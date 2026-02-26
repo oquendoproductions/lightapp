@@ -7876,11 +7876,11 @@ async function insertReportWithFallback(payload) {
 	              }}
             >
               <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                Ashtabula Streetlight Reporting
+                L.I.S.T.
               </div>
 
               <div style={{ fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
-                Community-reported streetlight outages
+                Local Infrastructure Status Tracker
               </div>
 
               <div style={{ fontSize: 14, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
@@ -8219,11 +8219,11 @@ async function insertReportWithFallback(payload) {
             />
 
             <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-              Ashtabula Streetlight Reporting
+              L.I.S.T.
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
-              Community-reported streetlight outages
+              Local Infrastructure Status Tracker
             </div>
 
             <div style={{ fontSize: 12.5, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
