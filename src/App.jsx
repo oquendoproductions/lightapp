@@ -1111,53 +1111,6 @@ function ConfirmReportModal({
     <ModalShell open={open} zIndex={9999}>
       <div style={{ fontSize: 16, fontWeight: 800 }}>Report this streetlight?</div>
 
-      <label style={{ display: "grid", gap: 8 }}>
-        <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-          What are you seeing?
-        </div>
-        <select
-          value={reportType}
-          onChange={(e) => setReportType(e.target.value)}
-          style={{
-            padding: 10,
-            height: 35,
-            boxSizing: "border-box",
-            borderRadius: 8,
-            border: "1px solid #ddd",
-            background: "#fff",
-            color: "#111",
-            fontSize: 16,
-          }}
-          disabled={saving}
-        >
-          {Object.entries(REPORT_TYPES).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label style={{ display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>
-          Notes {notesRequired ? "(required)" : "(optional)"}
-        </div>
-
-        <input
-          placeholder='Anything helpful? (e.g., "flickers at night")'
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
-          disabled={saving}
-        />
-
-        {notesMissing && (
-          <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 800 }}>
-            Please add a brief note for “Other”.
-          </div>
-        )}
-      </label>
-
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 900 }}>Power & Safety</div>
 
@@ -1303,6 +1256,54 @@ function ConfirmReportModal({
           </div>
         )}
       </div>
+
+      <label style={{ display: "grid", gap: 8 }}>
+        <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+          What are you seeing?
+        </div>
+        <select
+          value={reportType}
+          onChange={(e) => setReportType(e.target.value)}
+          style={{
+            padding: 10,
+            height: 40,
+            boxSizing: "border-box",
+            borderRadius: 8,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontSize: 14,
+            lineHeight: 1.2,
+          }}
+          disabled={saving}
+        >
+          {Object.entries(REPORT_TYPES).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 700 }}>
+          Notes {notesRequired ? "(required)" : "(optional)"}
+        </div>
+
+        <input
+          placeholder='Anything helpful? (e.g., "flickers at night")'
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          style={{ padding: 10, borderRadius: 8, border: "1px solid #ddd" }}
+          disabled={saving}
+        />
+
+        {notesMissing && (
+          <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 800 }}>
+            Please add a brief note for “Other”.
+          </div>
+        )}
+      </label>
 
       {showSafetyNote && (
         <div
@@ -2114,7 +2115,7 @@ function MyReportsModal({
           marginTop: 6,
           maxHeight: "60vh",
           overflow: "auto",
-          border: "1px solid var(--sl-ui-open-reports-item-border)",
+          border: "1px solid rgba(0,0,0,0.35)",
           borderRadius: 10,
           padding: 10,
           display: "grid",
@@ -3085,6 +3086,7 @@ export default function App() {
   const followRafRef = useRef(null);
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
+  const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
   const zoomDragRef = useRef({
     lastTapTs: 0,
     lastTapX: 0,
@@ -3115,6 +3117,25 @@ export default function App() {
       clearTimeout(flyInfoTimerRef.current);
       flyInfoTimerRef.current = null;
     }
+  }
+
+  function updateUserLocUi(lat, lng, force = false) {
+    const now = Date.now();
+    const prev = lastUserLocUiRef.current;
+    const next = { lat: Number(lat), lng: Number(lng) };
+    if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) return;
+
+    const movedMeters =
+      Number.isFinite(prev?.lat) && Number.isFinite(prev?.lng)
+        ? metersBetween({ lat: prev.lat, lng: prev.lng }, next)
+        : Infinity;
+    const elapsedMs = now - Number(prev?.ts || 0);
+
+    // Keep the blue dot responsive, but avoid re-rendering on every noisy GPS tick.
+    if (!force && movedMeters < 0.9 && elapsedMs < 120) return;
+
+    lastUserLocUiRef.current = { lat: next.lat, lng: next.lng, ts: now };
+    setUserLoc([next.lat, next.lng]);
   }
 
   function stopFollowCameraAnimation() {
@@ -4097,20 +4118,38 @@ export default function App() {
       setLoading(true);
       setError("");
 
+      const isAuthed = Boolean(session?.user?.id);
+      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
+      const reportSelectFull = "id, created_at, lat, lng, report_type, report_quality, note, light_id, reporter_user_id, reporter_name, reporter_phone, reporter_email";
+      const actionsSelectPublic = "id, light_id, action, created_at";
+      const actionsSelectFull = "id, light_id, action, note, created_at, actor_user_id";
+
+      const reportsPromise = isAdmin
+        ? supabase.from("reports").select(reportSelectFull).order("created_at", { ascending: false })
+        : supabase.from("reports_public").select(reportSelectPublic).order("created_at", { ascending: false });
+
+      const ownReportsPromise = (!isAdmin && isAuthed)
+        ? supabase
+            .from("reports")
+            .select(reportSelectFull)
+            .eq("reporter_user_id", session.user.id)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
+
+      const actionsPromise = isAdmin
+        ? supabase.from("light_actions").select(actionsSelectFull).order("created_at", { ascending: false })
+        : supabase.from("light_actions_public").select(actionsSelectPublic).order("created_at", { ascending: false });
+
       const [
         { data: reportData, error: repErr },
+        { data: ownReportData, error: ownRepErr },
         { data: fixedData, error: fixErr },
         { data: actionData, error: actErr },
       ] = await Promise.all([
-        supabase
-          .from("reports")
-          .select("id, created_at, lat, lng, report_type, report_quality, light_id, reporter_user_id, reporter_name, reporter_phone, reporter_email")
-          .order("created_at", { ascending: false }),
+        reportsPromise,
+        ownReportsPromise,
         supabase.from("fixed_lights").select("*"),
-        supabase
-          .from("light_actions")
-          .select("id, light_id, action, note, created_at, actor_user_id")
-          .order("created_at", { ascending: false }),
+        actionsPromise,
       ]);
 
       let officialData = [];
@@ -4132,29 +4171,50 @@ export default function App() {
         );
       }
 
-      setReports(
-        (reportData || []).map((r) => ({
-          id: r.id,
-          lat: r.lat,
-          lng: r.lng,
-          type: r.report_type,
-          report_quality: normalizeReportQuality(r.report_quality),
-          note: r.note || "",
-          ts: new Date(r.created_at).getTime(),
-          light_id: r.light_id || lightIdFor(r.lat, r.lng),
+      if (repErr) console.error(repErr);
+      if (ownRepErr) console.error("[reports own] load error:", ownRepErr);
 
-          reporter_user_id: r.reporter_user_id || null,
-          reporter_name: r.reporter_name || null,
-          reporter_phone: r.reporter_phone || null,
-          reporter_email: r.reporter_email || null,
-        }))
-      );
+      const normalizedPublicReports = (reportData || []).map((r) => ({
+        id: r.id,
+        lat: r.lat,
+        lng: r.lng,
+        type: r.report_type,
+        report_quality: normalizeReportQuality(r.report_quality),
+        note: r.note || "",
+        ts: new Date(r.created_at).getTime(),
+        light_id: r.light_id || lightIdFor(r.lat, r.lng),
+        reporter_user_id: r.reporter_user_id || null,
+        reporter_name: r.reporter_name || null,
+        reporter_phone: r.reporter_phone || null,
+        reporter_email: r.reporter_email || null,
+      }));
+
+      const normalizedOwnReports = (ownReportData || []).map((r) => ({
+        id: r.id,
+        lat: r.lat,
+        lng: r.lng,
+        type: r.report_type,
+        report_quality: normalizeReportQuality(r.report_quality),
+        note: r.note || "",
+        ts: new Date(r.created_at).getTime(),
+        light_id: r.light_id || lightIdFor(r.lat, r.lng),
+        reporter_user_id: r.reporter_user_id || null,
+        reporter_name: r.reporter_name || null,
+        reporter_phone: r.reporter_phone || null,
+        reporter_email: r.reporter_email || null,
+      }));
+
+      const reportMap = new Map();
+      for (const r of normalizedPublicReports) reportMap.set(r.id, r);
+      for (const r of normalizedOwnReports) reportMap.set(r.id, r); // own rows overwrite public-safe rows
+      setReports(Array.from(reportMap.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0)));
 
       const fixedMap = {};
       for (const row of fixedData || []) fixedMap[row.light_id] = new Date(row.fixed_at).getTime();
       setFixedLights(fixedMap);
 
       let map = {};
+      if (fixErr) console.error(fixErr);
       if (actErr) console.error(actErr);
       else {
         for (const a of actionData || []) {
@@ -4195,7 +4255,7 @@ export default function App() {
     }
 
     loadAll();
-  }, [authReady]);
+  }, [authReady, isAdmin, session?.user?.id]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -4211,7 +4271,7 @@ export default function App() {
   // Realtime subscriptions
   // -------------------------
   useEffect(() => {
-    const reportsChannel = supabase
+    const reportsChannel = isAdmin ? supabase
       .channel("realtime-reports")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "reports" }, (payload) => {
         const r = payload.new;
@@ -4236,7 +4296,7 @@ export default function App() {
           return [incoming, ...prev];
         });
       })
-      .subscribe();
+      .subscribe() : null;
 
     const fixedChannel = supabase
       .channel("realtime-fixed")
@@ -4264,7 +4324,7 @@ export default function App() {
       })
       .subscribe();
 
-    const actionsChannel = supabase
+    const actionsChannel = isAdmin ? supabase
       .channel("realtime-actions")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "light_actions" }, (payload) => {
         const a = payload.new;
@@ -4303,7 +4363,7 @@ export default function App() {
           return { ...prev, [a.light_id]: ts };
         });
       })
-      .subscribe();
+      .subscribe() : null;
 
 
     const officialChannel = supabase
@@ -4356,12 +4416,12 @@ export default function App() {
 
 
     return () => {
-      supabase.removeChannel(reportsChannel);
-      supabase.removeChannel(fixedChannel);
-      supabase.removeChannel(actionsChannel);
-      supabase.removeChannel(officialChannel);
+      if (reportsChannel) supabase.removeChannel(reportsChannel);
+      if (fixedChannel) supabase.removeChannel(fixedChannel);
+      if (actionsChannel) supabase.removeChannel(actionsChannel);
+      if (officialChannel) supabase.removeChannel(officialChannel);
     };
-  }, []);
+  }, [isAdmin]);
 
   // Build a fast lookup of official IDs
   const officialIdSet = useMemo(() => new Set(officialLights.map((o) => o.id)), [officialLights]);
@@ -4867,6 +4927,16 @@ export default function App() {
   }
 
 
+function canRetryInsertWithoutSelect(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    msg.includes("row-level security") ||
+    msg.includes("permission denied") ||
+    msg.includes("select") ||
+    msg.includes("violates row-level security policy")
+  );
+}
+
 async function insertReportWithFallback(payload) {
     const tryValues = [payload.report_type];
 
@@ -4879,25 +4949,70 @@ async function insertReportWithFallback(payload) {
 
     for (const rt of tryValues) {
       const attempt = { ...payload, report_type: rt };
-      let { data, error: insErr } = await supabase
-        .from("reports")
-        .insert([attempt])
-        .select("*")
-        .single();
+      const canReadInsertedRow = Boolean(attempt.reporter_user_id);
+      let data = null;
+      let insErr = null;
 
-      // Backward-compatible fallback when report_quality column is not present yet.
-      if (insErr && String(insErr.message || "").toLowerCase().includes("report_quality")) {
-        const { report_quality, ...withoutQuality } = attempt;
-        const second = await supabase
+      if (canReadInsertedRow) {
+        const first = await supabase
           .from("reports")
-          .insert([withoutQuality])
+          .insert([attempt])
           .select("*")
           .single();
-        data = second.data;
-        insErr = second.error;
+        data = first.data;
+        insErr = first.error;
+
+        // Backward-compatible fallback when report_quality column is not present yet.
+        if (insErr && String(insErr.message || "").toLowerCase().includes("report_quality")) {
+          const { report_quality, ...withoutQuality } = attempt;
+          const second = await supabase
+            .from("reports")
+            .insert([withoutQuality])
+            .select("*")
+            .single();
+          data = second.data;
+          insErr = second.error;
+        }
+      } else {
+        let plain = await supabase.from("reports").insert([attempt]);
+        if (plain.error && String(plain.error.message || "").toLowerCase().includes("report_quality")) {
+          const { report_quality, ...withoutQuality } = attempt;
+          plain = await supabase.from("reports").insert([withoutQuality]);
+        }
+        if (!plain.error) {
+          return {
+            data: {
+              id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              created_at: new Date().toISOString(),
+              ...attempt,
+            },
+            usedReportType: rt,
+          };
+        }
+        insErr = plain.error;
       }
 
       if (!insErr) return { data, usedReportType: rt };
+
+      // If SELECT on reports is restricted (security hardening), retry insert without RETURNING row.
+      if (canRetryInsertWithoutSelect(insErr)) {
+        let plain = await supabase.from("reports").insert([attempt]);
+        if (plain.error && String(plain.error.message || "").toLowerCase().includes("report_quality")) {
+          const { report_quality, ...withoutQuality } = attempt;
+          plain = await supabase.from("reports").insert([withoutQuality]);
+        }
+        if (!plain.error) {
+          return {
+            data: {
+              id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              created_at: new Date().toISOString(),
+              ...attempt,
+            },
+            usedReportType: rt,
+          };
+        }
+      }
+
       lastErr = insErr;
     }
 
@@ -4964,11 +5079,39 @@ async function insertReportWithFallback(payload) {
 
     for (const rt of workingTypeCandidates) {
       const attempt = { ...workingPayloadBase, report_type: rt };
-      const res = await supabase
-        .from("reports")
-        .insert([attempt])
-        .select("*")
-        .single();
+      const canReadInsertedRow = Boolean(attempt.reporter_user_id);
+      let res = canReadInsertedRow
+        ? await supabase
+            .from("reports")
+            .insert([attempt])
+            .select("*")
+            .single()
+        : await supabase.from("reports").insert([attempt]);
+
+      if (!canReadInsertedRow && !res.error) {
+        res = {
+          data: {
+            id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            created_at: new Date().toISOString(),
+            ...attempt,
+          },
+          error: null,
+        };
+      }
+
+      if (res.error && canRetryInsertWithoutSelect(res.error)) {
+        const plain = await supabase.from("reports").insert([attempt]);
+        if (!plain.error) {
+          res = {
+            data: {
+              id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              created_at: new Date().toISOString(),
+              ...attempt,
+            },
+            error: null,
+          };
+        }
+      }
 
       if (!res.error) {
         savedWorking = res.data || null;
@@ -5749,6 +5892,12 @@ async function insertReportWithFallback(payload) {
       const motionHeading = Number(motion?.heading);
       const motionSpeed = Number(motion?.speed);
       const motionTs = Number(motion?.ts);
+      const headingFreezeMps = 1.6; // ~3.6 mph
+      const headingHeavyDampMps = 3.6; // ~8 mph
+
+      if (Number.isFinite(motionSpeed) && motionSpeed < headingFreezeMps) {
+        targetHeading = NaN;
+      }
 
       if (
         Number.isFinite(motionLat) &&
@@ -5783,7 +5932,7 @@ async function insertReportWithFallback(payload) {
         { lat: targetLat, lng: targetLng }
       );
 
-      const centerAlpha = distToTarget > 25 ? 0.38 : distToTarget > 8 ? 0.26 : 0.18;
+      const centerAlpha = distToTarget > 25 ? 0.34 : distToTarget > 8 ? 0.22 : 0.14;
       const nextLat = curLat + (targetLat - curLat) * centerAlpha;
       const nextLng = curLng + (targetLng - curLng) * centerAlpha;
 
@@ -5792,7 +5941,17 @@ async function insertReportWithFallback(payload) {
 
       if (Number.isFinite(targetHeading) && followHeadingEnabledRef.current) {
         const delta = ((targetHeading - nextHeading + 540) % 360) - 180;
-        nextHeading = (nextHeading + delta * 0.32 + 360) % 360;
+        const rotateAlpha =
+          motionSpeed >= 12 ? 0.18 :
+          motionSpeed >= 6 ? 0.14 :
+          motionSpeed >= headingHeavyDampMps ? 0.10 : 0.08;
+        const rotateDeadband =
+          motionSpeed >= 12 ? 3 :
+          motionSpeed >= 6 ? 5 :
+          motionSpeed >= headingHeavyDampMps ? 8 : 12;
+        if (Math.abs(delta) >= rotateDeadband) {
+          nextHeading = (nextHeading + delta * rotateAlpha + 360) % 360;
+        }
       }
 
       moveFollowCamera({
@@ -5861,7 +6020,7 @@ async function insertReportWithFallback(payload) {
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        setUserLoc([lat, lng]);
+        updateUserLocUi(lat, lng, true);
         lastTrackedPosRef.current = { lat, lng };
         smoothedHeadingRef.current = null;
         lastFollowCameraRef.current = { lat, lng, heading: null };
@@ -5892,7 +6051,7 @@ async function insertReportWithFallback(payload) {
             (fallbackPos) => {
               const lat = fallbackPos.coords.latitude;
               const lng = fallbackPos.coords.longitude;
-              setUserLoc([lat, lng]);
+              updateUserLocUi(lat, lng, true);
               lastTrackedPosRef.current = { lat, lng };
               flyToTarget([lat, lng], LOCATE_ZOOM);
               setAutoFollow(true);
@@ -5911,7 +6070,7 @@ async function insertReportWithFallback(payload) {
             (fallbackPos) => {
               const lat = fallbackPos.coords.latitude;
               const lng = fallbackPos.coords.longitude;
-              setUserLoc([lat, lng]);
+              updateUserLocUi(lat, lng, true);
               lastTrackedPosRef.current = { lat, lng };
               flyToTarget([lat, lng], LOCATE_ZOOM);
               setAutoFollow(true);
@@ -5946,11 +6105,13 @@ async function insertReportWithFallback(payload) {
         const ts = Number(pos?.timestamp) || Date.now();
         const accuracyM = Number(pos?.coords?.accuracy);
 
-        setUserLoc([lat, lng]);
+        updateUserLocUi(lat, lng, false);
         lastTrackedPosRef.current = nextPos;
 
         const rawSpeed = Number(pos?.coords?.speed);
         let speedMps = Number.isFinite(rawSpeed) && rawSpeed >= 0 ? rawSpeed : NaN;
+        const headingFreezeMps = 1.6; // ~3.6 mph
+        const headingHeavyDampMps = 3.6; // ~8 mph
 
         const prevMotionTs = Number(liveMotionRef.current?.ts);
         if ((!Number.isFinite(speedMps) || speedMps < 0) && prevPos && Number.isFinite(prevMotionTs)) {
@@ -5969,22 +6130,33 @@ async function insertReportWithFallback(payload) {
         if (Number.isFinite(heading)) {
           const prev = smoothedHeadingRef.current;
           if (!Number.isFinite(prev)) {
-            smoothedHeadingRef.current = heading;
+            if (!Number.isFinite(speedMps) || speedMps >= headingFreezeMps) {
+              smoothedHeadingRef.current = heading;
+            }
           } else {
             const speedForSmoothing = Number.isFinite(speedMps) ? speedMps : 0;
             const headingAlpha =
-              speedForSmoothing >= 12 ? 0.45 :
-              speedForSmoothing >= 6 ? 0.36 :
-              speedForSmoothing >= 2 ? 0.26 :
-              0.2;
+              speedForSmoothing >= 12 ? 0.28 :
+              speedForSmoothing >= 6 ? 0.22 :
+              speedForSmoothing >= headingHeavyDampMps ? 0.14 :
+              0.08;
             const delta = ((heading - prev + 540) % 360) - 180;
-            smoothedHeadingRef.current = (prev + delta * headingAlpha + 360) % 360;
+            const headingDeadband =
+              speedForSmoothing >= 12 ? 2 :
+              speedForSmoothing >= 6 ? 3.5 :
+              speedForSmoothing >= headingHeavyDampMps ? 6 :
+              12;
+            if (speedForSmoothing >= headingFreezeMps && Math.abs(delta) >= headingDeadband) {
+              smoothedHeadingRef.current = (prev + delta * headingAlpha + 360) % 360;
+            }
           }
         }
 
-        const effectiveHeading = Number.isFinite(smoothedHeadingRef.current)
-          ? smoothedHeadingRef.current
-          : heading;
+        const speedForHeading = Number.isFinite(speedMps) ? speedMps : 0;
+        const effectiveHeading =
+          speedForHeading < headingFreezeMps
+            ? Number(liveMotionRef.current?.heading)
+            : (Number.isFinite(smoothedHeadingRef.current) ? smoothedHeadingRef.current : heading);
 
         liveMotionRef.current = {
           lat,
@@ -5997,11 +6169,12 @@ async function insertReportWithFallback(payload) {
         };
 
         if (followCamera) {
+          const speedForThresholds = Number.isFinite(speedMps) && speedMps > 0 ? speedMps : 0;
           const poorAccuracySmallMove =
             Number.isFinite(accuracyM) &&
-            accuracyM > 35 &&
+            accuracyM > 25 &&
             prevPos &&
-            metersBetween(prevPos, nextPos) < Math.min(accuracyM * 0.35, 12);
+            metersBetween(prevPos, nextPos) < Math.min(accuracyM * 0.5, 18);
 
           const last = lastFollowCameraRef.current;
           const movedMeters = Number.isFinite(last.lat) && Number.isFinite(last.lng)
@@ -6014,8 +6187,23 @@ async function insertReportWithFallback(payload) {
               ? Math.abs(((effectiveHeading - last.heading + 540) % 360) - 180)
               : Infinity;
 
-          if (!poorAccuracySmallMove && (movedMeters >= 0.8 || headingDelta >= 1.5 || !followTargetRef.current)) {
-            const queuedHeading = followHeadingEnabledRef.current ? effectiveHeading : null;
+          const moveTriggerMeters =
+            Number.isFinite(accuracyM) && accuracyM > 40 ? 3 :
+            Number.isFinite(accuracyM) && accuracyM > 20 ? 2 :
+            speedForThresholds >= 12 ? 1.5 :
+            speedForThresholds >= 6 ? 1.2 :
+            speedForThresholds >= headingHeavyDampMps ? 2.2 : 3.2;
+          const headingTriggerDeg =
+            speedForThresholds >= 12 ? 3 :
+            speedForThresholds >= 6 ? 4 :
+            speedForThresholds >= headingHeavyDampMps ? 8 :
+            14;
+
+          if (!poorAccuracySmallMove && (movedMeters >= moveTriggerMeters || headingDelta >= headingTriggerDeg || !followTargetRef.current)) {
+            const queuedHeading =
+              (followHeadingEnabledRef.current && speedForThresholds >= headingFreezeMps)
+                ? effectiveHeading
+                : null;
             queueFollowCameraTarget({ lat, lng, heading: queuedHeading });
             lastFollowCameraRef.current = { lat, lng, heading: queuedHeading };
           }
