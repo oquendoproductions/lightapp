@@ -25,7 +25,7 @@ const GROUP_RADIUS_METERS = 25;
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
-const APP_VERSION = "v2026.02.23.2";
+const APP_VERSION = "v2026.02.23.3";
 
 
 // Per-light cooldown (client-side guardrail; reversible)
@@ -1536,7 +1536,7 @@ function NoticeModal({ open, icon, title, message, buttonText = "OK", onClose, c
   if (!open) return null;
 
   return (
-    <ModalShell open={open} zIndex={10001}>
+    <ModalShell open={open} zIndex={10020}>
       <div
         style={{
           display: "flex",
@@ -1578,6 +1578,63 @@ function NoticeModal({ open, icon, title, message, buttonText = "OK", onClose, c
   );
 }
 
+function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend, onClose }) {
+  if (!open) return null;
+
+  return (
+    <ModalShell open={open} zIndex={10011}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Reset password</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35 }}>
+        Enter your account email and we’ll send a password reset link.
+      </div>
+
+      <input
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
+        autoCapitalize="none"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !loading) onSend();
+        }}
+      />
+
+      {!!errorText && (
+        <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 900 }}>
+          {errorText}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <button onClick={onSend} disabled={loading} style={{ ...btnPrimaryDark, opacity: loading ? 0.75 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+          {loading ? "Sending reset…" : "Send reset email"}
+        </button>
+        <button onClick={onClose} style={btnSecondary}>Cancel</button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function AuthGateModal({
   open,
   step,
@@ -1588,6 +1645,7 @@ function AuthGateModal({
   authPassword,
   setAuthPassword,
   authLoading,
+  onOpenForgotPassword,
   onLogin,
 
   signupName,
@@ -1706,6 +1764,26 @@ function AuthGateModal({
               if (e.key === "Enter" && !authLoading) onLogin();
             }}
           />
+
+          <button
+            type="button"
+            onClick={onOpenForgotPassword}
+            disabled={authLoading}
+            style={{
+              padding: 0,
+              width: "fit-content",
+              borderRadius: 0,
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: authLoading ? "not-allowed" : "pointer",
+              opacity: authLoading ? 0.65 : 1,
+              justifySelf: "start",
+            }}
+          >
+            Forgot password?
+          </button>
 
           <button
             onClick={onLogin}
@@ -3198,6 +3276,10 @@ export default function App() {
   const toggleBulkSelect = useCallback((lightId) => {
     setBulkSelectedIds((prev) => {
       const has = prev.includes(lightId);
+      if (!has && Number(mapZoomRef.current) < 17) {
+        openNotice("🔎", "Zoom in to select", "Zoom in closer (level 17+) before selecting lights for bulk reporting.");
+        return prev;
+      }
       return has ? prev.filter((x) => x !== lightId) : [...prev, lightId];
     });
   }, []);
@@ -3553,6 +3635,10 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [authResetLoading, setAuthResetLoading] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
 
   // Signup fields
   const [signupName, setSignupName] = useState("");
@@ -3620,6 +3706,11 @@ export default function App() {
   
 
   function toggleBulkSelection(id) {
+    const alreadySelected = bulkSelectedSet.has(id);
+    if (!alreadySelected && Number(mapZoomRef.current || mapZoom) < 17) {
+      openNotice("🔎", "Zoom in to select", "Zoom in closer (level 17+) before selecting lights for bulk reporting.");
+      return;
+    }
     setBulkSelectedIds((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
       return [...prev, id];
@@ -3919,6 +4010,35 @@ export default function App() {
     }
 
     setAccountMenuOpen(false);
+    return true;
+  }
+
+  function openForgotPasswordModal() {
+    setForgotPasswordEmail((authEmail || "").trim());
+    setForgotPasswordError("");
+    setForgotPasswordOpen(true);
+  }
+
+  async function sendPasswordReset() {
+    const email = (forgotPasswordEmail || "").trim().toLowerCase();
+    if (!email) {
+      setForgotPasswordError("Enter email");
+      return false;
+    }
+
+    setForgotPasswordError("");
+    setAuthResetLoading(true);
+    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    setAuthResetLoading(false);
+
+    if (error) {
+      openNotice("⚠️", "Couldn’t send reset", error.message || "Password reset email failed.");
+      return false;
+    }
+
+    setForgotPasswordOpen(false);
+    openNotice("✅", "Check your email", "If an account exists for that email, a password reset link has been sent.");
     return true;
   }
 
@@ -5405,6 +5525,11 @@ async function insertReportWithFallback(payload) {
   async function submitBulkReports() {
   if (saving) return;
 
+  if (Number(mapZoomRef.current || mapZoom) < 17) {
+    openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
+    return;
+  }
+
   const ids = bulkSelectedIds;
   if (!ids.length) return;
   
@@ -6743,6 +6868,7 @@ async function insertReportWithFallback(payload) {
         authPassword={authPassword}
         setAuthPassword={setAuthPassword}
         authLoading={authLoading}
+        onOpenForgotPassword={openForgotPasswordModal}
         onLogin={async () => {
           const ok = await signIn();
           if (!ok) return;
@@ -6763,6 +6889,20 @@ async function insertReportWithFallback(payload) {
         setSignupPassword2={setSignupPassword2}
         signupLoading={signupLoading}
         onCreateAccount={handleCreateAccount}
+      />
+
+      <ForgotPasswordModal
+        open={forgotPasswordOpen}
+        email={forgotPasswordEmail}
+        setEmail={(v) => { setForgotPasswordEmail(v); if (forgotPasswordError) setForgotPasswordError(""); }}
+        loading={authResetLoading}
+        errorText={forgotPasswordError}
+        onSend={sendPasswordReset}
+        onClose={() => {
+          if (authResetLoading) return;
+          setForgotPasswordOpen(false);
+          setForgotPasswordError("");
+        }}
       />
 
       <GuestInfoModal
@@ -7802,8 +7942,8 @@ async function insertReportWithFallback(payload) {
 	          <div
               style={{
                 position: "relative",
-                width: "min(984px, calc(100vw - 76px))",
-                marginLeft: -34,
+                width: "min(720px, calc(100vw - 32px))",
+                marginLeft: 0,
               }}
             >
 	            <div
@@ -7876,7 +8016,7 @@ async function insertReportWithFallback(payload) {
 	              }}
             >
               <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                L.I.S.T.
+                L.I.S.T. Report
               </div>
 
               <div style={{ fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
@@ -7984,6 +8124,11 @@ async function insertReportWithFallback(payload) {
 
                     if (bulkSelectedCount === 0) {
                       openNotice("⚠️", "No lights selected", "Tap multiple official 💡 lights first.");
+                      return;
+                    }
+
+                    if (Number(mapZoomRef.current || mapZoom) < 17) {
+                      openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
                       return;
                     }
 
@@ -8219,7 +8364,7 @@ async function insertReportWithFallback(payload) {
             />
 
             <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-              L.I.S.T.
+              L.I.S.T. Report
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
@@ -8303,6 +8448,11 @@ async function insertReportWithFallback(payload) {
 
                     if (bulkSelectedCount === 0) {
                       openNotice("⚠️", "No lights selected", "Tap multiple official 💡 lights first.");
+                      return;
+                    }
+
+                    if (Number(mapZoomRef.current || mapZoom) < 17) {
+                      openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
                       return;
                     }
 
