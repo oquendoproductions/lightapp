@@ -4271,7 +4271,7 @@ export default function App() {
   // Realtime subscriptions
   // -------------------------
   useEffect(() => {
-    const reportsChannel = supabase
+    const reportsChannel = isAdmin ? supabase
       .channel("realtime-reports")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "reports" }, (payload) => {
         const r = payload.new;
@@ -4296,7 +4296,7 @@ export default function App() {
           return [incoming, ...prev];
         });
       })
-      .subscribe();
+      .subscribe() : null;
 
     const fixedChannel = supabase
       .channel("realtime-fixed")
@@ -4324,7 +4324,7 @@ export default function App() {
       })
       .subscribe();
 
-    const actionsChannel = supabase
+    const actionsChannel = isAdmin ? supabase
       .channel("realtime-actions")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "light_actions" }, (payload) => {
         const a = payload.new;
@@ -4363,7 +4363,7 @@ export default function App() {
           return { ...prev, [a.light_id]: ts };
         });
       })
-      .subscribe();
+      .subscribe() : null;
 
 
     const officialChannel = supabase
@@ -4416,12 +4416,12 @@ export default function App() {
 
 
     return () => {
-      supabase.removeChannel(reportsChannel);
-      supabase.removeChannel(fixedChannel);
-      supabase.removeChannel(actionsChannel);
-      supabase.removeChannel(officialChannel);
+      if (reportsChannel) supabase.removeChannel(reportsChannel);
+      if (fixedChannel) supabase.removeChannel(fixedChannel);
+      if (actionsChannel) supabase.removeChannel(actionsChannel);
+      if (officialChannel) supabase.removeChannel(officialChannel);
     };
-  }, []);
+  }, [isAdmin]);
 
   // Build a fast lookup of official IDs
   const officialIdSet = useMemo(() => new Set(officialLights.map((o) => o.id)), [officialLights]);
@@ -4949,22 +4949,47 @@ async function insertReportWithFallback(payload) {
 
     for (const rt of tryValues) {
       const attempt = { ...payload, report_type: rt };
-      let { data, error: insErr } = await supabase
-        .from("reports")
-        .insert([attempt])
-        .select("*")
-        .single();
+      const canReadInsertedRow = Boolean(attempt.reporter_user_id);
+      let data = null;
+      let insErr = null;
 
-      // Backward-compatible fallback when report_quality column is not present yet.
-      if (insErr && String(insErr.message || "").toLowerCase().includes("report_quality")) {
-        const { report_quality, ...withoutQuality } = attempt;
-        const second = await supabase
+      if (canReadInsertedRow) {
+        const first = await supabase
           .from("reports")
-          .insert([withoutQuality])
+          .insert([attempt])
           .select("*")
           .single();
-        data = second.data;
-        insErr = second.error;
+        data = first.data;
+        insErr = first.error;
+
+        // Backward-compatible fallback when report_quality column is not present yet.
+        if (insErr && String(insErr.message || "").toLowerCase().includes("report_quality")) {
+          const { report_quality, ...withoutQuality } = attempt;
+          const second = await supabase
+            .from("reports")
+            .insert([withoutQuality])
+            .select("*")
+            .single();
+          data = second.data;
+          insErr = second.error;
+        }
+      } else {
+        let plain = await supabase.from("reports").insert([attempt]);
+        if (plain.error && String(plain.error.message || "").toLowerCase().includes("report_quality")) {
+          const { report_quality, ...withoutQuality } = attempt;
+          plain = await supabase.from("reports").insert([withoutQuality]);
+        }
+        if (!plain.error) {
+          return {
+            data: {
+              id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              created_at: new Date().toISOString(),
+              ...attempt,
+            },
+            usedReportType: rt,
+          };
+        }
+        insErr = plain.error;
       }
 
       if (!insErr) return { data, usedReportType: rt };
@@ -5054,11 +5079,25 @@ async function insertReportWithFallback(payload) {
 
     for (const rt of workingTypeCandidates) {
       const attempt = { ...workingPayloadBase, report_type: rt };
-      let res = await supabase
-        .from("reports")
-        .insert([attempt])
-        .select("*")
-        .single();
+      const canReadInsertedRow = Boolean(attempt.reporter_user_id);
+      let res = canReadInsertedRow
+        ? await supabase
+            .from("reports")
+            .insert([attempt])
+            .select("*")
+            .single()
+        : await supabase.from("reports").insert([attempt]);
+
+      if (!canReadInsertedRow && !res.error) {
+        res = {
+          data: {
+            id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            created_at: new Date().toISOString(),
+            ...attempt,
+          },
+          error: null,
+        };
+      }
 
       if (res.error && canRetryInsertWithoutSelect(res.error)) {
         const plain = await supabase.from("reports").insert([attempt]);
