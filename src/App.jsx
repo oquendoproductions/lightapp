@@ -4006,7 +4006,7 @@ export default function App() {
     // Realtime channel status strings
     if (typeof errOrStatus === "string") {
       const s = errOrStatus.toUpperCase();
-      return s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED";
+      return s === "CHANNEL_ERROR" || s === "TIMED_OUT";
     }
 
     const statusNum = Number(errOrStatus?.status);
@@ -4043,6 +4043,7 @@ export default function App() {
 
   function notifyDbConnectionIssue(errOrStatus) {
     if (!isConnectionLikeDbError(errOrStatus)) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const now = Date.now();
     if (now - dbConnectionStartedAtRef.current < 6000) return; // startup grace period
@@ -5398,7 +5399,7 @@ export default function App() {
       )
       .subscribe((status) => {
         console.log("OFFICIAL realtime subscribe status:", status);
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") notifyDbConnectionIssue(status);
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") notifyDbConnectionIssue(status);
         if (status === "SUBSCRIBED") resetDbConnectionIssueStreak();
       });
 
