@@ -25,7 +25,7 @@ const GROUP_RADIUS_METERS = 25;
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
-const APP_VERSION = "v2026.02.23.3";
+const APP_VERSION = "v1.1.0";
 
 
 // Per-light cooldown (client-side guardrail; reversible)
@@ -112,6 +112,15 @@ function normalizeEmail(e) {
 
 function normalizePhone(p) {
   return String(p || "").replace(/[^\d]/g, ""); // digits only
+}
+
+function validateStrongPassword(password) {
+  const v = String(password || "");
+  if (v.length < 8) return false;
+  if (!/[A-Z]/.test(v)) return false;
+  if (!/[a-z]/.test(v)) return false;
+  if (!/[^A-Za-z0-9]/.test(v)) return false;
+  return true;
 }
 
 function normalizeReportTypeValue(t) {
@@ -400,17 +409,18 @@ function findNearestOfficialWithinRadius(officialLights, lat, lng) {
 function svgDotDataUrl(fill = "#111", r = 7) {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
-      <circle cx="10" cy="10" r="${r}" fill="${fill}" stroke="white" stroke-width="2"/>
+      <circle cx="10" cy="10" r="${r}" fill="${fill}" stroke="${r}" stroke-width="2"/>
     </svg>
   `;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 // CMD+F: function gmapsDotIcon
-function gmapsDotIcon(color = "#1976d2") {
+function gmapsDotIcon(color = "#1976d2", ringColor = "white") {
   const c = color || "#1976d2";
+  const r = ringColor || "white";
   const g = window.google?.maps;
-  const cacheKey = `${c}|${g ? "g" : "nog"}`;
+  const cacheKey = `${c}|${r}|${g ? "g" : "nog"}`;
   gmapsDotIcon._cache ||= new Map();
   if (gmapsDotIcon._cache.has(cacheKey)) return gmapsDotIcon._cache.get(cacheKey);
 
@@ -831,6 +841,7 @@ const OfficialLightsLayer = memo(function OfficialLightsLayer({
   bulkMode,
   bulkSelectedSet,
   getMarkerColor,
+  getMarkerRingColor,
   onMarkerClick,
 }) {
   if (!show) return null;
@@ -843,7 +854,7 @@ const OfficialLightsLayer = memo(function OfficialLightsLayer({
       <MarkerF
         key={ol.id}
         position={{ lat: ol.lat, lng: ol.lng }}
-        icon={gmapsDotIcon(iconColor)}
+        icon={gmapsDotIcon(iconColor, getMarkerRingColor?.(ol.id) || "#fff")}
         shape={OFFICIAL_MARKER_SHAPE}
         optimized
         onClick={() => onMarkerClick(ol.id)}
@@ -859,6 +870,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
   bulkMode,
   bulkSelectedSet,
   getMarkerColor,
+  getMarkerRingColor,
 }, ref) {
   const overlayObjRef = useRef(null);
   const canvasRef = useRef(null);
@@ -869,9 +881,10 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
     bulkMode,
     bulkSelectedSet,
     getMarkerColor,
+    getMarkerRingColor,
   });
 
-  latestRef.current = { show, lights, bulkMode, bulkSelectedSet, getMarkerColor };
+  latestRef.current = { show, lights, bulkMode, bulkSelectedSet, getMarkerColor, getMarkerRingColor };
 
   const drawOverlayCanvas = useCallback(() => {
     const overlay = overlayObjRef.current;
@@ -929,7 +942,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
       ctx.fillStyle = color || "#1976d2";
       ctx.fill();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = state.getMarkerRingColor?.(ol.id) || "#fff";
       ctx.stroke();
 
       // Preserve the visual "bulb in dot" look without thousands of MarkerF DOM overlays.
@@ -1031,7 +1044,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
 
   useEffect(() => {
     drawOverlayCanvas();
-  }, [drawOverlayCanvas, show, lights, bulkMode, bulkSelectedSet, getMarkerColor]);
+  }, [drawOverlayCanvas, show, lights, bulkMode, bulkSelectedSet, getMarkerColor, getMarkerRingColor]);
 
   return null;
 }));
@@ -1580,6 +1593,7 @@ function NoticeModal({ open, icon, title, message, buttonText = "OK", onClose, c
 
 function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend, onClose }) {
   if (!open) return null;
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 
   return (
     <ModalShell open={open} zIndex={10011}>
@@ -1615,7 +1629,7 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
         style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
         autoCapitalize="none"
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !loading) onSend();
+          if (e.key === "Enter" && !loading && emailLooksValid) onSend();
         }}
       />
 
@@ -1626,11 +1640,125 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
       )}
 
       <div style={{ display: "grid", gap: 8 }}>
-        <button onClick={onSend} disabled={loading} style={{ ...btnPrimaryDark, opacity: loading ? 0.75 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+        <button
+          onClick={onSend}
+          disabled={loading || !emailLooksValid}
+          style={{
+            ...btnPrimaryDark,
+            background: emailLooksValid ? "#1976d2" : "#111",
+            opacity: loading || !emailLooksValid ? 0.65 : 1,
+            cursor: loading || !emailLooksValid ? "not-allowed" : "pointer",
+          }}
+        >
           {loading ? "Sending reset…" : "Send reset email"}
         </button>
         <button onClick={onClose} style={btnSecondary}>Cancel</button>
       </div>
+    </ModalShell>
+  );
+}
+
+function InfoMenuModal({ open, onClose, isAdmin }) {
+  if (!open) return null;
+
+  const markerSwatch = (fill, withBulb = true, ring = "#fff") => (
+    <span
+      style={{
+        width: 18,
+        height: 18,
+        borderRadius: 999,
+        background: fill,
+        border: `2px solid ${ring}`,
+        display: "grid",
+        placeItems: "center",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+        fontSize: withBulb ? 9 : 0,
+        lineHeight: 1,
+        color: "#111",
+      }}
+      aria-hidden="true"
+    >
+      {withBulb ? "💡" : ""}
+    </span>
+  );
+
+  const legendRows = [
+    { swatch: markerSwatch("#111"), label: "Streetlight marker / Operational" },
+    { swatch: markerSwatch("#f1c40f"), label: "Reported outage (lower likelihood)" },
+    { swatch: markerSwatch("#f57c00"), label: "Likely outage (moderate likelihood)" },
+    { swatch: markerSwatch("#e74c3c"), label: "Confirmed outage (high likelihood)" },
+    { swatch: markerSwatch("#111", true, "#1976d2"), label: "You have an open report on this light (blue outline)" },
+    { swatch: markerSwatch("#1976d2"), label: "Selected light in bulk reporting" },
+    { swatch: markerSwatch("#1976d2", false), label: "Your current location" },
+  ];
+
+  const adminLegendRows = [
+    { swatch: markerSwatch("#2ecc71"), label: "Queued light in mapping mode" },
+  ];
+
+  return (
+    <ModalShell open={open} zIndex={10013}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.1 }}>Info</div>
+          <div style={{ fontSize: 11.5, opacity: 0.72, lineHeight: 1.15 }}>Version {APP_VERSION}</div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35, marginTop: 4 }}>
+        Learn what map icons and controls mean.
+      </div>
+
+      <div
+        style={{
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 10,
+          padding: 10,
+          display: "grid",
+          gap: 8,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 900 }}>Map Legend</div>
+        {legendRows.map((row) => (
+          <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+            <span style={{ width: 24, display: "grid", placeItems: "center" }}>{row.swatch}</span>
+            <span>{row.label}</span>
+          </div>
+        ))}
+
+        {isAdmin && (
+          <>
+            <div style={{ height: 1, background: "var(--sl-ui-modal-border)", opacity: 0.65, margin: "2px 0" }} />
+            <div style={{ fontSize: 13, fontWeight: 900, opacity: 0.9 }}>Admin icons</div>
+            {adminLegendRows.map((row) => (
+              <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+                <span style={{ width: 24, display: "grid", placeItems: "center" }}>{row.swatch}</span>
+                <span>{row.label}</span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
+      <button onClick={onClose} style={btnPrimary}>Close</button>
     </ModalShell>
   );
 }
@@ -1661,13 +1789,36 @@ function AuthGateModal({
   signupPassword2,
   setSignupPassword2,
 }) {
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showSignupPassword2, setShowSignupPassword2] = useState(false);
+
   if (!open) return null;
 
   return (
     <ModalShell open={open} zIndex={10003}>
       {step === "welcome" && (
         <>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>Welcome</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 16, fontWeight: 950 }}>Welcome</div>
+            <button
+              onClick={onContinueGuest}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Close"
+              title="Close"
+            >
+              ×
+            </button>
+          </div>
 
           <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
             Log in or create an account to view your past reports.
@@ -1754,16 +1905,38 @@ function AuthGateModal({
             style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
             autoCapitalize="none"
           />
-          <input
-            placeholder="Password"
-            type="password"
-            value={authPassword}
-            onChange={(e) => setAuthPassword(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !authLoading) onLogin();
-            }}
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              placeholder="Password"
+              type={showLoginPassword ? "text" : "password"}
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !authLoading) onLogin();
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowLoginPassword((v) => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "#1976d2",
+                fontWeight: 800,
+                cursor: "pointer",
+                padding: 0,
+                fontSize: 12.5,
+                lineHeight: 1,
+              }}
+            >
+              {showLoginPassword ? "Hide" : "Show"}
+            </button>
+          </div>
 
           <button
             type="button"
@@ -1850,27 +2023,74 @@ function AuthGateModal({
             autoCapitalize="none"
           />
 
-          <input
-            placeholder="Password (min 6 chars)"
-            type="password"
-            value={signupPassword}
-            onChange={(e) => setSignupPassword(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !signupLoading) onCreateAccount();
-            }}
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              placeholder="Password (8+ w/ upper, lower, special)"
+              type={showSignupPassword ? "text" : "password"}
+              value={signupPassword}
+              onChange={(e) => setSignupPassword(e.target.value)}
+              style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !signupLoading) onCreateAccount();
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowSignupPassword((v) => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "#1976d2",
+                fontWeight: 800,
+                cursor: "pointer",
+                padding: 0,
+                fontSize: 12.5,
+                lineHeight: 1,
+              }}
+            >
+              {showSignupPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--sl-ui-text)", opacity: 0.82, lineHeight: 1.3 }}>
+            Password must be 8+ characters and include uppercase, lowercase, and special character.
+          </div>
 
-          <input
-            placeholder="Re-enter password"
-            type="password"
-            value={signupPassword2}
-            onChange={(e) => setSignupPassword2(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !signupLoading) onCreateAccount();
-            }}
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              placeholder="Re-enter password"
+              type={showSignupPassword2 ? "text" : "password"}
+              value={signupPassword2}
+              onChange={(e) => setSignupPassword2(e.target.value)}
+              style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !signupLoading) onCreateAccount();
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowSignupPassword2((v) => !v)}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "#1976d2",
+                fontWeight: 800,
+                cursor: "pointer",
+                padding: 0,
+                fontSize: 12.5,
+                lineHeight: 1,
+              }}
+            >
+              {showSignupPassword2 ? "Hide" : "Show"}
+            </button>
+          </div>
           {signupPassword2 && signupPassword !== signupPassword2 && (
             <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 900 }}>
               Passwords do not match.
@@ -2249,6 +2469,7 @@ function MyReportsModal({
                       fontWeight: 950,
                       fontSize: 12.5,
                       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      color: "var(--sl-ui-text)",
                     }}
                     title="Toggle details"
                   >
@@ -2495,6 +2716,7 @@ function OpenReportsModal({
                       fontWeight: 950,
                       fontSize: 12.5,
                       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      color: "var(--sl-ui-text)",
                     }}
                     title="Toggle details"
                   >
@@ -2621,6 +2843,8 @@ function ManageAccountModal({
   form,
   setForm,
   onSave,
+  onOpenChangePassword,
+  onRequestEdit,
 }) {
   if (!open) return null;
 
@@ -2683,7 +2907,7 @@ function ManageAccountModal({
       <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
         {!editing ? (
           <button
-            onClick={() => setEditing(true)}
+            onClick={onRequestEdit}
             style={{ ...btnPrimaryDark, width: "100%" }}
             disabled={saving}
           >
@@ -2717,8 +2941,415 @@ function ManageAccountModal({
         )}
       </div>
 
+      <button
+        onClick={onOpenChangePassword}
+        style={{ ...btnPrimary, width: "100%", marginTop: 10 }}
+        disabled={saving}
+      >
+        Change Password
+      </button>
+
       <div style={{ fontSize: 11.5, opacity: 0.7, lineHeight: 1.35 }}>
         Email changes will be a later step (requires verification).
+      </div>
+    </ModalShell>
+  );
+}
+
+function ReauthModal({
+  open,
+  onClose,
+  password,
+  setPassword,
+  saving,
+  onConfirm,
+}) {
+  const [show, setShow] = useState(false);
+  if (!open) return null;
+
+  return (
+    <ModalShell open={open} zIndex={10014}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Password</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35 }}>
+        Enter your current password to continue.
+      </div>
+
+      <div style={{ position: "relative" }}>
+        <input
+          placeholder="Current password"
+          type={show ? "text" : "password"}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !saving && String(password || "").trim()) onConfirm();
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          style={{
+            position: "absolute",
+            right: 8,
+            top: "50%",
+            transform: "translateY(-50%)",
+            border: "none",
+            background: "transparent",
+            color: "#1976d2",
+            fontWeight: 800,
+            cursor: "pointer",
+            padding: 0,
+            fontSize: 12.5,
+            lineHeight: 1,
+          }}
+        >
+          {show ? "Hide" : "Show"}
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onClose} style={btnSecondary} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          style={{ ...btnPrimary, opacity: saving ? 0.75 : 1, cursor: saving ? "not-allowed" : "pointer" }}
+          disabled={saving || !String(password || "").trim()}
+        >
+          {saving ? "Verifying…" : "Continue"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ChangePasswordModal({
+  open,
+  onClose,
+  password,
+  setPassword,
+  password2,
+  setPassword2,
+  currentPassword,
+  setCurrentPassword,
+  saving,
+  onSubmit,
+}) {
+  const [show1, setShow1] = useState(false);
+  const [show2, setShow2] = useState(false);
+  const [showCurrent, setShowCurrent] = useState(false);
+  if (!open) return null;
+
+  const hasLen = String(password || "").length >= 8;
+  const hasUpper = /[A-Z]/.test(String(password || ""));
+  const hasLower = /[a-z]/.test(String(password || ""));
+  const hasSpecial = /[^A-Za-z0-9]/.test(String(password || ""));
+  const strongEnough = hasLen && hasUpper && hasLower && hasSpecial;
+  const matches = !!password2 && password === password2;
+  const hasCurrentPassword = String(currentPassword || "").trim().length > 0;
+  const canSubmit = !saving && strongEnough && matches && hasCurrentPassword;
+  const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
+
+  return (
+    <ModalShell open={open} zIndex={10012}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Change Password</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ position: "relative" }}>
+          <input
+            placeholder="New password"
+            type={show1 ? "text" : "password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+          />
+          <button
+            type="button"
+            onClick={() => setShow1((v) => !v)}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+            }}
+          >
+            {show1 ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <input
+            placeholder="Re-enter new password"
+            type={show2 ? "text" : "password"}
+            value={password2}
+            onChange={(e) => setPassword2(e.target.value)}
+            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSubmit) onSubmit();
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShow2((v) => !v)}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+            }}
+          >
+            {show2 ? "Hide" : "Show"}
+          </button>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--sl-ui-text)", opacity: 0.9 }}>
+          Password Requirements
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.35, display: "grid", gap: 2 }}>
+          <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
+          <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
+          <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
+          <div style={{ color: reqColor(hasSpecial), fontWeight: 800 }}>- 1 special character</div>
+          <div style={{ color: reqColor(matches), fontWeight: 800 }}>- Passwords match</div>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <input
+            placeholder="Current password"
+            type={showCurrent ? "text" : "password"}
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSubmit) onSubmit();
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowCurrent((v) => !v)}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+            }}
+          >
+            {showCurrent ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onClose} style={btnSecondary} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          onClick={onSubmit}
+          style={{ ...btnPrimary, opacity: canSubmit ? 1 : 0.6, cursor: canSubmit ? "pointer" : "not-allowed" }}
+          disabled={!canSubmit}
+        >
+          {saving ? "Updating…" : "Update Password"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function RecoveryPasswordModal({
+  open,
+  onClose,
+  password,
+  setPassword,
+  password2,
+  setPassword2,
+  saving,
+  onSubmit,
+}) {
+  const [show1, setShow1] = useState(false);
+  const [show2, setShow2] = useState(false);
+  if (!open) return null;
+
+  const hasLen = String(password || "").length >= 8;
+  const hasUpper = /[A-Z]/.test(String(password || ""));
+  const hasLower = /[a-z]/.test(String(password || ""));
+  const hasSpecial = /[^A-Za-z0-9]/.test(String(password || ""));
+  const strongEnough = hasLen && hasUpper && hasLower && hasSpecial;
+  const matches = !!password2 && password === password2;
+  const canSubmit = !saving && strongEnough && matches;
+  const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
+
+  return (
+    <ModalShell open={open} zIndex={10015}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Set New Password</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ position: "relative" }}>
+          <input
+            placeholder="New password"
+            type={show1 ? "text" : "password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+          />
+          <button
+            type="button"
+            onClick={() => setShow1((v) => !v)}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+            }}
+          >
+            {show1 ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <input
+            placeholder="Re-enter new password"
+            type={show2 ? "text" : "password"}
+            value={password2}
+            onChange={(e) => setPassword2(e.target.value)}
+            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSubmit) onSubmit();
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShow2((v) => !v)}
+            style={{
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+            }}
+          >
+            {show2 ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--sl-ui-text)", opacity: 0.9 }}>
+          Password Requirements
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.35, display: "grid", gap: 2 }}>
+          <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
+          <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
+          <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
+          <div style={{ color: reqColor(hasSpecial), fontWeight: 800 }}>- 1 special character</div>
+          <div style={{ color: reqColor(matches), fontWeight: 800 }}>- Passwords match</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onClose} style={btnSecondary} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          onClick={onSubmit}
+          style={{ ...btnPrimary, opacity: canSubmit ? 1 : 0.6, cursor: canSubmit ? "pointer" : "not-allowed" }}
+          disabled={!canSubmit}
+        >
+          {saving ? "Updating…" : "Update Password"}
+        </button>
       </div>
     </ModalShell>
   );
@@ -2858,9 +3489,6 @@ function AccountMenuPanel({
             <div style={{ marginTop: 10, fontSize: 11.5, opacity: 0.7, lineHeight: 1.35 }}>
               Manage Account editing will require a password challenge (next step).
             </div>
-            <div style={{ marginTop: 8, fontSize: 10.5, opacity: 0.62, textAlign: "right", lineHeight: 1 }}>
-              {APP_VERSION}
-            </div>
           </>
         ) : (
           <>
@@ -2924,9 +3552,6 @@ function AccountMenuPanel({
               >
                 Close
               </button>
-            </div>
-            <div style={{ marginTop: 8, fontSize: 10.5, opacity: 0.62, textAlign: "right", lineHeight: 1 }}>
-              {APP_VERSION}
             </div>
           </>
         )}
@@ -3162,6 +3787,7 @@ export default function App() {
   const lastFollowCameraRef = useRef({ lat: null, lng: null, heading: null });
   const followTargetRef = useRef(null);
   const followRafRef = useRef(null);
+  const followLastFrameAtRef = useRef(0);
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
@@ -3221,6 +3847,7 @@ export default function App() {
       cancelAnimationFrame(followRafRef.current);
       followRafRef.current = null;
     }
+    followLastFrameAtRef.current = 0;
     followTargetRef.current = null;
   }
 
@@ -3291,6 +3918,8 @@ export default function App() {
   const [mapType, setMapType] = useState("roadmap"); // "roadmap" | "satellite"
   const [mapZoom, setMapZoom] = useState(OFFICIAL_LIGHTS_MIN_ZOOM);
   const mapZoomRef = useRef(OFFICIAL_LIGHTS_MIN_ZOOM);
+  const lastZoomGestureAtRef = useRef(0);
+  const dragFollowOffTimerRef = useRef(null);
   const [mapInteracting, setMapInteracting] = useState(false);
   const mapInteractIdleTimerRef = useRef(null);
 
@@ -3321,6 +3950,9 @@ export default function App() {
   // Notice modal state
   const [notice, setNotice] = useState({ open: false, icon: "", title: "", message: "", compact: false });
   const noticeTimerRef = useRef(null);
+  const dbConnectionStartedAtRef = useRef(Date.now());
+  const dbConnectionNoticeAtRef = useRef(0);
+  const dbConnectionFailureStreakRef = useRef(0);
   const [toolHintText, setToolHintText] = useState("");
   const [toolHintIndex, setToolHintIndex] = useState(null);
   const toolHintTimerRef = useRef(null);
@@ -3368,6 +4000,68 @@ export default function App() {
     }, ms);
   }
 
+  function isConnectionLikeDbError(errOrStatus) {
+    if (!errOrStatus) return false;
+
+    // Realtime channel status strings
+    if (typeof errOrStatus === "string") {
+      const s = errOrStatus.toUpperCase();
+      return s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED";
+    }
+
+    const statusNum = Number(errOrStatus?.status);
+    const rawCode = String(errOrStatus?.code || "").toUpperCase();
+    const msg = String(errOrStatus?.message || "").toLowerCase();
+    const details = String(errOrStatus?.details || "").toLowerCase();
+    const hint = String(errOrStatus?.hint || "").toLowerCase();
+    const combined = `${msg} ${details} ${hint}`;
+
+    // auth/permission/policy errors are not connectivity outages
+    if (statusNum === 401 || statusNum === 403) return false;
+    if (rawCode === "42501" || rawCode === "PGRST301" || rawCode === "PGRST116") return false;
+    if (
+      combined.includes("permission denied") ||
+      combined.includes("row-level security") ||
+      combined.includes("jwt") ||
+      combined.includes("unauthorized") ||
+      combined.includes("forbidden")
+    ) return false;
+
+    // likely connectivity/server failures
+    if (Number.isFinite(statusNum) && statusNum >= 500) return true;
+    if (
+      combined.includes("failed to fetch") ||
+      combined.includes("network") ||
+      combined.includes("timeout") ||
+      combined.includes("timed out") ||
+      combined.includes("connection") ||
+      combined.includes("unavailable")
+    ) return true;
+
+    return false;
+  }
+
+  function notifyDbConnectionIssue(errOrStatus) {
+    if (!isConnectionLikeDbError(errOrStatus)) return;
+
+    const now = Date.now();
+    if (now - dbConnectionStartedAtRef.current < 6000) return; // startup grace period
+    dbConnectionFailureStreakRef.current += 1;
+    if (dbConnectionFailureStreakRef.current < 2) return; // require 2 consecutive failures
+    if (now - dbConnectionNoticeAtRef.current < 15000) return; // avoid notice spam
+    dbConnectionNoticeAtRef.current = now;
+    dbConnectionFailureStreakRef.current = 0;
+    openNotice(
+      "⚠️",
+      "Connection issue",
+      "Some map/report data may be unavailable temporarily."
+    );
+  }
+
+  function resetDbConnectionIssueStreak() {
+    dbConnectionFailureStreakRef.current = 0;
+  }
+
   const [allReportsModal, setAllReportsModal] = useState({
     open: false,
     title: "",
@@ -3390,6 +4084,8 @@ export default function App() {
 
   const [openReportsOpen, setOpenReportsOpen] = useState(false);
   const [openReportsExpanded, setOpenReportsExpanded] = useState(() => new Set()); // lightIds expanded
+  const [openReportMapFilterOn, setOpenReportMapFilterOn] = useState(false);
+  const [infoMenuOpen, setInfoMenuOpen] = useState(false);
 
 
   function toggleMyReportsExpanded(lightId) {
@@ -3674,10 +4370,24 @@ export default function App() {
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
 
- const [manageOpen, setManageOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [manageEditing, setManageEditing] = useState(false);
   const [manageSaving, setManageSaving] = useState(false);
   const [manageForm, setManageForm] = useState({ full_name: "", phone: "" });
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthSaving, setReauthSaving] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthIntent, setReauthIntent] = useState(null); // "edit_profile" | "save_profile"
+  const reauthAtRef = useRef(0);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
+  const [changePasswordValue, setChangePasswordValue] = useState("");
+  const [changePasswordValue2, setChangePasswordValue2] = useState("");
+  const [changePasswordCurrentValue, setChangePasswordCurrentValue] = useState("");
+  const [recoveryPasswordOpen, setRecoveryPasswordOpen] = useState(false);
+  const [recoveryPasswordSaving, setRecoveryPasswordSaving] = useState(false);
+  const [recoveryPasswordValue, setRecoveryPasswordValue] = useState("");
+  const [recoveryPasswordValue2, setRecoveryPasswordValue2] = useState("");
 
   const showAdminTools = isAdmin || showAdminLogin;
 
@@ -3859,9 +4569,16 @@ export default function App() {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
+      (event, newSession) => {
         setSession(newSession);
         setAuthReady(true); // ✅ important
+        if (event === "PASSWORD_RECOVERY") {
+          setAuthGateOpen(false);
+          setForgotPasswordOpen(false);
+          setRecoveryPasswordValue("");
+          setRecoveryPasswordValue2("");
+          setRecoveryPasswordOpen(true);
+        }
       }
     );
 
@@ -4105,8 +4822,8 @@ export default function App() {
       openNotice("⚠️", "Phone required", "Please enter your phone number.");
       return;
     }
-    if (!password || password.length < 6) {
-      openNotice("⚠️", "Password too short", "Use at least 6 characters.");
+    if (!validateStrongPassword(password)) {
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
       return;
     }
     if (signupPassword !== signupPassword2) {
@@ -4143,6 +4860,7 @@ export default function App() {
 
   async function signOut() {
     await supabase.auth.signOut();
+    reauthAtRef.current = 0;
     setIsAdmin(false);
     setAuthEmail("");
     setAuthPassword("");
@@ -4157,6 +4875,13 @@ export default function App() {
 
     if (!full_name) {
       openNotice("⚠️", "Name required", "Please enter your full name.");
+      return;
+    }
+
+    if (Date.now() - reauthAtRef.current > 5 * 60 * 1000) {
+      setReauthIntent("save_profile");
+      setReauthPassword("");
+      setReauthOpen(true);
       return;
     }
 
@@ -4203,6 +4928,133 @@ export default function App() {
     setManageSaving(false);
     setManageEditing(false);
     openNotice("✅", "Saved", "Your account details were updated.");
+  }
+
+  async function handleChangePassword() {
+    const p1 = String(changePasswordValue || "");
+    const p2 = String(changePasswordValue2 || "");
+    const current = String(changePasswordCurrentValue || "");
+    if (!validateStrongPassword(p1)) {
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
+      return;
+    }
+    if (p1 !== p2) {
+      openNotice("⚠️", "Passwords don’t match", "Please re-enter your password so both fields match.");
+      return;
+    }
+    if (!current.trim()) {
+      openNotice("⚠️", "Current password required", "Enter your current password to continue.");
+      return;
+    }
+
+    setChangePasswordSaving(true);
+    const email = String(session?.user?.email || profile?.email || "").trim().toLowerCase();
+    const { error: reauthError } = await supabase.auth.signInWithPassword({ email, password: current });
+    if (reauthError) {
+      setChangePasswordSaving(false);
+      openNotice("⚠️", "Re-auth failed", reauthError.message || "Please verify your current password.");
+      return;
+    }
+
+    reauthAtRef.current = Date.now();
+    const { error } = await supabase.auth.updateUser({ password: p1 });
+    setChangePasswordSaving(false);
+
+    if (error) {
+      openNotice("⚠️", "Couldn’t update password", error.message || "Please try again.");
+      return;
+    }
+
+    setChangePasswordValue("");
+    setChangePasswordValue2("");
+    setChangePasswordCurrentValue("");
+    setChangePasswordOpen(false);
+    // Soft refresh auth context without forcing a full sign-out/login.
+    try {
+      const { data } = await supabase.auth.refreshSession();
+      if (data?.session) setSession(data.session);
+    } catch {
+      // no-op
+    }
+    openNotice("✅", "Password updated", "Your password was changed successfully.");
+  }
+
+  async function handleRecoveryPasswordUpdate() {
+    const p1 = String(recoveryPasswordValue || "");
+    const p2 = String(recoveryPasswordValue2 || "");
+    if (!validateStrongPassword(p1)) {
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
+      return;
+    }
+    if (p1 !== p2) {
+      openNotice("⚠️", "Passwords don’t match", "Please re-enter your password so both fields match.");
+      return;
+    }
+
+    setRecoveryPasswordSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: p1 });
+    setRecoveryPasswordSaving(false);
+
+    if (error) {
+      openNotice("⚠️", "Couldn’t update password", error.message || "Please try again.");
+      return;
+    }
+
+    setRecoveryPasswordValue("");
+    setRecoveryPasswordValue2("");
+    setRecoveryPasswordOpen(false);
+    // Soft refresh auth context without forcing a full sign-out/login.
+    try {
+      const { data } = await supabase.auth.refreshSession();
+      if (data?.session) setSession(data.session);
+    } catch {
+      // no-op
+    }
+    openNotice("✅", "Password updated", "Your password was reset successfully.");
+  }
+
+  function requestEditManagedProfile() {
+    if (Date.now() - reauthAtRef.current <= 5 * 60 * 1000) {
+      setManageEditing(true);
+      return;
+    }
+    setReauthIntent("edit_profile");
+    setReauthPassword("");
+    setReauthOpen(true);
+  }
+
+  async function confirmReauth() {
+    const email = String(session?.user?.email || profile?.email || "").trim().toLowerCase();
+    const password = String(reauthPassword || "");
+    if (!email || !password) {
+      openNotice("⚠️", "Re-auth failed", "Current password is required.");
+      return;
+    }
+
+    setReauthSaving(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setReauthSaving(false);
+
+    if (error) {
+      openNotice("⚠️", "Re-auth failed", error.message || "Please verify your current password.");
+      return;
+    }
+
+    reauthAtRef.current = Date.now();
+    const intent = reauthIntent;
+    setReauthOpen(false);
+    setReauthPassword("");
+    setReauthIntent(null);
+
+    if (intent === "edit_profile") {
+      setManageEditing(true);
+      return;
+    }
+    if (intent === "save_profile") {
+      saveManagedProfile();
+      return;
+    }
+    if (intent === "change_password") return;
   }
 
   // -------------------------
@@ -4291,8 +5143,12 @@ export default function App() {
         );
       }
 
-      if (repErr) console.error(repErr);
-      if (ownRepErr) console.error("[reports own] load error:", ownRepErr);
+      if (repErr) {
+        console.error(repErr);
+      }
+      if (ownRepErr) {
+        console.error("[reports own] load error:", ownRepErr);
+      }
 
       const normalizedPublicReports = (reportData || []).map((r) => ({
         id: r.id,
@@ -4334,8 +5190,12 @@ export default function App() {
       setFixedLights(fixedMap);
 
       let map = {};
-      if (fixErr) console.error(fixErr);
-      if (actErr) console.error(actErr);
+      if (fixErr) {
+        console.error(fixErr);
+      }
+      if (actErr) {
+        console.error(actErr);
+      }
       else {
         for (const a of actionData || []) {
           if (String(a.action || "").toLowerCase() !== "fix") continue;
@@ -4370,6 +5230,12 @@ export default function App() {
 
         setLastFixByLightId(map);
       }
+
+      const loadHadConnectionFailure = [repErr, ownRepErr, fixErr, actErr, offErr].some((e) =>
+        isConnectionLikeDbError(e)
+      );
+      if (loadHadConnectionFailure) notifyDbConnectionIssue({ message: "connection check failed" });
+      else resetDbConnectionIssueStreak();
 
       setLoading(false);
     }
@@ -4532,6 +5398,8 @@ export default function App() {
       )
       .subscribe((status) => {
         console.log("OFFICIAL realtime subscribe status:", status);
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") notifyDbConnectionIssue(status);
+        if (status === "SUBSCRIBED") resetDbConnectionIssueStreak();
       });
 
 
@@ -4557,15 +5425,53 @@ export default function App() {
     return m;
   }, [officialLights]);
 
-  const renderedOfficialLights = useMemo(
-    () => (Array.isArray(officialLights) ? officialLights : []).map(normalizeOfficialLightRow).filter(Boolean),
-    [officialLights]
-  );
+  const openReportOfficialIdSet = useMemo(() => {
+    const out = new Set();
+    for (const r of reports || []) {
+      if (!isOutageReportType(r)) continue;
+      const lightId = (r.light_id || "").trim();
+      if (!lightId || !officialIdSet.has(lightId)) continue;
+      const lastFixTs = Math.max(lastFixByLightId?.[lightId] || 0, fixedLights?.[lightId] || 0);
+      if (lastFixTs && (r.ts || 0) <= lastFixTs) continue;
+      out.add(lightId);
+    }
+    return out;
+  }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
+
+  const renderedOfficialLights = useMemo(() => {
+    const base = (Array.isArray(officialLights) ? officialLights : []).map(normalizeOfficialLightRow).filter(Boolean);
+    if (!(isAdmin && openReportMapFilterOn)) return base;
+    return base.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
+  }, [officialLights, isAdmin, openReportMapFilterOn, openReportOfficialIdSet]);
 
   const viewerIdentityKey = useMemo(
     () => reporterIdentityKey({ session, profile, guestInfo }),
     [session?.user?.id, guestInfo?.email, guestInfo?.phone, guestInfo?.name]
   );
+  const viewerOpenOutageLightIdSet = useMemo(() => {
+    const out = new Set();
+    if (!viewerIdentityKey) return out;
+
+    for (const r of reports || []) {
+      if (!isOutageReportType(r)) continue;
+      const lid = (r.light_id || "").trim();
+      if (!lid || !officialIdSet.has(lid)) continue;
+
+      const lastFixTs = Math.max(lastFixByLightId?.[lid] || 0, fixedLights?.[lid] || 0);
+      const ts = Number(r.ts || 0);
+      if (!Number.isFinite(ts) || (lastFixTs && ts <= lastFixTs)) continue;
+
+      if (reportIdentityKey(r) === viewerIdentityKey) out.add(lid);
+    }
+
+    return out;
+  }, [viewerIdentityKey, reports, officialIdSet, fixedLights, lastFixByLightId]);
+
+  const officialMarkerRingColorForViewer = useCallback((lightId) => {
+    const lid = (lightId || "").trim();
+    if (!lid) return "#fff";
+    return viewerOpenOutageLightIdSet.has(lid) ? "#1e88e5" : "#fff";
+  }, [viewerOpenOutageLightIdSet]);
 
   const selectedOfficialLightForPopup = useMemo(() => {
     if (bulkMode) return null;
@@ -4579,6 +5485,14 @@ export default function App() {
     if (!ol) return null;
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(ol.lat, ol.lng) || null;
   }, [selectedOfficialLightForPopup, mapCenter, mapZoom, mapInteracting]);
+
+  useEffect(() => {
+    if (!(isAdmin && openReportMapFilterOn)) return;
+    const id = (selectedOfficialId || "").trim();
+    if (!id) return;
+    if (!openReportOfficialIdSet.has(id)) setSelectedOfficialId(null);
+  }, [isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
+
 
   const selectedQueuedLightForPopup = useMemo(() => {
     if (bulkMode || !mappingMode || !isAdmin) return null;
@@ -5969,20 +6883,23 @@ async function insertReportWithFallback(payload) {
     const map = mapRef.current;
     if (!map) return;
 
-    const nextHeading = Number(heading);
+    const headingNum = Number(heading);
+    const hasHeading = Number.isFinite(headingNum);
+    const currentZoom = Number(map.getZoom?.() ?? mapZoomRef.current ?? LOCATE_ZOOM);
+    const targetZoom = Number.isFinite(currentZoom) ? currentZoom : LOCATE_ZOOM;
 
     try {
       if (map.moveCamera) {
         map.moveCamera({
           center: { lat, lng },
-          zoom: LOCATE_ZOOM,
-          heading: Number.isFinite(nextHeading) ? nextHeading : (map.getHeading?.() || 0),
+          zoom: targetZoom,
+          heading: hasHeading ? headingNum : (map.getHeading?.() || 0),
           tilt: 0,
         });
       } else {
         map.setCenter?.({ lat, lng });
-        map.setZoom?.(LOCATE_ZOOM);
-        if (Number.isFinite(nextHeading)) map.setHeading?.(nextHeading);
+        map.setZoom?.(targetZoom);
+        if (hasHeading) map.setHeading?.(headingNum);
       }
     } catch {
       // ignore
@@ -5990,7 +6907,7 @@ async function insertReportWithFallback(payload) {
 
     if (syncState) {
       setMapCenter({ lat, lng });
-      setMapZoom(LOCATE_ZOOM);
+      if (Number.isFinite(targetZoom)) setMapZoom(Math.round(targetZoom));
     }
   }
 
@@ -5999,6 +6916,13 @@ async function insertReportWithFallback(payload) {
     if (followRafRef.current) return;
 
     const step = () => {
+      const now = Date.now();
+      if (followLastFrameAtRef.current && (now - followLastFrameAtRef.current) < 33) {
+        followRafRef.current = requestAnimationFrame(step);
+        return;
+      }
+      followLastFrameAtRef.current = now;
+
       const map = mapRef.current;
       const target = followTargetRef.current;
       if (!map || !target || !followCamera) {
@@ -6086,10 +7010,10 @@ async function insertReportWithFallback(payload) {
         syncState: false,
       });
 
-      const now = Date.now();
-      if (now - lastFollowStateSyncRef.current >= 120) {
+      if (now - lastFollowStateSyncRef.current >= 180) {
         setMapCenter({ lat: nextLat, lng: nextLng });
-        setMapZoom(LOCATE_ZOOM);
+        const z = Number(map.getZoom?.() ?? mapZoomRef.current);
+        if (Number.isFinite(z)) setMapZoom(Math.round(z));
         lastFollowStateSyncRef.current = now;
       }
 
@@ -6598,13 +7522,21 @@ async function insertReportWithFallback(payload) {
     cursor: "pointer",
   };
 
-  const connected = !loading && !error;
   const canShowOfficialLightsByZoom = true;
-  const showOfficialLights = canShowOfficialLightsByZoom && !mapInteracting;
+  const showOfficialLights = canShowOfficialLightsByZoom && (!mapInteracting || bulkMode);
 
   useEffect(() => {
     mapZoomRef.current = mapZoom;
   }, [mapZoom]);
+
+  useEffect(() => {
+    return () => {
+      if (dragFollowOffTimerRef.current) {
+        clearTimeout(dragFollowOffTimerRef.current);
+        dragFollowOffTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (canShowOfficialLightsByZoom) return;
@@ -6741,7 +7673,9 @@ async function insertReportWithFallback(payload) {
           }
 
           .sl-map-tool .sl-map-tool-btn.is-on,
-          .sl-map-tool .sl-bulk-tool-btn.is-on {
+          .sl-map-tool .sl-bulk-tool-btn.is-on,
+          .sl-map-tool .sl-open-filter-btn.is-on,
+          .sl-map-tool .sl-account-btn.is-on {
             background: rgba(57, 211, 83, 0.96);
             color: #111;
             border: 1px solid rgba(255,255,255,0.18) !important;
@@ -6754,7 +7688,8 @@ async function insertReportWithFallback(payload) {
             color: #111 !important;
           }
 
-          .sl-map-tool .sl-map-tool-mini.is-on {
+          .sl-map-tool .sl-map-tool-mini.is-on,
+          .sl-map-tool .sl-map-tool-btn.is-on {
             box-shadow:
               inset 0 1px 0 rgba(255,255,255,0.16),
               inset 0 -2px 0 rgba(0,0,0,0.28),
@@ -6965,6 +7900,12 @@ async function insertReportWithFallback(payload) {
           });
           setGuestInfoOpen(true);
         }}
+      />
+
+      <InfoMenuModal
+        open={infoMenuOpen}
+        onClose={() => setInfoMenuOpen(false)}
+        isAdmin={isAdmin}
       />
 
       <NoticeModal
@@ -7282,6 +8223,62 @@ async function insertReportWithFallback(payload) {
         form={manageForm}
         setForm={setManageForm}
         onSave={saveManagedProfile}
+        onRequestEdit={requestEditManagedProfile}
+        onOpenChangePassword={() => {
+          setChangePasswordValue("");
+          setChangePasswordValue2("");
+          setChangePasswordCurrentValue("");
+          setChangePasswordOpen(true);
+        }}
+      />
+
+      <ReauthModal
+        open={reauthOpen}
+        onClose={() => {
+          if (reauthSaving) return;
+          setReauthOpen(false);
+          setReauthPassword("");
+          setReauthIntent(null);
+        }}
+        password={reauthPassword}
+        setPassword={setReauthPassword}
+        saving={reauthSaving}
+        onConfirm={confirmReauth}
+      />
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => {
+          if (changePasswordSaving) return;
+          setChangePasswordOpen(false);
+          setChangePasswordValue("");
+          setChangePasswordValue2("");
+          setChangePasswordCurrentValue("");
+        }}
+        password={changePasswordValue}
+        setPassword={setChangePasswordValue}
+        password2={changePasswordValue2}
+        setPassword2={setChangePasswordValue2}
+        currentPassword={changePasswordCurrentValue}
+        setCurrentPassword={setChangePasswordCurrentValue}
+        saving={changePasswordSaving}
+        onSubmit={handleChangePassword}
+      />
+
+      <RecoveryPasswordModal
+        open={recoveryPasswordOpen}
+        onClose={() => {
+          if (recoveryPasswordSaving) return;
+          setRecoveryPasswordOpen(false);
+          setRecoveryPasswordValue("");
+          setRecoveryPasswordValue2("");
+        }}
+        password={recoveryPasswordValue}
+        setPassword={setRecoveryPasswordValue}
+        password2={recoveryPasswordValue2}
+        setPassword2={setRecoveryPasswordValue2}
+        saving={recoveryPasswordSaving}
+        onSubmit={handleRecoveryPasswordUpdate}
       />
 
 
@@ -7298,10 +8295,22 @@ async function insertReportWithFallback(payload) {
         }}
         onDragStart={() => {
           beginMapInteraction();
-          if (followCamera) setFollowCamera(false);
+          if (dragFollowOffTimerRef.current) {
+            clearTimeout(dragFollowOffTimerRef.current);
+            dragFollowOffTimerRef.current = null;
+          }
+          if (followCamera) {
+            // Preserve follow during pinch-zoom; disable only for true drag-pan.
+            dragFollowOffTimerRef.current = setTimeout(() => {
+              const msSinceZoom = Date.now() - Number(lastZoomGestureAtRef.current || 0);
+              if (msSinceZoom > 220) setFollowCamera(false);
+              dragFollowOffTimerRef.current = null;
+            }, 120);
+          }
         }}
         onZoomChanged={() => {
           beginMapInteraction();
+          lastZoomGestureAtRef.current = Date.now();
           const z = Number(mapRef.current?.getZoom?.());
           if (!Number.isFinite(z)) return;
           mapZoomRef.current = z;
@@ -7380,6 +8389,7 @@ async function insertReportWithFallback(payload) {
           bulkMode={bulkMode}
           bulkSelectedSet={bulkSelectedSet}
           getMarkerColor={officialMarkerColorForViewer}
+          getMarkerRingColor={officialMarkerRingColorForViewer}
         />
 
 
@@ -7701,7 +8711,7 @@ async function insertReportWithFallback(payload) {
         )}
         <button
           type="button"
-          className={`sl-map-tool-mini ${accountMenuOpen ? "is-on" : ""}`}
+          className={`sl-map-tool-mini sl-account-btn ${(accountMenuOpen || !!session?.user) ? "is-on" : ""}`}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -7709,7 +8719,6 @@ async function insertReportWithFallback(payload) {
           }}
           aria-label="Account menu"
           title={session ? "Account" : "Login / Account"}
-          style={session?.user ? { borderColor: "#39d353", boxShadow: "inset 0 0 0 2px rgba(57, 211, 83, 0.24), inset 0 0 10px rgba(57, 211, 83, 0.38)" } : undefined}
         >
           👤
         </button>
@@ -7855,6 +8864,26 @@ async function insertReportWithFallback(payload) {
         {/* =========================
           Bulk/Open Reports (admin)
          ========================= */}
+        {isAdmin && (
+          <button
+            type="button"
+            className={`sl-map-tool-mini sl-open-filter-btn ${openReportMapFilterOn ? "is-on" : ""}`}
+            title={openReportMapFilterOn ? "Showing only open-report lights" : "Show only open-report lights"}
+            aria-label="Toggle open-report light filter"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setOpenReportMapFilterOn((on) => {
+                const next = !on;
+                showToolHint(next ? "Open-report filter on" : "Open-report filter off", 1100, 5);
+                return next;
+              });
+            }}
+          >
+            🔎
+          </button>
+        )}
+
         {isAdmin && (
           <button
             type="button"
@@ -8016,7 +9045,7 @@ async function insertReportWithFallback(payload) {
 	              }}
             >
               <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                L.I.S.T. Report
+                LIST Report
               </div>
 
               <div style={{ fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
@@ -8026,21 +9055,6 @@ async function insertReportWithFallback(payload) {
               <div style={{ fontSize: 14, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
                 Select a light to submit a report.
               </div>
-
-              <div
-                style={{
-                  position: "absolute",
-                  left: 12,
-                  top: 12,
-                  width: 12,
-                  height: 12,
-                  borderRadius: 999,
-                  background: connected ? "#2ecc71" : "#e74c3c",
-                  border: "2px solid white",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-                }}
-                title={connected ? "Connected" : "Not connected"}
-              />
 	            </div>
 	          </div>
 	        </div>
@@ -8233,13 +9247,39 @@ async function insertReportWithFallback(payload) {
 	              border: "1px solid var(--sl-ui-surface-border)",
 	              borderRadius: 14,
 	              boxShadow: "var(--sl-ui-surface-shadow-bottom)",
-	              padding: 12,
-	              display: "grid",
-	              gap: 8,
+              padding: 12,
+              display: "grid",
+              gap: 8,
+              position: "relative",
                 color: "var(--sl-ui-text)",
 	            }}
           >
-            <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35 }}>
+            <button
+              type="button"
+              onClick={() => setInfoMenuOpen(true)}
+              title="Info"
+              aria-label="Open info menu"
+              style={{
+                position: "absolute",
+                right: 10,
+                top: 10,
+                width: 32,
+                height: 32,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+                lineHeight: 1,
+                pointerEvents: "auto",
+                touchAction: "manipulation",
+                zIndex: 2,
+              }}
+            >
+              ℹ
+            </button>
+            <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34 }}>
               <b>About:</b> Community reporting tool to help track streetlight issues.
               <br />
               <b>Disclaimer:</b> This does not replace emergency services or official utility reporting.
@@ -8364,7 +9404,7 @@ async function insertReportWithFallback(payload) {
             />
 
             <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-              L.I.S.T. Report
+              LIST Report
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
@@ -8374,21 +9414,6 @@ async function insertReportWithFallback(payload) {
             <div style={{ fontSize: 12.5, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
               Select a light to submit a report.
             </div>
-
-            <div
-              style={{
-                position: "absolute",
-                left: 10,
-                top: 8,
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: connected ? "#2ecc71" : "#e74c3c",
-                border: "2px solid white",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-              }}
-              title={connected ? "Connected" : "Not connected"}
-	            />
 	            </div>
 	          </div>
 	        </div>
@@ -8573,14 +9598,41 @@ async function insertReportWithFallback(payload) {
 	              border: "1px solid var(--sl-ui-surface-border)",
 	              borderRadius: 14,
 	              boxShadow: "var(--sl-ui-surface-shadow-bottom)",
-	              padding: 10,
-	              display: "grid",
-	              gap: 8,
+              padding: 10,
+              display: "grid",
+              gap: 8,
+              position: "relative",
                 color: "var(--sl-ui-text)",
 	            }}
           >
+            <button
+              type="button"
+              onClick={() => setInfoMenuOpen(true)}
+              title="Info"
+              aria-label="Open info menu"
+              style={{
+                position: "absolute",
+                right: 8,
+                top: 8,
+                width: 30,
+                height: 30,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+                lineHeight: 1,
+                fontSize: 14,
+                pointerEvents: "auto",
+                touchAction: "manipulation",
+                zIndex: 2,
+              }}
+            >
+              ℹ
+            </button>
 
-            <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35 }}>
+            <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30 }}>
               <b>About:</b> Community reporting tool to help track streetlight issues.
               <br />
               <b>Disclaimer:</b> This does not replace emergency services or official utility reporting.
