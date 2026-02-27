@@ -25,7 +25,7 @@ const GROUP_RADIUS_METERS = 25;
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
-const APP_VERSION = "v1.1.0";
+const APP_VERSION = "v1.1.1";
 
 
 // Per-light cooldown (client-side guardrail; reversible)
@@ -3953,6 +3953,7 @@ export default function App() {
   const dbConnectionStartedAtRef = useRef(Date.now());
   const dbConnectionNoticeAtRef = useRef(0);
   const dbConnectionFailureStreakRef = useRef(0);
+  const dbConnectionResumeGraceUntilRef = useRef(0);
   const [toolHintText, setToolHintText] = useState("");
   const [toolHintIndex, setToolHintIndex] = useState(null);
   const toolHintTimerRef = useRef(null);
@@ -4046,6 +4047,7 @@ export default function App() {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const now = Date.now();
+    if (now < dbConnectionResumeGraceUntilRef.current) return; // grace period after returning to foreground
     if (now - dbConnectionStartedAtRef.current < 6000) return; // startup grace period
     dbConnectionFailureStreakRef.current += 1;
     if (dbConnectionFailureStreakRef.current < 2) return; // require 2 consecutive failures
@@ -4062,6 +4064,21 @@ export default function App() {
   function resetDbConnectionIssueStreak() {
     dbConnectionFailureStreakRef.current = 0;
   }
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibility = () => {
+      const now = Date.now();
+      // Always reset streak across visibility transitions.
+      resetDbConnectionIssueStreak();
+      if (document.visibilityState === "visible") {
+        // Short grace window to avoid false alerts during realtime reconnect bursts.
+        dbConnectionResumeGraceUntilRef.current = now + 12000;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   const [allReportsModal, setAllReportsModal] = useState({
     open: false,
