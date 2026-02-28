@@ -11,6 +11,7 @@ const GMAPS_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_KEY ||
   "";
 const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
+const GMAPS_LIBRARIES = ["places"];
 
 
 
@@ -20,12 +21,18 @@ const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
 const containerStyle = { height: "100%", width: "100%" };
 const ASHTABULA = [41.8651, -80.7898];
 const GROUP_RADIUS_METERS = 25;
+const POTHOLE_MERGE_RADIUS_METERS = 22;
+const POTHOLE_ROAD_HIT_METERS = 12;
 
 // 💡 OFFICIAL LIGHTS (admin-only mapping layer)
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
 const APP_VERSION = "v1.1.0";
+const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const TITLE_LOGO_DARK_SRC =
+  import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
+const TITLE_LOGO_ALT = "CityReport.io";
 
 
 // Per-light cooldown (client-side guardrail; reversible)
@@ -49,6 +56,13 @@ const REPORT_TYPES = {
   other: "Other",
 };
 
+const REPORT_DOMAIN_OPTIONS = [
+  { key: "streetlights", label: "Streetlights", icon: "💡", enabled: true },
+  { key: "potholes", label: "Potholes", icon: "🕳️", enabled: true },
+  { key: "power_outage", label: "Power outage", icon: "⚡", enabled: true },
+  { key: "water_main", label: "Water main", icon: "💧", enabled: true },
+];
+
 function statusFromCount(count) {
   if (count >= 4) return { label: "Confirmed Out", color: "#b71c1c" };
   if (count >= 2) return { label: "Likely Out", color: "#f57c00" };
@@ -61,6 +75,16 @@ function officialStatusFromSinceFixCount(count) {
   if (count >= 5) return { label: "Likely Out", color: "#f57c00" };    // orange
   if (count >= 1) return { label: "Reported", color: "#fbc02d" };      // yellow
   return { label: "Operational", color: "#111" };                      // black
+}
+
+function potholeColorFromCount(count) {
+  const n = Number(count || 0);
+  const yellow = officialStatusFromSinceFixCount(1).color; // keep exact streetlight yellow
+  if (n >= 7) return "#b71c1c"; // red
+  if (n >= 4) return "#f57c00"; // orange
+  if (n >= 2) return yellow;      // yellow
+  if (n >= 1) return yellow;      // private single-report view
+  return "#111";
 }
 
 function majorityReportType(reports) {
@@ -96,6 +120,18 @@ function metersBetween(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+function isPointInBounds(lat, lng, bounds) {
+  if (!bounds) return false;
+  const north = Number(bounds.north);
+  const south = Number(bounds.south);
+  const east = Number(bounds.east);
+  const west = Number(bounds.west);
+  if (![lat, lng, north, south, east, west].every(Number.isFinite)) return false;
+  const latOk = lat <= north && lat >= south;
+  const lngOk = west <= east ? (lng >= west && lng <= east) : (lng >= west || lng <= east);
+  return latOk && lngOk;
+}
+
 function lightIdFor(lat, lng) {
   return `${lat.toFixed(5)}:${lng.toFixed(5)}`;
 }
@@ -114,17 +150,147 @@ function normalizePhone(p) {
   return String(p || "").replace(/[^\d]/g, ""); // digits only
 }
 
+function reportDomainFromLightId(lightId) {
+  const v = String(lightId || "").trim().toLowerCase();
+  if (v.startsWith("power_outage:")) return "power_outage";
+  if (v.startsWith("water_main:")) return "water_main";
+  if (v.startsWith("potholes:")) return "potholes";
+  return "streetlights";
+}
+
+function canonicalOfficialLightId(rawLightId, lat, lng, officialIdByAlias, officialIdByCoordKey) {
+  const raw = String(rawLightId || "").trim();
+  if (raw && officialIdByAlias?.has(raw)) return officialIdByAlias.get(raw);
+
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  if (Number.isFinite(nLat) && Number.isFinite(nLng)) {
+    const k5 = `${nLat.toFixed(5)}:${nLng.toFixed(5)}`;
+    if (officialIdByCoordKey?.has(k5)) return officialIdByCoordKey.get(k5);
+    const k4 = `${nLat.toFixed(4)}:${nLng.toFixed(4)}`;
+    if (officialIdByCoordKey?.has(k4)) return officialIdByCoordKey.get(k4);
+  }
+
+  return raw || lightIdFor(nLat, nLng);
+}
+
+function reportNumberForRow(row, domainHint = "") {
+  const persisted = String(row?.report_number || "").trim();
+  if (persisted) return persisted;
+
+  const domain = (domainHint || row?.domain || (row?.pothole_id ? "potholes" : reportDomainFromLightId(row?.light_id))).toLowerCase();
+  const prefix =
+    domain === "potholes"
+      ? "PHR"
+      : domain === "power_outage"
+        ? "POR"
+        : domain === "water_main"
+          ? "WMR"
+          : "SLR";
+
+  const idRaw = row?.id;
+  const asNum = Number(idRaw);
+  if (Number.isFinite(asNum) && asNum > 0) return `${prefix}${String(Math.trunc(asNum)).padStart(7, "0")}`;
+
+  const s = String(idRaw ?? `${row?.light_id || ""}|${row?.pothole_id || ""}|${row?.ts || 0}`);
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return `${prefix}${String(h % 10000000).padStart(7, "0")}`;
+}
+
 function validateStrongPassword(password) {
   const v = String(password || "");
   if (v.length < 8) return false;
   if (!/[A-Z]/.test(v)) return false;
   if (!/[a-z]/.test(v)) return false;
+  if (!/[0-9]/.test(v)) return false;
   if (!/[^A-Za-z0-9]/.test(v)) return false;
   return true;
 }
 
 function normalizeReportTypeValue(t) {
   return String(t || "").trim().toLowerCase();
+}
+
+function normalizeDomainKey(v) {
+  const raw = String(v || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "streetlights" || raw === "streetlight") return "streetlights";
+  if (raw === "potholes" || raw === "pothole") return "potholes";
+  if (raw === "power_outage" || raw === "power outage" || raw === "outage" || raw === "power") return "power_outage";
+  if (raw === "water_main" || raw === "water main" || raw === "water_main_break" || raw === "water main break" || raw === "water_main_breaks" || raw === "water main breaks") return "water_main";
+  return "";
+}
+
+function reportDomainForRow(row, officialIdSet) {
+  const lid = String(row?.light_id || "").trim();
+  if (lid.startsWith("potholes:")) return "potholes";
+  if (lid.startsWith("power_outage:")) return "power_outage";
+  if (lid.startsWith("water_main:")) return "water_main";
+  if (lid && officialIdSet?.has?.(lid)) return "streetlights";
+
+  const explicit =
+    normalizeDomainKey(row?.report_domain) ||
+    normalizeDomainKey(row?.domain) ||
+    normalizeDomainKey(row?.category);
+  if (explicit) return explicit;
+
+  const type = normalizeReportTypeValue(row?.type || row?.report_type);
+  if (!type) return "streetlights";
+  if (type.includes("pothole")) return "potholes";
+  if (type.includes("water")) return "water_main";
+  if (type.includes("power")) return "power_outage";
+  return "streetlights";
+}
+
+function readLocationFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/i);
+  if (!m) return "";
+  return String(m[1] || "").trim();
+}
+
+function stripLocationFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const withoutLocation = raw.replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/i, "").trim();
+  return withoutLocation.replace(/^\|\s*/, "").trim();
+}
+
+function readAddressFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/i);
+  if (!m) return "";
+  return String(m[1] || "").trim();
+}
+
+function readLandmarkFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/i);
+  if (!m) return "";
+  const v = String(m[1] || "").trim();
+  if (!v) return "";
+  if (/^\d+\s*\/\s*\d+$/.test(v)) return "";
+  return v;
+}
+
+function stripSystemMetadataFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  return raw
+    .replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/^\|\s*/, "")
+    .replace(/\s*\|\s*$/, "")
+    .replace(/\s*\|\s*\|\s*/g, " | ")
+    .trim();
 }
 
 function normalizeReportQuality(q) {
@@ -416,18 +582,22 @@ function svgDotDataUrl(fill = "#111", r = 7) {
 }
 
 // CMD+F: function gmapsDotIcon
-function gmapsDotIcon(color = "#1976d2", ringColor = "white") {
+function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡") {
   const c = color || "#1976d2";
   const r = ringColor || "white";
+  const gph = String(glyph || "💡");
+  const isPotholeGlyph = gph.includes("🕳");
+  const textY = isPotholeGlyph ? 11.5 : 12;
+  const textSize = isPotholeGlyph ? 9 : 10;
   const g = window.google?.maps;
-  const cacheKey = `${c}|${r}|${g ? "g" : "nog"}`;
+  const cacheKey = `${c}|${r}|${gph}|${textY}|${textSize}|${g ? "g" : "nog"}`;
   gmapsDotIcon._cache ||= new Map();
   if (gmapsDotIcon._cache.has(cacheKey)) return gmapsDotIcon._cache.get(cacheKey);
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8" fill="${c}" stroke="white" stroke-width="2" />
-      <text x="12" y="12" text-anchor="middle" dominant-baseline="central" font-size="10">&#x1F4A1;</text>
+      <circle cx="12" cy="12" r="8" fill="${c}" stroke="${r}" stroke-width="2" />
+      <text x="12" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}">${gph}</text>
     </svg>
   `.trim();
 
@@ -1049,7 +1219,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
   return null;
 }));
 
-function ModalShell({ open, children, zIndex = 9999 }) {
+function ModalShell({ open, children, zIndex = 9999, panelStyle }) {
   if (!open) return null;
 
   return (
@@ -1075,6 +1245,7 @@ function ModalShell({ open, children, zIndex = 9999 }) {
           display: "grid",
           gap: 12,
           boxShadow: "var(--sl-ui-modal-shadow)",
+          ...(panelStyle || {}),
         }}
       >
         {children}
@@ -1389,6 +1560,88 @@ function ConfirmReportModal({
   );
 }
 
+function DomainReportModal({
+  open,
+  domain,
+  domainLabel,
+  locationLabel,
+  note,
+  setNote,
+  consentChecked,
+  setConsentChecked,
+  saving,
+  onCancel,
+  onSubmit,
+}) {
+  if (!open) return null;
+  const requiresConsent = domain === "potholes";
+  const canSubmit = !saving && (!requiresConsent || consentChecked);
+  return (
+    <ModalShell open={open} zIndex={10012}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 16, fontWeight: 900 }}>Report {domainLabel}</div>
+        <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
+          <b>Location:</b> {locationLabel || "Road location"}
+        </div>
+      </div>
+
+      <label style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Add details (size, lane, nearby landmark)"
+          style={{
+            minHeight: 90,
+            resize: "vertical",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-input-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            color: "var(--sl-ui-text)",
+            padding: 10,
+            fontSize: 14,
+            lineHeight: 1.35,
+          }}
+        />
+      </label>
+
+      {requiresConsent && (
+        <label
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(consentChecked)}
+            onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
+            disabled={saving}
+            style={{ marginTop: 2 }}
+          />
+          <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+            I agree to allow CityReport.io to submit this pothole report and my provided contact
+            information to the city, utility, or other responsible agency on my behalf.
+          </span>
+        </label>
+      )}
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button onClick={onCancel} disabled={saving} style={btnSecondary}>Cancel</button>
+        <button onClick={onSubmit} disabled={!canSubmit} style={{ ...btnPrimary, opacity: canSubmit ? 1 : 0.6 }}>
+          {saving ? "Submitting..." : "Report"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function WelcomeModal({ open, onLogin, onCreate, onGuest }) {
   return (
     <ModalShell open={open} zIndex={10005}>
@@ -1416,7 +1669,7 @@ function GuestInfoModal({ open, info, setInfo, onContinue, onCancel }) {
   const ok = nameOk && phoneOk && emailOk;
 
   return (
-    <ModalShell open={open} zIndex={10006}>
+    <ModalShell open={open} zIndex={10029}>
       <div style={{ fontSize: 16, fontWeight: 950 }}>Guest info required</div>
       <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
         Please provide your name, phone number, and email.
@@ -1485,7 +1738,7 @@ function LocationPromptModal({ open, onEnable, onSkip }) {
 
 function ContactRequiredModal({ open, onLogin, onSignup, onGuest, onClose }) {
   return (
-    <ModalShell open={open} zIndex={10008}>
+    <ModalShell open={open} zIndex={10028}>
       <div style={{ fontSize: 16, fontWeight: 950 }}>Contact required</div>
 
       <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35 }}>
@@ -1596,7 +1849,7 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 
   return (
-    <ModalShell open={open} zIndex={10011}>
+    <ModalShell open={open} zIndex={10031}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Reset password</div>
         <button
@@ -1773,6 +2026,8 @@ function AuthGateModal({
   authPassword,
   setAuthPassword,
   authLoading,
+  loginError,
+  clearLoginError,
   onOpenForgotPassword,
   onLogin,
 
@@ -1788,15 +2043,26 @@ function AuthGateModal({
   onCreateAccount,
   signupPassword2,
   setSignupPassword2,
+  signupLegalAccepted,
+  setSignupLegalAccepted,
+  onOpenTerms,
+  onOpenPrivacy,
 }) {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showSignupPassword2, setShowSignupPassword2] = useState(false);
+  const hasSignupLen = String(signupPassword || "").length >= 8;
+  const hasSignupUpper = /[A-Z]/.test(String(signupPassword || ""));
+  const hasSignupLower = /[a-z]/.test(String(signupPassword || ""));
+  const hasSignupNumber = /[0-9]/.test(String(signupPassword || ""));
+  const hasSignupSpecial = /[^A-Za-z0-9]/.test(String(signupPassword || ""));
+  const signupMatches = !!signupPassword2 && signupPassword === signupPassword2;
+  const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
 
   if (!open) return null;
 
   return (
-    <ModalShell open={open} zIndex={10003}>
+    <ModalShell open={open} zIndex={10030}>
       {step === "welcome" && (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1826,7 +2092,7 @@ function AuthGateModal({
             Guests can report, but must provide name + phone or email.
           </div>
 
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 12 }}>
             <button
               onClick={() => setStep("login")}
               style={{
@@ -1901,7 +2167,10 @@ function AuthGateModal({
           <input
             placeholder="Email"
             value={authEmail}
-            onChange={(e) => setAuthEmail(e.target.value)}
+            onChange={(e) => {
+              clearLoginError?.();
+              setAuthEmail(e.target.value);
+            }}
             style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
             autoCapitalize="none"
           />
@@ -1910,7 +2179,10 @@ function AuthGateModal({
               placeholder="Password"
               type={showLoginPassword ? "text" : "password"}
               value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
+              onChange={(e) => {
+                clearLoginError?.();
+                setAuthPassword(e.target.value);
+              }}
               style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !authLoading) onLogin();
@@ -1937,6 +2209,23 @@ function AuthGateModal({
               {showLoginPassword ? "Hide" : "Show"}
             </button>
           </div>
+          {!!String(loginError || "").trim() && (
+            <div
+              style={{
+                marginTop: 2,
+                fontSize: 12.5,
+                lineHeight: 1.35,
+                fontWeight: 800,
+                borderRadius: 10,
+                padding: "8px 10px",
+                background: "var(--sl-ui-alert-danger-bg)",
+                border: "1px solid var(--sl-ui-alert-danger-border)",
+                color: "var(--sl-ui-alert-danger-text)",
+              }}
+            >
+              Sign in failed: invalid email or password.
+            </div>
+          )}
 
           <button
             type="button"
@@ -2055,8 +2344,16 @@ function AuthGateModal({
               {showSignupPassword ? "Hide" : "Show"}
             </button>
           </div>
-          <div style={{ fontSize: 12, color: "var(--sl-ui-text)", opacity: 0.82, lineHeight: 1.3 }}>
-            Password must be 8+ characters and include uppercase, lowercase, and special character.
+          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--sl-ui-text)", opacity: 0.9 }}>
+            Password Requirements
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.35, display: "grid", gap: 2 }}>
+            <div style={{ color: reqColor(hasSignupLen), fontWeight: 800 }}>- 8 or more characters</div>
+            <div style={{ color: reqColor(hasSignupUpper), fontWeight: 800 }}>- 1 uppercase</div>
+            <div style={{ color: reqColor(hasSignupLower), fontWeight: 800 }}>- 1 lowercase</div>
+            <div style={{ color: reqColor(hasSignupNumber), fontWeight: 800 }}>- 1 number</div>
+            <div style={{ color: reqColor(hasSignupSpecial), fontWeight: 800 }}>- 1 special character</div>
+            <div style={{ color: reqColor(signupMatches), fontWeight: 800 }}>- Passwords match</div>
           </div>
 
           <div style={{ position: "relative" }}>
@@ -2091,16 +2388,64 @@ function AuthGateModal({
               {showSignupPassword2 ? "Hide" : "Show"}
             </button>
           </div>
-          {signupPassword2 && signupPassword !== signupPassword2 && (
-            <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 900 }}>
-              Passwords do not match.
-            </div>
-          )}
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              fontSize: 12.5,
+              lineHeight: 1.35,
+              opacity: 0.95,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(signupLegalAccepted)}
+              onChange={(e) => setSignupLegalAccepted(Boolean(e.target.checked))}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              I agree to the{" "}
+              <button
+                type="button"
+                onClick={onOpenTerms}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#1976d2",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                Terms of Use
+              </button>{" "}
+              and{" "}
+              <button
+                type="button"
+                onClick={onOpenPrivacy}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#1976d2",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                Privacy Policy
+              </button>
+              , including permission for CityReport.io to submit my provided name, phone number,
+              and email on my behalf to city departments, utility providers, or other responsible
+              maintenance entities for issue resolution. I understand these entities may contact me
+              directly using that shared information for follow-up, validation, scheduling, or status updates.
+            </span>
+          </label>
 
 
           <button
             onClick={onCreateAccount}
-            disabled={signupLoading}
+            disabled={signupLoading || !signupLegalAccepted}
             style={{
               padding: 10,
               width: "100%",
@@ -2110,17 +2455,74 @@ function AuthGateModal({
               color: "white",
               fontWeight: 900,
               cursor: signupLoading ? "not-allowed" : "pointer",
-              opacity: signupLoading ? 0.75 : 1,
+              opacity: signupLoading || !signupLegalAccepted ? 0.75 : 1,
             }}
           >
             {signupLoading ? "Creating…" : "Create account"}
           </button>
-
-          <div style={{ fontSize: 12, opacity: 0.75, lineHeight: 1.35 }}>
-            If your project requires email confirmation, you may need to confirm before logging in.
-          </div>
         </>
       )}
+    </ModalShell>
+  );
+}
+
+function TermsOfUseModal({ open, onClose }) {
+  return (
+    <ModalShell open={open} zIndex={10040} panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Terms of Use</div>
+        <button onClick={onClose} style={btnSecondary} aria-label="Close">Close</button>
+      </div>
+      <div style={{ fontSize: 12.5, lineHeight: 1.5, display: "grid", gap: 10, opacity: 0.95 }}>
+        <div>
+          By creating an account or submitting a report, you authorize CityReport.io to collect and process
+          submitted report data, including contact information, for infrastructure issue intake and forwarding.
+        </div>
+        <div>
+          You grant permission for CityReport.io to submit your provided name, phone number, and email, along
+          with report details, to municipal departments, utility providers, and other entities responsible for
+          maintenance, repairs, or service restoration. You acknowledge these receiving entities may contact you
+          directly using the submitted contact information.
+        </div>
+        <div>
+          CityReport.io acts as an intermediary reporting platform and does not guarantee response times,
+          resolution, or acceptance by receiving entities.
+        </div>
+        <div>
+          You are responsible for accurate submissions and lawful use of the service. Do not use this platform
+          for emergencies; contact emergency services when immediate danger exists.
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function PrivacyPolicyModal({ open, onClose }) {
+  return (
+    <ModalShell open={open} zIndex={10040} panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Privacy Policy</div>
+        <button onClick={onClose} style={btnSecondary} aria-label="Close">Close</button>
+      </div>
+      <div style={{ fontSize: 12.5, lineHeight: 1.5, display: "grid", gap: 10, opacity: 0.95 }}>
+        <div>
+          CityReport.io may collect report content, approximate location, timestamps, and account or guest contact
+          information to process and route infrastructure reports.
+        </div>
+        <div>
+          Contact information may be shared with city departments, utility providers, or other responsible entities
+          when needed to process, validate, or follow up on submitted reports. Those entities may contact you
+          directly using your submitted information.
+        </div>
+        <div>
+          Data is stored in backend systems used by CityReport.io and may be retained for operational, auditing, and
+          service-improvement purposes.
+        </div>
+        <div>
+          CityReport.io does not sell personal data. Access to stored data is limited to authorized system and
+          administrative uses.
+        </div>
+      </div>
     </ModalShell>
   );
 }
@@ -2226,7 +2628,18 @@ function ReporterDetailsModal({ open, onClose, reportItem }) {
   );
 }
 
-function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
+function AllReportsModal({
+  open,
+  title,
+  items,
+  onClose,
+  onReporterDetails,
+  domainKey = "streetlights",
+  sharedLocation = "",
+  sharedAddress = "",
+  sharedLandmark = "",
+}) {
+  const isPotholeDomain = domainKey === "potholes";
   return (
     <ModalShell open={open} zIndex={10010}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2250,9 +2663,19 @@ function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
         </button>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.35 }}>
-        History of reports + light actions for this light.
-      </div>
+      {!!String(sharedLocation || sharedAddress || sharedLandmark).trim() && (
+        <div style={{ marginTop: 6, display: "grid", gap: 3, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
+          {!!String(sharedLocation || "").trim() && (
+            <div><b>Location:</b> {sharedLocation}</div>
+          )}
+          {!!String(sharedAddress || "").trim() && (
+            <div><b>Closest address:</b> {sharedAddress}</div>
+          )}
+          {!!String(sharedLandmark || "").trim() && (
+            <div><b>Closest landmark:</b> {sharedLandmark}</div>
+          )}
+        </div>
+      )}
 
       <div
         style={{
@@ -2293,8 +2716,15 @@ function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
                 style={{
                   display: "grid",
                   gap: 4,
-                  paddingBottom: 10,
-                  borderBottom: idx === items.length - 1 ? "none" : "1px solid rgba(0,0,0,0.08)",
+                  padding: 10,
+                  borderRadius: 10,
+                  border: isPotholeDomain
+                    ? "1px solid #ffffff"
+                    : "1px solid rgba(0,0,0,0.08)",
+                  cursor: (it.kind === "report" || it.kind === "working") && onReporterDetails ? "pointer" : "default",
+                }}
+                onClick={() => {
+                  if (it.kind === "report" || it.kind === "working") onReporterDetails?.(it);
                 }}
               >
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -2316,6 +2746,17 @@ function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
                   {formatDateTime(it.ts)}
                 </div>
+                {!!it.report_number && (
+                  <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
+                    Report #: {it.report_number}
+                  </div>
+                )}
+
+                {!!it.note?.trim() && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Note:</b> {stripSystemMetadataFromNote(it.note) || it.note}
+                  </div>
+                )}
 
                 {(it.kind === "report" || it.kind === "working") && (
                   <button
@@ -2333,12 +2774,6 @@ function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
                   >
                     Reporter Details
                   </button>
-                )}
-
-                {!!it.note?.trim() && (
-                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
-                    <b>Note:</b> {it.note}
-                  </div>
                 )}
               </div>
             );
@@ -2369,6 +2804,9 @@ function AllReportsModal({ open, title, items, onClose, onReporterDetails }) {
 function MyReportsModal({
   open,
   onClose,
+  activeDomain = "streetlights",
+  onSelectDomain,
+  domainCounts,
   groups, // [{ lightId, mineRows, lastTs }]
   expandedSet,
   onToggleExpand,
@@ -2380,9 +2818,28 @@ function MyReportsModal({
   onFlyTo, // (lat,lng,zoom,lightId)
 }) {
   if (!open) return null;
+  const domainButtons = REPORT_DOMAIN_OPTIONS.filter((d) => d.enabled);
+
+  const potholeStatusLabel = (count) => {
+    const n = Number(count || 0);
+    if (n >= 7) return "Confirmed Out";
+    if (n >= 4) return "Likely Out";
+    if (n >= 2) return "Reported";
+    return "Reported (pending)";
+  };
 
   return (
-    <ModalShell open={open} zIndex={10004}>
+    <ModalShell
+      open={open}
+      zIndex={10004}
+      panelStyle={{
+        width: "min(980px, calc(100vw - 32px))",
+        maxWidth: "980px",
+        minWidth: "min(680px, calc(100vw - 32px))",
+        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px)",
+        overflow: "auto",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>My Reports</div>
         <button
@@ -2405,7 +2862,36 @@ function MyReportsModal({
       </div>
 
       <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.35 }}>
-        Your past reports grouped by streetlight.
+        Your past reports grouped by selected domain item.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {domainButtons.map((d) => {
+          const selected = activeDomain === d.key;
+          const count = Number(domainCounts?.[d.key] || 0);
+          return (
+            <button
+              key={d.key}
+              type="button"
+              onClick={() => onSelectDomain?.(d.key)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: selected
+                  ? "1px solid #1b5e20"
+                  : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: selected
+                  ? "#2e7d32"
+                  : "var(--sl-ui-modal-btn-secondary-bg)",
+                color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              {d.icon} {d.label} ({count})
+            </button>
+          );
+        })}
       </div>
 
       <div
@@ -2426,9 +2912,17 @@ function MyReportsModal({
           </div>
         ) : (
           groups.map((g) => {
-            const coords = getCoordsForLightId(g.lightId, reports, officialLights);
-            const info = computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId });
-            const dot = statusDotForLightId(g.lightId, coords, info, reports);
+            const isPotholeGroup = g.domainKey === "potholes";
+            const coords = g.center || getCoordsForLightId(g.lightId, reports, officialLights);
+            const info = isPotholeGroup
+              ? { majorityLabel: potholeStatusLabel(g.totalCount || g.mineRows?.length || 0) }
+              : computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId });
+            const dot = isPotholeGroup
+              ? {
+                  color: potholeColorFromCount(g.totalCount || g.mineRows?.length || 0),
+                  label: info.majorityLabel,
+                }
+              : statusDotForLightId(g.lightId, coords, info, reports);
 
             const isOpen = expandedSet?.has(g.lightId);
 
@@ -2473,7 +2967,7 @@ function MyReportsModal({
                     }}
                     title="Toggle details"
                   >
-                    {displayLightId(g.lightId, slIdByUuid)}
+                    {g.displayId || displayLightId(g.lightId, slIdByUuid)}
                   </button>
 
                   <button
@@ -2506,7 +3000,7 @@ function MyReportsModal({
                 {/* Dropdown details */}
                 {isOpen && (
                   <div style={{ display: "grid", gap: 8, paddingTop: 6, borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-                    <div style={{ fontSize: 12, fontWeight: 950 }}>Your reports for this light</div>
+                    <div style={{ fontSize: 12, fontWeight: 950 }}>Your reports for this item</div>
 
                     <div style={{ display: "grid", gap: 6 }}>
                       {g.mineRows.map((r) => (
@@ -2521,10 +3015,13 @@ function MyReportsModal({
                           }}
                         >
                           <div style={{ fontSize: 12.5, fontWeight: 900 }}>
-                            {REPORT_TYPES[r.type] || r.type}
+                            {isPotholeGroup ? "Pothole report" : (REPORT_TYPES[r.type] || r.type || "Report")}
                           </div>
                           <div style={{ fontSize: 12, opacity: 0.8 }}>
                             {formatDateTime(r.ts)}
+                          </div>
+                          <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
+                            Report #: {reportNumberForRow(r, g.domainKey || "streetlights")}
                           </div>
                         </div>
                       ))}
@@ -2578,6 +3075,9 @@ function formatTs(ms) {
 function OpenReportsModal({
   open,
   onClose,
+  isAdmin = false,
+  activeDomain = "streetlights",
+  onSelectDomain,
   groups, // [{ lightId, rows, count, lastTs }]
   expandedSet,
   onToggleExpand,
@@ -2588,8 +3088,38 @@ function OpenReportsModal({
   lastFixByLightId,
   onFlyTo, // (posArray, zoom, lightId)
   onOpenAllReports, // (title, items)
+  onReporterDetails,
 }) {
   const [sortMode, setSortMode] = useState("count"); // count | recent
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const listScrollRef = useRef(null);
+  const rowRefMap = useRef(new Map());
+
+  const scrollGroupToTop = useCallback((lightId) => {
+    const lid = (lightId || "").trim();
+    if (!lid) return;
+    const scroller = listScrollRef.current;
+    const row = rowRefMap.current.get(lid);
+    if (!scroller || !row) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const top = Math.max(0, scroller.scrollTop + (rowRect.top - scrollerRect.top) - 2);
+    scroller.scrollTo({ top, behavior: "smooth" });
+  }, []);
+
+  const handleToggleExpand = useCallback((lightId) => {
+    const lid = (lightId || "").trim();
+    if (!lid) return;
+    const wasOpen = expandedSet?.has?.(lid);
+    onToggleExpand?.(lid);
+    if (wasOpen) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => scrollGroupToTop(lid));
+    });
+  }, [expandedSet, onToggleExpand, scrollGroupToTop]);
+
   const sortedGroups = useMemo(() => {
     const arr = Array.isArray(groups) ? [...groups] : [];
     if (sortMode === "recent") {
@@ -2599,10 +3129,67 @@ function OpenReportsModal({
     arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
     return arr;
   }, [groups, sortMode]);
+
+  const visibleGroups = useMemo(() => sortedGroups, [sortedGroups]);
+
+  const matchedSearchRows = useMemo(() => {
+    const q = String(searchQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    const digitsQ = normalizePhone(q);
+    const out = [];
+    for (const g of sortedGroups || []) {
+      const isStreetlights = activeDomain === "streetlights";
+      const coords = isStreetlights
+        ? getCoordsForLightId(g.lightId, reports, officialLights)
+        : {
+            lat: Number(g.lat ?? g.rows?.[0]?.lat),
+            lng: Number(g.lng ?? g.rows?.[0]?.lng),
+            isOfficial: false,
+          };
+      const locationLabel =
+        String(g.location_label || "").trim() ||
+        readLocationFromNote(g.rows?.[0]?.note) ||
+        (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
+          ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+          : "Location unavailable");
+      for (const r of g?.rows || []) {
+        const reportNo = reportNumberForRow(r, activeDomain).toLowerCase();
+        const name = String(r?.reporter_name || "").toLowerCase();
+        const email = String(r?.reporter_email || "").toLowerCase();
+        const phoneNorm = normalizePhone(r?.reporter_phone || "");
+        const lightId = String(g?.lightId || "").toLowerCase();
+        const matches =
+          reportNo.includes(q) ||
+          name.includes(q) ||
+          email.includes(q) ||
+          lightId.includes(q) ||
+          (digitsQ && phoneNorm.includes(digitsQ));
+        if (!matches) continue;
+        out.push({
+          id: `${g.lightId}:${r.id}`,
+          lightId: g.lightId,
+          row: r,
+          coords,
+          locationLabel,
+          count: Number(g?.count || 0),
+          isStreetlights,
+        });
+      }
+    }
+    return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
+  }, [searchQuery, sortedGroups, activeDomain, reports, officialLights]);
   if (!open) return null;
 
   return (
-    <ModalShell open={open} zIndex={10004}>
+    <ModalShell
+      open={open}
+      zIndex={10004}
+      panelStyle={{
+        width: "min(980px, calc(100vw - 32px))",
+        maxWidth: "980px",
+        minWidth: "min(680px, calc(100vw - 32px))",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Open Reports</div>
         <button
@@ -2624,9 +3211,67 @@ function OpenReportsModal({
         </button>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.35 }}>
-        All streetlights with current outage reports (since last fix).
-      </div>
+      {isAdmin && (
+        <div
+          style={{
+            display: "grid",
+            gap: 8,
+            marginTop: 2,
+            padding: 8,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+          }}
+        >
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {REPORT_DOMAIN_OPTIONS.map((d) => {
+              const selected = activeDomain === d.key;
+              return (
+                <button
+                  key={d.key}
+                  type="button"
+                  onClick={() => {
+                    if (!d.enabled) return;
+                    onSelectDomain?.(d.key);
+                  }}
+                  disabled={!d.enabled}
+                  style={{
+                    borderRadius: 10,
+                    border: selected
+                      ? "1px solid #1b5e20"
+                      : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: selected
+                      ? "#2e7d32"
+                      : "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: d.enabled ? "pointer" : "not-allowed",
+                    opacity: d.enabled ? 1 : 0.55,
+                    padding: "8px 10px",
+                    whiteSpace: "nowrap",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                  aria-label={d.label}
+                  title={d.enabled ? d.label : `${d.label} (Soon)`}
+                >
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>{d.icon}</span>
+                  <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: 8,
+          borderTop: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+          opacity: 0.7,
+        }}
+      />
 
       <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
         <button
@@ -2657,11 +3302,65 @@ function OpenReportsModal({
         >
           Most recent
         </button>
+        <button
+          onClick={() => {
+            setSearchDraft("");
+            setSearchQuery("");
+          }}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid rgba(0,0,0,0.12)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Clear search
+        </button>
+      </div>
+      <div style={{ marginTop: 6, minHeight: 42, display: "flex", gap: 8 }}>
+        <input
+          value={searchDraft}
+          onChange={(e) => setSearchDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
+          }}
+          placeholder="Search by report #, name, phone, or email"
+          style={{
+            width: "100%",
+            padding: "9px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-input-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            color: "var(--sl-ui-text)",
+            fontSize: 12.5,
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => setSearchQuery(String(searchDraft || "").trim())}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Apply
+        </button>
       </div>
 
       <div
+        ref={listScrollRef}
         style={{
           marginTop: 6,
+          height: "60vh",
           maxHeight: "60vh",
           overflow: "auto",
           border: "1px solid rgba(0,0,0,0.10)",
@@ -2671,18 +3370,136 @@ function OpenReportsModal({
           gap: 10,
         }}
       >
-        {!sortedGroups?.length ? (
+        {String(searchQuery || "").trim() ? (
+          !matchedSearchRows.length ? (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>No matching reports found.</div>
+          ) : (
+            matchedSearchRows.map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  border: "1px solid var(--sl-ui-open-reports-item-border)",
+                  borderRadius: 10,
+                  padding: 10,
+                  display: "grid",
+                  gap: 6,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    onClick={() => onFlyTo?.([item.coords?.lat, item.coords?.lng], 18, item.lightId)}
+                    style={{
+                      flex: 1,
+                      textAlign: "left",
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      cursor: "pointer",
+                      fontWeight: 950,
+                      fontSize: 12.5,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      color: "var(--sl-ui-text)",
+                    }}
+                    title="Fly to report location"
+                  >
+                    {displayLightId(item.lightId, slIdByUuid)}
+                  </button>
+                  <button
+                    onClick={() => onFlyTo?.([item.coords?.lat, item.coords?.lng], 18, item.lightId)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Fly to
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.9, fontWeight: 900 }}>
+                  Report #: {reportNumberForRow(item.row, activeDomain)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  {formatTs(item.row?.ts)}
+                </div>
+                {!item.isStreetlights && (
+                  <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
+                    <b>Location:</b> {item.locationLabel}
+                  </div>
+                )}
+                {!!String(item.row?.note || "").trim() && (
+                  <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
+                    <b>Note:</b> {stripSystemMetadataFromNote(item.row.note) || item.row.note}
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={{ marginTop: 2, display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      onClick={() => onReporterDetails?.(item.row)}
+                      style={{
+                        padding: "6px 9px",
+                        borderRadius: 9,
+                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontSize: 11.5,
+                      }}
+                    >
+                      Reporter Details
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )
+        ) : !visibleGroups?.length ? (
           <div style={{ fontSize: 13, opacity: 0.8 }}>No open reports right now.</div>
         ) : (
-          sortedGroups.map((g) => {
-            const coords = getCoordsForLightId(g.lightId, reports, officialLights);
-            const info = computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId });
-            const dot = statusDotForLightId(g.lightId, coords, info, reports);
+          visibleGroups.map((g) => {
+            const isStreetlights = activeDomain === "streetlights";
+            const coords = isStreetlights
+              ? getCoordsForLightId(g.lightId, reports, officialLights)
+              : {
+                  lat: Number(g.lat ?? g.rows?.[0]?.lat),
+                  lng: Number(g.lng ?? g.rows?.[0]?.lng),
+                  isOfficial: false,
+                };
+            const info = isStreetlights
+              ? computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId })
+              : { majorityLabel: REPORT_DOMAIN_OPTIONS.find((d) => d.key === activeDomain)?.label || "Report" };
+            const nonStreetlightDotColor =
+              activeDomain === "potholes"
+                ? potholeColorFromCount(Number(g?.count || 0))
+                : activeDomain === "power_outage"
+                  ? "#f39c12"
+                  : activeDomain === "water_main"
+                    ? "#3498db"
+                    : "#616161";
+            const dot = isStreetlights
+              ? statusDotForLightId(g.lightId, coords, info, reports)
+              : { color: nonStreetlightDotColor, label: info.majorityLabel };
             const isOpen = expandedSet?.has(g.lightId);
+            const locationLabel =
+              String(g.location_label || "").trim() ||
+              readLocationFromNote(g.rows?.[0]?.note) ||
+              (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
+                ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+                : "Location unavailable");
 
             return (
               <div
                 key={g.lightId}
+                ref={(el) => {
+                  if (el) rowRefMap.current.set(g.lightId, el);
+                  else rowRefMap.current.delete(g.lightId);
+                }}
                 style={{
                   border: "1px solid var(--sl-ui-open-reports-item-border)",
                   borderRadius: 10,
@@ -2705,7 +3522,7 @@ function OpenReportsModal({
                   />
 
                   <button
-                    onClick={() => onToggleExpand(g.lightId)}
+                    onClick={() => handleToggleExpand(g.lightId)}
                     style={{
                       flex: 1,
                       textAlign: "left",
@@ -2725,7 +3542,7 @@ function OpenReportsModal({
 
                   <button
                     onClick={() => {
-                      onOpenAllReports?.(g.lightId);
+                      handleToggleExpand(g.lightId);
                     }}
                     style={{
                       padding: "8px 10px",
@@ -2765,8 +3582,15 @@ function OpenReportsModal({
                 </div>
 
                 <div style={{ fontSize: 12, opacity: 0.9 }}>
-                  <b>{g.count}</b> report{g.count === 1 ? "" : "s"} • Status: <b>{info.majorityLabel}</b>
+                  <b>{g.count}</b> report{g.count === 1 ? "" : "s"}
+                  {isStreetlights ? <> • Status: <b>{info.majorityLabel}</b></> : <> • <b>{info.majorityLabel}</b></>}
                 </div>
+
+                {!isStreetlights && (
+                  <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
+                    <b>Location:</b> {locationLabel}
+                  </div>
+                )}
 
                 {isOpen && (
                   <div
@@ -2796,6 +3620,29 @@ function OpenReportsModal({
                           {formatTs(r.ts)}
                           {r.note ? ` • ${r.note}` : ""}
                         </div>
+                        <div style={{ opacity: 0.9, fontWeight: 900 }}>
+                          Report #: {reportNumberForRow(r, activeDomain)}
+                        </div>
+                        {isAdmin && (
+                          <div style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={() => onReporterDetails?.(r)}
+                              style={{
+                                padding: "6px 9px",
+                                borderRadius: 9,
+                                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                color: "var(--sl-ui-modal-btn-secondary-text)",
+                                fontWeight: 900,
+                                cursor: "pointer",
+                                fontSize: 11.5,
+                              }}
+                            >
+                              Reporter Details
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
 
@@ -3063,8 +3910,9 @@ function ChangePasswordModal({
   const hasLen = String(password || "").length >= 8;
   const hasUpper = /[A-Z]/.test(String(password || ""));
   const hasLower = /[a-z]/.test(String(password || ""));
+  const hasNumber = /[0-9]/.test(String(password || ""));
   const hasSpecial = /[^A-Za-z0-9]/.test(String(password || ""));
-  const strongEnough = hasLen && hasUpper && hasLower && hasSpecial;
+  const strongEnough = hasLen && hasUpper && hasLower && hasNumber && hasSpecial;
   const matches = !!password2 && password === password2;
   const hasCurrentPassword = String(currentPassword || "").trim().length > 0;
   const canSubmit = !saving && strongEnough && matches && hasCurrentPassword;
@@ -3163,6 +4011,7 @@ function ChangePasswordModal({
           <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
           <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
           <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
+          <div style={{ color: reqColor(hasNumber), fontWeight: 800 }}>- 1 number</div>
           <div style={{ color: reqColor(hasSpecial), fontWeight: 800 }}>- 1 special character</div>
           <div style={{ color: reqColor(matches), fontWeight: 800 }}>- Passwords match</div>
         </div>
@@ -3234,8 +4083,9 @@ function RecoveryPasswordModal({
   const hasLen = String(password || "").length >= 8;
   const hasUpper = /[A-Z]/.test(String(password || ""));
   const hasLower = /[a-z]/.test(String(password || ""));
+  const hasNumber = /[0-9]/.test(String(password || ""));
   const hasSpecial = /[^A-Za-z0-9]/.test(String(password || ""));
-  const strongEnough = hasLen && hasUpper && hasLower && hasSpecial;
+  const strongEnough = hasLen && hasUpper && hasLower && hasNumber && hasSpecial;
   const matches = !!password2 && password === password2;
   const canSubmit = !saving && strongEnough && matches;
   const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
@@ -3334,6 +4184,7 @@ function RecoveryPasswordModal({
           <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
           <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
           <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
+          <div style={{ color: reqColor(hasNumber), fontWeight: 800 }}>- 1 number</div>
           <div style={{ color: reqColor(hasSpecial), fontWeight: 800 }}>- 1 special character</div>
           <div style={{ color: reqColor(matches), fontWeight: 800 }}>- Passwords match</div>
         </div>
@@ -3642,6 +4493,30 @@ function makeLightIdFromCoords(lat, lng) {
   return `SL${lng5}${lat5}`;
 }
 
+function makePotholeIdFromCoords(lat, lng) {
+  const lat5 = Math.abs(Number(lat)).toFixed(5).split(".")[1] || "00000";
+  const lng5 = Math.abs(Number(lng)).toFixed(5).split(".")[1] || "00000";
+  return `PH${lng5}${lat5}`;
+}
+
+function nearestPotholeForPoint(lat, lng, potholes, radiusMeters = POTHOLE_MERGE_RADIUS_METERS) {
+  const arr = Array.isArray(potholes) ? potholes : [];
+  let best = null;
+  let bestMeters = Infinity;
+  for (const p of arr) {
+    const plat = Number(p?.lat);
+    const plng = Number(p?.lng);
+    if (!Number.isFinite(plat) || !Number.isFinite(plng)) continue;
+    const d = metersBetween({ lat, lng }, { lat: plat, lng: plng });
+    if (d < bestMeters) {
+      bestMeters = d;
+      best = p;
+    }
+  }
+  if (!best || bestMeters > radiusMeters) return null;
+  return best;
+}
+
 
 function computePublicStatusForLightId(lightId, { reports, fixedLights, lastFixByLightId }) {
   const all = (reports || [])
@@ -3704,6 +4579,7 @@ function buildLightHistory({ reportRows, fixActionRows }) {
         label,
         note: r.note || "",
         type: r.type || "",
+        report_number: reportNumberForRow(r, r.pothole_id ? "potholes" : reportDomainFromLightId(r.light_id)),
 
         // ✅ reporter fields (for admin "Reporter Details" button)
         reporter_user_id: r.reporter_user_id || null,
@@ -3806,8 +4682,26 @@ export default function App() {
     lastAppliedZoom: OFFICIAL_LIGHTS_MIN_ZOOM,
   });
   const isMobile = useIsMobile(640);
+  const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const [titleLogoError, setTitleLogoError] = useState(false);
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
+  const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e) => {
+      setPrefersDarkMode(Boolean(e.matches));
+      setTitleLogoError(false);
+    };
+    setPrefersDarkMode(Boolean(media.matches));
+    media.addEventListener?.("change", onChange);
+    return () => media.removeEventListener?.("change", onChange);
+  }, []);
 
   function cancelFlyAnimation() {
     if (flyAnimRef.current) {
@@ -3896,6 +4790,8 @@ export default function App() {
 
   // OFFICIAL LIGHTS (admin-only)
   const [officialLights, setOfficialLights] = useState([]); // rows: {id, lat, lng}
+  const [potholes, setPotholes] = useState([]); // rows: {id, ph_id, lat, lng, location_label?}
+  const [potholeReports, setPotholeReports] = useState([]); // rows: {id, pothole_id, lat, lng, note, ts, reporter_*}
   // Google Maps InfoWindow selection
   const [selectedOfficialId, setSelectedOfficialId] = useState(null);
   const [selectedQueuedTempId, setSelectedQueuedTempId] = useState(null);
@@ -3925,6 +4821,7 @@ export default function App() {
 
   // Google Maps center (actual camera center)
   const [mapCenter, setMapCenter] = useState({ lat: ASHTABULA[0], lng: ASHTABULA[1] });
+  const [mapBounds, setMapBounds] = useState(null);
 
   const [reports, setReports] = useState([]);
   const [picked, setPicked] = useState(null);
@@ -3946,6 +4843,19 @@ export default function App() {
 
   // activeLight: object for modal context
   const [activeLight, setActiveLight] = useState(null);
+  const [domainReportTarget, setDomainReportTarget] = useState(null); // { domain, lat, lng, lightId, locationLabel }
+  const [domainReportNote, setDomainReportNote] = useState("");
+  const [potholeConsentChecked, setPotholeConsentChecked] = useState(false);
+
+  useEffect(() => {
+    if (!domainReportTarget) {
+      setPotholeConsentChecked(false);
+      return;
+    }
+    if (domainReportTarget?.domain === "potholes") {
+      setPotholeConsentChecked(false);
+    }
+  }, [domainReportTarget?.domain, domainReportTarget?.lat, domainReportTarget?.lng]);
 
   // Notice modal state
   const [notice, setNotice] = useState({ open: false, icon: "", title: "", message: "", compact: false });
@@ -4006,7 +4916,7 @@ export default function App() {
     // Realtime channel status strings
     if (typeof errOrStatus === "string") {
       const s = errOrStatus.toUpperCase();
-      return s === "CHANNEL_ERROR" || s === "TIMED_OUT" || s === "CLOSED";
+      return s === "CHANNEL_ERROR" || s === "TIMED_OUT";
     }
 
     const statusNum = Number(errOrStatus?.status);
@@ -4043,6 +4953,7 @@ export default function App() {
 
   function notifyDbConnectionIssue(errOrStatus) {
     if (!isConnectionLikeDbError(errOrStatus)) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const now = Date.now();
     if (now - dbConnectionStartedAtRef.current < 6000) return; // startup grace period
@@ -4066,6 +4977,10 @@ export default function App() {
     open: false,
     title: "",
     items: [],
+    domainKey: "streetlights",
+    sharedLocation: "",
+    sharedAddress: "",
+    sharedLandmark: "",
   });
   const officialLightHistoryCacheRef = useRef(new Map());
 
@@ -4081,10 +4996,15 @@ export default function App() {
 
   const [myReportsOpen, setMyReportsOpen] = useState(false);
   const [myReportsExpanded, setMyReportsExpanded] = useState(() => new Set()); // lightIds expanded
+  const [myReportsDomain, setMyReportsDomain] = useState("streetlights");
 
   const [openReportsOpen, setOpenReportsOpen] = useState(false);
   const [openReportsExpanded, setOpenReportsExpanded] = useState(() => new Set()); // lightIds expanded
   const [openReportMapFilterOn, setOpenReportMapFilterOn] = useState(false);
+  const [adminReportDomain, setAdminReportDomain] = useState("streetlights");
+  const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
+  const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
+  const [selectedDomainMarker, setSelectedDomainMarker] = useState(null);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
 
 
@@ -4103,11 +5023,11 @@ export default function App() {
   }
 
   function toggleOpenReportsExpanded(lightId) {
+    const lid = (lightId || "").trim();
+    if (!lid) return;
     setOpenReportsExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(lightId)) next.delete(lightId);
-      else next.add(lightId);
-      return next;
+      if (prev.has(lid)) return new Set();
+      return new Set([lid]);
     });
   }
 
@@ -4117,8 +5037,16 @@ export default function App() {
   }
 
 
-  function openAllReports(title, items) {
-    setAllReportsModal({ open: true, title: title || "All Reports", items: items || [] });
+  function openAllReports(title, items, opts = {}) {
+    setAllReportsModal({
+      open: true,
+      title: title || "All Reports",
+      items: items || [],
+      domainKey: String(opts?.domainKey || "streetlights").trim() || "streetlights",
+      sharedLocation: String(opts?.sharedLocation || "").trim(),
+      sharedAddress: String(opts?.sharedAddress || "").trim(),
+      sharedLandmark: String(opts?.sharedLandmark || "").trim(),
+    });
   }
 
   function closeAllReports() {
@@ -4135,7 +5063,7 @@ export default function App() {
     const [repRes, actRes] = await Promise.all([
       supabase
         .from("reports")
-        .select("id, created_at, lat, lng, report_type, report_quality, note, light_id, reporter_user_id, reporter_name, reporter_phone, reporter_email")
+        .select("id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, reporter_name, reporter_phone, reporter_email")
         .eq("light_id", lid)
         .order("created_at", { ascending: false }),
       supabase
@@ -4157,6 +5085,7 @@ export default function App() {
       note: r.note || "",
       ts: new Date(r.created_at).getTime(),
       light_id: r.light_id || lightIdFor(r.lat, r.lng),
+      report_number: r.report_number || null,
       reporter_user_id: r.reporter_user_id || null,
       reporter_name: r.reporter_name || null,
       reporter_phone: r.reporter_phone || null,
@@ -4210,6 +5139,75 @@ export default function App() {
 
     const history = buildLightHistory({ reportRows, fixActionRows });
     openAllReports("All Reports (Official light)", history);
+  }
+
+  function openPotholeAllReportsFromMarker(marker) {
+    const pid = String(marker?.pothole_id || "").trim();
+    if (!pid) return;
+    const ph = String(marker?.id || "").trim() || "Pothole";
+    const reportRows = (potholeReports || [])
+      .filter((r) => String(r?.pothole_id || "").trim() === pid)
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))
+      .map((r) => ({
+        id: r.id,
+        type: "other",
+        note: r.note || null,
+        ts: Number(r.ts || 0),
+        report_number: r.report_number || null,
+        pothole_id: pid,
+        reporter_user_id: r.reporter_user_id || null,
+        reporter_name: r.reporter_name || null,
+        reporter_email: r.reporter_email || null,
+        reporter_phone: r.reporter_phone || null,
+      }));
+    const fixActionRows = (actionsByLightId?.[`pothole:${pid}`] || [])
+      .filter((a) => {
+        const t = String(a?.action || "").toLowerCase();
+        return t === "fix" || t === "reopen";
+      })
+      .map((a) => ({
+        action: a.action,
+        ts: Number(a.ts || 0),
+        note: a.note || null,
+      }));
+    const history = buildLightHistory({ reportRows, fixActionRows });
+    const addrFromNote = readAddressFromNote(reportRows?.[0]?.note);
+    const landmarkFromNote = readLandmarkFromNote(reportRows?.[0]?.note);
+    const locationLine =
+      Number.isFinite(Number(marker?.lat)) && Number.isFinite(Number(marker?.lng))
+        ? `${Number(marker.lat).toFixed(5)}, ${Number(marker.lng).toFixed(5)}`
+        : "";
+    const addressLine = addrFromNote || "Address unavailable";
+    openAllReports(`All Reports (${ph})`, history, {
+      domainKey: "potholes",
+      sharedLocation: locationLine,
+      sharedAddress: addressLine,
+      sharedLandmark: landmarkFromNote || "No nearby landmark",
+    });
+  }
+
+  async function markPotholeFixed(marker) {
+    const pid = String(marker?.pothole_id || "").trim();
+    if (!pid || !session?.user?.id) return;
+    const lightActionId = `pothole:${pid}`;
+    const { error } = await supabase
+      .from("light_actions")
+      .insert([{ light_id: lightActionId, action: "fix", actor_user_id: session.user.id }]);
+    if (error) {
+      console.error("[pothole mark fixed] insert error:", error);
+      openNotice("⚠️", "Couldn’t mark fixed", error.message || "Please try again.");
+      return;
+    }
+
+    const ts = Date.now();
+    setActionsByLightId((prev) => {
+      const list = Array.isArray(prev?.[lightActionId]) ? [...prev[lightActionId]] : [];
+      list.unshift({ action: "fix", ts, note: null, actor_user_id: session.user.id });
+      return { ...(prev || {}), [lightActionId]: list };
+    });
+    setLastFixByLightId((prev) => ({ ...(prev || {}), [lightActionId]: Math.max(Number(prev?.[lightActionId] || 0), ts) }));
+    setSelectedDomainMarker(null);
+    openNotice("✅", "Marked fixed", "Pothole marked fixed.");
   }
 
   function stopLeafletPropagation(e) {
@@ -4331,6 +5329,7 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
   const [authResetLoading, setAuthResetLoading] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
@@ -4343,6 +5342,20 @@ export default function App() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupPassword2, setSignupPassword2] = useState("");
   const [signupLoading, setSignupLoading] = useState(false);
+  const [signupLegalAccepted, setSignupLegalAccepted] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+
+  useEffect(() => {
+    if (!authGateOpen) setLoginError("");
+  }, [authGateOpen, authGateStep]);
+
+  useEffect(() => {
+    if (authGateOpen) return;
+    setSignupLegalAccepted(false);
+    setTermsOpen(false);
+    setPrivacyOpen(false);
+  }, [authGateOpen]);
 
 
   // Gate flow
@@ -4406,6 +5419,8 @@ export default function App() {
   const [deleteOfficialConfirmOpen, setDeleteOfficialConfirmOpen] = useState(false);
   const [pendingDeleteOfficialLightId, setPendingDeleteOfficialLightId] = useState(null);
   const [clearQueuedConfirmOpen, setClearQueuedConfirmOpen] = useState(false);
+  const [potholeAdvisoryOpen, setPotholeAdvisoryOpen] = useState(false);
+  const [pendingPotholeDomainTarget, setPendingPotholeDomainTarget] = useState(null);
 
   const bulkSelectedSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds]);
   const bulkSelectedCount = bulkSelectedIds.length;
@@ -4713,6 +5728,7 @@ export default function App() {
 
   async function signIn() {
     setAuthLoading(true);
+    setLoginError("");
 
     const email = (authEmail || "").trim().toLowerCase();
     const password = authPassword || "";
@@ -4722,11 +5738,12 @@ export default function App() {
     setAuthLoading(false);
 
     if (error) {
-      openNotice("⚠️", "Sign-in failed", error.message);
+      setLoginError("invalid_credentials");
       return false;
     }
 
     setAccountMenuOpen(false);
+    setLoginError("");
     return true;
   }
 
@@ -4780,6 +5797,10 @@ export default function App() {
         data: {
           full_name,
           phone,
+          terms_accepted: true,
+          privacy_accepted: true,
+          contact_forwarding_consent: true,
+          legal_accepted_at: new Date().toISOString(),
         },
       },
     });
@@ -4823,11 +5844,19 @@ export default function App() {
       return;
     }
     if (!validateStrongPassword(password)) {
-      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, number, and special character.");
       return;
     }
     if (signupPassword !== signupPassword2) {
       openNotice("⚠️", "Passwords don’t match", "Please re-enter your password so both fields match.");
+      return;
+    }
+    if (!signupLegalAccepted) {
+      openNotice(
+        "⚠️",
+        "Agreement required",
+        "Please accept the Terms of Use and Privacy Policy to create an account."
+      );
       return;
     }
 
@@ -4856,6 +5885,7 @@ export default function App() {
     setSignupEmail("");
     setSignupPassword("");
     setSignupPassword2("");
+    setSignupLegalAccepted(false);
   }
 
   async function signOut() {
@@ -4935,7 +5965,7 @@ export default function App() {
     const p2 = String(changePasswordValue2 || "");
     const current = String(changePasswordCurrentValue || "");
     if (!validateStrongPassword(p1)) {
-      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, number, and special character.");
       return;
     }
     if (p1 !== p2) {
@@ -4983,7 +6013,7 @@ export default function App() {
     const p1 = String(recoveryPasswordValue || "");
     const p2 = String(recoveryPasswordValue2 || "");
     if (!validateStrongPassword(p1)) {
-      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, and special character.");
+      openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, number, and special character.");
       return;
     }
     if (p1 !== p2) {
@@ -5054,7 +6084,6 @@ export default function App() {
       saveManagedProfile();
       return;
     }
-    if (intent === "change_password") return;
   }
 
   // -------------------------
@@ -5091,14 +6120,28 @@ export default function App() {
       setError("");
 
       const isAuthed = Boolean(session?.user?.id);
-      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
-      const reportSelectFull = "id, created_at, lat, lng, report_type, report_quality, note, light_id, reporter_user_id, reporter_name, reporter_phone, reporter_email";
+      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number";
+      const reportSelectPublicLegacy = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
+      const reportSelectFull = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, reporter_name, reporter_phone, reporter_email";
       const actionsSelectPublic = "id, light_id, action, created_at";
       const actionsSelectFull = "id, light_id, action, note, created_at, actor_user_id";
 
       const reportsPromise = isAdmin
         ? supabase.from("reports").select(reportSelectFull).order("created_at", { ascending: false })
-        : supabase.from("reports_public").select(reportSelectPublic).order("created_at", { ascending: false });
+        : (async () => {
+            const first = await supabase
+              .from("reports_public")
+              .select(reportSelectPublic)
+              .order("created_at", { ascending: false });
+            const msg = String(first?.error?.message || "").toLowerCase();
+            const missingReportNumber =
+              first?.error && msg.includes("report_number") && msg.includes("does not exist");
+            if (!missingReportNumber) return first;
+            return supabase
+              .from("reports_public")
+              .select(reportSelectPublicLegacy)
+              .order("created_at", { ascending: false });
+          })();
 
       const ownReportsPromise = (!isAdmin && isAuthed)
         ? supabase
@@ -5113,7 +6156,7 @@ export default function App() {
         : supabase.from("light_actions_public").select(actionsSelectPublic).order("created_at", { ascending: false });
 
       const [
-        { data: reportData, error: repErr },
+        { data: reportDataRaw, error: repErrRaw },
         { data: ownReportData, error: ownRepErr },
         { data: fixedData, error: fixErr },
         { data: actionData, error: actErr },
@@ -5123,6 +6166,43 @@ export default function App() {
         supabase.from("fixed_lights").select("*"),
         actionsPromise,
       ]);
+      let reportData = reportDataRaw;
+      let repErr = repErrRaw;
+      if (!isAdmin && (repErr || !(Array.isArray(reportData) && reportData.length))) {
+        try {
+          const fallback = await supabase
+            .from("reports")
+            .select(reportSelectPublic)
+            .order("created_at", { ascending: false });
+          if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length) {
+            reportData = fallback.data;
+            repErr = null;
+          }
+        } catch {
+          // keep original result
+        }
+      }
+
+      // Potholes (dedicated tables)
+      const potholeSelect = "id, ph_id, lat, lng, location_label, created_at";
+      const potholeReportSelect =
+        "id, pothole_id, lat, lng, note, report_number, created_at, reporter_user_id, reporter_name, reporter_phone, reporter_email";
+      let potholeData = [];
+      let potholeRepData = [];
+      let potholeErr = null;
+      let potholeRepErr = null;
+      try {
+        const [{ data: pd, error: pe }, { data: prd, error: pre }] = await Promise.all([
+          supabase.from("potholes").select(potholeSelect).order("created_at", { ascending: true }),
+          supabase.from("pothole_reports").select(potholeReportSelect).order("created_at", { ascending: false }),
+        ]);
+        potholeData = pd || [];
+        potholeRepData = prd || [];
+        potholeErr = pe;
+        potholeRepErr = pre;
+      } catch (e) {
+        potholeErr = e;
+      }
 
       let officialData = [];
       let offErr = null;
@@ -5143,6 +6223,57 @@ export default function App() {
         );
       }
 
+      const officialIdByAlias = new Map();
+      const officialIdByCoordKey = new Map();
+      for (const ol of officialData || []) {
+        const id = String(ol?.id || "").trim();
+        if (!id) continue;
+        officialIdByAlias.set(id, id);
+        const sl = String(ol?.sl_id || "").trim();
+        if (sl) officialIdByAlias.set(sl, id);
+        const lat = Number(ol?.lat);
+        const lng = Number(ol?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          officialIdByCoordKey.set(`${lat.toFixed(5)}:${lng.toFixed(5)}`, id);
+          officialIdByCoordKey.set(`${lat.toFixed(4)}:${lng.toFixed(4)}`, id);
+        }
+      }
+
+      if (potholeErr) {
+        console.warn("[potholes] load warning:", potholeErr?.message || potholeErr);
+      } else {
+        setPotholes(
+          (potholeData || [])
+            .map((p) => ({
+              id: p.id,
+              ph_id: (p.ph_id || "").trim() || null,
+              lat: Number(p.lat),
+              lng: Number(p.lng),
+              location_label: (p.location_label || "").trim() || null,
+            }))
+            .filter((p) => p.id && isValidLatLng(p.lat, p.lng))
+        );
+      }
+      if (potholeRepErr) {
+        console.warn("[pothole_reports] load warning:", potholeRepErr?.message || potholeRepErr);
+      } else {
+        setPotholeReports(
+          (potholeRepData || []).map((r) => ({
+            id: r.id,
+            pothole_id: r.pothole_id || null,
+            lat: Number(r.lat),
+            lng: Number(r.lng),
+            note: r.note || "",
+            report_number: r.report_number || null,
+            ts: new Date(r.created_at).getTime(),
+            reporter_user_id: r.reporter_user_id || null,
+            reporter_name: r.reporter_name || null,
+            reporter_phone: r.reporter_phone || null,
+            reporter_email: r.reporter_email || null,
+          }))
+        );
+      }
+
       if (repErr) {
         console.error(repErr);
       }
@@ -5158,7 +6289,8 @@ export default function App() {
         report_quality: normalizeReportQuality(r.report_quality),
         note: r.note || "",
         ts: new Date(r.created_at).getTime(),
-        light_id: r.light_id || lightIdFor(r.lat, r.lng),
+        light_id: canonicalOfficialLightId(r.light_id, r.lat, r.lng, officialIdByAlias, officialIdByCoordKey),
+        report_number: r.report_number || null,
         reporter_user_id: r.reporter_user_id || null,
         reporter_name: r.reporter_name || null,
         reporter_phone: r.reporter_phone || null,
@@ -5173,7 +6305,8 @@ export default function App() {
         report_quality: normalizeReportQuality(r.report_quality),
         note: r.note || "",
         ts: new Date(r.created_at).getTime(),
-        light_id: r.light_id || lightIdFor(r.lat, r.lng),
+        light_id: canonicalOfficialLightId(r.light_id, r.lat, r.lng, officialIdByAlias, officialIdByCoordKey),
+        report_number: r.report_number || null,
         reporter_user_id: r.reporter_user_id || null,
         reporter_name: r.reporter_name || null,
         reporter_phone: r.reporter_phone || null,
@@ -5231,7 +6364,7 @@ export default function App() {
         setLastFixByLightId(map);
       }
 
-      const loadHadConnectionFailure = [repErr, ownRepErr, fixErr, actErr, offErr].some((e) =>
+      const loadHadConnectionFailure = [repErr, ownRepErr, fixErr, actErr, offErr, potholeErr, potholeRepErr].some((e) =>
         isConnectionLikeDbError(e)
       );
       if (loadHadConnectionFailure) notifyDbConnectionIssue({ message: "connection check failed" });
@@ -5270,6 +6403,7 @@ export default function App() {
           note: r.note || "",
           ts: new Date(r.created_at).getTime(),
           light_id: r.light_id || lightIdFor(r.lat, r.lng),
+          report_number: r.report_number || null,
 
           reporter_user_id: r.reporter_user_id || null,
           reporter_name: r.reporter_name || null,
@@ -5398,9 +6532,62 @@ export default function App() {
       )
       .subscribe((status) => {
         console.log("OFFICIAL realtime subscribe status:", status);
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") notifyDbConnectionIssue(status);
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") notifyDbConnectionIssue(status);
         if (status === "SUBSCRIBED") resetDbConnectionIssueStreak();
       });
+
+    const potholesChannel = supabase
+      .channel("realtime-potholes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "potholes" }, (payload) => {
+        if (payload.eventType === "DELETE") {
+          const id = payload?.old?.id;
+          if (!id) return;
+          setPotholes((prev) => prev.filter((x) => x.id !== id));
+          return;
+        }
+        const p = payload?.new;
+        const clean = {
+          id: p?.id,
+          ph_id: (p?.ph_id || "").trim() || null,
+          lat: Number(p?.lat),
+          lng: Number(p?.lng),
+          location_label: (p?.location_label || "").trim() || null,
+        };
+        if (!clean.id || !isValidLatLng(clean.lat, clean.lng)) return;
+        setPotholes((prev) => {
+          const next = Array.isArray(prev) ? [...prev] : [];
+          const idx = next.findIndex((x) => x.id === clean.id);
+          if (idx >= 0) next[idx] = { ...next[idx], ...clean };
+          else next.push(clean);
+          return next;
+        });
+      })
+      .subscribe();
+
+    const potholeReportsChannel = supabase
+      .channel("realtime-pothole-reports")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "pothole_reports" }, (payload) => {
+        const r = payload?.new;
+        const incoming = {
+          id: r?.id,
+          pothole_id: r?.pothole_id || null,
+          lat: Number(r?.lat),
+          lng: Number(r?.lng),
+          note: r?.note || "",
+          report_number: r?.report_number || null,
+          ts: new Date(r?.created_at).getTime(),
+          reporter_user_id: r?.reporter_user_id || null,
+          reporter_name: r?.reporter_name || null,
+          reporter_phone: r?.reporter_phone || null,
+          reporter_email: r?.reporter_email || null,
+        };
+        if (!incoming.id) return;
+        setPotholeReports((prev) => {
+          if (prev.some((x) => x.id === incoming.id)) return prev;
+          return [incoming, ...prev];
+        });
+      })
+      .subscribe();
 
 
     return () => {
@@ -5408,6 +6595,8 @@ export default function App() {
       if (fixedChannel) supabase.removeChannel(fixedChannel);
       if (actionsChannel) supabase.removeChannel(actionsChannel);
       if (officialChannel) supabase.removeChannel(officialChannel);
+      if (potholesChannel) supabase.removeChannel(potholesChannel);
+      if (potholeReportsChannel) supabase.removeChannel(potholeReportsChannel);
     };
   }, [isAdmin]);
 
@@ -5438,11 +6627,85 @@ export default function App() {
     return out;
   }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
 
+  const isStreetlightsDomain = adminReportDomain === "streetlights";
+  const isPotholesDomain = adminReportDomain === "potholes";
+
+  const selectedDomainReports = useMemo(() => {
+    if (isPotholesDomain) return potholeReports;
+    const all = Array.isArray(reports) ? reports : [];
+    return all.filter((r) => reportDomainForRow(r, officialIdSet) === adminReportDomain);
+  }, [isPotholesDomain, potholeReports, reports, officialIdSet, adminReportDomain]);
+
+  const potholeLastFixById = useMemo(() => {
+    const out = {};
+    const byId = actionsByLightId || {};
+    for (const [lid, acts] of Object.entries(byId)) {
+      if (!String(lid || "").startsWith("pothole:")) continue;
+      const pid = String(lid).slice("pothole:".length).trim();
+      if (!pid) continue;
+      for (const a of acts || []) {
+        if (String(a?.action || "").toLowerCase() !== "fix") continue;
+        const ts = Number(a?.ts || 0);
+        if (!Number.isFinite(ts) || ts <= 0) continue;
+        if (!out[pid] || ts > out[pid]) out[pid] = ts;
+      }
+    }
+    return out;
+  }, [actionsByLightId]);
+
   const renderedOfficialLights = useMemo(() => {
+    if (!isStreetlightsDomain) return [];
     const base = (Array.isArray(officialLights) ? officialLights : []).map(normalizeOfficialLightRow).filter(Boolean);
     if (!(isAdmin && openReportMapFilterOn)) return base;
     return base.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
-  }, [officialLights, isAdmin, openReportMapFilterOn, openReportOfficialIdSet]);
+  }, [officialLights, isStreetlightsDomain, isAdmin, openReportMapFilterOn, openReportOfficialIdSet]);
+
+  const nonStreetlightDomainMarkers = useMemo(() => {
+    if (isStreetlightsDomain) return [];
+    if (isPotholesDomain) {
+      const byId = new Map();
+      for (const p of potholes || []) {
+        if (!p?.id || !isValidLatLng(Number(p.lat), Number(p.lng))) continue;
+        byId.set(p.id, {
+          id: p.ph_id || `PH-${String(p.id).slice(0, 6)}`,
+          pothole_id: p.id,
+          lat: Number(p.lat),
+          lng: Number(p.lng),
+          count: 0,
+          lastTs: 0,
+          lastFixTs: Number(potholeLastFixById?.[String(p.id).trim()] || 0),
+          location_label: p.location_label || "",
+        });
+      }
+      for (const r of potholeReports || []) {
+        const pid = (r.pothole_id || "").trim();
+        if (!pid) continue;
+        const m = byId.get(pid);
+        if (!m) continue;
+        const lastFixTs = Number(m.lastFixTs || 0);
+        const ts = Number(r.ts || 0);
+        if (lastFixTs && ts <= lastFixTs) continue;
+        m.count += 1;
+        if (ts > m.lastTs) m.lastTs = ts;
+      }
+      return Array.from(byId.values()).sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+    }
+    const byLight = new Map();
+    for (const r of selectedDomainReports) {
+      const lat = Number(r.lat);
+      const lng = Number(r.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const lid = String(r.light_id || `${lat.toFixed(5)}:${lng.toFixed(5)}`).trim();
+      const prev = byLight.get(lid);
+      if (!prev) {
+        byLight.set(lid, { id: lid, lat, lng, count: 1, lastTs: Number(r.ts || 0) || 0 });
+      } else {
+        prev.count += 1;
+        if (Number(r.ts || 0) > prev.lastTs) prev.lastTs = Number(r.ts || 0);
+      }
+    }
+    return Array.from(byLight.values());
+  }, [isStreetlightsDomain, isPotholesDomain, potholes, potholeReports, selectedDomainReports, potholeLastFixById]);
 
   const viewerIdentityKey = useMemo(
     () => reporterIdentityKey({ session, profile, guestInfo }),
@@ -5473,12 +6736,55 @@ export default function App() {
     return viewerOpenOutageLightIdSet.has(lid) ? "#1e88e5" : "#fff";
   }, [viewerOpenOutageLightIdSet]);
 
+  const viewerReportedPotholeIdSet = useMemo(() => {
+    const out = new Set();
+    if (!viewerIdentityKey) return out;
+    for (const r of potholeReports || []) {
+      const pid = String(r?.pothole_id || "").trim();
+      if (!pid) continue;
+      if (reportIdentityKey(r) === viewerIdentityKey) out.add(pid);
+    }
+    return out;
+  }, [viewerIdentityKey, potholeReports]);
+
+  const renderedDomainMarkers = useMemo(() => {
+    if (!isPotholesDomain) return nonStreetlightDomainMarkers;
+    const isLoggedIn = Boolean(session?.user?.id);
+    const adminView = Boolean(isAdmin);
+    return (nonStreetlightDomainMarkers || [])
+      .map((m) => {
+        const pid = String(m?.pothole_id || "").trim();
+        const count = Number(m?.count || 0);
+        const userReported = pid ? viewerReportedPotholeIdSet.has(pid) : false;
+        if (adminView) {
+          if (count < 1) return null;
+          return {
+            ...m,
+            color: potholeColorFromCount(count),
+            ringColor: userReported ? "#1e88e5" : "#fff",
+            glyph: "🕳️",
+          };
+        }
+        const isPublic = count >= 2;
+        const isPrivateOwn = isLoggedIn && userReported && count === 1;
+        if (!isPublic && !isPrivateOwn) return null;
+        return {
+          ...m,
+          color: potholeColorFromCount(count),
+          ringColor: userReported ? "#1e88e5" : "#fff",
+          glyph: "🕳️",
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+  }, [isPotholesDomain, nonStreetlightDomainMarkers, viewerReportedPotholeIdSet, session?.user?.id, isAdmin]);
+
   const selectedOfficialLightForPopup = useMemo(() => {
-    if (bulkMode) return null;
+    if (bulkMode || !isStreetlightsDomain) return null;
     const id = (selectedOfficialId || "").trim();
     if (!id) return null;
     return (officialLights || []).find((x) => (x.id || "").trim() === id) || null;
-  }, [bulkMode, selectedOfficialId, officialLights]);
+  }, [bulkMode, isStreetlightsDomain, selectedOfficialId, officialLights]);
 
   const selectedOfficialPopupPixel = useMemo(() => {
     const ol = selectedOfficialLightForPopup;
@@ -5486,12 +6792,49 @@ export default function App() {
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(ol.lat, ol.lng) || null;
   }, [selectedOfficialLightForPopup, mapCenter, mapZoom, mapInteracting]);
 
+  const selectedPotholeInfo = useMemo(() => {
+    if (!(isAdmin && adminReportDomain === "potholes" && selectedDomainMarker)) return null;
+    const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+    if (!pid) return null;
+    const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
+    const rows = (potholeReports || [])
+      .filter((r) => String(r?.pothole_id || "").trim() === pid)
+      .filter((r) => Number(r?.ts || 0) > lastFixTs)
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const latest = rows[0] || null;
+    const addrFromNote = readAddressFromNote(latest?.note);
+    const landmarkFromNote = readLandmarkFromNote(latest?.note);
+    const baseLocation =
+      String(selectedDomainMarker?.location_label || "").trim() ||
+      addrFromNote ||
+      readLocationFromNote(latest?.note) ||
+      (Number.isFinite(Number(selectedDomainMarker?.lat)) && Number.isFinite(Number(selectedDomainMarker?.lng))
+        ? `${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`
+        : "Location unavailable");
+    const locationLabel =
+      landmarkFromNote ? `${baseLocation} (Near: ${landmarkFromNote})` : baseLocation;
+    return {
+      openCount: rows.length,
+      locationLabel,
+    };
+  }, [isAdmin, adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById]);
+
   useEffect(() => {
+    if (!isStreetlightsDomain) {
+      if (selectedOfficialId) setSelectedOfficialId(null);
+      return;
+    }
     if (!(isAdmin && openReportMapFilterOn)) return;
     const id = (selectedOfficialId || "").trim();
     if (!id) return;
     if (!openReportOfficialIdSet.has(id)) setSelectedOfficialId(null);
-  }, [isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
+  }, [isStreetlightsDomain, isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
+
+  useEffect(() => {
+    if (adminReportDomain !== "potholes" && selectedDomainMarker) {
+      setSelectedDomainMarker(null);
+    }
+  }, [adminReportDomain, selectedDomainMarker]);
 
 
   const selectedQueuedLightForPopup = useMemo(() => {
@@ -5731,15 +7074,76 @@ export default function App() {
     [reports, officialIdSet]
   );
 
+  const myReportDomainCounts = useMemo(() => {
+    const uid = session?.user?.id;
+    const empty = { streetlights: 0, potholes: 0, power_outage: 0, water_main: 0 };
+    if (!uid) return empty;
+
+    const counts = { ...empty };
+    for (const r of reports || []) {
+      if (r?.reporter_user_id !== uid) continue;
+      const domain = reportDomainForRow(r, officialIdSet);
+      if (Object.prototype.hasOwnProperty.call(counts, domain)) counts[domain] += 1;
+    }
+    for (const r of potholeReports || []) {
+      if (r?.reporter_user_id !== uid) continue;
+      counts.potholes += 1;
+    }
+    return counts;
+  }, [session?.user?.id, reports, potholeReports, officialIdSet]);
+
   const myReportsByLight = useMemo(() => {
     const uid = session?.user?.id;
     if (!uid) return [];
 
+    if (myReportsDomain === "potholes") {
+      const potholeById = new Map((potholes || []).map((p) => [String(p?.id || "").trim(), p]));
+      const totalByPotholeId = new Map();
+      for (const row of potholeReports || []) {
+        const pid = String(row?.pothole_id || "").trim();
+        if (!pid) continue;
+        totalByPotholeId.set(pid, (totalByPotholeId.get(pid) || 0) + 1);
+      }
+
+      const mineRows = (potholeReports || []).filter((r) => r?.reporter_user_id === uid);
+      const map = new Map(); // potholeId -> rows
+      for (const r of mineRows) {
+        const pid = String(r?.pothole_id || "").trim();
+        if (!pid) continue;
+        if (!map.has(pid)) map.set(pid, []);
+        map.get(pid).push(r);
+      }
+
+      const groups = Array.from(map.entries()).map(([pid, rows]) => {
+        rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        const p = potholeById.get(pid);
+        const avg = rows.reduce(
+          (acc, r) => ({ lat: acc.lat + Number(r?.lat || 0), lng: acc.lng + Number(r?.lng || 0) }),
+          { lat: 0, lng: 0 }
+        );
+        const n = rows.length || 1;
+        return {
+          domainKey: "potholes",
+          lightId: `potholes:${pid}`,
+          displayId: String(p?.ph_id || "").trim() || pid,
+          center: Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))
+            ? { lat: Number(p.lat), lng: Number(p.lng), isOfficial: false }
+            : { lat: avg.lat / n, lng: avg.lng / n, isOfficial: false },
+          mineRows: rows,
+          totalCount: Number(totalByPotholeId.get(pid) || rows.length || 0),
+          lastTs: rows?.[0]?.ts || 0,
+        };
+      });
+
+      groups.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+      return groups;
+    }
+
     // reports you already store are normalized as:
     // { id, lat, lng, type, note, ts, light_id }
-    const mine = reports.filter((r) => r.reporter_user_id === uid); 
-    // ⚠️ If your local `reports` state does NOT include reporter_user_id,
-    // we’ll fix that in step 3 (small patch).
+    const mine = reports.filter((r) => (
+      r.reporter_user_id === uid && reportDomainForRow(r, officialIdSet) === myReportsDomain
+    ));
 
     const map = new Map(); // lightId -> array of reports
     for (const r of mine) {
@@ -5755,14 +7159,16 @@ export default function App() {
 
     // return list sorted by most recent activity in that light
     const groups = Array.from(map.entries()).map(([lightId, mineRows]) => ({
+      domainKey: myReportsDomain,
       lightId,
       mineRows,
       lastTs: mineRows?.[0]?.ts || 0,
+      totalCount: mineRows?.length || 0,
     }));
 
     groups.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
     return groups;
-  }, [session?.user?.id, reports]);
+  }, [session?.user?.id, reports, potholeReports, potholes, officialIdSet, myReportsDomain]);
 
   const openReportsByLight = useMemo(() => {
     // "Open" means: reports exist since last fix (or ever, if never fixed)
@@ -5800,6 +7206,25 @@ export default function App() {
     groups.sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
     return groups;
   }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
+
+  const openReportsInViewCount = useMemo(() => {
+    const list = isStreetlightsDomain
+      ? (Array.isArray(openReportsByLight) ? openReportsByLight : [])
+      : (Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : []);
+    if (!list.length) return 0;
+    if (!mapBounds) return list.length;
+    let count = 0;
+    for (const g of list) {
+      const coords = isStreetlightsDomain
+        ? getCoordsForLightId(g.lightId, reports, officialLights)
+        : { lat: g.lat, lng: g.lng };
+      const lat = Number(coords?.lat);
+      const lng = Number(coords?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      if (isPointInBounds(lat, lng, mapBounds)) count += 1;
+    }
+    return count;
+  }, [isStreetlightsDomain, openReportsByLight, renderedDomainMarkers, mapBounds, reports, officialLights]);
 
   // -------------------------
   // Google Maps marker status helper
@@ -5913,6 +7338,7 @@ export default function App() {
   function closeAnyPopup() {
     // Google Maps InfoWindow (official)
     try { setSelectedOfficialId(null); } catch {}
+    try { setSelectedDomainMarker(null); } catch {}
 
     // ✅ queued marker popup
     try { setSelectedQueuedTempId(null); } catch {}
@@ -5942,6 +7368,290 @@ export default function App() {
     setContactChoiceOpen(true);
   }
 
+  async function reverseGeocodeRoadLabel(lat, lng) {
+    const fallbackLabel = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+    const distanceMeters = (aLat, aLng, bLat, bLng) => {
+      const R = 6371000;
+      const toRad = (v) => (v * Math.PI) / 180;
+      const dLat = toRad(bLat - aLat);
+      const dLng = toRad(bLng - aLng);
+      const aa =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+      return R * c;
+    };
+
+    const geocodeAddressAt = async (qlat, qlng) => {
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        const res = await new Promise((resolve) => {
+          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
+            resolve({ results: Array.isArray(results) ? results : [], status });
+          });
+        });
+        if (res.status !== "OK" || !res.results.length) return "";
+        const ranked = res.results.find((r) => {
+          const t = Array.isArray(r?.types) ? r.types : [];
+          const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+          const hasStreetNo = comps.some((c) => (Array.isArray(c?.types) ? c.types : []).includes("street_number"));
+          const hasRoute = comps.some((c) => (Array.isArray(c?.types) ? c.types : []).includes("route"));
+          const hasPremise = comps.some((c) => {
+            const ct = Array.isArray(c?.types) ? c.types : [];
+            return ct.includes("premise") || ct.includes("subpremise");
+          });
+          return t.includes("street_address") || (hasStreetNo && hasRoute) || (hasPremise && hasRoute);
+        });
+        return String(ranked?.formatted_address || "").trim();
+      } catch {
+        return "";
+      }
+    };
+
+    const lookupNearestLandmark = async (qlat, qlng) => {
+      try {
+        const placesNS = window.google?.maps?.places;
+        if (!placesNS?.PlacesService) return "";
+        const service = new placesNS.PlacesService(document.createElement("div"));
+
+        const nearbyByType = async (type) =>
+          new Promise((resolve) => {
+            service.nearbySearch(
+              {
+                location: { lat: qlat, lng: qlng },
+                radius: 152, // ~500 ft
+                type,
+              },
+              (results, status) => {
+                resolve({
+                  results: Array.isArray(results) ? results : [],
+                  ok:
+                    status === placesNS.PlacesServiceStatus.OK ||
+                    status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
+                });
+              }
+            );
+          });
+
+        const candidates = [];
+        for (const type of ["establishment", "point_of_interest"]) {
+          const res = await nearbyByType(type);
+          if (!res.ok || !res.results.length) continue;
+          for (const r of res.results) {
+            const nm = String(r?.name || "").trim();
+            const rLat = Number(r?.geometry?.location?.lat?.());
+            const rLng = Number(r?.geometry?.location?.lng?.());
+            if (!nm || !Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+            candidates.push({ name: nm, d: distanceMeters(qlat, qlng, rLat, rLng) });
+          }
+          if (candidates.length) break;
+        }
+
+        if (candidates.length) {
+          candidates.sort((a, b) => a.d - b.d);
+          return candidates[0]?.name || "";
+        }
+
+        // Fallback 2: distance-ranked search without a strict type
+        const byDistance = await new Promise((resolve) => {
+          service.nearbySearch(
+            {
+              location: { lat: qlat, lng: qlng },
+              rankBy: placesNS.RankBy.DISTANCE,
+              keyword: "business",
+            },
+            (results, status) => {
+              resolve({
+                results: Array.isArray(results) ? results : [],
+                ok:
+                  status === placesNS.PlacesServiceStatus.OK ||
+                  status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
+              });
+            }
+          );
+        });
+        if (byDistance.ok && byDistance.results.length) {
+          const named = byDistance.results
+            .map((r) => String(r?.name || "").trim())
+            .filter(Boolean);
+          if (named.length) return named[0];
+        }
+
+        // Fallback: geocoder sometimes includes place names (premise/establishment)
+        const geocoder = new window.google.maps.Geocoder();
+        const geo = await new Promise((resolve) => {
+          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
+            resolve({ results: Array.isArray(results) ? results : [], status });
+          });
+        });
+        if (geo.status !== "OK" || !geo.results.length) return "";
+        for (const r of geo.results) {
+          const t = Array.isArray(r?.types) ? r.types : [];
+          if (!t.includes("establishment") && !t.includes("point_of_interest") && !t.includes("premise")) continue;
+          const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+          const namedComp = comps.find((c) => {
+            const ct = Array.isArray(c?.types) ? c.types : [];
+            return ct.includes("establishment") || ct.includes("point_of_interest") || ct.includes("premise");
+          });
+          const compName = String(namedComp?.long_name || "").trim();
+          if (compName && !/^\d+\s/.test(compName)) return compName;
+          const formatted = String(r?.formatted_address || "").trim();
+          const firstChunk = formatted.split(",")[0]?.trim() || "";
+          if (firstChunk && !/^\d+\s/.test(firstChunk)) return firstChunk;
+        }
+        return "";
+      } catch {
+        return "";
+      }
+    };
+
+    // 1) Roads API nearest-road snap (deterministic road check)
+    try {
+      if (GMAPS_KEY) {
+        const points = `${lat},${lng}`;
+
+        const resp = await fetch(
+          `https://roads.googleapis.com/v1/nearestRoads?points=${encodeURIComponent(points)}&key=${encodeURIComponent(GMAPS_KEY)}`
+        );
+
+        if (resp.ok) {
+          const json = await resp.json();
+          const snapped = Array.isArray(json?.snappedPoints) ? json.snappedPoints : [];
+          if (snapped.length) {
+            let best = null;
+            for (const sp of snapped) {
+              const slat = Number(sp?.location?.latitude);
+              const slng = Number(sp?.location?.longitude);
+              if (!Number.isFinite(slat) || !Number.isFinite(slng)) continue;
+              const dMeters = distanceMeters(lat, lng, slat, slng);
+              if (!best || dMeters < best.distance) best = { lat: slat, lng: slng, distance: dMeters };
+            }
+            if (best) {
+              const isRoad = best.distance <= POTHOLE_ROAD_HIT_METERS;
+              const nearestAddress = (await geocodeAddressAt(best.lat, best.lng)) || "";
+              const nearestLandmark = await lookupNearestLandmark(best.lat, best.lng);
+              return {
+                isRoad,
+                label: nearestAddress || fallbackLabel,
+                nearestAddress,
+                nearestLandmark,
+                snappedLat: best.lat,
+                snappedLng: best.lng,
+                distance: best.distance,
+                validationUnavailable: false,
+              };
+            }
+          }
+        }
+      }
+    } catch {
+      // fall through to geocoder fallback
+    }
+
+    // 2) Geocoder fallback
+    try {
+      const geocoder = new window.google.maps.Geocoder();
+      const geocodeOnce = (qlat, qlng) =>
+        new Promise((resolve) => {
+          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
+            resolve({ results: Array.isArray(results) ? results : [], status });
+          });
+        });
+
+      const isRoadLikeResult = (r) => {
+        const t = Array.isArray(r?.types) ? r.types : [];
+        if (
+          t.includes("route") ||
+          t.includes("street_address") ||
+          t.includes("intersection") ||
+          t.includes("range_interpolated")
+        ) {
+          return true;
+        }
+        const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+        return comps.some((c) => {
+          const ct = Array.isArray(c?.types) ? c.types : [];
+          return ct.includes("route");
+        });
+      };
+
+      const probes = [
+        [lat, lng],
+        [lat + 0.0001, lng],
+        [lat - 0.0001, lng],
+        [lat, lng + 0.0001],
+        [lat, lng - 0.0001],
+      ];
+
+      let best = null;
+      let bestLabel = "";
+      let gotAnyResults = false;
+
+      for (const [plat, plng] of probes) {
+        const { results, status } = await geocodeOnce(plat, plng);
+        if (status !== "OK" || !results.length) continue;
+        gotAnyResults = true;
+        for (const r of results) {
+          if (!isRoadLikeResult(r)) continue;
+          const rLat = Number(r?.geometry?.location?.lat?.());
+          const rLng = Number(r?.geometry?.location?.lng?.());
+          if (!Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+          const dMeters = distanceMeters(lat, lng, rLat, rLng);
+          if (!best || dMeters < best.distance) {
+            best = { lat: rLat, lng: rLng, distance: dMeters };
+            const maybe = String(r?.formatted_address || "").trim();
+            if (maybe) bestLabel = maybe;
+          }
+        }
+      }
+
+      if (best) {
+        const nearestAddress = bestLabel || "";
+        const nearestLandmark = await lookupNearestLandmark(best.lat, best.lng);
+        return {
+          isRoad: best.distance <= POTHOLE_ROAD_HIT_METERS,
+          label: nearestAddress || fallbackLabel,
+          nearestAddress,
+          nearestLandmark,
+          snappedLat: best.lat,
+          snappedLng: best.lng,
+          distance: best.distance,
+          validationUnavailable: false,
+        };
+      }
+
+      if (gotAnyResults) {
+        const nearestAddress = bestLabel || "";
+        const nearestLandmark = await lookupNearestLandmark(lat, lng);
+        return {
+          isRoad: false,
+          label: nearestAddress || fallbackLabel,
+          nearestAddress,
+          nearestLandmark,
+          snappedLat: null,
+          snappedLng: null,
+          distance: Infinity,
+          validationUnavailable: false,
+        };
+      }
+    } catch {
+      // handled below as unavailable
+    }
+
+    // 3) If validation services are unavailable, allow but mark uncertain.
+    return {
+      isRoad: true,
+      label: fallbackLabel,
+      nearestAddress: "",
+      nearestLandmark: "",
+      snappedLat: lat,
+      snappedLng: lng,
+      distance: Infinity,
+      validationUnavailable: true,
+    };
+  }
+
   function resumePendingGuestAction() {
     const action = pendingGuestAction;
     if (!action) return;
@@ -5956,8 +7666,257 @@ export default function App() {
         submitBulkReports();
         return;
       }
+      if (action.kind === "domain") {
+        submitDomainReport();
+        return;
+      }
       submitReport();
     }, 0);
+  }
+
+  async function sendPotholeEmailNotice({
+    potholeCode,
+    reportNumber,
+    notes,
+    lat,
+    lng,
+    closestAddress,
+    closestLandmark,
+    submittedAtIso,
+    reporter,
+  }) {
+    try {
+      await supabase.functions.invoke("email-pothole-report", {
+        body: {
+          title: "Attention Public Works, Pothole report",
+          potholeCode: String(potholeCode || "").trim(),
+          reportNumber: String(reportNumber || "").trim(),
+          notes: String(notes || "").trim(),
+          location: {
+            lat: Number(lat),
+            lng: Number(lng),
+            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+          },
+          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+          reporter: {
+            type: reporter?.type === "guest" ? "guest" : "user",
+            userId: reporter?.userId || null,
+            name: String(reporter?.name || "").trim() || "Unknown",
+            email: String(reporter?.email || "").trim() || "Not provided",
+            phone: String(reporter?.phone || "").trim() || "Not provided",
+          },
+        },
+      });
+    } catch (e) {
+      console.warn("[pothole email notice] invoke failed:", e?.message || e);
+    }
+  }
+
+  async function submitDomainReport() {
+    const target = domainReportTarget;
+    if (!target || saving) return;
+    if (target.domain === "potholes" && !potholeConsentChecked) {
+      openNotice(
+        "⚠️",
+        "Consent required",
+        "Please confirm authorization to submit your pothole report and contact information."
+      );
+      return;
+    }
+
+    const isAuthed = Boolean(session?.user?.id);
+    const usingGuestBypass = !isAuthed && guestSubmitBypassRef.current;
+    if (!isAuthed && !usingGuestBypass) {
+      requestGuestChallenge("domain");
+      return;
+    }
+    const guestSource = usingGuestBypass ? guestInfoDraft : guestInfo;
+    if (usingGuestBypass) guestSubmitBypassRef.current = false;
+
+    const authedEmail = session?.user?.email || "";
+    const authedName =
+      (profile?.full_name || "").trim() ||
+      (session?.user?.user_metadata?.full_name || "").trim() ||
+      (authedEmail ? authedEmail.split("@")[0] : "User");
+    const name = isAuthed ? authedName : (guestSource.name || "");
+    const phone = isAuthed ? (profile?.phone || "") : (guestSource.phone || "");
+    const email = isAuthed ? ((profile?.email || authedEmail) || "") : (guestSource.email || "");
+
+    if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+      requestGuestChallenge("domain");
+      openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting.");
+      return;
+    }
+
+    setSaving(true);
+
+    if (target.domain === "potholes") {
+      let potholeId = (target.pothole_id || "").trim();
+      let phId = (target.lightId || "").trim();
+      const potholeAddress =
+        String(target.nearestAddress || "").trim() || "Address unavailable";
+      const potholeLandmark = String(target.nearestLandmark || "").trim();
+
+      if (!potholeId) {
+        const nearest = nearestPotholeForPoint(target.lat, target.lng, potholes, POTHOLE_MERGE_RADIUS_METERS);
+        if (nearest?.id) {
+          potholeId = nearest.id;
+          phId = nearest.ph_id || phId;
+        }
+      }
+
+      if (!potholeId) {
+        const insPothole = await supabase
+          .from("potholes")
+          .insert([{
+            ph_id: phId || makePotholeIdFromCoords(target.lat, target.lng),
+            lat: target.lat,
+            lng: target.lng,
+            location_label: potholeAddress || null,
+            created_by: session?.user?.id || null,
+          }])
+          .select("id, ph_id, lat, lng, location_label")
+          .single();
+        if (insPothole.error) {
+          setSaving(false);
+          console.error(insPothole.error);
+          openNotice("⚠️", "Couldn’t submit", insPothole.error?.message || "Failed to create pothole location.");
+          return;
+        }
+        potholeId = insPothole.data?.id;
+        phId = (insPothole.data?.ph_id || phId || "").trim();
+        if (potholeId) {
+          setPotholes((prev) => {
+            const incoming = {
+              id: potholeId,
+              ph_id: phId || null,
+              lat: Number(insPothole.data?.lat),
+              lng: Number(insPothole.data?.lng),
+              location_label: (insPothole.data?.location_label || "").trim() || null,
+            };
+            if (!incoming.id || !isValidLatLng(incoming.lat, incoming.lng)) return prev;
+            if (prev.some((x) => x.id === incoming.id)) return prev;
+            return [...prev, incoming];
+          });
+        }
+      }
+
+      const potholeReportPayload = {
+        pothole_id: potholeId,
+        lat: target.lat,
+        lng: target.lng,
+        note: [
+          `Address: ${potholeAddress}`,
+          `Landmark: ${potholeLandmark || "No nearby landmark"}`,
+          domainReportNote.trim() || null,
+        ]
+          .filter(Boolean)
+          .join(" | "),
+        reporter_user_id: isAuthed ? session.user.id : null,
+        reporter_name: name.trim(),
+        reporter_phone: phone.trim() || null,
+        reporter_email: email.trim() || null,
+      };
+
+      const insReport = await supabase
+        .from("pothole_reports")
+        .insert([potholeReportPayload])
+        .select("*")
+        .single();
+
+      setSaving(false);
+      if (insReport.error) {
+        console.error(insReport.error);
+        openNotice("⚠️", "Couldn’t submit", insReport.error?.message || "Failed to submit pothole report.");
+        return;
+      }
+
+      const saved = {
+        id: insReport.data?.id,
+        pothole_id: insReport.data?.pothole_id || potholeId,
+        lat: Number(insReport.data?.lat),
+        lng: Number(insReport.data?.lng),
+        note: insReport.data?.note || potholeReportPayload.note || "",
+        report_number: insReport.data?.report_number || null,
+        ts: new Date(insReport.data?.created_at).getTime(),
+        reporter_user_id: insReport.data?.reporter_user_id || null,
+        reporter_name: insReport.data?.reporter_name || null,
+        reporter_phone: insReport.data?.reporter_phone || null,
+        reporter_email: insReport.data?.reporter_email || null,
+      };
+      if (saved.id) {
+        setPotholeReports((prev) => (prev.some((x) => x.id === saved.id) ? prev : [saved, ...prev]));
+      }
+
+      const submittedAtIso = insReport.data?.created_at || new Date().toISOString();
+      sendPotholeEmailNotice({
+        potholeCode: phId || target.lightId || saved.pothole_id || "Pothole",
+        reportNumber: insReport.data?.report_number || saved.report_number || "",
+        notes: insReport.data?.note || potholeReportPayload.note || "",
+        lat: Number(insReport.data?.lat ?? target.lat),
+        lng: Number(insReport.data?.lng ?? target.lng),
+        closestAddress: potholeAddress,
+        closestLandmark: potholeLandmark || "No nearby landmark",
+        submittedAtIso,
+        reporter: {
+          type: isAuthed ? "user" : "guest",
+          userId: isAuthed ? (session?.user?.id || null) : null,
+          name: name.trim(),
+          email: email.trim(),
+          phone: phone.trim(),
+        },
+      });
+    } else {
+      const payload = {
+        lat: target.lat,
+        lng: target.lng,
+        report_type: "other",
+        report_quality: "bad",
+        note: [`Location: ${target.locationLabel || `${target.lat.toFixed(5)}, ${target.lng.toFixed(5)}`}`, domainReportNote.trim() || null]
+          .filter(Boolean)
+          .join(" | "),
+        light_id: target.lightId,
+        reporter_user_id: isAuthed ? session.user.id : null,
+        reporter_name: name.trim(),
+        reporter_phone: phone.trim() || null,
+        reporter_email: email.trim() || null,
+      };
+
+      const { data, error: insErr } = await insertReportWithFallback(payload);
+      setSaving(false);
+
+      if (insErr) {
+        console.error(insErr);
+        openNotice("⚠️", "Couldn’t submit", insErr?.message || "Failed to submit report.");
+        return;
+      }
+
+      const saved = {
+        id: data.id,
+        lat: data.lat,
+        lng: data.lng,
+        type: data.report_type,
+        report_quality: normalizeReportQuality(data.report_quality) || "bad",
+        note: data.note || "",
+        ts: new Date(data.created_at).getTime(),
+        light_id: data.light_id || target.lightId,
+        report_number: data.report_number || null,
+        reporter_user_id: data.reporter_user_id || null,
+        reporter_name: data.reporter_name || null,
+        reporter_phone: data.reporter_phone || null,
+        reporter_email: data.reporter_email || null,
+      };
+      setReports((prev) => [saved, ...prev]);
+    }
+
+    if (!isAuthed) clearGuestContact();
+    setDomainReportNote("");
+    setPotholeConsentChecked(false);
+    setDomainReportTarget(null);
+    openNotice("✅", "Reported", `${target.domainLabel || "Issue"} reported successfully.`);
   }
 
 
@@ -6301,6 +8260,7 @@ async function insertReportWithFallback(payload) {
       note: data.note || "",
       ts: new Date(data.created_at).getTime(),
       light_id: data.light_id || lightId,
+      report_number: data.report_number || null,
 
       reporter_user_id: data.reporter_user_id || null,
       reporter_name: data.reporter_name || null,
@@ -6544,6 +8504,7 @@ async function insertReportWithFallback(payload) {
       note: data.note || "",
       ts: new Date(data.created_at).getTime(),
       light_id: data.light_id || lightId,
+      report_number: data.report_number || null,
 
       reporter_user_id: data.reporter_user_id || null,
       reporter_name: data.reporter_name || null,
@@ -6890,12 +8851,14 @@ async function insertReportWithFallback(payload) {
 
     try {
       if (map.moveCamera) {
-        map.moveCamera({
+        const camera = {
           center: { lat, lng },
           zoom: targetZoom,
-          heading: hasHeading ? headingNum : (map.getHeading?.() || 0),
           tilt: 0,
-        });
+        };
+        // Preserve heading while stopped or when heading is unavailable.
+        if (hasHeading) camera.heading = headingNum;
+        map.moveCamera(camera);
       } else {
         map.setCenter?.({ lat, lng });
         map.setZoom?.(targetZoom);
@@ -6916,13 +8879,6 @@ async function insertReportWithFallback(payload) {
     if (followRafRef.current) return;
 
     const step = () => {
-      const now = Date.now();
-      if (followLastFrameAtRef.current && (now - followLastFrameAtRef.current) < 33) {
-        followRafRef.current = requestAnimationFrame(step);
-        return;
-      }
-      followLastFrameAtRef.current = now;
-
       const map = mapRef.current;
       const target = followTargetRef.current;
       if (!map || !target || !followCamera) {
@@ -6930,94 +8886,27 @@ async function insertReportWithFallback(payload) {
         return;
       }
 
-      let targetLat = Number(target.lat);
-      let targetLng = Number(target.lng);
+      const targetLat = Number(target.lat);
+      const targetLng = Number(target.lng);
       let targetHeading = Number(target.heading);
       if (!followHeadingEnabledRef.current) targetHeading = NaN;
 
-      const motion = liveMotionRef.current;
-      const motionLat = Number(motion?.lat);
-      const motionLng = Number(motion?.lng);
-      const motionHeading = Number(motion?.heading);
-      const motionSpeed = Number(motion?.speed);
-      const motionTs = Number(motion?.ts);
-      const headingFreezeMps = 1.6; // ~3.6 mph
-      const headingHeavyDampMps = 3.6; // ~8 mph
-
-      if (Number.isFinite(motionSpeed) && motionSpeed < headingFreezeMps) {
-        targetHeading = NaN;
-      }
-
-      if (
-        Number.isFinite(motionLat) &&
-        Number.isFinite(motionLng) &&
-        Number.isFinite(motionHeading) &&
-        Number.isFinite(motionSpeed) &&
-        motionSpeed > 2.5 &&
-        Number.isFinite(motionTs)
-      ) {
-        const elapsedSec = Math.max(0, (Date.now() - motionTs) / 1000);
-        const predictSec = clamp(elapsedSec, 0, 0.55);
-        const predictMeters = clamp(motionSpeed * predictSec, 0, 12);
-
-        if (predictMeters > 0.5) {
-          const predicted = destinationPointMeters(
-            { lat: motionLat, lng: motionLng },
-            predictMeters,
-            motionHeading
-          );
-          const predictBlend = clamp(motionSpeed / 20, 0.2, 0.55);
-          targetLat = targetLat + (predicted.lat - targetLat) * predictBlend;
-          targetLng = targetLng + (predicted.lng - targetLng) * predictBlend;
-          if (!Number.isFinite(targetHeading)) targetHeading = motionHeading;
-        }
-      }
-
-      const curCenter = map.getCenter?.();
-      const curLat = Number(curCenter?.lat?.() ?? targetLat);
-      const curLng = Number(curCenter?.lng?.() ?? targetLng);
-      const distToTarget = metersBetween(
-        { lat: curLat, lng: curLng },
-        { lat: targetLat, lng: targetLng }
-      );
-
-      const centerAlpha = distToTarget > 25 ? 0.34 : distToTarget > 8 ? 0.22 : 0.14;
-      const nextLat = curLat + (targetLat - curLat) * centerAlpha;
-      const nextLng = curLng + (targetLng - curLng) * centerAlpha;
-
-      let nextHeading = Number(map.getHeading?.());
-      if (!Number.isFinite(nextHeading)) nextHeading = 0;
-
-      if (Number.isFinite(targetHeading) && followHeadingEnabledRef.current) {
-        const delta = ((targetHeading - nextHeading + 540) % 360) - 180;
-        const rotateAlpha =
-          motionSpeed >= 12 ? 0.18 :
-          motionSpeed >= 6 ? 0.14 :
-          motionSpeed >= headingHeavyDampMps ? 0.10 : 0.08;
-        const rotateDeadband =
-          motionSpeed >= 12 ? 3 :
-          motionSpeed >= 6 ? 5 :
-          motionSpeed >= headingHeavyDampMps ? 8 : 12;
-        if (Math.abs(delta) >= rotateDeadband) {
-          nextHeading = (nextHeading + delta * rotateAlpha + 360) % 360;
-        }
-      }
-
       moveFollowCamera({
-        lat: nextLat,
-        lng: nextLng,
-        heading: Number.isFinite(targetHeading) ? nextHeading : null,
+        lat: targetLat,
+        lng: targetLng,
+        heading: Number.isFinite(targetHeading) ? targetHeading : null,
         syncState: false,
       });
 
-      if (now - lastFollowStateSyncRef.current >= 180) {
-        setMapCenter({ lat: nextLat, lng: nextLng });
+      const now = Date.now();
+      if (now - lastFollowStateSyncRef.current >= 120) {
+        setMapCenter({ lat: targetLat, lng: targetLng });
         const z = Number(map.getZoom?.() ?? mapZoomRef.current);
         if (Number.isFinite(z)) setMapZoom(Math.round(z));
         lastFollowStateSyncRef.current = now;
       }
 
-      followRafRef.current = requestAnimationFrame(step);
+      followRafRef.current = null;
     };
 
     followRafRef.current = requestAnimationFrame(step);
@@ -7185,16 +9074,16 @@ async function insertReportWithFallback(payload) {
           } else {
             const speedForSmoothing = Number.isFinite(speedMps) ? speedMps : 0;
             const headingAlpha =
-              speedForSmoothing >= 12 ? 0.28 :
-              speedForSmoothing >= 6 ? 0.22 :
-              speedForSmoothing >= headingHeavyDampMps ? 0.14 :
-              0.08;
+              speedForSmoothing >= 12 ? 0.62 :
+              speedForSmoothing >= 6 ? 0.48 :
+              speedForSmoothing >= headingHeavyDampMps ? 0.32 :
+              0.20;
             const delta = ((heading - prev + 540) % 360) - 180;
             const headingDeadband =
-              speedForSmoothing >= 12 ? 2 :
-              speedForSmoothing >= 6 ? 3.5 :
-              speedForSmoothing >= headingHeavyDampMps ? 6 :
-              12;
+              speedForSmoothing >= 12 ? 0.8 :
+              speedForSmoothing >= 6 ? 1.2 :
+              speedForSmoothing >= headingHeavyDampMps ? 2 :
+              5;
             if (speedForSmoothing >= headingFreezeMps && Math.abs(delta) >= headingDeadband) {
               smoothedHeadingRef.current = (prev + delta * headingAlpha + 360) % 360;
             }
@@ -7300,6 +9189,7 @@ async function insertReportWithFallback(payload) {
   const { isLoaded, loadError } = useJsApiLoader({
     id: "google-map-script",
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+    libraries: GMAPS_LIBRARIES,
   });
 
   // Touch fallback: tap once, then quickly tap+hold and drag up/down to zoom.
@@ -7523,7 +9413,19 @@ async function insertReportWithFallback(payload) {
   };
 
   const canShowOfficialLightsByZoom = true;
-  const showOfficialLights = canShowOfficialLightsByZoom && (!mapInteracting || bulkMode);
+  const showOfficialLights = canShowOfficialLightsByZoom;
+  const adminDomainMeta =
+    REPORT_DOMAIN_OPTIONS.find((d) => d.key === adminReportDomain) || REPORT_DOMAIN_OPTIONS[0];
+  const domainMarkerColor = adminReportDomain === "potholes"
+    ? "#8e24aa"
+    : adminReportDomain === "power_outage"
+      ? "#d32f2f"
+      : adminReportDomain === "water_main"
+        ? "#1e88e5"
+        : "#111";
+  const inViewCounterColor = "var(--sl-ui-text)";
+  const inViewCounterBg = "var(--sl-ui-surface-bg)";
+  const inViewCounterBorder = "var(--sl-ui-surface-border)";
 
   useEffect(() => {
     mapZoomRef.current = mapZoom;
@@ -7542,6 +9444,27 @@ async function insertReportWithFallback(payload) {
     if (canShowOfficialLightsByZoom) return;
     if (selectedOfficialId) setSelectedOfficialId(null);
   }, [canShowOfficialLightsByZoom, selectedOfficialId]);
+
+  useEffect(() => {
+    if (isStreetlightsDomain) return;
+    if (bulkMode) {
+      setBulkMode(false);
+      clearBulkSelection();
+    }
+    if (mappingMode) {
+      setMappingMode(false);
+      setMappingQueue([]);
+    }
+    if (openReportMapFilterOn) setOpenReportMapFilterOn(false);
+    if (selectedOfficialId) setSelectedOfficialId(null);
+  }, [
+    isStreetlightsDomain,
+    bulkMode,
+    mappingMode,
+    openReportMapFilterOn,
+    selectedOfficialId,
+    clearBulkSelection,
+  ]);
 
   const beginMapInteraction = useCallback(() => {
     if (mapInteractIdleTimerRef.current) {
@@ -7722,6 +9645,18 @@ async function insertReportWithFallback(payload) {
           justify-items: end;
         }
 
+        .sl-map-tool-left {
+          position: fixed;
+          top: 50%;
+          left: 14px;
+          transform: translateY(-50%);
+          z-index: 2200;
+          pointer-events: auto;
+          display: grid;
+          gap: 8px;
+          justify-items: start;
+        }
+
         .sl-map-tool-btn {
           width: 44px;
           height: 44px;
@@ -7796,6 +9731,7 @@ async function insertReportWithFallback(payload) {
         onContinueGuest={() => {
           setAuthGateOpen(false);
           setAuthGateStep("welcome");
+          setSignupLegalAccepted(false);
         }}
 
         authEmail={authEmail}
@@ -7803,6 +9739,8 @@ async function insertReportWithFallback(payload) {
         authPassword={authPassword}
         setAuthPassword={setAuthPassword}
         authLoading={authLoading}
+        loginError={loginError}
+        clearLoginError={() => setLoginError("")}
         onOpenForgotPassword={openForgotPasswordModal}
         onLogin={async () => {
           const ok = await signIn();
@@ -7823,7 +9761,21 @@ async function insertReportWithFallback(payload) {
         signupPassword2={signupPassword2}
         setSignupPassword2={setSignupPassword2}
         signupLoading={signupLoading}
+        signupLegalAccepted={signupLegalAccepted}
+        setSignupLegalAccepted={setSignupLegalAccepted}
+        onOpenTerms={() => setTermsOpen(true)}
+        onOpenPrivacy={() => setPrivacyOpen(true)}
         onCreateAccount={handleCreateAccount}
+      />
+
+      <TermsOfUseModal
+        open={termsOpen}
+        onClose={() => setTermsOpen(false)}
+      />
+
+      <PrivacyPolicyModal
+        open={privacyOpen}
+        onClose={() => setPrivacyOpen(false)}
       />
 
       <ForgotPasswordModal
@@ -7927,7 +9879,7 @@ async function insertReportWithFallback(payload) {
             Place them before turning mapping off?
           </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
             <button
               type="button"
               onClick={async () => {
@@ -8037,6 +9989,60 @@ async function insertReportWithFallback(payload) {
         </div>
       </ModalShell>
 
+      <ModalShell open={potholeAdvisoryOpen} zIndex={10013}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 950, fontSize: 16 }}>🚨 Pothole Reporting Notice</div>
+
+          <div style={{ fontSize: 15, opacity: 0.95, lineHeight: 1.45 }}>
+            If you need to report damage to your vehicle from a pothole, you will need to file a police report as soon as possible, then bring this information to the City Manager's Office.
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = pendingPotholeDomainTarget;
+                setPotholeAdvisoryOpen(false);
+                setPendingPotholeDomainTarget(null);
+                if (!next) return;
+                setDomainReportTarget(next);
+                setDomainReportNote("");
+              }}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "none",
+                background: "#1976d2",
+                color: "white",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              OK
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPotholeAdvisoryOpen(false);
+                setPendingPotholeDomainTarget(null);
+              }}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
       <ConfirmReportModal
         open={Boolean(activeLight) || bulkConfirmOpen}
         onCancel={() => {
@@ -8059,6 +10065,24 @@ async function insertReportWithFallback(payload) {
         note={note}
         setNote={setNote}
         saving={saving}
+      />
+
+      <DomainReportModal
+        open={Boolean(domainReportTarget)}
+        domain={domainReportTarget?.domain || ""}
+        domainLabel={domainReportTarget?.domainLabel || "Issue"}
+        locationLabel={domainReportTarget?.locationLabel || ""}
+        note={domainReportNote}
+        setNote={setDomainReportNote}
+        consentChecked={potholeConsentChecked}
+        setConsentChecked={setPotholeConsentChecked}
+        saving={saving}
+        onCancel={() => {
+          setDomainReportTarget(null);
+          setDomainReportNote("");
+          setPotholeConsentChecked(false);
+        }}
+        onSubmit={submitDomainReport}
       />
 
       <ModalShell open={isWorkingConfirmOpen} zIndex={10012}>
@@ -8162,6 +10186,10 @@ async function insertReportWithFallback(payload) {
         open={allReportsModal.open}
         title={allReportsModal.title}
         items={allReportsModal.items}
+        domainKey={allReportsModal.domainKey}
+        sharedLocation={allReportsModal.sharedLocation}
+        sharedAddress={allReportsModal.sharedAddress}
+        sharedLandmark={allReportsModal.sharedLandmark}
         onClose={closeAllReports}
         onReporterDetails={openReporterDetails}
       />
@@ -8175,6 +10203,12 @@ async function insertReportWithFallback(payload) {
       <MyReportsModal
         open={myReportsOpen}
         onClose={closeMyReports}
+        activeDomain={myReportsDomain}
+        onSelectDomain={(domainKey) => {
+          setMyReportsDomain(domainKey);
+          setMyReportsExpanded(new Set());
+        }}
+        domainCounts={myReportDomainCounts}
         groups={myReportsByLight}
         expandedSet={myReportsExpanded}
         onToggleExpand={toggleMyReportsExpanded}
@@ -8192,7 +10226,36 @@ async function insertReportWithFallback(payload) {
       <OpenReportsModal
         open={openReportsOpen}
         onClose={closeOpenReports}
-        groups={openReportsByLight}
+        isAdmin={isAdmin}
+        activeDomain={adminReportDomain}
+        onSelectDomain={setAdminReportDomain}
+        groups={
+          adminReportDomain === "streetlights"
+            ? openReportsByLight
+            : adminReportDomain === "potholes"
+              ? nonStreetlightDomainMarkers
+                  .filter((m) => Number(m?.count || 0) > 0)
+                  .map((m) => ({
+                  lightId: m.id,
+                  count: m.count,
+                  lastTs: m.lastTs,
+                  rows: (potholeReports || [])
+                    .filter((r) => String(r.pothole_id || "").trim() === String(m.pothole_id || "").trim())
+                    .filter((r) => Number(r?.ts || 0) > Number(m?.lastFixTs || 0))
+                    .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+                  lat: m.lat,
+                  lng: m.lng,
+                  location_label: m.location_label || "",
+                }))
+            : nonStreetlightDomainMarkers.map((m) => ({
+                lightId: m.id,
+                count: m.count,
+                lastTs: m.lastTs,
+                rows: selectedDomainReports
+                  .filter((r) => String(r.light_id || "").trim() === m.id)
+                  .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+              }))
+        }
         expandedSet={openReportsExpanded}
         onToggleExpand={toggleOpenReportsExpanded}
         reports={reports}
@@ -8207,6 +10270,7 @@ async function insertReportWithFallback(payload) {
         onOpenAllReports={(lightId) => {
           openOfficialLightAllReports(lightId);
         }}
+        onReporterDetails={openReporterDetails}
       />
 
       <ManageAccountModal
@@ -8295,18 +10359,6 @@ async function insertReportWithFallback(payload) {
         }}
         onDragStart={() => {
           beginMapInteraction();
-          if (dragFollowOffTimerRef.current) {
-            clearTimeout(dragFollowOffTimerRef.current);
-            dragFollowOffTimerRef.current = null;
-          }
-          if (followCamera) {
-            // Preserve follow during pinch-zoom; disable only for true drag-pan.
-            dragFollowOffTimerRef.current = setTimeout(() => {
-              const msSinceZoom = Date.now() - Number(lastZoomGestureAtRef.current || 0);
-              if (msSinceZoom > 220) setFollowCamera(false);
-              dragFollowOffTimerRef.current = null;
-            }, 120);
-          }
         }}
         onZoomChanged={() => {
           beginMapInteraction();
@@ -8338,6 +10390,28 @@ async function insertReportWithFallback(payload) {
               return { lat, lng };
             });
           }
+
+          const b = map.getBounds?.();
+          const ne = b?.getNorthEast?.();
+          const sw = b?.getSouthWest?.();
+          const north = Number(ne?.lat?.());
+          const east = Number(ne?.lng?.());
+          const south = Number(sw?.lat?.());
+          const west = Number(sw?.lng?.());
+          if ([north, east, south, west].every(Number.isFinite)) {
+            setMapBounds((prev) => {
+              if (
+                prev &&
+                Math.abs(prev.north - north) < 0.000001 &&
+                Math.abs(prev.east - east) < 0.000001 &&
+                Math.abs(prev.south - south) < 0.000001 &&
+                Math.abs(prev.west - west) < 0.000001
+              ) {
+                return prev;
+              }
+              return { north, east, south, west };
+            });
+          }
         }}
         options={{
           mapTypeId: mapType,
@@ -8354,6 +10428,8 @@ async function insertReportWithFallback(payload) {
           tiltInteractionEnabled: false,
         }}
         onClick={(e) => {
+          setAdminDomainMenuOpen(false);
+          setAdminToolboxOpen(false);
           if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
           const lat = Number(e?.latLng?.lat?.());
           const lng = Number(e?.latLng?.lng?.());
@@ -8366,9 +10442,79 @@ async function insertReportWithFallback(payload) {
           }
 
           // Clicking map background should close any open info windows.
-          if (selectedOfficialId || selectedQueuedTempId) {
+          if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker) {
             setSelectedOfficialId(null);
             setSelectedQueuedTempId(null);
+            setSelectedDomainMarker(null);
+          }
+
+          if (adminReportDomain !== "streetlights") {
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            (async () => {
+              if (adminReportDomain === "potholes" && Number(mapZoomRef.current || mapZoom) < 17) {
+                openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before placing a pothole report.");
+                return;
+              }
+              let geo = {
+                isRoad: true,
+                label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+                nearestAddress: "",
+                nearestLandmark: "",
+                snappedLat: lat,
+                snappedLng: lng,
+              };
+              let targetLat = lat;
+              let targetLng = lng;
+              if (adminReportDomain === "potholes") {
+                geo = await reverseGeocodeRoadLabel(lat, lng);
+                if (!geo.isRoad) {
+                  openNotice("⚠️", "Road required", "Pothole reports must be placed on a road.");
+                  return;
+                }
+                if (geo.validationUnavailable) {
+                  openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
+                  return;
+                }
+                if (Number.isFinite(geo.snappedLat) && Number.isFinite(geo.snappedLng)) {
+                  targetLat = Number(geo.snappedLat);
+                  targetLng = Number(geo.snappedLng);
+                }
+              }
+              let potholeId = null;
+              let potholeCode = "";
+              if (adminReportDomain === "potholes") {
+                const nearest = nearestPotholeForPoint(targetLat, targetLng, potholes, POTHOLE_MERGE_RADIUS_METERS);
+                if (nearest?.id) {
+                  potholeId = nearest.id;
+                  potholeCode = (nearest.ph_id || "").trim();
+                }
+              }
+              const lightId =
+                adminReportDomain === "potholes"
+                  ? (potholeCode || makePotholeIdFromCoords(targetLat, targetLng))
+                  : `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`;
+              const domainLabel =
+                REPORT_DOMAIN_OPTIONS.find((d) => d.key === adminReportDomain)?.label || "Report";
+              const nextTarget = {
+                domain: adminReportDomain,
+                domainLabel,
+                lat: targetLat,
+                lng: targetLng,
+                lightId,
+                pothole_id: potholeId,
+                locationLabel: geo.nearestAddress || geo.label || `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
+                nearestAddress: geo.nearestAddress || "",
+                nearestLandmark: geo.nearestLandmark || "",
+              };
+              if (adminReportDomain === "potholes") {
+                setPendingPotholeDomainTarget(nextTarget);
+                setPotholeAdvisoryOpen(true);
+                return;
+              }
+              setDomainReportTarget(nextTarget);
+              setDomainReportNote("");
+            })();
+            return;
           }
 
           if (!mappingMode) return;
@@ -8391,6 +10537,76 @@ async function insertReportWithFallback(payload) {
           getMarkerColor={officialMarkerColorForViewer}
           getMarkerRingColor={officialMarkerRingColorForViewer}
         />
+
+        {!isStreetlightsDomain && renderedDomainMarkers.map((m) => (
+          <MarkerF
+            key={`domain-${adminReportDomain}-${m.id}`}
+            position={{ lat: m.lat, lng: m.lng }}
+            icon={gmapsDotIcon(m.color || domainMarkerColor, m.ringColor || "#fff", m.glyph || adminDomainMeta.icon || "💡")}
+            onClick={() => {
+              if (isAdmin && adminReportDomain === "potholes") {
+                setSelectedDomainMarker(m);
+                return;
+              }
+              openNotice(
+                adminDomainMeta.icon,
+                adminDomainMeta.label,
+                `${m.count} report${m.count === 1 ? "" : "s"} at this location.`,
+                { autoCloseMs: 1800, compact: true }
+              );
+            }}
+          />
+        ))}
+
+        {isAdmin && adminReportDomain === "potholes" && selectedDomainMarker && (
+          <InfoWindowF
+            position={{ lat: Number(selectedDomainMarker.lat), lng: Number(selectedDomainMarker.lng) }}
+            onCloseClick={() => setSelectedDomainMarker(null)}
+            options={{ disableAutoPan: true }}
+          >
+            <div style={{ minWidth: 210, display: "grid", gap: 8 }}>
+              <div style={{ fontWeight: 950, fontSize: 13 }}>
+                Pothole ID: {selectedDomainMarker.id || "Pothole"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                <b>Location:</b> {selectedPotholeInfo?.locationLabel || "Location unavailable"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.9 }}>
+                <b>{Number(selectedPotholeInfo?.openCount || selectedDomainMarker.count || 0)}</b> open report{Number(selectedPotholeInfo?.openCount || selectedDomainMarker.count || 0) === 1 ? "" : "s"}
+              </div>
+              <button
+                type="button"
+                onClick={() => openPotholeAllReportsFromMarker(selectedDomainMarker)}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 9,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                All Reports
+              </button>
+              <button
+                type="button"
+                onClick={() => markPotholeFixed(selectedDomainMarker)}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 9,
+                  border: "none",
+                  background: "#2e7d32",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                Mark Fixed
+              </button>
+            </div>
+          </InfoWindowF>
+        )}
 
 
         {/* Queued markers (mapping mode preview) */}
@@ -8795,154 +11011,308 @@ async function insertReportWithFallback(payload) {
           📍
         </button>
 
-
-        <button
-          type="button"
-          className={`sl-map-tool-mini sl-bulk-tool-btn ${bulkMode ? "is-on" : ""}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            setBulkConfirmOpen(false);
-
-            setBulkMode((on) => {
-              const next = !on;
-              showToolHint(next ? "Report multiple lights" : "Report one light", 1100, 4);
-
-              if (next) {
-                setSelectedOfficialId(null);
-                // ✅ turning BULK ON → force mapping OFF
-                setMappingMode(false);
-                setMappingQueue([]);
-
-                closeAnyPopup();
-                suppressPopupsSafe(1600);
-              } else {
-                // turning BULK OFF clears selection
-                clearBulkSelection();
-              }
-
-              return next;
-            });
-          }}
-          title={bulkMode ? "Bulk selection ON" : "Bulk selection OFF"}
-          aria-label="Toggle bulk selection"
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 0,
-              transform: "translateY(0.5px)",
-            }}
-          >
-            {["#111", "#111"].map((fill, i) => (
-              <span
-                key={i}
+        {
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`sl-map-tool-mini ${adminDomainMenuOpen ? "is-on" : ""}`}
+              title={`Report domain: ${adminDomainMeta.label}`}
+              aria-label="Select report domain"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setAdminDomainMenuOpen((p) => {
+                  const next = !p;
+                  if (next) setAdminToolboxOpen(false);
+                  return next;
+                });
+                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 4);
+              }}
+            >
+              {adminDomainMeta.icon}
+            </button>
+            {adminDomainMenuOpen && (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
                 style={{
-                  width: 13,
-                  height: 13,
-                  borderRadius: 999,
-                  background: fill,
-                  border: "1.5px solid #fff",
+                  position: "absolute",
+                  right: "calc(100% + 10px)",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "var(--sl-ui-modal-bg)",
+                  border: "1px solid var(--sl-ui-modal-border)",
+                  borderRadius: 12,
+                  boxShadow: "var(--sl-ui-modal-shadow)",
+                  padding: 8,
                   display: "grid",
-                  placeItems: "center",
-                  fontSize: 7,
-                  lineHeight: 1,
-                  marginLeft: i === 0 ? 0 : -2,
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
+                  gap: 6,
+                  zIndex: 3,
+                  minWidth: 170,
                 }}
               >
-                <span style={{ transform: "translateY(0.1px)" }}>💡</span>
-              </span>
-            ))}
-          </span>
-        </button>
+                {REPORT_DOMAIN_OPTIONS.map((d) => {
+                  const isOn = d.key === adminReportDomain;
+                  return (
+                    <button
+                      key={d.key}
+                      type="button"
+                      onClick={() => {
+                        if (!d.enabled) return;
+                        setAdminReportDomain(d.key);
+                        setAdminDomainMenuOpen(false);
+                        showToolHint(`Domain: ${d.label}`, 1000, 4);
+                      }}
+                      disabled={!d.enabled}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "7px 9px",
+                        borderRadius: 9,
+                        border: isOn
+                          ? "1px solid #1b5e20"
+                          : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: isOn
+                          ? "#2e7d32"
+                          : "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: isOn
+                          ? "white"
+                          : "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: d.enabled ? "pointer" : "not-allowed",
+                        opacity: d.enabled ? 1 : 0.6,
+                        justifyContent: "flex-start",
+                      }}
+                    >
+                      <span aria-hidden="true">{d.icon}</span>
+                      <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        }
 
-        {/* =========================
-          Bulk/Open Reports (admin)
-         ========================= */}
-        {isAdmin && (
+        {isStreetlightsDomain && (
           <button
             type="button"
-            className={`sl-map-tool-mini sl-open-filter-btn ${openReportMapFilterOn ? "is-on" : ""}`}
-            title={openReportMapFilterOn ? "Showing only open-report lights" : "Show only open-report lights"}
-            aria-label="Toggle open-report light filter"
+            className={`sl-map-tool-mini sl-bulk-tool-btn ${bulkMode ? "is-on" : ""}`}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setOpenReportMapFilterOn((on) => {
+
+              setBulkConfirmOpen(false);
+
+              setBulkMode((on) => {
                 const next = !on;
-                showToolHint(next ? "Open-report filter on" : "Open-report filter off", 1100, 5);
-                return next;
-              });
-            }}
-          >
-            🔎
-          </button>
-        )}
-
-        {isAdmin && (
-          <button
-            type="button"
-            className={`sl-map-tool-mini ${openReportsOpen ? "is-on" : ""}`}
-            title="Open Reports"
-            aria-label="Open Reports"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-
-              // keep modes mutually exclusive / reduce confusion
-              if (mappingMode) requestExitMappingMode();
-              if (bulkMode) setBulkMode(false);
-
-              setOpenReportsOpen(true);
-            }}
-          >
-            📋
-          </button>
-        )}
-
-        {showAdminTools && (
-          <button
-            type="button"
-            className={`sl-map-tool-btn ${mappingMode ? "is-on" : ""}`}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setMappingMode((on) => {
-                const next = !on;
-                showToolHint(next ? "Mapping mode on" : "Mapping mode off", 1100, 6);
+                showToolHint(next ? "Report multiple lights" : "Report one light", 1100, 5);
 
                 if (next) {
-                  // ✅ turning MAPPING ON → force bulk OFF
-                  setBulkMode(false);
-                  setBulkConfirmOpen(false);
-                  clearBulkSelection();
-
-                  suppressPopupsSafe(1600);
-                  closeAnyPopup();
-                } else {
-                  // turning MAPPING OFF: if queue has items, confirm first
-                  if (mappingQueue.length > 0) {
-                    setExitMappingConfirmOpen(true);
-                    return true; // keep mapping mode ON until user decides
-                  }
-
-                  // no queued items => safe to turn off
+                  setSelectedOfficialId(null);
+                  setMappingMode(false);
                   setMappingQueue([]);
+
+                  closeAnyPopup();
+                  suppressPopupsSafe(1600);
+                } else {
+                  clearBulkSelection();
                 }
 
                 return next;
               });
             }}
-            title={mappingMode ? "Light mapping ON" : "Light mapping OFF"}
-            aria-label="Toggle light mapping"
+            title={bulkMode ? "Bulk selection ON" : "Bulk selection OFF"}
+            aria-label="Toggle bulk selection"
           >
-            💡
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 0,
+                transform: "translateY(0.5px)",
+              }}
+            >
+              {["#111", "#111"].map((fill, i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: 13,
+                    height: 13,
+                    borderRadius: 999,
+                    background: fill,
+                    border: "1.5px solid #fff",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 7,
+                    lineHeight: 1,
+                    marginLeft: i === 0 ? 0 : -2,
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
+                  }}
+                >
+                  <span style={{ transform: "translateY(0.1px)" }}>💡</span>
+                </span>
+              ))}
+            </span>
           </button>
+        )}
+        {(isAdmin || showAdminTools) && (
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className={`sl-map-tool-mini ${adminToolboxOpen ? "is-on" : ""}`}
+              title="Admin tools"
+              aria-label="Admin tools"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setAdminToolboxOpen((p) => {
+                  const next = !p;
+                  if (next) setAdminDomainMenuOpen(false);
+                  return next;
+                });
+                showToolHint("Admin tools", 1000, 6);
+              }}
+            >
+              🧰
+            </button>
+
+            {adminToolboxOpen && (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute",
+                  right: "calc(100% + 10px)",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "var(--sl-ui-modal-bg)",
+                  border: "1px solid var(--sl-ui-modal-border)",
+                  borderRadius: 12,
+                  boxShadow: "var(--sl-ui-modal-shadow)",
+                  padding: 8,
+                  display: "grid",
+                  gap: 6,
+                  zIndex: 3,
+                  minWidth: 180,
+                }}
+              >
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (mappingMode) requestExitMappingMode();
+                      if (bulkMode) setBulkMode(false);
+                      setOpenReportsOpen(true);
+                      setAdminToolboxOpen(false);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 9px",
+                      borderRadius: 9,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    <span aria-hidden="true">📋</span>
+                    <span style={{ fontSize: 12.5 }}>Open Reports</span>
+                  </button>
+                )}
+
+                {isAdmin && isStreetlightsDomain && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOpenReportMapFilterOn((on) => {
+                        const next = !on;
+                        showToolHint(next ? "Open-report filter on" : "Open-report filter off", 1100, 1);
+                        return next;
+                      });
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 9px",
+                      borderRadius: 9,
+                      border: openReportMapFilterOn
+                        ? "1px solid #1b5e20"
+                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: openReportMapFilterOn
+                        ? "#2e7d32"
+                        : "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: openReportMapFilterOn
+                        ? "white"
+                        : "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    <span aria-hidden="true">🔎</span>
+                    <span style={{ fontSize: 12.5 }}>Open Filter</span>
+                  </button>
+                )}
+
+                {showAdminTools && isStreetlightsDomain && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMappingMode((on) => {
+                        const next = !on;
+                        showToolHint(next ? "Mapping mode on" : "Mapping mode off", 1100, 2);
+
+                        if (next) {
+                          setBulkMode(false);
+                          setBulkConfirmOpen(false);
+                          clearBulkSelection();
+                          suppressPopupsSafe(1600);
+                          closeAnyPopup();
+                        } else if (mappingQueue.length > 0) {
+                          setExitMappingConfirmOpen(true);
+                          return true;
+                        } else {
+                          setMappingQueue([]);
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 9px",
+                      borderRadius: 9,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: mappingMode ? "#2e7d32" : "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: mappingMode ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    <span aria-hidden="true">💡</span>
+                    <span style={{ fontSize: 12.5 }}>{mappingMode ? "Mapping On" : "Mapping"}</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -9044,17 +11414,30 @@ async function insertReportWithFallback(payload) {
                   color: "var(--sl-ui-text)",
 	              }}
             >
-              <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                LIST Report
-              </div>
+              {titleLogoError ? (
+                <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
+                  CityReport.io
+                </div>
+              ) : (
+                <img
+                  src={titleLogoSrc}
+                  alt={TITLE_LOGO_ALT}
+                  onError={() => setTitleLogoError(true)}
+                  style={{
+                    display: "block",
+                    margin: "0 auto",
+                    width: "100%",
+                    maxWidth: "100%",
+                    height: 72,
+                    objectFit: "contain",
+                  }}
+                />
+              )}
 
               <div style={{ fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
                 Local Infrastructure Status Tracker
               </div>
 
-              <div style={{ fontSize: 14, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
-                Select a light to submit a report.
-              </div>
 	            </div>
 	          </div>
 	        </div>
@@ -9240,6 +11623,26 @@ async function insertReportWithFallback(payload) {
           }}
         >
           <div
+            style={{
+              width: "fit-content",
+              maxWidth: "min(720px, calc(100vw - 32px))",
+              margin: "0 auto 6px",
+              fontSize: 11.5,
+              opacity: 1,
+              textAlign: "left",
+              color: inViewCounterColor,
+              padding: "4px 8px",
+              borderRadius: 999,
+              border: `1px solid ${inViewCounterBorder}`,
+              background: inViewCounterBg,
+              boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+              backdropFilter: "blur(2px)",
+              WebkitBackdropFilter: "blur(2px)",
+            }}
+          >
+            Open reports in view: <b>{openReportsInViewCount}</b>
+          </div>
+          <div
 	            style={{
 	              width: "min(720px, calc(100vw - 32px))",
 	              margin: "0 auto",
@@ -9403,17 +11806,30 @@ async function insertReportWithFallback(payload) {
               }}
             />
 
-            <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-              LIST Report
-            </div>
+            {titleLogoError ? (
+              <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
+                CityReport.io
+              </div>
+            ) : (
+              <img
+                src={titleLogoSrc}
+                alt={TITLE_LOGO_ALT}
+                onError={() => setTitleLogoError(true)}
+                style={{
+                  display: "block",
+                  margin: "0 auto",
+                  width: "100%",
+                  maxWidth: "100%",
+                  height: 50,
+                  objectFit: "contain",
+                }}
+              />
+            )}
 
             <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
               Local Infrastructure Status Tracker
             </div>
 
-            <div style={{ fontSize: 12.5, opacity: 0.92, textAlign: "center", lineHeight: 1.25, fontWeight: 800 }}>
-              Select a light to submit a report.
-            </div>
 	            </div>
 	          </div>
 	        </div>
@@ -9590,6 +12006,26 @@ async function insertReportWithFallback(payload) {
             padding: "0 10px calc(10px + env(safe-area-inset-bottom))",
           }}
         >
+          <div
+            style={{
+              width: "fit-content",
+              maxWidth: "min(520px, calc(100vw - 20px))",
+              margin: "0 auto 6px",
+              fontSize: 11,
+              opacity: 1,
+              textAlign: "left",
+              color: inViewCounterColor,
+              padding: "4px 8px",
+              borderRadius: 999,
+              border: `1px solid ${inViewCounterBorder}`,
+              background: inViewCounterBg,
+              boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+              backdropFilter: "blur(2px)",
+              WebkitBackdropFilter: "blur(2px)",
+            }}
+          >
+            Open reports in view: <b>{openReportsInViewCount}</b>
+          </div>
           <div
 	            style={{
 	              width: "min(520px, calc(100vw - 20px))",
