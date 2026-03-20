@@ -1,17 +1,39 @@
 // ==================================================
 // App.jsx — Full file
 // ==================================================
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { GoogleMap, MarkerF, InfoWindowF, useJsApiLoader } from "@react-google-maps/api";
+import React, { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
 import { supabase } from "./supabaseClient";
+import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_API_KEY ||
   import.meta.env.VITE_GOOGLE_MAPS_KEY ||
   "";
+const GMAPS_KEY_DEV = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_DEV || "";
 const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
 const GMAPS_LIBRARIES = ["places"];
+
+const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
+
+function isDevMapsHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  if (!host) return false;
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
+  return DEV_MAPS_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+function currentRuntimeHost() {
+  if (typeof window === "undefined") return "";
+  return String(window.location.hostname || "").trim().toLowerCase();
+}
+
+const GMAPS_RUNTIME_HOST = currentRuntimeHost();
+const GMAPS_ACTIVE_KEY =
+  GMAPS_KEY_DEV && isDevMapsHost(GMAPS_RUNTIME_HOST)
+    ? GMAPS_KEY_DEV
+    : GMAPS_KEY;
 
 
 
@@ -28,11 +50,40 @@ const POTHOLE_ROAD_HIT_METERS = 12;
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
+const REPORTING_MIN_ZOOM = 17;
 const APP_VERSION = "v1.1.0";
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
+const ENABLE_TENANT_VISIBILITY_CONFIG =
+  String(import.meta.env.VITE_ENABLE_TENANT_VISIBILITY_CONFIG || "").trim().toLowerCase() === "true";
+const ENABLE_STREETLIGHT_IN_APP_REPORTING =
+  String(import.meta.env.VITE_ENABLE_STREETLIGHT_IN_APP_REPORTING || "").trim().toLowerCase() === "true";
+const ENABLE_LEGACY_PLACES_SERVICE =
+  String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
+const ENABLE_TOUCH_DRAG_ZOOM = false;
+const STREETLIGHT_UTILITY_REPORT_URL =
+  String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim() ||
+  "https://www.firstenergycorp.com/outages_help/Report_Power_Outages.html?_gl=1*te1hi8*_up*MQ..*_ga*MTEyODI2NTQ5OS4xNzcyMjU3MDQ4*_ga_TVQJK7Z44E*czE3NzI0Mzc3NzEkbzIkZzEkdDE3NzI0Mzc3ODQkajQ3JGwwJGgw";
 const TITLE_LOGO_ALT = "CityReport.io";
+const UI_ICON_SRC = {
+  account: "/account_icon.png",
+  streetlight: "/streetlight_icon.png",
+  streetSign: "/street_sign_icons/street_sign_domain_icon.png",
+  pothole: "/pothole_icon.png",
+  powerOutage: "/power_outage_icon.png",
+  waterMain: "/water_main_icon.png",
+  filter: "/filter_icon.png",
+  openReports: "/open_reports_icon.png",
+  mapping: "/streetlight_mapping_icon.png",
+  bulk: "/bulk_reporting_icon.png",
+  toolbox: "/toolbox_icon.png",
+  headingReset: "/heading_reset_icon.png",
+  info: "/info_icon.png",
+  location: "/location_icon.png",
+  satellite: "/satellite_icon.png",
+  streetMap: "/street_map_icon.png",
+};
 
 
 // Per-light cooldown (client-side guardrail; reversible)
@@ -40,6 +91,16 @@ const REPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Cooldown persistence key
 const COOLDOWNS_KEY = "streetlight_cooldowns_v1";
+const ABUSE_RATE_KEY = "cityreport_abuse_rate_v1";
+const ABUSE_GATE_FUNCTION = "rate-limit-gate";
+const ABUSE_WINDOW_MS = 60 * 1000; // 1 minute
+const ABUSE_MAX_EVENTS_PER_WINDOW = 7;
+const ABUSE_MAX_LIGHTS_PER_WINDOW = 20;
+const DOMAIN_SUBMIT_DEDUPE_WINDOW_MS = 60 * 1000;
+const BULK_MAX_LIGHTS_PER_SUBMIT = 10;
+const EXPORT_SCHEMA_VERSION = "v1";
+const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
+const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 
 // Location request prompt upon opening page
 const LOC_PROMPTED_SESSION_KEY = "streetlight_loc_prompted_session_v1";
@@ -53,15 +114,133 @@ const REPORT_TYPES = {
   flickering: "Dim / Flickering",
   dayburner: "On during daytime",
   downed_pole: "Pole down",
+  sewer_backup: "Sewer Backup",
+  storm_drain_clog: "Storm Drain Blocked / Flooding",
   other: "Other",
 };
+const STREET_SIGN_ISSUE_OPTIONS = [
+  { value: "damaged", label: "Damaged sign" },
+  { value: "missing", label: "Missing sign" },
+  { value: "blocked", label: "Obstructed / blocked visibility" },
+  { value: "faded", label: "Faded / unreadable" },
+  { value: "bent", label: "Bent / leaning" },
+  { value: "graffiti", label: "Graffiti / vandalized" },
+  { value: "wrong_sign", label: "Wrong sign posted" },
+  { value: "other", label: "Other" },
+];
+const WATER_DRAIN_ISSUE_OPTIONS = [
+  { value: "sewer_backup", label: "Sewer Backup" },
+  { value: "storm_drain_clog", label: "Storm Drain Blocked / Flooding" },
+];
 
 const REPORT_DOMAIN_OPTIONS = [
-  { key: "streetlights", label: "Streetlights", icon: "💡", enabled: true },
-  { key: "potholes", label: "Potholes", icon: "🕳️", enabled: true },
-  { key: "power_outage", label: "Power outage", icon: "⚡", enabled: true },
-  { key: "water_main", label: "Water main", icon: "💧", enabled: true },
+  { key: "potholes", label: "Potholes", icon: "🕳️", iconSrc: UI_ICON_SRC.pothole, enabled: true },
+  { key: "water_drain_issues", label: "Water / Drain Issues", icon: "💧", iconSrc: UI_ICON_SRC.waterMain, enabled: true },
+  { key: "streetlights", label: "Streetlights (Utility-owned)", icon: "💡", iconSrc: UI_ICON_SRC.streetlight, enabled: true },
 ];
+const DEFAULT_PUBLIC_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
+const STREET_SIGN_TYPE_OPTIONS = [
+  { value: "stop", label: "Stop" },
+  { value: "yield", label: "Yield" },
+  { value: "speed_limit", label: "Speed limit" },
+  { value: "warning", label: "Warning" },
+  { value: "no_parking", label: "No parking" },
+  { value: "one_way", label: "One way" },
+  { value: "school_zone", label: "School zone" },
+  { value: "crosswalk", label: "Crosswalk" },
+  { value: "street_name", label: "Street name" },
+  { value: "other", label: "Other" },
+];
+const STREET_SIGN_TYPE_VALUES = new Set(STREET_SIGN_TYPE_OPTIONS.map((opt) => String(opt.value || "").trim().toLowerCase()));
+const STREET_SIGN_TYPE_ICON_SRC = {
+  stop: "/street_sign_icons/stop_sign_icon.png",
+  yield: "/street_sign_icons/yield_sign_icon.png",
+  speed_limit: "/street_sign_icons/speed_limit_sign.png",
+  warning: "/street_sign_icons/warning_sign_icon.png",
+  no_parking: "/street_sign_icons/no_parking_icon.png",
+  one_way: "/street_sign_icons/one_way_icon.png",
+  school_zone: "/street_sign_icons/school_zone_icon.png",
+  crosswalk: "/street_sign_icons/crosswalk_icon.png",
+  street_name: "/street_sign_icons/street_name_sign_icon.png",
+  other: "/street_sign_icons/street_sign_domain_icon.png",
+};
+
+function defaultDomainIssueFor(domainKey) {
+  const d = String(domainKey || "").trim().toLowerCase();
+  if (d === "street_signs") return STREET_SIGN_ISSUE_OPTIONS[0].value;
+  if (d === "water_drain_issues") return WATER_DRAIN_ISSUE_OPTIONS[0].value;
+  return "other";
+}
+
+function AppIcon({ src, alt = "", size = 18, style = {} }) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      style={{
+        width: size,
+        height: size,
+        objectFit: "contain",
+        objectPosition: "center center",
+        display: "block",
+        verticalAlign: "middle",
+        ...style,
+      }}
+    />
+  );
+}
+
+function formatStreetSignTypeLabel(raw) {
+  const key = String(raw || "").trim().toLowerCase();
+  const found = STREET_SIGN_TYPE_OPTIONS.find((x) => x.value === key);
+  if (found) return found.label;
+  if (!key) return "Other";
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function signMarkerGlyphForType(raw) {
+  const key = String(raw || "").trim().toLowerCase();
+  if (key === "stop") return "🛑";
+  if (key === "yield") return "Y";
+  if (key === "speed_limit") return "SL";
+  if (key === "warning") return "⚠️";
+  if (key === "no_parking") return "NP";
+  if (key === "one_way") return "→";
+  if (key === "school_zone") return "SZ";
+  if (key === "crosswalk") return "🚸";
+  if (key === "street_name") return "St";
+  return "🪧";
+}
+
+function signMarkerIconSrcForType(raw) {
+  const key = String(raw || "").trim().toLowerCase();
+  return STREET_SIGN_TYPE_ICON_SRC[key] || STREET_SIGN_TYPE_ICON_SRC.other;
+}
+
+function formatWaterDrainIssueLabel(raw) {
+  const key = String(raw || "").trim().toLowerCase();
+  if (!key) return "Water / Drain Issue";
+  const fromOptions = WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === key)?.label;
+  if (fromOptions) return fromOptions;
+  const fromTypes = REPORT_TYPES?.[key];
+  if (fromTypes) return fromTypes;
+  return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function waterDrainIssueKeyFromNote(note) {
+  const text = String(note || "");
+  if (!text) return "";
+  const m = text.match(/water issue:\s*([^|]+)/i);
+  const raw = String(m?.[1] || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.includes("sewer")) return "sewer_backup";
+  if (raw.includes("storm drain") || raw.includes("drain blocked") || raw.includes("flood")) {
+    return "storm_drain_clog";
+  }
+  return "";
+}
 
 function statusFromCount(count) {
   if (count >= 4) return { label: "Confirmed Out", color: "#b71c1c" };
@@ -84,6 +263,17 @@ function potholeColorFromCount(count) {
   if (n >= 4) return "#f57c00"; // orange
   if (n >= 2) return yellow;      // yellow
   if (n >= 1) return yellow;      // private single-report view
+  return "#111";
+}
+
+function waterDrainColorFromCount(count) {
+  const n = Number(count || 0);
+  const yellow = officialStatusFromSinceFixCount(1).color; // keep same yellow tone
+  // Requested thresholds:
+  // 2-3 = yellow, 4-5 = orange, >5 = red.
+  if (n > 5) return "#b71c1c";  // red
+  if (n >= 4) return "#f57c00"; // orange
+  if (n >= 2) return yellow;    // yellow
   return "#111";
 }
 
@@ -132,6 +322,166 @@ function isPointInBounds(lat, lng, bounds) {
   return latOk && lngOk;
 }
 
+function parseGeoJsonValue(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parseGeoJsonValue(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === "object") {
+    const type = String(raw?.type || "");
+    if (type === "FeatureCollection" || type === "Feature" || type === "Polygon" || type === "MultiPolygon") {
+      return raw;
+    }
+    // Allow app_config payload wrappers, e.g. { geojson: {...} } / { value: {...} } / { boundary: {...} }.
+    if (raw?.geojson) return parseGeoJsonValue(raw.geojson);
+    if (raw?.value) return parseGeoJsonValue(raw.value);
+    if (raw?.boundary) return parseGeoJsonValue(raw.boundary);
+    if (raw?.geometry) return parseGeoJsonValue(raw.geometry);
+  }
+  return null;
+}
+
+function normalizePolygonRings(coords) {
+  if (!Array.isArray(coords)) return [];
+  return coords
+    .map((ring) => {
+      if (!Array.isArray(ring)) return [];
+      return ring
+        .map((pt) => {
+          const lng = Number(pt?.[0]);
+          const lat = Number(pt?.[1]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          return { lat, lng };
+        })
+        .filter(Boolean);
+    })
+    .filter((ring) => ring.length >= 3);
+}
+
+function extractPolygonsFromGeoJson(raw) {
+  const geo = parseGeoJsonValue(raw);
+  if (!geo || typeof geo !== "object") return [];
+  const out = [];
+
+  const addGeometry = (geometry) => {
+    const g = parseGeoJsonValue(geometry);
+    if (!g || typeof g !== "object") return;
+    const type = String(g.type || "");
+    if (type === "Polygon") {
+      const rings = normalizePolygonRings(g.coordinates);
+      if (rings.length) out.push(rings);
+      return;
+    }
+    if (type === "MultiPolygon") {
+      for (const poly of g.coordinates || []) {
+        const rings = normalizePolygonRings(poly);
+        if (rings.length) out.push(rings);
+      }
+    }
+  };
+
+  const type = String(geo.type || "");
+  if (type === "FeatureCollection") {
+    for (const f of geo.features || []) addGeometry(f?.geometry);
+  } else if (type === "Feature") {
+    addGeometry(geo.geometry);
+  } else {
+    addGeometry(geo);
+  }
+
+  return out;
+}
+
+function isPointInRing(lat, lng, ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = Number(ring[i]?.lng);
+    const yi = Number(ring[i]?.lat);
+    const xj = Number(ring[j]?.lng);
+    const yj = Number(ring[j]?.lat);
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+    const intersects =
+      (yi > lat) !== (yj > lat) &&
+      lng < ((xj - xi) * (lat - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function isPointInPolygons(lat, lng, polygons) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  for (const poly of polygons || []) {
+    const outer = poly?.[0];
+    if (!outer || !isPointInRing(lat, lng, outer)) continue;
+    const holes = poly.slice(1);
+    const inHole = holes.some((h) => isPointInRing(lat, lng, h));
+    if (!inHole) return true;
+  }
+  return false;
+}
+
+function ringSignedArea(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const ax = Number(a?.lng);
+    const ay = Number(a?.lat);
+    const bx = Number(b?.lng);
+    const by = Number(b?.lat);
+    if (![ax, ay, bx, by].every(Number.isFinite)) continue;
+    sum += ax * by - bx * ay;
+  }
+  return sum / 2;
+}
+
+function orientRing(ring, direction = "clockwise") {
+  if (!Array.isArray(ring)) return [];
+  const copy = ring
+    .map((pt) => ({
+      lat: Number(pt?.lat),
+      lng: Number(pt?.lng),
+    }))
+    .filter((pt) => Number.isFinite(pt.lat) && Number.isFinite(pt.lng));
+  if (copy.length < 3) return copy;
+  const area = ringSignedArea(copy);
+  const shouldClockwise = direction === "clockwise";
+  const isClockwise = area < 0;
+  if (shouldClockwise === isClockwise) return copy;
+  return [...copy].reverse();
+}
+
+function buildWorldMaskRing() {
+  const topLat = 85;
+  const bottomLat = -85;
+  const westLng = -179.999;
+  const eastLng = 179.999;
+  const lngStep = 20;
+  const latStep = 20;
+  const pts = [];
+
+  for (let lng = westLng; lng <= eastLng; lng += lngStep) {
+    pts.push({ lat: topLat, lng: Math.min(eastLng, lng) });
+  }
+  for (let lat = topLat; lat >= bottomLat; lat -= latStep) {
+    pts.push({ lat: Math.max(bottomLat, lat), lng: eastLng });
+  }
+  for (let lng = eastLng; lng >= westLng; lng -= lngStep) {
+    pts.push({ lat: bottomLat, lng: Math.max(westLng, lng) });
+  }
+  for (let lat = bottomLat; lat <= topLat; lat += latStep) {
+    pts.push({ lat: Math.min(topLat, lat), lng: westLng });
+  }
+  return orientRing(pts, "clockwise");
+}
+
 function lightIdFor(lat, lng) {
   return `${lat.toFixed(5)}:${lng.toFixed(5)}`;
 }
@@ -150,12 +500,57 @@ function normalizePhone(p) {
   return String(p || "").replace(/[^\d]/g, ""); // digits only
 }
 
+function normalizeSubmitTextForKey(v) {
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .slice(0, 160);
+}
+
+function domainSubmitIdempotencyKey({ target, issue, note }) {
+  const domain = normalizeDomainKey(target?.domain || "streetlights") || "streetlights";
+  const incidentId = String(target?.lightId || target?.pothole_id || "").trim().toLowerCase();
+  const srcLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target?.sourceLat) : Number(target?.lat);
+  const srcLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target?.sourceLng) : Number(target?.lng);
+  const coordKey = Number.isFinite(srcLat) && Number.isFinite(srcLng)
+    ? `${srcLat.toFixed(5)},${srcLng.toFixed(5)}`
+    : "";
+  const issueKey = normalizeSubmitTextForKey(issue || "");
+  const noteKey = normalizeSubmitTextForKey(note || "");
+  return [domain, incidentId || coordKey, issueKey, noteKey].filter(Boolean).join("|").slice(0, 220);
+}
+
 function reportDomainFromLightId(lightId) {
   const v = String(lightId || "").trim().toLowerCase();
+  if (v.startsWith("water_drain_issues:")) return "water_drain_issues";
+  if (v.startsWith("street_signs:")) return "street_signs";
   if (v.startsWith("power_outage:")) return "power_outage";
   if (v.startsWith("water_main:")) return "water_main";
   if (v.startsWith("potholes:")) return "potholes";
   return "streetlights";
+}
+
+function incidentSnapshotKey(domain, incidentId) {
+  const d = normalizeDomainKey(domain) || String(domain || "").trim().toLowerCase();
+  const id = String(incidentId || "").trim();
+  if (!d || !id) return "";
+  return `${d}:${id}`;
+}
+
+function incidentStateLabel(state) {
+  const v = String(state || "").trim().toLowerCase();
+  if (!v) return "";
+  const map = {
+    reported: "Reported",
+    aggregated: "Aggregated",
+    confirmed: "Confirmed",
+    in_progress: "In progress",
+    fixed: "Fixed",
+    reopened: "Reopened",
+    archived: "Archived",
+  };
+  return map[v] || v.replace(/_/g, " ");
 }
 
 function canonicalOfficialLightId(rawLightId, lat, lng, officialIdByAlias, officialIdByCoordKey) {
@@ -175,13 +570,27 @@ function canonicalOfficialLightId(rawLightId, lat, lng, officialIdByAlias, offic
 }
 
 function reportNumberForRow(row, domainHint = "") {
-  const persisted = String(row?.report_number || "").trim();
-  if (persisted) return persisted;
-
   const domain = (domainHint || row?.domain || (row?.pothole_id ? "potholes" : reportDomainFromLightId(row?.light_id))).toLowerCase();
+  const persisted = String(row?.report_number || "").trim();
+  if (persisted) {
+    if (domain === "street_signs") {
+      const m = persisted.match(/^slr(\d+)$/i);
+      if (m) return `SSR${m[1]}`;
+    }
+    if (domain === "water_drain_issues") {
+      const m = persisted.match(/^slr(\d+)$/i);
+      if (m) return `WDR${m[1]}`;
+    }
+    return persisted;
+  }
+
   const prefix =
     domain === "potholes"
       ? "PHR"
+      : domain === "street_signs"
+        ? "SSR"
+      : domain === "water_drain_issues"
+        ? "WDR"
       : domain === "power_outage"
         ? "POR"
         : domain === "water_main"
@@ -199,6 +608,45 @@ function reportNumberForRow(row, domainHint = "") {
     h = Math.imul(h, 16777619) >>> 0;
   }
   return `${prefix}${String(h % 10000000).padStart(7, "0")}`;
+}
+
+function shortIncidentKey(incidentId) {
+  const s = String(incidentId || "").trim();
+  if (!s) return "000000";
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  const key = (h >>> 0).toString(36).toUpperCase();
+  return key.padStart(6, "0").slice(-6);
+}
+
+function adminIncidentLabelForDomain(domain, incidentId, reportNumber, slIdByUuid, displayId = "") {
+  const d = normalizeDomainKey(domain);
+  const id = String(incidentId || "").trim();
+  const shown = String(displayId || "").trim();
+  if (!id) return "Unknown incident";
+  if (d === "streetlights") return displayLightId(id, slIdByUuid);
+  if (d === "street_signs") return displayLightId(id, slIdByUuid);
+  if (d === "potholes") return `Pothole ID ${shown || `PH${shortIncidentKey(id)}`}`;
+  if (d === "water_drain_issues") return `Water/Drain ID ${shown || `WD${shortIncidentKey(id)}`}`;
+  const stableKey = shortIncidentKey(id);
+  const report = String(reportNumber || "").trim();
+  const domainTag =
+    d === "water_drain_issues"
+      ? "Water/Drain Incident"
+      : d === "power_outage"
+        ? "Power Outage Incident"
+        : d === "water_main"
+          ? "Water Main Incident"
+          : "Incident";
+  return report ? `${report} • ${domainTag} ${stableKey}` : `${domainTag} ${stableKey}`;
+}
+
+function extFromFileName(name, fallback = "jpg") {
+  const m = String(name || "").trim().match(/\.([a-zA-Z0-9]{2,8})$/);
+  return m?.[1] ? m[1].toLowerCase() : fallback;
 }
 
 function validateStrongPassword(password) {
@@ -219,17 +667,30 @@ function normalizeDomainKey(v) {
   const raw = String(v || "").trim().toLowerCase();
   if (!raw) return "";
   if (raw === "streetlights" || raw === "streetlight") return "streetlights";
+  if (raw === "street_signs" || raw === "street signs" || raw === "street_sign" || raw === "street sign" || raw === "signs") return "street_signs";
   if (raw === "potholes" || raw === "pothole") return "potholes";
+  if (raw === "water_drain_issues" || raw === "water drain issues" || raw === "drain_issues" || raw === "drain issues" || raw === "sewer" || raw === "storm_drain" || raw === "storm drain") return "water_drain_issues";
   if (raw === "power_outage" || raw === "power outage" || raw === "outage" || raw === "power") return "power_outage";
   if (raw === "water_main" || raw === "water main" || raw === "water_main_break" || raw === "water main break" || raw === "water_main_breaks" || raw === "water main breaks") return "water_main";
   return "";
 }
 
-function reportDomainForRow(row, officialIdSet) {
+function activeTenantKey() {
+  return getRuntimeTenantKey();
+}
+
+function tenantBoundaryConfigKey() {
+  return `${activeTenantKey()}_city_geojson`;
+}
+
+function reportDomainForRow(row, officialIdSet, officialSignIdSet) {
   const lid = String(row?.light_id || "").trim();
   if (lid.startsWith("potholes:")) return "potholes";
+  if (lid.startsWith("water_drain_issues:")) return "water_drain_issues";
+  if (lid.startsWith("street_signs:")) return "street_signs";
   if (lid.startsWith("power_outage:")) return "power_outage";
   if (lid.startsWith("water_main:")) return "water_main";
+  if (lid && officialSignIdSet?.has?.(lid)) return "street_signs";
   if (lid && officialIdSet?.has?.(lid)) return "streetlights";
 
   const explicit =
@@ -240,7 +701,9 @@ function reportDomainForRow(row, officialIdSet) {
 
   const type = normalizeReportTypeValue(row?.type || row?.report_type);
   if (!type) return "streetlights";
+  if (type.includes("sign")) return "street_signs";
   if (type.includes("pothole")) return "potholes";
+  if (type.includes("sewer") || type.includes("storm_drain") || type.includes("drain")) return "water_drain_issues";
   if (type.includes("water")) return "water_main";
   if (type.includes("power")) return "power_outage";
   return "streetlights";
@@ -259,6 +722,14 @@ function stripLocationFromNote(note) {
   if (!raw) return "";
   const withoutLocation = raw.replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/i, "").trim();
   return withoutLocation.replace(/^\|\s*/, "").trim();
+}
+
+function readImageUrlFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/i);
+  if (!m) return "";
+  return String(m[1] || "").trim();
 }
 
 function readAddressFromNote(note) {
@@ -287,10 +758,38 @@ function stripSystemMetadataFromNote(note) {
     .replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Water issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Sign issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Sign type:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/\[SL_QA\s+power_on=(yes|no|unknown)\s+hazardous=(yes|no|unknown)\]/gi, "")
+    .replace(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/gi, "")
     .replace(/^\|\s*/, "")
     .replace(/\s*\|\s*$/, "")
     .replace(/\s*\|\s*\|\s*/g, " | ")
+    .replace(/^\s*Note:\s*/i, "")
     .trim();
+}
+
+function composeStreetlightQaNote(userNote, areaPowerOn, hazardYesNo) {
+  const power = ["yes", "no"].includes(String(areaPowerOn || "").toLowerCase())
+    ? String(areaPowerOn || "").toLowerCase()
+    : "unknown";
+  const hazard = ["yes", "no"].includes(String(hazardYesNo || "").toLowerCase())
+    ? String(hazardYesNo || "").toLowerCase()
+    : "unknown";
+  const qaTag = `[SL_QA power_on=${power} hazardous=${hazard}]`;
+  const noteText = String(userNote || "").trim();
+  return [noteText, qaTag].filter(Boolean).join(" | ");
+}
+
+function parseStreetlightQaFromNote(note) {
+  const raw = String(note || "");
+  const m = raw.match(/\[SL_QA\s+power_on=(yes|no|unknown)\s+hazardous=(yes|no|unknown)\]/i);
+  if (!m) return null;
+  return {
+    powerOn: String(m[1] || "").toLowerCase(),
+    hazardous: String(m[2] || "").toLowerCase(),
+  };
 }
 
 function normalizeReportQuality(q) {
@@ -351,12 +850,40 @@ function reporterIdentityKey({ session, profile, guestInfo }) {
   return null;
 }
 
-function canIdentityReportLight(lightId, { session, profile, guestInfo, reports, fixedLights, lastFixByLightId }) {
+function canIdentityReportLight(
+  lightId,
+  {
+    session,
+    profile,
+    guestInfo,
+    reports,
+    fixedLights,
+    lastFixByLightId,
+    potholeReports = [],
+    potholeLastFixById = {},
+  }
+) {
   const key = reporterIdentityKey({ session, profile, guestInfo });
 
   // ✅ If we have an identity key, enforce via DB-backed history (works for authed + guests)
   // Rule: one report per light per identity since the light was last fixed.
   if (key) {
+    const lid = String(lightId || "").trim();
+    if (lid.startsWith("pothole:")) {
+      const pid = lid.slice("pothole:".length).trim();
+      if (!pid) return true;
+      const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
+      for (const r of potholeReports || []) {
+        if (String(r?.pothole_id || "").trim() !== pid) continue;
+        const rKey = reportIdentityKey(r);
+        if (!(rKey && rKey === key)) continue;
+        const ts = Number(r?.ts || 0);
+        if (!Number.isFinite(ts)) continue;
+        if (!lastFixTs || ts > lastFixTs) return false;
+      }
+      return true;
+    }
+
     const lastFixTs = Math.max(
       Number(lastFixByLightId?.[lightId] || 0),
       Number(fixedLights?.[lightId] || 0)
@@ -486,6 +1013,247 @@ function saveCooldownsToStorage(cooldowns) {
   }
 }
 
+function loadAbuseRateFromStorage() {
+  try {
+    const raw = localStorage.getItem(ABUSE_RATE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function saveAbuseRateToStorage(value) {
+  try {
+    localStorage.setItem(ABUSE_RATE_KEY, JSON.stringify(value || {}));
+  } catch {
+    // ignore
+  }
+}
+
+function loadAbuseBackoffFromStorage() {
+  try {
+    const raw = localStorage.getItem(ABUSE_BACKOFF_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function saveAbuseBackoffToStorage(value) {
+  try {
+    localStorage.setItem(ABUSE_BACKOFF_KEY, JSON.stringify(value || {}));
+  } catch {
+    // ignore
+  }
+}
+
+function nextAbuseBackoffMs(identityKey, retryAfterMs = ABUSE_WINDOW_MS) {
+  const now = Date.now();
+  const key = String(identityKey || "").trim();
+  if (!key) return Math.max(1000, Number(retryAfterMs) || ABUSE_WINDOW_MS);
+  const base = Math.max(1000, Number(retryAfterMs) || ABUSE_WINDOW_MS);
+  const map = loadAbuseBackoffFromStorage();
+  const prev = Number(map[key] || 0);
+  const next = Math.min(ABUSE_BACKOFF_MAX_MS, prev > 0 ? prev * 2 : base);
+  map[key] = next;
+  map[`${key}:updated_at`] = now;
+  saveAbuseBackoffToStorage(map);
+  return next;
+}
+
+function clearAbuseBackoff(identityKey) {
+  const key = String(identityKey || "").trim();
+  if (!key) return;
+  const map = loadAbuseBackoffFromStorage();
+  delete map[key];
+  delete map[`${key}:updated_at`];
+  saveAbuseBackoffToStorage(map);
+}
+
+async function logAbuseEventAttempt(payload) {
+  try {
+    const tenantKey = activeTenantKey();
+    await supabase.from("abuse_events").insert([{
+      tenant_key: tenantKey,
+      domain: String(payload?.domain || "streetlights"),
+      identity_hash: payload?.identity_hash || null,
+      ip_hash: payload?.ip_hash || null,
+      event_kind: String(payload?.event_kind || "submission_attempt"),
+      allowed: Boolean(payload?.allowed),
+      event_count: Math.max(1, Number(payload?.event_count || 1)),
+      unit_count: Math.max(1, Number(payload?.unit_count || 1)),
+      reason: payload?.reason ? String(payload.reason) : null,
+      metadata: payload?.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
+      created_at: new Date().toISOString(),
+    }]);
+  } catch {
+    // non-blocking telemetry
+  }
+}
+
+function registerAbuseEvent({
+  session,
+  profile,
+  guestInfo,
+  domain = "streetlights",
+  count = 1,
+  bypass = false,
+}) {
+  if (bypass) return { allowed: true, remaining: ABUSE_MAX_EVENTS_PER_WINDOW };
+  const identity = reporterIdentityKey({ session, profile, guestInfo });
+  if (!identity) return { allowed: true, remaining: ABUSE_MAX_EVENTS_PER_WINDOW };
+
+  const now = Date.now();
+  const safeCount = Math.max(1, Math.trunc(Number(count) || 1));
+  const key = `${identity}::${normalizeDomainKey(domain) || "streetlights"}`;
+  const buckets = loadAbuseRateFromStorage();
+  const windowStart = now - ABUSE_WINDOW_MS;
+  const prev = Array.isArray(buckets[key]) ? buckets[key] : [];
+  const active = prev.filter((x) => Number.isFinite(Number(x?.ts)) && Number(x.ts) >= windowStart);
+  const used = active.reduce((acc, x) => acc + Math.max(1, Math.trunc(Number(x?.count) || 1)), 0);
+
+  if (used + safeCount > ABUSE_MAX_EVENTS_PER_WINDOW) {
+    const backoffMs = nextAbuseBackoffMs(key, ABUSE_WINDOW_MS - (now - Number(active[0]?.ts || now)));
+    void logAbuseEventAttempt({
+      domain: normalizeDomainKey(domain) || "streetlights",
+      identity_hash: identity,
+      event_kind: "rate_limit_block_local",
+      allowed: false,
+      event_count: safeCount,
+      unit_count: safeCount,
+      reason: "local_event_cap",
+      metadata: { used, cap: ABUSE_MAX_EVENTS_PER_WINDOW, retry_after_ms: backoffMs },
+    });
+    return {
+      allowed: false,
+      remaining: Math.max(0, ABUSE_MAX_EVENTS_PER_WINDOW - used),
+      retryAfterMs: backoffMs,
+    };
+  }
+
+  const nextActive = [...active, { ts: now, count: safeCount }];
+  buckets[key] = nextActive;
+  saveAbuseRateToStorage(buckets);
+  clearAbuseBackoff(key);
+  return {
+    allowed: true,
+    remaining: Math.max(0, ABUSE_MAX_EVENTS_PER_WINDOW - (used + safeCount)),
+  };
+}
+
+function openRateLimitNotice(openNoticeFn, abuseGate) {
+  const waitMins = Math.max(1, Math.ceil((abuseGate?.retryAfterMs || ABUSE_WINDOW_MS) / 60000));
+  const hitLightCap = Number(abuseGate?.remainingUnits) <= 0;
+  const body = hitLightCap
+    ? `Too many reported lights in a short window. Please wait about ${waitMins} minute${waitMins === 1 ? "" : "s"} and try again.`
+    : `Too many submissions. Please wait about ${waitMins} minute${waitMins === 1 ? "" : "s"} and try again.`;
+  if (typeof openNoticeFn === "function") {
+    openNoticeFn("⏳", "Rate limited", body);
+  }
+}
+
+async function registerAbuseEventWithServer({
+  session,
+  profile,
+  guestInfo,
+  domain = "streetlights",
+  count = 1,
+  unitCount = 1,
+  idempotencyKey = "",
+  bypass = false,
+}) {
+  // Never bypass abuse/rate controls for real submits.
+  const effectiveBypass = false;
+  const identity = {
+    user_id: session?.user?.id || null,
+    email: normalizeEmail(guestInfo?.email || profile?.email || session?.user?.email || "") || null,
+    phone: normalizePhone(guestInfo?.phone || profile?.phone || "") || null,
+    name: String(guestInfo?.name || profile?.full_name || session?.user?.user_metadata?.full_name || "").trim() || null,
+  };
+  const identityKey = reporterIdentityKey({ session, profile, guestInfo });
+  const normalizedDomain = normalizeDomainKey(domain) || "streetlights";
+  const tenantKey = activeTenantKey();
+
+  try {
+    const { data, error } = await supabase.functions.invoke(ABUSE_GATE_FUNCTION, {
+      body: {
+        tenant_key: tenantKey,
+        domain: normalizeDomainKey(domain) || "streetlights",
+        count: Math.max(1, Math.trunc(Number(count) || 1)),
+        unitCount: Math.max(1, Math.trunc(Number(unitCount) || 1)),
+        idempotency_key: String(idempotencyKey || "").trim() || null,
+        windowMs: ABUSE_WINDOW_MS,
+        maxEvents: ABUSE_MAX_EVENTS_PER_WINDOW,
+        maxUnits: ABUSE_MAX_LIGHTS_PER_WINDOW,
+        identity,
+      },
+    });
+
+    if (!error && data && typeof data === "object") {
+      if (data.allowed === false) {
+        const retryAfterMsRaw = Number.isFinite(Number(data.retryAfterMs))
+          ? Number(data.retryAfterMs)
+          : ABUSE_WINDOW_MS;
+        const retryAfterMs = nextAbuseBackoffMs(identityKey, retryAfterMsRaw);
+        void logAbuseEventAttempt({
+          domain: normalizedDomain,
+          identity_hash: identityKey || null,
+          event_kind: "rate_limit_block_server",
+          allowed: false,
+          event_count: Math.max(1, Math.trunc(Number(count) || 1)),
+          unit_count: Math.max(1, Math.trunc(Number(unitCount) || 1)),
+          reason: "server_gate_denied",
+          metadata: {
+            remaining: Number(data.remaining || 0),
+            remaining_units: Number(data.remainingUnits || 0),
+            retry_after_ms: retryAfterMs,
+          },
+        });
+        return {
+          allowed: false,
+          remaining: Number.isFinite(Number(data.remaining)) ? Number(data.remaining) : 0,
+          remainingUnits: Number.isFinite(Number(data.remainingUnits))
+            ? Number(data.remainingUnits)
+            : 0,
+          retryAfterMs,
+        };
+      }
+      if (data.allowed === true) {
+        clearAbuseBackoff(identityKey);
+        return {
+          allowed: true,
+          duplicate: Boolean(data.duplicate),
+          remaining: Number.isFinite(Number(data.remaining))
+            ? Number(data.remaining)
+            : ABUSE_MAX_EVENTS_PER_WINDOW,
+          remainingUnits: Number.isFinite(Number(data.remainingUnits))
+            ? Number(data.remainingUnits)
+            : ABUSE_MAX_LIGHTS_PER_WINDOW,
+        };
+      }
+    } else if (error) {
+      console.warn("[abuse gate] server function error, using local fallback:", error?.message || error);
+    }
+  } catch (e) {
+    console.warn("[abuse gate] server function exception, using local fallback:", e?.message || e);
+  }
+
+  return registerAbuseEvent({
+    session,
+    profile,
+    guestInfo,
+    domain,
+    count,
+    bypass: effectiveBypass || bypass,
+  });
+}
+
 // ==================================================
 // SECTION 5 — Group reports into streetlights
 // ==================================================
@@ -581,38 +1349,175 @@ function svgDotDataUrl(fill = "#111", r = 7) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+const MAP_MARKER_SIZE = 26;
+const MAP_MARKER_CENTER = MAP_MARKER_SIZE / 2;
+const MAP_MARKER_RADIUS = 9.2;
+const MAP_MARKER_STROKE = 2.2;
+const MAP_MARKER_GLYPH_SIZE = 15;
+const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.10;
+
 // CMD+F: function gmapsDotIcon
-function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡") {
+function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", glyphSrc = "") {
   const c = color || "#1976d2";
   const r = ringColor || "white";
   const gph = String(glyph || "💡");
+  const gsrc = String(glyphSrc || "").trim();
+  const gsrcResolved = (() => {
+    if (!gsrc) return "";
+    if (/^(https?:|data:)/i.test(gsrc)) return gsrc;
+    if (gsrc.startsWith("/") && typeof window !== "undefined" && window.location?.origin) {
+      return `${window.location.origin}${gsrc}`;
+    }
+    return gsrc;
+  })();
   const isPotholeGlyph = gph.includes("🕳");
-  const textY = isPotholeGlyph ? 11.5 : 12;
-  const textSize = isPotholeGlyph ? 9 : 10;
+  const isPotholeImage = /(^|\/)pothole_icon\.png(\?|$)/i.test(gsrcResolved);
+  const MARKER_SIZE = MAP_MARKER_SIZE;
+  const MARKER_CENTER = MAP_MARKER_CENTER;
+  const MARKER_RADIUS = MAP_MARKER_RADIUS;
+  const textY = isPotholeGlyph ? 13.8 : 14.5;
+  const textSize = isPotholeGlyph ? 13.5 : 14;
   const g = window.google?.maps;
-  const cacheKey = `${c}|${r}|${gph}|${textY}|${textSize}|${g ? "g" : "nog"}`;
+
+  // Prefer canvas composition for image glyphs (more reliable than <image href> in SVG data URLs across environments).
+  let glyphImg = null;
+  if (gsrcResolved && typeof window !== "undefined") {
+    gmapsDotIcon._imgCache ||= new Map();
+    let img = gmapsDotIcon._imgCache.get(gsrcResolved);
+    if (!img) {
+      img = new Image();
+      img.decoding = "async";
+      img.src = gsrcResolved;
+      gmapsDotIcon._imgCache.set(gsrcResolved, img);
+    }
+    if (img.complete && img.naturalWidth > 0) glyphImg = img;
+  }
+
+  const usingImageGlyph = Boolean(glyphImg);
+  const cacheKey = `${c}|${r}|${gph}|${gsrcResolved}|${MARKER_SIZE}|${MARKER_RADIUS}|${MAP_MARKER_STROKE}|${MAP_MARKER_GLYPH_SIZE}|${textY}|${textSize}|${usingImageGlyph ? "img" : "txt"}|${g ? "g" : "nog"}`;
   gmapsDotIcon._cache ||= new Map();
   if (gmapsDotIcon._cache.has(cacheKey)) return gmapsDotIcon._cache.get(cacheKey);
 
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8" fill="${c}" stroke="${r}" stroke-width="2" />
-      <text x="12" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}">${gph}</text>
-    </svg>
-  `.trim();
+  let url = "";
+  if (usingImageGlyph && typeof document !== "undefined") {
+    const canvas = document.createElement("canvas");
+    canvas.width = MARKER_SIZE;
+    canvas.height = MARKER_SIZE;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.beginPath();
+      ctx.arc(MARKER_CENTER, MARKER_CENTER, MARKER_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = c;
+      ctx.fill();
+      ctx.lineWidth = MAP_MARKER_STROKE;
+      ctx.strokeStyle = r;
+      ctx.stroke();
+      const imgSize = MAP_MARKER_GLYPH_SIZE;
+      const imgX = (MARKER_SIZE - imgSize) / 2;
+      const imgY = (MARKER_SIZE - imgSize) / 2;
+      ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
+      url = canvas.toDataURL("image/png");
+    }
+  }
 
-  const url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+  const fallbackGlyph = isPotholeImage ? "" : gph;
+  if (!url) {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
+        <circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MARKER_RADIUS}" fill="${c}" stroke="${r}" stroke-width="${MAP_MARKER_STROKE}" />
+        ${fallbackGlyph ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}">${fallbackGlyph}</text>` : ""}
+      </svg>
+    `.trim();
+    url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+  }
 
   // If google maps isn't ready yet, returning {url} is fine
   if (!g) return { url };
 
   const icon = {
     url,
-    scaledSize: new g.Size(24, 24),
-    anchor: new g.Point(12, 12),
+    scaledSize: new g.Size(MARKER_SIZE, MARKER_SIZE),
+    anchor: new g.Point(MARKER_CENTER, MARKER_CENTER),
   };
   gmapsDotIcon._cache.set(cacheKey, icon);
   return icon;
+}
+
+function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
+  const raw = String(src || "").trim();
+  if (!raw) return gmapsDotIcon();
+  const border = Boolean(opts?.border);
+  const borderColor = String(opts?.borderColor || "#39ff14");
+  const borderWidth = Number(opts?.borderWidth || 3);
+  const resolved = (() => {
+    if (/^(https?:|data:)/i.test(raw)) return raw;
+    if (raw.startsWith("/") && typeof window !== "undefined" && window.location?.origin) {
+      return `${window.location.origin}${raw}`;
+    }
+    return raw;
+  })();
+  const g = window.google?.maps;
+  const px = Number(size) > 0 ? Number(size) : STREET_SIGN_MARKER_SIZE;
+  if (!border) {
+    if (!g) return { url: resolved };
+    return {
+      url: resolved,
+      scaledSize: new g.Size(px, px),
+      anchor: new g.Point(px / 2, px / 2),
+    };
+  }
+
+  // Bordered icon variant (used for queued sign mapping markers).
+  let borderedUrl = "";
+  if (typeof window !== "undefined" && typeof document !== "undefined") {
+    gmapsImageIcon._imgCache ||= new Map();
+    let img = gmapsImageIcon._imgCache.get(resolved);
+    if (!img) {
+      img = new Image();
+      img.decoding = "async";
+      img.src = resolved;
+      gmapsImageIcon._imgCache.set(resolved, img);
+    }
+    if (img.complete && img.naturalWidth > 0) {
+      const cacheKey = `${resolved}|${px}|border|${borderColor}|${borderWidth}`;
+      gmapsImageIcon._borderCache ||= new Map();
+      if (gmapsImageIcon._borderCache.has(cacheKey)) {
+        borderedUrl = gmapsImageIcon._borderCache.get(cacheKey);
+      } else {
+        const pad = Math.max(4, Math.ceil(borderWidth) + 3);
+        const canvasSize = px + pad * 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = canvasSize;
+        canvas.height = canvasSize;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const x = pad;
+          const y = pad;
+          ctx.drawImage(img, x, y, px, px);
+          const cx = canvasSize / 2;
+          const cy = canvasSize / 2;
+          const radius = (px / 2) + 1;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.strokeStyle = borderColor;
+          ctx.lineWidth = Math.max(2, borderWidth);
+          ctx.stroke();
+          borderedUrl = canvas.toDataURL("image/png");
+          gmapsImageIcon._borderCache.set(cacheKey, borderedUrl);
+        }
+      }
+    }
+  }
+
+  const finalUrl = borderedUrl || resolved;
+  const finalSize = borderedUrl ? px + Math.max(4, Math.ceil(borderWidth) + 3) * 2 : px;
+  const anchor = finalSize / 2;
+  if (!g) return { url: finalUrl };
+  return {
+    url: finalUrl,
+    scaledSize: new g.Size(finalSize, finalSize),
+    anchor: new g.Point(anchor, anchor),
+  };
 }
 
 function gmapsUserLocIcon() {
@@ -637,7 +1542,7 @@ function gmapsUserLocIcon() {
 const OFFICIAL_MARKER_SHAPE = {
   type: "circle",
   // Smaller hit area than the full 24x24 icon so pan/zoom gestures are easier to start.
-  coords: [12, 12, 8],
+  coords: [MAP_MARKER_CENTER, MAP_MARKER_CENTER, Math.round(MAP_MARKER_RADIUS)],
 };
 
 function displayLightId(lightUuid, slIdByUuid) {
@@ -1024,7 +1929,7 @@ const OfficialLightsLayer = memo(function OfficialLightsLayer({
       <MarkerF
         key={ol.id}
         position={{ lat: ol.lat, lng: ol.lng }}
-        icon={gmapsDotIcon(iconColor, getMarkerRingColor?.(ol.id) || "#fff")}
+        icon={gmapsDotIcon(iconColor, getMarkerRingColor?.(ol.id) || "#fff", "💡", UI_ICON_SRC.streetlight)}
         shape={OFFICIAL_MARKER_SHAPE}
         optimized
         onClick={() => onMarkerClick(ol.id)}
@@ -1045,6 +1950,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
   const overlayObjRef = useRef(null);
   const canvasRef = useRef(null);
   const hitPointsRef = useRef([]);
+  const glyphImgRef = useRef(null);
   const latestRef = useRef({
     show,
     lights,
@@ -1055,6 +1961,22 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
   });
 
   latestRef.current = { show, lights, bulkMode, bulkSelectedSet, getMarkerColor, getMarkerRingColor };
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = UI_ICON_SRC.streetlight;
+    glyphImgRef.current = img;
+    const onLoad = () => drawOverlayCanvas();
+    if (img.complete && img.naturalWidth > 0) {
+      onLoad();
+    } else {
+      img.onload = onLoad;
+    }
+    return () => {
+      if (glyphImgRef.current === img) glyphImgRef.current = null;
+      img.onload = null;
+    };
+  }, []);
 
   const drawOverlayCanvas = useCallback(() => {
     const overlay = overlayObjRef.current;
@@ -1108,16 +2030,24 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
       const color = isSelected ? "#1976d2" : baseColor;
 
       ctx.beginPath();
-      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.arc(x, y, MAP_MARKER_RADIUS, 0, Math.PI * 2);
       ctx.fillStyle = color || "#1976d2";
       ctx.fill();
-      ctx.lineWidth = 2;
+      ctx.lineWidth = MAP_MARKER_STROKE;
       ctx.strokeStyle = state.getMarkerRingColor?.(ol.id) || "#fff";
       ctx.stroke();
 
-      // Preserve the visual "bulb in dot" look without thousands of MarkerF DOM overlays.
-      ctx.fillStyle = "#111";
-      ctx.fillText("💡", x, y + 0.5);
+      // Draw streetlight icon glyph (fallback to emoji if image is not ready yet).
+      const glyphImg = glyphImgRef.current;
+      if (glyphImg && glyphImg.complete && glyphImg.naturalWidth > 0) {
+        const glyphSize = MAP_MARKER_GLYPH_SIZE;
+        const glyphHalf = glyphSize / 2;
+        ctx.drawImage(glyphImg, x - glyphHalf, y - glyphHalf, glyphSize, glyphSize);
+      } else {
+        ctx.fillStyle = "#111";
+        ctx.font = "12px system-ui, -apple-system, sans-serif";
+        ctx.fillText("💡", x, y + 0.5);
+      }
 
       hit.push({ id: ol.id, x, y });
     }
@@ -1129,7 +2059,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
     redraw() {
       drawOverlayCanvas();
     },
-    hitTestByLatLng(lat, lng, radiusPx = 14) {
+    hitTestByLatLng(lat, lng, radiusPx = 17) {
       const overlay = overlayObjRef.current;
       if (!overlay || !latestRef.current?.show) return null;
       const projection = overlay.getProjection?.();
@@ -1262,12 +2192,14 @@ function ConfirmReportModal({
   setReportType,
   note,
   setNote,
+  areaPowerOn,
+  setAreaPowerOn,
+  hazardYesNo,
+  setHazardYesNo,
   saving,
+  titleLabel = "Save this report?",
+  confirmLabel = "Save light",
 }) {
-    // Utility-company required questions
-  const [areaPowerOn, setAreaPowerOn] = useState(""); // "", "yes", "no"
-  const [hazardYesNo, setHazardYesNo] = useState(""); // "", "yes", "no"
-
   const notesRequired = reportType === "other";
   const notesMissing = notesRequired && !note.trim();
   const showSafetyNote = reportType === "downed_pole";
@@ -1293,7 +2225,7 @@ function ConfirmReportModal({
 
   return (
     <ModalShell open={open} zIndex={9999}>
-      <div style={{ fontSize: 16, fontWeight: 800 }}>Report this streetlight?</div>
+      <div style={{ fontSize: 16, fontWeight: 900 }}>{titleLabel}</div>
 
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 900 }}>Power & Safety</div>
@@ -1541,7 +2473,7 @@ function ConfirmReportModal({
             padding: 10,
             borderRadius: 8,
             border: "none",
-            background: "#1976d2",
+            background: "var(--sl-ui-brand-blue)",
             color: "white",
             cursor: canSubmit ? "pointer" : "not-allowed",
             opacity: canSubmit ? 1 : 0.6,
@@ -1549,12 +2481,12 @@ function ConfirmReportModal({
           }}
           disabled={!canSubmit}
         >
-          {saving ? "Submitting…" : "Report"}
+          {saving ? "Submitting…" : confirmLabel}
         </button>
       </div>
 
       <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1.35 }}>
-        Reports help track outages and do not replace emergency services.
+        Reports help track infrastructure issues and do not replace emergency services.
       </div>
     </ModalShell>
   );
@@ -1567,30 +2499,108 @@ function DomainReportModal({
   locationLabel,
   note,
   setNote,
+  streetSignIssue,
+  setStreetSignIssue,
   consentChecked,
   setConsentChecked,
+  imageFile,
+  imagePreviewUrl,
+  setImageFile,
   saving,
   onCancel,
   onSubmit,
 }) {
   if (!open) return null;
-  const requiresConsent = domain === "potholes";
+  const requiresConsent = domain === "potholes" || domain === "water_drain_issues";
+  const requiresStreetSignIssue = domain === "street_signs";
+  const requiresWaterDrainIssue = domain === "water_drain_issues";
+  const issueValid = !requiresStreetSignIssue && !requiresWaterDrainIssue
+    ? true
+    : Boolean(String(streetSignIssue || "").trim());
   const canSubmit = !saving && (!requiresConsent || consentChecked);
+  const canSubmitFinal = canSubmit && issueValid;
+  const notesPlaceholder = requiresStreetSignIssue
+    ? "Add details (visibility issue, lane, landmark)"
+    : requiresWaterDrainIssue
+      ? "Add details (depth, lane affected, nearest drain/intersection)"
+    : requiresConsent
+      ? "Add details (size, lane, nearby landmark)"
+      : "Add details (what you observed)";
   return (
     <ModalShell open={open} zIndex={10012}>
       <div style={{ display: "grid", gap: 6 }}>
         <div style={{ fontSize: 16, fontWeight: 900 }}>Report {domainLabel}</div>
         <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
-          <b>Location:</b> {locationLabel || "Road location"}
+          <b>Location:</b> {locationLabel || "Map location"}
         </div>
       </div>
+
+      {requiresStreetSignIssue && (
+        <label style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+            What issue are you seeing?
+          </div>
+          <select
+            value={streetSignIssue}
+            onChange={(e) => setStreetSignIssue(e.target.value)}
+            style={{
+              padding: 10,
+              height: 40,
+              boxSizing: "border-box",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: "#fff",
+              color: "#111",
+              fontSize: 14,
+              lineHeight: 1.2,
+            }}
+            disabled={saving}
+          >
+            {STREET_SIGN_ISSUE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {requiresWaterDrainIssue && (
+        <label style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+            What issue are you seeing?
+          </div>
+          <select
+            value={streetSignIssue}
+            onChange={(e) => setStreetSignIssue(e.target.value)}
+            style={{
+              padding: 10,
+              height: 40,
+              boxSizing: "border-box",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: "#fff",
+              color: "#111",
+              fontSize: 14,
+              lineHeight: 1.2,
+            }}
+            disabled={saving}
+          >
+            {WATER_DRAIN_ISSUE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <label style={{ display: "grid", gap: 6 }}>
         <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="Add details (size, lane, nearby landmark)"
+          placeholder={notesPlaceholder}
           style={{
             minHeight: 90,
             resize: "vertical",
@@ -1604,6 +2614,54 @@ function DomainReportModal({
           }}
         />
       </label>
+
+      {(domain === "potholes" || domain === "water_drain_issues") && (
+        <label style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Image (optional)</div>
+          <input
+            type="file"
+            accept="image/*"
+            disabled={saving}
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              setImageFile(f);
+            }}
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+            }}
+          />
+          {imageFile && (
+            <div style={{ display: "grid", gap: 6 }}>
+              {imagePreviewUrl ? (
+                <img
+                  src={imagePreviewUrl}
+                  alt="Report attachment preview"
+                  style={{
+                    width: "100%",
+                    maxHeight: 180,
+                    objectFit: "cover",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-border)",
+                  }}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setImageFile(null)}
+                disabled={saving}
+                style={btnSecondary}
+              >
+                Remove image
+              </button>
+            </div>
+          )}
+        </label>
+      )}
 
       {requiresConsent && (
         <label
@@ -1626,15 +2684,15 @@ function DomainReportModal({
             style={{ marginTop: 2 }}
           />
           <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
-            I agree to allow CityReport.io to submit this pothole report and my provided contact
-            information to the city, utility, or other responsible agency on my behalf.
+            I agree to allow CityReport.io to submit this {domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and my provided contact
+            information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.
           </span>
         </label>
       )}
 
       <div style={{ display: "flex", gap: 10 }}>
         <button onClick={onCancel} disabled={saving} style={btnSecondary}>Cancel</button>
-        <button onClick={onSubmit} disabled={!canSubmit} style={{ ...btnPrimary, opacity: canSubmit ? 1 : 0.6 }}>
+        <button onClick={onSubmit} disabled={!canSubmitFinal} style={{ ...btnPrimary, opacity: canSubmitFinal ? 1 : 0.6 }}>
           {saving ? "Submitting..." : "Report"}
         </button>
       </div>
@@ -1654,9 +2712,9 @@ function WelcomeModal({ open, onLogin, onCreate, onGuest }) {
       </div>
 
       <div style={{ display: "grid", gap: 10 }}>
-        <button onClick={onLogin} style={btnPrimary}>Login</button>
-        <button onClick={onCreate} style={btnPrimaryDark}>Create Account</button>
-        <button onClick={onGuest} style={btnSecondary}>Continue as Guest</button>
+        <button onClick={onLogin} style={{ ...btnPrimary, background: "var(--sl-ui-brand-green)" }}>Log in</button>
+        <button onClick={onCreate} style={{ ...btnPrimary, background: "var(--sl-ui-brand-blue)" }}>Create account</button>
+        <button onClick={onGuest} style={btnSecondary}>Continue as guest</button>
       </div>
     </ModalShell>
   );
@@ -1769,7 +2827,7 @@ const inputStyle = {
   background: "var(--sl-ui-modal-input-bg)",
   color: "var(--sl-ui-text)",
 };
-const btnPrimary = { padding: 10, borderRadius: 10, border: "none", background: "#1976d2", color: "white", fontWeight: 900, cursor: "pointer", width: "100%" };
+const btnPrimary = { padding: 10, borderRadius: 10, border: "none", background: "var(--sl-ui-brand-blue)", color: "white", fontWeight: 900, cursor: "pointer", width: "100%" };
 const btnPrimaryDark = { padding: 10, borderRadius: 10, border: "none", background: "var(--sl-ui-modal-btn-dark-bg)", color: "var(--sl-ui-modal-btn-dark-text)", fontWeight: 900, cursor: "pointer", width: "100%" };
 const btnSecondary = { padding: 10, borderRadius: 10, border: "1px solid var(--sl-ui-modal-btn-secondary-border)", background: "var(--sl-ui-modal-btn-secondary-bg)", color: "var(--sl-ui-modal-btn-secondary-text)", fontWeight: 900, cursor: "pointer", width: "100%" };
 const btnPopupPrimary = {
@@ -1777,7 +2835,7 @@ const btnPopupPrimary = {
   width: "100%",
   borderRadius: 10,
   border: "none",
-  background: "#1976d2",
+  background: "var(--sl-ui-brand-blue)",
   color: "white",
   fontWeight: 900,
   cursor: "pointer",
@@ -1830,7 +2888,7 @@ function NoticeModal({ open, icon, title, message, buttonText = "OK", onClose, c
             padding: 10,
             borderRadius: 10,
             border: "none",
-            background: "#1976d2",
+            background: "var(--sl-ui-brand-blue)",
             color: "white",
             fontWeight: 900,
             cursor: "pointer",
@@ -1911,46 +2969,98 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
   );
 }
 
-function InfoMenuModal({ open, onClose, isAdmin }) {
+function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
   if (!open) return null;
 
-  const markerSwatch = (fill, withBulb = true, ring = "#fff") => (
+  const markerSwatch = (
+    fill,
+    { ring = "#fff", glyph = "💡", glyphSrc = "", glyphColor = "#111", showGlyph = true } = {}
+  ) => (
     <span
       style={{
-        width: 18,
-        height: 18,
+        width: MAP_MARKER_SIZE,
+        height: MAP_MARKER_SIZE,
         borderRadius: 999,
         background: fill,
-        border: `2px solid ${ring}`,
+        border: `${MAP_MARKER_STROKE}px solid ${ring}`,
         display: "grid",
         placeItems: "center",
         boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-        fontSize: withBulb ? 9 : 0,
+        fontSize: showGlyph ? MAP_MARKER_GLYPH_SIZE : 0,
         lineHeight: 1,
-        color: "#111",
+        color: glyphColor,
       }}
       aria-hidden="true"
     >
-      {withBulb ? "💡" : ""}
+      {showGlyph ? (glyphSrc ? <AppIcon src={glyphSrc} size={MAP_MARKER_GLYPH_SIZE} /> : glyph) : ""}
     </span>
   );
 
-  const legendRows = [
-    { swatch: markerSwatch("#111"), label: "Streetlight marker / Operational" },
-    { swatch: markerSwatch("#f1c40f"), label: "Reported outage (lower likelihood)" },
-    { swatch: markerSwatch("#f57c00"), label: "Likely outage (moderate likelihood)" },
-    { swatch: markerSwatch("#e74c3c"), label: "Confirmed outage (high likelihood)" },
-    { swatch: markerSwatch("#111", true, "#1976d2"), label: "You have an open report on this light (blue outline)" },
-    { swatch: markerSwatch("#1976d2"), label: "Selected light in bulk reporting" },
-    { swatch: markerSwatch("#1976d2", false), label: "Your current location" },
+  // Legend maintenance rule (internal): whenever markers/helpers change on the map,
+  // update Info modal legend entries in this same pass.
+  const legendSections = [
+    {
+      title: "Streetlights (Utility-owned)",
+      rows: [
+        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Streetlight asset marker" },
+        { swatch: markerSwatch("#f1c40f", { showGlyph: false }), label: "Reported outage (lower likelihood)" },
+        { swatch: markerSwatch("#f57c00", { showGlyph: false }), label: "Likely outage (moderate likelihood)" },
+        { swatch: markerSwatch("#e74c3c", { showGlyph: false }), label: "Confirmed outage (high likelihood)" },
+        { swatch: markerSwatch("#111", { ring: "#2ecc71", showGlyph: false }), label: "Saved to My Reports (green outline)" },
+        { swatch: markerSwatch("#111", { ring: "#1976d2", showGlyph: false }), label: "Reported to utility (blue outline)" },
+        { swatch: markerSwatch("#1976d2", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Selected light in bulk reporting" },
+      ],
+    },
+    {
+      title: "Potholes",
+      rows: [
+        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.pothole }), label: "Pothole marker" },
+        { swatch: markerSwatch("#f1c40f", { glyphSrc: UI_ICON_SRC.pothole }), label: "Open pothole (yellow indicator)" },
+        { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.pothole }), label: "Fixed pothole (green indicator)" },
+      ],
+    },
+    {
+      title: "Water / Drain Issues",
+      rows: [
+        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Water / Drain marker" },
+        { swatch: markerSwatch("#f1c40f", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Open water/drain issue (yellow indicator)" },
+        { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Fixed water/drain issue (green indicator)" },
+      ],
+    },
+    {
+      title: "Map Helpers",
+      rows: [
+        { swatch: markerSwatch("#1976d2", { showGlyph: false }), label: "Your current location" },
+      ],
+    },
   ];
 
   const adminLegendRows = [
-    { swatch: markerSwatch("#2ecc71"), label: "Queued light in mapping mode" },
+    { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Queued mapped asset" },
+  ];
+
+  const primaryToolRows = [
+    { iconSrc: UI_ICON_SRC.account, label: "Account", desc: "Open login/account menu and My Reports access." },
+    { iconSrc: UI_ICON_SRC.satellite, label: "Map View", desc: "Toggle street map and satellite imagery." },
+    { iconSrc: UI_ICON_SRC.headingReset, label: "Reset Heading", desc: "Realign map orientation to north-up." },
+    { iconSrc: UI_ICON_SRC.location, label: "My Location", desc: "Center map on your current device location." },
+    { iconSrc: UI_ICON_SRC.streetlight, label: "Domain Selector", desc: "Switch active reporting domain on the map." },
+    { iconSrc: UI_ICON_SRC.bulk, label: "Bulk Save (Streetlights)", desc: "Select and save multiple streetlights to My Reports." },
+    { iconSrc: UI_ICON_SRC.info, label: "Info", desc: "Open this help modal with legend and policy links." },
+  ];
+
+  const adminToolRows = [
+    { iconSrc: UI_ICON_SRC.toolbox, label: "Admin Tools", desc: "Open admin action menu." },
+    { iconSrc: UI_ICON_SRC.openReports, label: "Reports", desc: "Open admin reports modal for triage and exports." },
+    { iconSrc: UI_ICON_SRC.mapping, label: "Mapping", desc: "Enable mapping mode for administrative asset placement." },
   ];
 
   return (
-    <ModalShell open={open} zIndex={10013}>
+    <ModalShell
+      open={open}
+      zIndex={10013}
+      panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ display: "grid", gap: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.1 }}>Info</div>
@@ -1985,30 +3095,134 @@ function InfoMenuModal({ open, onClose, isAdmin }) {
           borderRadius: 10,
           padding: 10,
           display: "grid",
-          gap: 8,
+          gap: 10,
           background: "var(--sl-ui-modal-subtle-bg)",
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 900 }}>Map Legend</div>
-        {legendRows.map((row) => (
-          <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
-            <span style={{ width: 24, display: "grid", placeItems: "center" }}>{row.swatch}</span>
-            <span>{row.label}</span>
+        {legendSections.map((section) => (
+          <div key={section.title} style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 900, opacity: 0.92 }}>{section.title}</div>
+            {section.rows.map((row) => (
+              <div key={`${section.title}-${row.label}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
+                <span style={{ width: MAP_MARKER_SIZE + 10, display: "grid", placeItems: "center" }}>{row.swatch}</span>
+                <span>{row.label}</span>
+              </div>
+            ))}
           </div>
         ))}
 
         {isAdmin && (
-          <>
+          <div style={{ display: "grid", gap: 6 }}>
             <div style={{ height: 1, background: "var(--sl-ui-modal-border)", opacity: 0.65, margin: "2px 0" }} />
-            <div style={{ fontSize: 13, fontWeight: 900, opacity: 0.9 }}>Admin icons</div>
+            <div style={{ fontSize: 12.5, fontWeight: 900, opacity: 0.92 }}>Admin markers</div>
             {adminLegendRows.map((row) => (
               <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5 }}>
-                <span style={{ width: 24, display: "grid", placeItems: "center" }}>{row.swatch}</span>
+                <span style={{ width: MAP_MARKER_SIZE + 10, display: "grid", placeItems: "center" }}>{row.swatch}</span>
                 <span>{row.label}</span>
               </div>
             ))}
-          </>
+          </div>
         )}
+      </div>
+
+      <div
+        style={{
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 10,
+          padding: 10,
+          display: "grid",
+          gap: 10,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 900 }}>Tool Buttons</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {primaryToolRows.map((row) => (
+            <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <span style={{ width: 34, height: 34, display: "grid", placeItems: "center" }}>
+                <AppIcon src={row.iconSrc} size={28} />
+              </span>
+              <span><b>{row.label}:</b> {row.desc}</span>
+            </div>
+          ))}
+        </div>
+        {isAdmin && (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ height: 1, background: "var(--sl-ui-modal-border)", opacity: 0.65, margin: "2px 0" }} />
+            <div style={{ fontSize: 12.5, fontWeight: 900, opacity: 0.92 }}>Admin tools</div>
+            {adminToolRows.map((row) => (
+              <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <span style={{ width: 34, height: 34, display: "grid", placeItems: "center" }}>
+                  <AppIcon src={row.iconSrc} size={28} />
+                </span>
+                <span><b>{row.label}:</b> {row.desc}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 10,
+          padding: 10,
+          display: "grid",
+          gap: 10,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 900 }}>Terms of Service</div>
+        <div style={{ fontSize: 12.5, lineHeight: 1.4, opacity: 0.92 }}>
+          CityReport.io is an intermediary intake and accountability platform for non-emergency infrastructure reporting.
+          Use of the platform is governed by the official Terms of Service document.
+        </div>
+        <button
+          onClick={onOpenTerms}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          View Terms of Service
+        </button>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 10,
+          padding: 10,
+          display: "grid",
+          gap: 10,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 900 }}>Privacy Notice</div>
+        <div style={{ fontSize: 12.5, lineHeight: 1.4, opacity: 0.92 }}>
+          CityReport.io collects, uses, shares, and retains report and contact data as described in the official
+          Privacy Notice document.
+        </div>
+        <button
+          onClick={onOpenPrivacy}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          View Privacy Notice
+        </button>
       </div>
 
       <button onClick={onClose} style={btnPrimary}>Close</button>
@@ -2099,7 +3313,7 @@ function AuthGateModal({
                 padding: 10,
                 borderRadius: 10,
                 border: "none",
-                background: "#111",
+                background: "var(--sl-ui-brand-green)",
                 color: "white",
                 fontWeight: 900,
                 cursor: "pointer",
@@ -2113,9 +3327,9 @@ function AuthGateModal({
               style={{
                 padding: 10,
                 borderRadius: 10,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
+                border: "none",
+                background: "var(--sl-ui-brand-blue)",
+                color: "white",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
@@ -2128,9 +3342,9 @@ function AuthGateModal({
               style={{
                 padding: 10,
                 borderRadius: 10,
-                border: "none",
-                background: "#1976d2",
-                color: "white",
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
@@ -2468,29 +3682,41 @@ function AuthGateModal({
 
 function TermsOfUseModal({ open, onClose }) {
   return (
-    <ModalShell open={open} zIndex={10040} panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Terms of Use</div>
-        <button onClick={onClose} style={btnSecondary} aria-label="Close">Close</button>
-      </div>
-      <div style={{ fontSize: 12.5, lineHeight: 1.5, display: "grid", gap: 10, opacity: 0.95 }}>
-        <div>
-          By creating an account or submitting a report, you authorize CityReport.io to collect and process
-          submitted report data, including contact information, for infrastructure issue intake and forwarding.
+    <ModalShell
+      open={open}
+      zIndex={10040}
+      panelStyle={{ width: "min(860px, calc(100vw - 24px))", maxHeight: "85vh", overflow: "hidden", padding: 0 }}
+    >
+      <div style={{ display: "grid", gridTemplateRows: "auto minmax(0,1fr) auto", maxHeight: "85vh" }}>
+        <div
+          style={{
+            width: "100%",
+            padding: "12px 14px",
+            borderBottom: "1px solid var(--sl-ui-modal-border)",
+            fontSize: 16,
+            fontWeight: 950,
+            textAlign: "center",
+          }}
+        >
+          Terms of Service
         </div>
-        <div>
-          You grant permission for CityReport.io to submit your provided name, phone number, and email, along
-          with report details, to municipal departments, utility providers, and other entities responsible for
-          maintenance, repairs, or service restoration. You acknowledge these receiving entities may contact you
-          directly using the submitted contact information.
+        <div style={{ overflow: "hidden", padding: "0", background: "var(--sl-ui-modal-bg)" }}>
+          <iframe
+            title="CityReport Terms of Service"
+            src="/legal/terms.html"
+            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "white" }}
+          />
         </div>
-        <div>
-          CityReport.io acts as an intermediary reporting platform and does not guarantee response times,
-          resolution, or acceptance by receiving entities.
-        </div>
-        <div>
-          You are responsible for accurate submissions and lawful use of the service. Do not use this platform
-          for emergencies; contact emergency services when immediate danger exists.
+        <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>
+          <a
+            href="/legal/terms.html"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "#1976d2", fontWeight: 800, textAlign: "center", textDecoration: "underline" }}
+          >
+            Open Terms of Service in new tab
+          </a>
+          <button onClick={onClose} style={btnPrimary} aria-label="Close">Close</button>
         </div>
       </div>
     </ModalShell>
@@ -2499,28 +3725,41 @@ function TermsOfUseModal({ open, onClose }) {
 
 function PrivacyPolicyModal({ open, onClose }) {
   return (
-    <ModalShell open={open} zIndex={10040} panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Privacy Policy</div>
-        <button onClick={onClose} style={btnSecondary} aria-label="Close">Close</button>
-      </div>
-      <div style={{ fontSize: 12.5, lineHeight: 1.5, display: "grid", gap: 10, opacity: 0.95 }}>
-        <div>
-          CityReport.io may collect report content, approximate location, timestamps, and account or guest contact
-          information to process and route infrastructure reports.
+    <ModalShell
+      open={open}
+      zIndex={10040}
+      panelStyle={{ width: "min(860px, calc(100vw - 24px))", maxHeight: "85vh", overflow: "hidden", padding: 0 }}
+    >
+      <div style={{ display: "grid", gridTemplateRows: "auto minmax(0,1fr) auto", maxHeight: "85vh" }}>
+        <div
+          style={{
+            width: "100%",
+            padding: "12px 14px",
+            borderBottom: "1px solid var(--sl-ui-modal-border)",
+            fontSize: 16,
+            fontWeight: 950,
+            textAlign: "center",
+          }}
+        >
+          Privacy Notice
         </div>
-        <div>
-          Contact information may be shared with city departments, utility providers, or other responsible entities
-          when needed to process, validate, or follow up on submitted reports. Those entities may contact you
-          directly using your submitted information.
+        <div style={{ overflow: "hidden", padding: "0", background: "var(--sl-ui-modal-bg)" }}>
+          <iframe
+            title="CityReport Privacy Notice"
+            src="/legal/privacy.html"
+            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "white" }}
+          />
         </div>
-        <div>
-          Data is stored in backend systems used by CityReport.io and may be retained for operational, auditing, and
-          service-improvement purposes.
-        </div>
-        <div>
-          CityReport.io does not sell personal data. Access to stored data is limited to authorized system and
-          administrative uses.
+        <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>
+          <a
+            href="/legal/privacy.html"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "#1976d2", fontWeight: 800, textAlign: "center", textDecoration: "underline" }}
+          >
+            Open Privacy Notice in new tab
+          </a>
+          <button onClick={onClose} style={btnPrimary} aria-label="Close">Close</button>
         </div>
       </div>
     </ModalShell>
@@ -2638,8 +3877,53 @@ function AllReportsModal({
   sharedLocation = "",
   sharedAddress = "",
   sharedLandmark = "",
+  currentState = "",
+  lastChangedAt = "",
+  onCopyField = null,
 }) {
-  const isPotholeDomain = domainKey === "potholes";
+  const [actionProfileByUserId, setActionProfileByUserId] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!open) return;
+
+    const wanted = Array.from(new Set(
+      (items || [])
+        .filter((it) => it?.kind === "fix" || it?.kind === "reopen")
+        .map((it) => String(it?.actor_user_id || "").trim())
+        .filter((uid) => uid && !actionProfileByUserId[uid])
+    ));
+    if (!wanted.length) return;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, phone, email")
+        .in("user_id", wanted);
+      if (cancelled) return;
+      if (error) {
+        console.error("[profiles] action actor lookup error:", error);
+        return;
+      }
+      const next = {};
+      for (const row of data || []) {
+        const uid = String(row?.user_id || "").trim();
+        if (!uid) continue;
+        next[uid] = {
+          name: String(row?.full_name || "").trim() || null,
+          phone: String(row?.phone || "").trim() || null,
+          email: String(row?.email || "").trim() || null,
+        };
+      }
+      if (!Object.keys(next).length) return;
+      setActionProfileByUserId((prev) => ({ ...prev, ...next }));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, items, actionProfileByUserId]);
+
   return (
     <ModalShell open={open} zIndex={10010}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2666,13 +3950,66 @@ function AllReportsModal({
       {!!String(sharedLocation || sharedAddress || sharedLandmark).trim() && (
         <div style={{ marginTop: 6, display: "grid", gap: 3, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
           {!!String(sharedLocation || "").trim() && (
-            <div><b>Location:</b> {sharedLocation}</div>
+            <div>
+              <b>Location:</b>{" "}
+              {onCopyField ? (
+                <button
+                  type="button"
+                  onClick={() => onCopyField("Location", sharedLocation)}
+                  style={{
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    cursor: "copy",
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    padding: 0,
+                    font: "inherit",
+                  }}
+                >
+                  {sharedLocation}
+                </button>
+              ) : (
+                <span>{sharedLocation}</span>
+              )}
+            </div>
           )}
           {!!String(sharedAddress || "").trim() && (
-            <div><b>Closest address:</b> {sharedAddress}</div>
+            <div>
+              <b>Closest address:</b>{" "}
+              {onCopyField ? (
+                <button
+                  type="button"
+                  onClick={() => onCopyField("Closest address", sharedAddress)}
+                  style={{
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    cursor: "copy",
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    padding: 0,
+                    font: "inherit",
+                  }}
+                >
+                  {sharedAddress}
+                </button>
+              ) : (
+                <span>{sharedAddress}</span>
+              )}
+            </div>
           )}
           {!!String(sharedLandmark || "").trim() && (
             <div><b>Closest landmark:</b> {sharedLandmark}</div>
+          )}
+        </div>
+      )}
+
+      {!!String(currentState || "").trim() && (
+        <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
+          <b>Current state:</b> {incidentStateLabel(currentState)}
+          {!!String(lastChangedAt || "").trim() && (
+            <> • <b>Last updated:</b> {formatTs(lastChangedAt)}</>
           )}
         </div>
       )}
@@ -2694,8 +4031,27 @@ function AllReportsModal({
         ) : (
           items.map((it, idx) => {
             const isFix = it.kind === "fix";
+            const isReopen = it.kind === "reopen";
             const isWorking = it.kind === "working";
             const isWorkingReport = it.kind === "report" && isWorkingReportType(it.type);
+            const actorUserId = String(it?.actor_user_id || "").trim();
+            const actorProfile = actorUserId ? actionProfileByUserId[actorUserId] : null;
+            const actorName =
+              String(it?.actor_name || "").trim()
+              || String(actorProfile?.name || "").trim()
+              || String(it?.actor_email || "").trim()
+              || String(actorProfile?.email || "").trim()
+              || String(it?.actor_phone || "").trim()
+              || String(actorProfile?.phone || "").trim()
+              || (actorUserId ? `User ${actorUserId.slice(0, 8)}` : "Unknown");
+            const actorEmail =
+              String(it?.actor_email || "").trim()
+              || String(actorProfile?.email || "").trim()
+              || "";
+            const actorPhone =
+              String(it?.actor_phone || "").trim()
+              || String(actorProfile?.phone || "").trim()
+              || "";
 
               // Treat all "pole down" variants as red
               const isPoleDown =
@@ -2718,13 +4074,7 @@ function AllReportsModal({
                   gap: 4,
                   padding: 10,
                   borderRadius: 10,
-                  border: isPotholeDomain
-                    ? "1px solid #ffffff"
-                    : "1px solid rgba(0,0,0,0.08)",
-                  cursor: (it.kind === "report" || it.kind === "working") && onReporterDetails ? "pointer" : "default",
-                }}
-                onClick={() => {
-                  if (it.kind === "report" || it.kind === "working") onReporterDetails?.(it);
+                  border: "1px solid rgba(0,0,0,0.08)",
                 }}
               >
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -2759,21 +4109,58 @@ function AllReportsModal({
                 )}
 
                 {(it.kind === "report" || it.kind === "working") && (
-                  <button
-                    onClick={() => onReporterDetails?.(it)}
-                    style={{
-                      padding: 9,
-                      width: "100%",
-                      cursor: "pointer",
-                      background: "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: "var(--sl-ui-modal-btn-secondary-text)",
-                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      borderRadius: 8,
-                      fontWeight: 850,
-                    }}
-                  >
-                    Reporter Details
-                  </button>
+                  <div style={{ fontSize: 11.5, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Submitted by:</b>{" "}
+                    <button
+                      type="button"
+                      onClick={() => onReporterDetails?.(it)}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        color: "var(--sl-ui-brand-green)",
+                        textDecoration: "underline",
+                        cursor: "pointer",
+                        fontWeight: 900,
+                      }}
+                    >
+                      {String(it?.reporter_name || "").trim() || String(it?.reporter_email || "").trim() || "Unknown"}
+                    </button>
+                  </div>
+                )}
+
+                {(isFix || isReopen) && (
+                  <div style={{ fontSize: 11.5, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>{isFix ? "Fixed by:" : "Action by:"}</b>{" "}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onReporterDetails?.({
+                          id: `${it.kind}-${it.ts || idx}`,
+                          reporter_user_id: actorUserId || null,
+                          reporter_name: actorName,
+                          reporter_email: actorEmail || null,
+                          reporter_phone: actorPhone || null,
+                          note: it.note || "",
+                          ts: Number(it.ts || 0),
+                          report_number: null,
+                        })
+                      }
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        color: "var(--sl-ui-brand-green)",
+                        textDecoration: "underline",
+                        cursor: "pointer",
+                        fontWeight: 900,
+                      }}
+                    >
+                      {actorName}
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -2806,6 +4193,7 @@ function MyReportsModal({
   onClose,
   activeDomain = "streetlights",
   onSelectDomain,
+  domainOptions = REPORT_DOMAIN_OPTIONS,
   domainCounts,
   groups, // [{ lightId, mineRows, lastTs }]
   expandedSet,
@@ -2817,16 +4205,99 @@ function MyReportsModal({
   lastFixByLightId,
   onFlyTo, // (lat,lng,zoom,lightId)
 }) {
-  if (!open) return null;
-  const domainButtons = REPORT_DOMAIN_OPTIONS.filter((d) => d.enabled);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const defaultFromDate = useCallback(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return toLocalIsoDate(d);
+  }, []);
+  const defaultToDate = useCallback(() => toLocalIsoDate(new Date()), []);
+  const [fromDate, setFromDate] = useState(() => defaultFromDate());
+  const [toDate, setToDate] = useState(() => defaultToDate());
 
-  const potholeStatusLabel = (count) => {
-    const n = Number(count || 0);
-    if (n >= 7) return "Confirmed Out";
-    if (n >= 4) return "Likely Out";
-    if (n >= 2) return "Reported";
-    return "Reported (pending)";
-  };
+  const parseLocalDateStart = useCallback((v) => {
+    return parseLocalIsoDate(v);
+  }, []);
+  const parseLocalDateEndExclusive = useCallback((v) => {
+    const d = parseLocalIsoDate(v);
+    if (!d) return null;
+    const next = new Date(d);
+    next.setDate(next.getDate() + 1);
+    return next;
+  }, []);
+
+  const domainButtons = (domainOptions || []).filter((d) => d.enabled);
+  const selectedDomainMeta = useMemo(() => {
+    const opts = domainButtons.length ? domainButtons : REPORT_DOMAIN_OPTIONS;
+    return opts.find((d) => d.key === activeDomain) || opts[0] || REPORT_DOMAIN_OPTIONS[0];
+  }, [domainButtons, activeDomain]);
+
+  const inDateRange = useCallback((ts) => {
+    const n = Number(ts || 0);
+    if (!n) return false;
+    const d = new Date(n);
+    const from = parseLocalDateStart(fromDate);
+    const toEx = parseLocalDateEndExclusive(toDate);
+    if (from && d < from) return false;
+    if (toEx && d >= toEx) return false;
+    return true;
+  }, [parseLocalDateStart, parseLocalDateEndExclusive, fromDate, toDate]);
+
+  const normalizedQuery = String(searchQuery || "").trim().toLowerCase();
+  const filteredGroups = useMemo(() => {
+    const digitsQ = normalizePhone(normalizedQuery);
+    const out = [];
+    for (const g of groups || []) {
+      const displayId = String(g?.displayId || displayLightId(g?.lightId, slIdByUuid) || "").toLowerCase();
+      const filteredRows = (g?.mineRows || [])
+        .filter((r) => inDateRange(r?.ts))
+        .filter((r) => {
+          if (!normalizedQuery) return true;
+          const no = reportNumberForRow(r, g?.domainKey || activeDomain).toLowerCase();
+          const type = String(REPORT_TYPES?.[r?.type] || r?.type || "").toLowerCase();
+          const note = String(stripSystemMetadataFromNote(r?.note || "") || r?.note || "").toLowerCase();
+          const email = String(r?.reporter_email || "").toLowerCase();
+          const name = String(r?.reporter_name || "").toLowerCase();
+          const phoneNorm = normalizePhone(r?.reporter_phone || "");
+          return (
+            no.includes(normalizedQuery) ||
+            type.includes(normalizedQuery) ||
+            note.includes(normalizedQuery) ||
+            displayId.includes(normalizedQuery) ||
+            email.includes(normalizedQuery) ||
+            name.includes(normalizedQuery) ||
+            (digitsQ && phoneNorm.includes(digitsQ))
+          );
+        })
+        .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+      if (!filteredRows.length) continue;
+      out.push({
+        ...g,
+        filteredRows,
+        filteredCount: filteredRows.length,
+        filteredLastTs: Number(filteredRows?.[0]?.ts || 0),
+      });
+    }
+    return out.sort((a, b) => Number(b?.filteredLastTs || 0) - Number(a?.filteredLastTs || 0));
+  }, [groups, slIdByUuid, normalizedQuery, inDateRange, activeDomain]);
+
+  const myMetrics = useMemo(() => {
+    const allGroups = Array.isArray(groups) ? groups : [];
+    const listed = Array.isArray(filteredGroups) ? filteredGroups : [];
+    const domainReports = allGroups.reduce((acc, g) => acc + Number(g?.mineRows?.length || 0), 0);
+    const listedReports = listed.reduce((acc, g) => acc + Number(g?.filteredCount || 0), 0);
+    const latestTs = listed.reduce((mx, g) => Math.max(mx, Number(g?.filteredLastTs || 0)), 0);
+    return {
+      domainReports,
+      domainIncidents: allGroups.length,
+      listedReports,
+      listedIncidents: listed.length,
+      latestTs,
+    };
+  }, [groups, filteredGroups]);
+
+  if (!open) return null;
 
   return (
     <ModalShell
@@ -2836,8 +4307,11 @@ function MyReportsModal({
         width: "min(980px, calc(100vw - 32px))",
         maxWidth: "980px",
         minWidth: "min(680px, calc(100vw - 32px))",
-        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px)",
-        overflow: "auto",
+        height: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2861,10 +4335,6 @@ function MyReportsModal({
         </button>
       </div>
 
-      <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.35 }}>
-        Your past reports grouped by selected domain item.
-      </div>
-
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {domainButtons.map((d) => {
           const selected = activeDomain === d.key;
@@ -2878,448 +4348,25 @@ function MyReportsModal({
                 padding: "8px 10px",
                 borderRadius: 10,
                 border: selected
-                  ? "1px solid #1b5e20"
+                  ? "1px solid var(--sl-ui-brand-green-border)"
                   : "1px solid var(--sl-ui-modal-btn-secondary-border)",
                 background: selected
-                  ? "#2e7d32"
+                  ? "var(--sl-ui-brand-green)"
                   : "var(--sl-ui-modal-btn-secondary-bg)",
                 color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
             >
-              {d.icon} {d.label} ({count})
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <AppIcon src={d.iconSrc} size={32} />
+                  <span>{d.label} ({count})</span>
+                </span>
             </button>
           );
         })}
       </div>
 
-      <div
-        style={{
-          marginTop: 6,
-          maxHeight: "60vh",
-          overflow: "auto",
-          border: "1px solid rgba(0,0,0,0.35)",
-          borderRadius: 10,
-          padding: 10,
-          display: "grid",
-          gap: 10,
-        }}
-      >
-        {!groups?.length ? (
-          <div style={{ fontSize: 13, opacity: 0.8 }}>
-            No reports yet.
-          </div>
-        ) : (
-          groups.map((g) => {
-            const isPotholeGroup = g.domainKey === "potholes";
-            const coords = g.center || getCoordsForLightId(g.lightId, reports, officialLights);
-            const info = isPotholeGroup
-              ? { majorityLabel: potholeStatusLabel(g.totalCount || g.mineRows?.length || 0) }
-              : computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId });
-            const dot = isPotholeGroup
-              ? {
-                  color: potholeColorFromCount(g.totalCount || g.mineRows?.length || 0),
-                  label: info.majorityLabel,
-                }
-              : statusDotForLightId(g.lightId, coords, info, reports);
-
-            const isOpen = expandedSet?.has(g.lightId);
-
-            return (
-              <div
-                key={g.lightId}
-                style={{
-                  border: "1px solid var(--sl-ui-open-reports-item-border)",
-                  borderRadius: 10,
-                  padding: 10,
-                  display: "grid",
-                  gap: 8,
-                }}
-              >
-                {/* Header row */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 999,
-                      background: dot.color,
-                      boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-                      flex: "0 0 auto",
-                    }}
-                    title={dot.label}
-                  />
-
-                  <button
-                    onClick={() => onToggleExpand(g.lightId)}
-                    style={{
-                      flex: 1,
-                      textAlign: "left",
-                      border: "none",
-                      background: "transparent",
-                      padding: 0,
-                      cursor: "pointer",
-                      fontWeight: 950,
-                      fontSize: 12.5,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                      color: "var(--sl-ui-text)",
-                    }}
-                    title="Toggle details"
-                  >
-                    {g.displayId || displayLightId(g.lightId, slIdByUuid)}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (!coords) return;
-                      onFlyTo([coords.lat, coords.lng], 18, g.lightId);
-                    }}
-                    disabled={!coords}
-                    style={{
-                      padding: "8px 10px",
-                      borderRadius: 10,
-                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      background: "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: "var(--sl-ui-modal-btn-secondary-text)",
-                      fontWeight: 900,
-                      cursor: coords ? "pointer" : "not-allowed",
-                      opacity: coords ? 1 : 0.6,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Fly to
-                  </button>
-                </div>
-
-                {/* Current status summary */}
-                <div style={{ fontSize: 12, opacity: 0.9 }}>
-                  Status: <b>{info.majorityLabel}</b>
-                </div>
-
-                {/* Dropdown details */}
-                {isOpen && (
-                  <div style={{ display: "grid", gap: 8, paddingTop: 6, borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-                    <div style={{ fontSize: 12, fontWeight: 950 }}>Your reports for this item</div>
-
-                    <div style={{ display: "grid", gap: 6 }}>
-                      {g.mineRows.map((r) => (
-                        <div
-                          key={r.id}
-                          style={{
-                            display: "grid",
-                            gap: 2,
-                            padding: 8,
-                            borderRadius: 10,
-                            border: "1px solid rgba(0,0,0,0.08)",
-                          }}
-                        >
-                          <div style={{ fontSize: 12.5, fontWeight: 900 }}>
-                            {isPotholeGroup ? "Pothole report" : (REPORT_TYPES[r.type] || r.type || "Report")}
-                          </div>
-                          <div style={{ fontSize: 12, opacity: 0.8 }}>
-                            {formatDateTime(r.ts)}
-                          </div>
-                          <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
-                            Report #: {reportNumberForRow(r, g.domainKey || "streetlights")}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      <button
-        onClick={onClose}
-        style={{
-          marginTop: 6,
-          padding: 10,
-          width: "100%",
-          borderRadius: 10,
-          border: "none",
-          background: "#111",
-          color: "white",
-          fontWeight: 900,
-          cursor: "pointer",
-        }}
-      >
-        Close
-      </button>
-    </ModalShell>
-  );
-}
-
-// CMD+F: function formatTs
-function formatTs(ms) {
-  try {
-    const d = new Date(ms || 0);
-    if (!ms || Number.isNaN(d.getTime())) return "";
-    return d.toLocaleString([], {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "";
-  }
-}
-
-
-function OpenReportsModal({
-  open,
-  onClose,
-  isAdmin = false,
-  activeDomain = "streetlights",
-  onSelectDomain,
-  groups, // [{ lightId, rows, count, lastTs }]
-  expandedSet,
-  onToggleExpand,
-  reports,
-  officialLights,
-  slIdByUuid,
-  fixedLights,
-  lastFixByLightId,
-  onFlyTo, // (posArray, zoom, lightId)
-  onOpenAllReports, // (title, items)
-  onReporterDetails,
-}) {
-  const [sortMode, setSortMode] = useState("count"); // count | recent
-  const [searchDraft, setSearchDraft] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const listScrollRef = useRef(null);
-  const rowRefMap = useRef(new Map());
-
-  const scrollGroupToTop = useCallback((lightId) => {
-    const lid = (lightId || "").trim();
-    if (!lid) return;
-    const scroller = listScrollRef.current;
-    const row = rowRefMap.current.get(lid);
-    if (!scroller || !row) return;
-
-    const scrollerRect = scroller.getBoundingClientRect();
-    const rowRect = row.getBoundingClientRect();
-    const top = Math.max(0, scroller.scrollTop + (rowRect.top - scrollerRect.top) - 2);
-    scroller.scrollTo({ top, behavior: "smooth" });
-  }, []);
-
-  const handleToggleExpand = useCallback((lightId) => {
-    const lid = (lightId || "").trim();
-    if (!lid) return;
-    const wasOpen = expandedSet?.has?.(lid);
-    onToggleExpand?.(lid);
-    if (wasOpen) return;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => scrollGroupToTop(lid));
-    });
-  }, [expandedSet, onToggleExpand, scrollGroupToTop]);
-
-  const sortedGroups = useMemo(() => {
-    const arr = Array.isArray(groups) ? [...groups] : [];
-    if (sortMode === "recent") {
-      arr.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-      return arr;
-    }
-    arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
-    return arr;
-  }, [groups, sortMode]);
-
-  const visibleGroups = useMemo(() => sortedGroups, [sortedGroups]);
-
-  const matchedSearchRows = useMemo(() => {
-    const q = String(searchQuery || "").trim().toLowerCase();
-    if (!q) return [];
-    const digitsQ = normalizePhone(q);
-    const out = [];
-    for (const g of sortedGroups || []) {
-      const isStreetlights = activeDomain === "streetlights";
-      const coords = isStreetlights
-        ? getCoordsForLightId(g.lightId, reports, officialLights)
-        : {
-            lat: Number(g.lat ?? g.rows?.[0]?.lat),
-            lng: Number(g.lng ?? g.rows?.[0]?.lng),
-            isOfficial: false,
-          };
-      const locationLabel =
-        String(g.location_label || "").trim() ||
-        readLocationFromNote(g.rows?.[0]?.note) ||
-        (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
-          ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
-          : "Location unavailable");
-      for (const r of g?.rows || []) {
-        const reportNo = reportNumberForRow(r, activeDomain).toLowerCase();
-        const name = String(r?.reporter_name || "").toLowerCase();
-        const email = String(r?.reporter_email || "").toLowerCase();
-        const phoneNorm = normalizePhone(r?.reporter_phone || "");
-        const lightId = String(g?.lightId || "").toLowerCase();
-        const matches =
-          reportNo.includes(q) ||
-          name.includes(q) ||
-          email.includes(q) ||
-          lightId.includes(q) ||
-          (digitsQ && phoneNorm.includes(digitsQ));
-        if (!matches) continue;
-        out.push({
-          id: `${g.lightId}:${r.id}`,
-          lightId: g.lightId,
-          row: r,
-          coords,
-          locationLabel,
-          count: Number(g?.count || 0),
-          isStreetlights,
-        });
-      }
-    }
-    return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
-  }, [searchQuery, sortedGroups, activeDomain, reports, officialLights]);
-  if (!open) return null;
-
-  return (
-    <ModalShell
-      open={open}
-      zIndex={10004}
-      panelStyle={{
-        width: "min(980px, calc(100vw - 32px))",
-        maxWidth: "980px",
-        minWidth: "min(680px, calc(100vw - 32px))",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Open Reports</div>
-        <button
-          onClick={onClose}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-          aria-label="Close"
-          title="Close"
-        >
-          ✕
-        </button>
-      </div>
-
-      {isAdmin && (
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            marginTop: 2,
-            padding: 8,
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-input-bg)",
-          }}
-        >
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {REPORT_DOMAIN_OPTIONS.map((d) => {
-              const selected = activeDomain === d.key;
-              return (
-                <button
-                  key={d.key}
-                  type="button"
-                  onClick={() => {
-                    if (!d.enabled) return;
-                    onSelectDomain?.(d.key);
-                  }}
-                  disabled={!d.enabled}
-                  style={{
-                    borderRadius: 10,
-                    border: selected
-                      ? "1px solid #1b5e20"
-                      : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                    background: selected
-                      ? "#2e7d32"
-                      : "var(--sl-ui-modal-btn-secondary-bg)",
-                    color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
-                    fontWeight: 900,
-                    cursor: d.enabled ? "pointer" : "not-allowed",
-                    opacity: d.enabled ? 1 : 0.55,
-                    padding: "8px 10px",
-                    whiteSpace: "nowrap",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                  aria-label={d.label}
-                  title={d.enabled ? d.label : `${d.label} (Soon)`}
-                >
-                  <span style={{ fontSize: 16, lineHeight: 1 }}>{d.icon}</span>
-                  <span style={{ fontSize: 12.5 }}>{d.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <div
-        style={{
-          marginTop: 8,
-          borderTop: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-          opacity: 0.7,
-        }}
-      />
-
-      <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
-        <button
-          onClick={() => setSortMode("count")}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.12)",
-            background: sortMode === "count" ? "var(--sl-ui-modal-btn-dark-bg)" : "var(--sl-ui-modal-btn-secondary-bg)",
-            color: sortMode === "count" ? "var(--sl-ui-modal-btn-dark-text)" : "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Most reports
-        </button>
-        <button
-          onClick={() => setSortMode("recent")}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.12)",
-            background: sortMode === "recent" ? "var(--sl-ui-modal-btn-dark-bg)" : "var(--sl-ui-modal-btn-secondary-bg)",
-            color: sortMode === "recent" ? "var(--sl-ui-modal-btn-dark-text)" : "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Most recent
-        </button>
-        <button
-          onClick={() => {
-            setSearchDraft("");
-            setSearchQuery("");
-          }}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.12)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Clear search
-        </button>
-      </div>
       <div style={{ marginTop: 6, minHeight: 42, display: "flex", gap: 8 }}>
         <input
           value={searchDraft}
@@ -3327,7 +4374,7 @@ function OpenReportsModal({
           onKeyDown={(e) => {
             if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
           }}
-          placeholder="Search by report #, name, phone, or email"
+          placeholder="Search by report #, type, note, or contact"
           style={{
             width: "100%",
             padding: "9px 10px",
@@ -3356,12 +4403,3235 @@ function OpenReportsModal({
         </button>
       </div>
 
+      <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+          From{" "}
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            style={{
+              marginLeft: 6,
+              padding: "6px 8px",
+              borderRadius: 8,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+            }}
+          />
+        </label>
+        <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+          To{" "}
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            style={{
+              marginLeft: 6,
+              padding: "6px 8px",
+              borderRadius: 8,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+            }}
+          />
+        </label>
+        <button
+          onClick={() => {
+            setSearchDraft("");
+            setSearchQuery("");
+            setFromDate(defaultFromDate());
+            setToDate(defaultToDate());
+          }}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Clear search
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          display: "grid",
+          gap: 8,
+          border: "1px solid rgba(0,0,0,0.12)",
+          borderRadius: 10,
+          padding: 8,
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.9 }}>My metrics (domain + date range)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+          {[
+            { label: "Reports (domain)", value: myMetrics.domainReports },
+            { label: "Incidents (domain)", value: myMetrics.domainIncidents },
+            { label: "Reports (listed)", value: myMetrics.listedReports },
+            { label: "Incidents (listed)", value: myMetrics.listedIncidents },
+            { label: "Latest listed", value: myMetrics.latestTs ? formatTs(myMetrics.latestTs) : "N/A" },
+            { label: "Domain", value: selectedDomainMeta?.label || activeDomain },
+          ].map((m) => (
+            <div
+              key={m.label}
+              style={{
+                border: "1px solid rgba(0,0,0,0.12)",
+                borderRadius: 8,
+                padding: "7px 8px",
+                display: "grid",
+                gap: 2,
+              }}
+            >
+              <div style={{ fontSize: 11.5, opacity: 0.8, fontWeight: 800 }}>{m.label}</div>
+              <div style={{ fontSize: 14, fontWeight: 950 }}>{m.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          border: "1px solid rgba(0,0,0,0.10)",
+          borderRadius: 10,
+          padding: 10,
+        }}
+      >
+        {!filteredGroups?.length ? (
+          <div style={{ fontSize: 13, opacity: 0.8 }}>
+            No reports in selected filters.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ position: "sticky", top: 0, background: "var(--sl-ui-modal-bg)", zIndex: 1 }}>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                  {activeDomain === "potholes" ? "Pothole ID" : activeDomain === "street_signs" ? "Sign ID" : "Light ID"}
+                </th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                  Reports
+                </th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                  Latest report
+                </th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredGroups.map((g) => {
+                const coords = g.center || getCoordsForLightId(g.lightId, reports, officialLights);
+                const isOpen = expandedSet?.has(g.lightId);
+                const latestTs = Number(g?.filteredLastTs || 0);
+                return (
+                  <Fragment key={g.lightId}>
+                    <tr>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                        <button
+                          type="button"
+                          onClick={() => onToggleExpand(g.lightId)}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--sl-ui-text)",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                            padding: 0,
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                          }}
+                          title="Toggle report rows"
+                        >
+                          {isOpen ? "▾ " : "▸ "}
+                          {g.displayId || displayLightId(g.lightId, slIdByUuid)}
+                        </button>
+                      </td>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", fontWeight: 900 }}>
+                        {Number(g?.filteredCount || 0)}
+                      </td>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                        {latestTs ? formatTs(latestTs) : "—"}
+                      </td>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!coords) return;
+                            onFlyTo([coords.lat, coords.lng], 18, g.lightId);
+                          }}
+                          disabled={!coords}
+                          style={{
+                            padding: "6px 8px",
+                            borderRadius: 8,
+                            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                            background: "var(--sl-ui-modal-btn-secondary-bg)",
+                            color: "var(--sl-ui-modal-btn-secondary-text)",
+                            fontWeight: 900,
+                            cursor: coords ? "pointer" : "not-allowed",
+                            opacity: coords ? 1 : 0.6,
+                          }}
+                        >
+                          Fly to
+                        </button>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={4} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
+                            {(g.filteredRows || []).map((r) => (
+                              <div
+                                key={`${g.lightId}:${r.id}`}
+                                style={{
+                                  border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                  borderRadius: 8,
+                                  padding: "7px 8px",
+                                  display: "grid",
+                                  gap: 4,
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                  <div style={{ fontWeight: 900 }}>
+                                    {REPORT_TYPES?.[r.type] || r.type || "Report"}
+                                  </div>
+                                  <div style={{ opacity: 0.8 }}>{formatTs(r.ts)}</div>
+                                </div>
+                                <div style={{ fontWeight: 900, opacity: 0.9 }}>
+                                  Report #: {reportNumberForRow(r, g.domainKey || activeDomain)}
+                                </div>
+                                {!!String(stripSystemMetadataFromNote(r.note || "") || "").trim() && (
+                                  <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                    <b>Note:</b> {stripSystemMetadataFromNote(r.note) || r.note}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function ModerationFlagsModal({
+  open,
+  onClose,
+  rows = [],
+  loading = false,
+  error = "",
+  onRefresh,
+}) {
+  if (!open) return null;
+
+  const toTsLabel = (row) => {
+    const candidates = [
+      row?.created_at,
+      row?.occurred_at,
+      row?.event_ts,
+      row?.ts,
+      row?.inserted_at,
+      row?.updated_at,
+    ];
+    for (const v of candidates) {
+      const n = Date.parse(String(v || ""));
+      if (Number.isFinite(n) && n > 0) return formatTs(n);
+    }
+    return "—";
+  };
+
+  const isStillOpen = (row) => {
+    const closed = String(row?.resolved_at || row?.closed_at || row?.cleared_at || "").trim();
+    if (closed) return false;
+    const explicit = row?.is_open;
+    if (explicit === true) return true;
+    if (explicit === false) return false;
+    return true;
+  };
+
+  const domainForRow = (row) => {
+    return String(row?.domain || row?.report_domain || row?.incident_domain || "unknown").trim() || "unknown";
+  };
+
+  const reasonForRow = (row) => {
+    return String(
+      row?.reason ||
+      row?.event_type ||
+      row?.flag_type ||
+      row?.kind ||
+      row?.rule_name ||
+      "flag"
+    ).trim() || "flag";
+  };
+
+  const detailForRow = (row) => {
+    return String(
+      row?.message ||
+      row?.details ||
+      row?.note ||
+      row?.context ||
+      row?.source ||
+      ""
+    ).trim();
+  };
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10011}
+      panelStyle={{
+        width: "min(980px, calc(100vw - 32px))",
+        maxWidth: "980px",
+        minWidth: "min(680px, calc(100vw - 32px))",
+        height: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>Moderation Flags</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <div style={{ fontSize: 12.5, opacity: 0.85 }}>
+          Admin-only telemetry view of active/recorded moderation events.
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          style={{
+            padding: "7px 10px",
+            borderRadius: 9,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Refresh
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: 8,
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          border: "1px solid var(--sl-ui-open-reports-item-border)",
+          borderRadius: 10,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        {error ? (
+          <div style={{ padding: 12, fontSize: 13, color: "#d32f2f", fontWeight: 800 }}>{error}</div>
+        ) : loading ? (
+          <div style={{ padding: 12, fontSize: 13, opacity: 0.85 }}>Loading moderation flags…</div>
+        ) : !rows.length ? (
+          <div style={{ padding: 12, fontSize: 13, opacity: 0.85 }}>No moderation flags found.</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ position: "sticky", top: 0, background: "var(--sl-ui-modal-bg)", zIndex: 1 }}>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Open</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Severity</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Domain</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Type</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>When</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, idx) => (
+                <tr key={`${String(row?.id || "flag")}-${idx}`}>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                    {isStillOpen(row) ? "Open" : "Closed"}
+                  </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", fontWeight: 900 }}>
+                    {Math.max(0, Number(row?.severity || 0))}
+                  </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                    {domainForRow(row)}
+                  </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                    {reasonForRow(row)}
+                  </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                    {toTsLabel(row)}
+                  </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", lineHeight: 1.35 }}>
+                    {detailForRow(row) || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+// CMD+F: function formatTs
+function formatTs(ms) {
+  try {
+    const d = new Date(ms || 0);
+    if (!ms || Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString([], {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function toLocalIsoDate(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseLocalIsoDate(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  const d = new Date(y, month - 1, day, 0, 0, 0, 0);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+
+function OpenReportsModal({
+  open,
+  onClose,
+  isAdmin = false,
+  activeDomain = "streetlights",
+  onSelectDomain,
+  domainOptions = REPORT_DOMAIN_OPTIONS,
+  groups, // [{ lightId, rows, count, lastTs }]
+  expandedSet,
+  onToggleExpand,
+  reports,
+  potholes = [],
+  allDomainReports = [],
+  officialLights,
+  slIdByUuid,
+  fixedLights,
+  lastFixByLightId,
+  onFlyTo, // (posArray, zoom, lightId)
+  onMarkFixedIncident, // (incidentId, actionType: "fix" | "reopen")
+  onOpenAllReports, // (title, items)
+  onReporterDetails,
+  actionsByLightId = {},
+  session = null,
+  profile = null,
+  incidentStateByKey = {},
+  officialSignIdSetForExport = new Set(),
+  cityBoundaryLoaded = false,
+  isWithinCityLimits = null,
+  modalTitle = "Reports",
+  getStreetlightUtilityDetails = null,
+  onUtilityReportedChange = null,
+  focusIncidentId = "",
+  initialSearchQuery = "",
+  onInitialFocusApplied = null,
+  mapBounds = null,
+}) {
+  const canMutateIncidents = isAdmin && typeof onMarkFixedIncident === "function";
+  const [sortMode, setSortMode] = useState("count"); // count | recent
+  const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const DATE_PRESET_OPTIONS = useMemo(() => ([
+    { key: "all", label: "All" },
+    { key: "today", label: "Today" },
+    { key: "thisMonth", label: "This Month" },
+    { key: "lastMonth", label: "Last Month" },
+    { key: "last90", label: "Last 90 days" },
+    { key: "last180", label: "Last 180 days" },
+    { key: "ytd", label: "YTD" },
+  ]), []);
+  const defaultFromDate = useCallback(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return toLocalIsoDate(d);
+  }, []);
+  const defaultToDate = useCallback(() => {
+    return toLocalIsoDate(new Date());
+  }, []);
+  const [exportFromDate, setExportFromDate] = useState(() => defaultFromDate());
+  const [exportToDate, setExportToDate] = useState(() => defaultToDate());
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [draftFromDate, setDraftFromDate] = useState("");
+  const [draftToDate, setDraftToDate] = useState("");
+  const [calendarLeftMonth, setCalendarLeftMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  });
+  const toIsoDate = useCallback((value) => {
+    return toLocalIsoDate(value);
+  }, []);
+  const parseIsoDate = useCallback((value) => {
+    return parseLocalIsoDate(value);
+  }, []);
+  const getPresetRange = useCallback((presetKey) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let from = new Date(today);
+    let to = new Date(today);
+    if (presetKey === "all") {
+      return { from: "", to: "" };
+    }
+    if (presetKey === "today") {
+      from = new Date(today);
+      to = new Date(today);
+    } else if (presetKey === "thisMonth") {
+      from = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (presetKey === "lastMonth") {
+      from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      to = new Date(today.getFullYear(), today.getMonth(), 0);
+    } else if (presetKey === "last90") {
+      from = new Date(today);
+      from.setDate(from.getDate() - 89);
+    } else if (presetKey === "last180") {
+      from = new Date(today);
+      from.setDate(from.getDate() - 179);
+    } else if (presetKey === "ytd") {
+      from = new Date(today.getFullYear(), 0, 1);
+    }
+    return {
+      from: toIsoDate(from),
+      to: toIsoDate(to),
+    };
+  }, [toIsoDate]);
+  const dateRangeLabel = useCallback((from, to) => {
+    if (!String(from || "").trim() && !String(to || "").trim()) return "All";
+    const fromD = parseIsoDate(from);
+    const toD = parseIsoDate(to);
+    if (!fromD || !toD) return "Select range";
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    return `${fmt.format(fromD)} - ${fmt.format(toD)}`;
+  }, [parseIsoDate]);
+  const openDatePicker = useCallback(() => {
+    const from = String(exportFromDate || "").trim();
+    const to = String(exportToDate || "").trim();
+    setDraftFromDate(from);
+    setDraftToDate(to);
+    const toDate = parseIsoDate(to) || parseIsoDate(from) || new Date();
+    setCalendarLeftMonth(new Date(toDate.getFullYear(), toDate.getMonth() - 1, 1));
+    setDatePickerOpen(true);
+  }, [exportFromDate, exportToDate, parseIsoDate]);
+  const cancelDatePicker = useCallback(() => {
+    setDatePickerOpen(false);
+    setDraftFromDate("");
+    setDraftToDate("");
+  }, []);
+  const applyDatePicker = useCallback(() => {
+    const rawFrom = String(draftFromDate || "").trim();
+    const rawTo = String(draftToDate || "").trim();
+    if (!rawFrom && !rawTo) {
+      setExportFromDate("");
+      setExportToDate("");
+      setDatePickerOpen(false);
+      return;
+    }
+    const from = rawFrom || rawTo;
+    const to = rawTo || rawFrom;
+    if (!from || !to) {
+      setDatePickerOpen(false);
+      return;
+    }
+    if (from <= to) {
+      setExportFromDate(from);
+      setExportToDate(to);
+    } else {
+      setExportFromDate(to);
+      setExportToDate(from);
+    }
+    setDatePickerOpen(false);
+  }, [draftFromDate, draftToDate]);
+  const applyPresetToDraft = useCallback((presetKey) => {
+    const range = getPresetRange(presetKey);
+    setDraftFromDate(range.from);
+    setDraftToDate(range.to);
+    const toDate = parseIsoDate(range.to);
+    if (toDate) {
+      setCalendarLeftMonth(new Date(toDate.getFullYear(), toDate.getMonth() - 1, 1));
+    }
+  }, [getPresetRange, parseIsoDate]);
+  const shiftCalendarMonths = useCallback((delta) => {
+    setCalendarLeftMonth((prev) => {
+      const base = prev instanceof Date ? prev : new Date();
+      return new Date(base.getFullYear(), base.getMonth() + Number(delta || 0), 1);
+    });
+  }, []);
+  const formatMonthLabel = useCallback((value) => {
+    const d = value instanceof Date ? value : new Date();
+    return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+  }, []);
+  const buildMonthCells = useCallback((value) => {
+    const d = value instanceof Date ? value : new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const firstDow = new Date(y, m, 1).getDay();
+    const dim = new Date(y, m + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i += 1) cells.push(null);
+    for (let day = 1; day <= dim; day += 1) {
+      cells.push(toIsoDate(new Date(y, m, day)));
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+    while (cells.length < 42) cells.push(null);
+    return cells;
+  }, [toIsoDate]);
+  const pickCalendarDate = useCallback((iso) => {
+    const day = String(iso || "").trim();
+    if (!day) return;
+    const from = String(draftFromDate || "").trim();
+    const to = String(draftToDate || "").trim();
+    if (!from || (from && to)) {
+      setDraftFromDate(day);
+      setDraftToDate("");
+      return;
+    }
+    if (day < from) {
+      setDraftFromDate(day);
+      setDraftToDate(from);
+      return;
+    }
+    setDraftToDate(day);
+  }, [draftFromDate, draftToDate]);
+  const draftRangeFrom = String(draftFromDate || "").trim();
+  const draftRangeTo = String(draftToDate || draftFromDate || "").trim();
+  const isDateInDraftRange = useCallback((iso) => {
+    const day = String(iso || "").trim();
+    if (!day || !draftRangeFrom || !draftRangeTo) return false;
+    return day >= draftRangeFrom && day <= draftRangeTo;
+  }, [draftRangeFrom, draftRangeTo]);
+  const leftMonthCells = useMemo(() => buildMonthCells(calendarLeftMonth), [buildMonthCells, calendarLeftMonth]);
+  const rightMonthDate = useMemo(
+    () => new Date(calendarLeftMonth.getFullYear(), calendarLeftMonth.getMonth() + 1, 1),
+    [calendarLeftMonth]
+  );
+  const rightMonthCells = useMemo(() => buildMonthCells(rightMonthDate), [buildMonthCells, rightMonthDate]);
+  const [compactDomainPicker, setCompactDomainPicker] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 760;
+  });
+  const [compactDomainMenuOpen, setCompactDomainMenuOpen] = useState(false);
+  const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
+  const [metricsCollapsed, setMetricsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 760;
+  });
+  const listScrollRef = useRef(null);
+  const rowRefMap = useRef(new Map());
+  const [serverDetailRows, setServerDetailRows] = useState(null);
+  const [serverDetailLoading, setServerDetailLoading] = useState(false);
+  const [serverDetailError, setServerDetailError] = useState("");
+  const [serverViewsDisabled, setServerViewsDisabled] = useState(false);
+  const useServerViews = false; // local deterministic mode to avoid server-view 400 noise across domains
+  const [metricsViewRows, setMetricsViewRows] = useState({
+    stateCounts: [],
+    closeStats: null,
+    topRecurring: [],
+  });
+  const [tableSort, setTableSort] = useState({ key: "submitted_at", dir: "desc" });
+  const [adminExpandedSet, setAdminExpandedSet] = useState(() => new Set());
+  const [streetlightReportInfoByIncident, setStreetlightReportInfoByIncident] = useState({});
+  const [copyToast, setCopyToast] = useState(null);
+  const copyToastTimerRef = useRef(null);
+  const isLikelyPermanentViewError = useCallback((err) => {
+    const status = Number(err?.status || 0);
+    if (status === 400 || status === 404) return true;
+    const text = `${String(err?.message || "")} ${String(err?.details || "")} ${String(err?.hint || "")}`.toLowerCase();
+    if (text.includes("schema cache")) return true;
+    if (text.includes("does not exist")) return true;
+    if (text.includes("could not find")) return true;
+    if (text.includes("column")) return true;
+    if (text.includes("relation")) return true;
+    return false;
+  }, []);
+  const officialIdSetForExport = useMemo(
+    () => new Set((officialLights || []).map((l) => String(l?.id || "").trim()).filter(Boolean)),
+    [officialLights]
+  );
+
+  const splitAddressParts = useCallback((rawAddress) => {
+    const raw = String(rawAddress || "").trim();
+    if (!raw) {
+      return { houseNumber: "", street: "", ruralRoute: "", city: "", state: "", zip: "" };
+    }
+    const parts = raw.split(",").map((s) => String(s || "").trim()).filter(Boolean);
+    const first = parts[0] || "";
+    const second = parts[1] || "";
+    const third = parts[2] || "";
+    const firstMatch = first.match(/^(\d+)\s+(.+)$/);
+    const houseNumber = firstMatch ? String(firstMatch[1]).trim() : "";
+    const street = firstMatch ? String(firstMatch[2]).trim() : first;
+    const isRural = /^(rr|rural route)\b/i.test(first);
+    const ruralRoute = isRural ? first : "";
+    const stateZipMatch = third.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+    return {
+      houseNumber: houseNumber || (isRural ? "" : ""),
+      street: isRural ? "" : street,
+      ruralRoute,
+      city: second,
+      state: stateZipMatch ? String(stateZipMatch[1]).trim() : "",
+      zip: stateZipMatch ? String(stateZipMatch[2]).trim() : "",
+    };
+  }, []);
+  const isMyReportsModal = String(modalTitle || "").trim().toLowerCase() === "my reports";
+  const isStreetlightMyReports = activeDomain === "streetlights" && !canMutateIncidents;
+  const utilityReportUserId = String(session?.user?.id || "").trim();
+  const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
+  const clearSearchField = useCallback(() => {
+    setSearchDraft("");
+    setSearchQuery("");
+  }, []);
+  const copyStreetlightField = useCallback(async (label, value, anchorEl = null) => {
+    const text = String(value || "").trim();
+    if (!text || text.toLowerCase() === "unavailable") return;
+    try {
+      if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        const rect = anchorEl?.getBoundingClientRect?.();
+        const x = rect ? Math.max(10, Math.min(window.innerWidth - 180, rect.right + 8)) : null;
+        const y = rect ? Math.max(10, rect.top - 2) : null;
+        setCopyToast({ text: "Copied to clipboard", x, y });
+        if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+        copyToastTimerRef.current = setTimeout(() => {
+          setCopyToast(null);
+          copyToastTimerRef.current = null;
+        }, 900);
+      }
+    } catch {
+      // clipboard failures are non-fatal in modal context
+    }
+  }, []);
+  const getStreetlightUtilityRows = useCallback((util, coords) => {
+    const latVal = Number(coords?.lat);
+    const lngVal = Number(coords?.lng);
+    const coordsText =
+      Number.isFinite(latVal) && Number.isFinite(lngVal)
+        ? `${latVal.toFixed(6)}, ${lngVal.toFixed(6)}`
+        : "Unavailable";
+    const nearestAddressRaw = String(util?.nearestAddress || util?.nearest_address || "").trim();
+    const parts = splitAddressParts(nearestAddressRaw);
+    const onStreet = String(util?.nearestStreet || util?.nearest_street || "").trim();
+    const intersectionRaw = String(util?.nearestIntersection || util?.nearest_intersection || "").trim();
+    const nearestCrossStreetRaw = String(util?.nearestCrossStreet || util?.nearest_cross_street || "").trim();
+    const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const onStreetKey = normalizeRoad(onStreet);
+    const crossStreet = (() => {
+      if (nearestCrossStreetRaw) return nearestCrossStreetRaw;
+      if (!intersectionRaw) return "";
+      const cleaned = intersectionRaw
+        .replace(/\b(at|on|between|near|of|north|south|east|west|n|s|e|w)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const tokens = cleaned
+        .split(/&|\/|,|\band\b|\bnear\b|\bbetween\b|\bof\b/i)
+        .map((x) => String(x || "").trim())
+        .filter(Boolean);
+      for (const token of tokens) {
+        const tokenKey = normalizeRoad(token);
+        if (!tokenKey) continue;
+        if (!onStreetKey) return token;
+        if (tokenKey === onStreetKey) continue;
+        if (tokenKey.includes(onStreetKey) || onStreetKey.includes(tokenKey)) continue;
+        return token;
+      }
+      return "";
+    })();
+    return [
+      { label: "House Number", value: parts.houseNumber || "Unavailable" },
+      { label: "Street", value: parts.street || "Unavailable" },
+      ...(parts.ruralRoute ? [{ label: "Rural Route", value: parts.ruralRoute }] : []),
+      { label: "City", value: parts.city || "Unavailable" },
+      { label: "State", value: parts.state || "Unavailable" },
+      { label: "ZIP", value: parts.zip || "Unavailable" },
+      { label: "Cross Street", value: crossStreet || "Unavailable" },
+      { label: "Nearest Landmark", value: String(util?.nearestLandmark || util?.nearest_landmark || "").trim() || "Unavailable" },
+      { label: "Coordinates", value: coordsText },
+    ];
+  }, [splitAddressParts]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setCompactDomainPicker(window.innerWidth <= 760);
+    sync();
+    window.addEventListener("resize", sync, { passive: true });
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !compactDomainPicker) {
+      setCompactDomainMenuOpen(false);
+      setCompactFiltersOpen(false);
+    }
+  }, [open, compactDomainPicker]);
+  useEffect(() => {
+    if (!open) setCopyToast(null);
+  }, [open]);
+  useEffect(() => {
+    if (open) return;
+    setDatePickerOpen(false);
+    setDraftFromDate("");
+    setDraftToDate("");
+  }, [open]);
+  useEffect(() => {
+    if (!datePickerOpen) return;
+    const onKey = (ev) => {
+      if (ev.key === "Escape") cancelDatePicker();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [datePickerOpen, cancelDatePicker]);
+  useEffect(() => {
+    return () => {
+      if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!compactDomainPicker) setMetricsCollapsed(false);
+  }, [compactDomainPicker]);
+  useEffect(() => {
+    if (!open) return;
+    const targetIncidentId = String(focusIncidentId || "").trim();
+    if (!targetIncidentId) return;
+    setStatusFilter("all");
+    setAdminExpandedSet(new Set([targetIncidentId]));
+  }, [open, focusIncidentId]);
+  useEffect(() => {
+    if (!open) return;
+    const q = String(initialSearchQuery || "").trim();
+    if (!q) return;
+    setStatusFilter("all");
+    setSearchDraft(q);
+    setSearchQuery(q);
+    if (typeof onInitialFocusApplied === "function") onInitialFocusApplied();
+  }, [open, initialSearchQuery]);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUtilityReportedState() {
+      if (!open || !utilityReportUserId) {
+        if (!cancelled) setUtilityReportedByIncident({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from("utility_report_status")
+        .select("incident_id")
+        .eq("user_id", utilityReportUserId)
+        .eq("tenant_key", activeTenantKey())
+        .order("updated_at", { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        console.warn("[utility_report_status] load warning:", error?.message || error);
+        setUtilityReportedByIncident({});
+        return;
+      }
+      const next = {};
+      for (const row of data || []) {
+        const id = String(row?.incident_id || "").trim();
+        if (!id) continue;
+        next[id] = true;
+      }
+      setUtilityReportedByIncident(next);
+    }
+    loadUtilityReportedState();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, utilityReportUserId]);
+  const toggleUtilityReported = useCallback(async (incidentId) => {
+    const id = String(incidentId || "").trim();
+    if (!id || !utilityReportUserId) return;
+    const nextValue = !Boolean(utilityReportedByIncident?.[id]);
+    setUtilityReportedByIncident((prev) => ({
+      ...(prev || {}),
+      [id]: nextValue,
+    }));
+    onUtilityReportedChange?.(id, nextValue);
+    if (nextValue) {
+      const { error } = await supabase
+        .from("utility_report_status")
+        .upsert(
+          [{
+            tenant_key: activeTenantKey(),
+            user_id: utilityReportUserId,
+            incident_id: id,
+            reported_at: new Date().toISOString(),
+          }],
+          { onConflict: "tenant_key,user_id,incident_id" }
+        );
+      if (error) {
+        console.warn("[utility_report_status] upsert warning:", error?.message || error);
+        setUtilityReportedByIncident((prev) => ({
+          ...(prev || {}),
+          [id]: false,
+        }));
+        onUtilityReportedChange?.(id, false);
+      }
+      return;
+    }
+    const { error } = await supabase
+      .from("utility_report_status")
+      .delete()
+      .eq("tenant_key", activeTenantKey())
+      .eq("user_id", utilityReportUserId)
+      .eq("incident_id", id);
+    if (error) {
+      console.warn("[utility_report_status] delete warning:", error?.message || error);
+      setUtilityReportedByIncident((prev) => ({
+        ...(prev || {}),
+        [id]: true,
+      }));
+      onUtilityReportedChange?.(id, true);
+    }
+  }, [utilityReportUserId, utilityReportedByIncident, onUtilityReportedChange]);
+
+  const getStreetlightUtilityForIncident = useCallback((incidentId) => {
+    const key = String(incidentId || "").trim();
+    if (!key) return null;
+
+    const fromState = streetlightReportInfoByIncident?.[key] || null;
+    if (fromState) return fromState;
+
+    const byId = (officialLights || []).find((l) => String(l?.id || "").trim() === key);
+    const bySlId = byId
+      ? null
+      : (officialLights || []).find((l) => String(l?.sl_id || "").trim().toLowerCase() === key.toLowerCase());
+    const match = byId || bySlId;
+    if (!match) return null;
+
+    return {
+      nearestAddress: String(match?.nearest_address || "").trim(),
+      nearestCrossStreet: String(match?.nearest_cross_street || "").trim(),
+      nearestLandmark: String(match?.nearest_landmark || "").trim(),
+      nearestStreet: "",
+      nearestIntersection: "",
+    };
+  }, [streetlightReportInfoByIncident, officialLights]);
+
+  const selectedDomainMeta = useMemo(() => {
+    const opts = Array.isArray(domainOptions) && domainOptions.length
+      ? domainOptions
+      : REPORT_DOMAIN_OPTIONS;
+    return opts.find((d) => d.key === activeDomain) || opts[0] || REPORT_DOMAIN_OPTIONS[0];
+  }, [activeDomain, domainOptions]);
+
+  const scrollGroupToTop = useCallback((lightId) => {
+    const lid = (lightId || "").trim();
+    if (!lid) return;
+    const scroller = listScrollRef.current;
+    const row = rowRefMap.current.get(lid);
+    if (!scroller || !row) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const top = Math.max(0, scroller.scrollTop + (rowRect.top - scrollerRect.top) - 2);
+    scroller.scrollTo({ top, behavior: "smooth" });
+  }, []);
+
+  const handleToggleExpand = useCallback((lightId) => {
+    const lid = (lightId || "").trim();
+    if (!lid) return;
+    const wasOpen = expandedSet?.has?.(lid);
+    if (wasOpen) {
+      onToggleExpand?.(lid);
+      return;
+    }
+    const openIds = Array.from(expandedSet || [])
+      .map((id) => String(id || "").trim())
+      .filter((id) => id && id !== lid);
+    for (const id of openIds) onToggleExpand?.(id);
+    onToggleExpand?.(lid);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => scrollGroupToTop(lid));
+    });
+  }, [expandedSet, onToggleExpand, scrollGroupToTop]);
+
+  const deriveIncidentStateFromTimeline = useCallback((incidentId, rows = []) => {
+    const id = String(incidentId || "").trim();
+    const timeline = Array.isArray(actionsByLightId?.[id]) ? actionsByLightId[id] : [];
+    let lastFixTs = Number(lastFixByLightId?.[id] || 0);
+    let lastReopenTs = 0;
+    for (const a of timeline) {
+      const t = Number(a?.ts || 0);
+      if (!Number.isFinite(t) || t <= 0) continue;
+      const kind = String(a?.action || "").toLowerCase();
+      if (kind === "fix") lastFixTs = Math.max(lastFixTs, t);
+      if (kind === "reopen") lastReopenTs = Math.max(lastReopenTs, t);
+    }
+    let lastReportTs = 0;
+    for (const r of rows || []) {
+      const t = Number(r?.ts || 0);
+      if (!Number.isFinite(t) || t <= 0) continue;
+      if (t > lastReportTs) lastReportTs = t;
+    }
+
+    // Canonical cross-domain rule:
+    // report newer than last fix => reported/open
+    // reopen newer than last fix => reopened/open
+    // otherwise if last fix exists => fixed/closed
+    if (lastReportTs > lastFixTs) {
+      return { state: "reported", fixedAtIso: "", lastChangedAtIso: new Date(lastReportTs).toISOString() };
+    }
+    if (lastReopenTs > lastFixTs) {
+      return { state: "reopened", fixedAtIso: "", lastChangedAtIso: new Date(lastReopenTs).toISOString() };
+    }
+    if (lastFixTs > 0) {
+      return { state: "fixed", fixedAtIso: new Date(lastFixTs).toISOString(), lastChangedAtIso: new Date(lastFixTs).toISOString() };
+    }
+    if (lastReportTs > 0) {
+      return { state: "reported", fixedAtIso: "", lastChangedAtIso: new Date(lastReportTs).toISOString() };
+    }
+    return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
+  }, [actionsByLightId, lastFixByLightId]);
+
+  const sortedGroups = useMemo(() => {
+    const arr = Array.isArray(groups) ? [...groups] : [];
+    if (sortMode === "recent") {
+      arr.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+      return arr;
+    }
+    arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
+    return arr;
+  }, [groups, sortMode]);
+
+  const visibleGroups = useMemo(() => sortedGroups, [sortedGroups]);
+  const exactIncidentSearch = useMemo(() => {
+    const raw = String(searchQuery || "").trim();
+    if (!raw) return "";
+    const upper = raw.toUpperCase();
+    if (/^(SL|PH|WD)\d{10}$/.test(upper)) return upper;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+      return raw.toLowerCase();
+    }
+    return "";
+  }, [searchQuery]);
+  const bypassDateRangeForExactIncidentSearch = Boolean(exactIncidentSearch);
+
+  const matchedSearchRows = useMemo(() => {
+    const q = String(searchQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    const from = (() => {
+      const s = String(exportFromDate || "").trim();
+      if (!s) return null;
+      return parseIsoDate(s);
+    })();
+    const toExclusive = (() => {
+      const s = String(exportToDate || "").trim();
+      if (!s) return null;
+      const d = parseIsoDate(s);
+      if (!d) return null;
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      return next;
+    })();
+    const inRange = (ts) => {
+      if (bypassDateRangeForExactIncidentSearch) return true;
+      const n = Number(ts || 0);
+      if (!n) return false;
+      const d = new Date(n);
+      if (from && d < from) return false;
+      if (toExclusive && d >= toExclusive) return false;
+      return true;
+    };
+    const digitsQ = normalizePhone(q);
+    const out = [];
+    for (const g of sortedGroups || []) {
+      const isStreetlights = activeDomain === "streetlights";
+      const coords = isStreetlights
+        ? getCoordsForLightId(g.lightId, reports, officialLights)
+        : {
+            lat: Number(g.lat ?? g.rows?.[0]?.lat),
+            lng: Number(g.lng ?? g.rows?.[0]?.lng),
+            isOfficial: false,
+          };
+      const locationLabel =
+        String(g.location_label || "").trim() ||
+        readLocationFromNote(g.rows?.[0]?.note) ||
+        (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
+          ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+          : "Location unavailable");
+      for (const r of g?.rows || []) {
+        const ts = Number(r?.ts || 0);
+        if (!inRange(ts)) continue;
+        const reportNo = reportNumberForRow(r, activeDomain).toLowerCase();
+        const name = String(r?.reporter_name || "").toLowerCase();
+        const email = String(r?.reporter_email || "").toLowerCase();
+        const phoneNorm = normalizePhone(r?.reporter_phone || "");
+        const lightId = String(g?.lightId || "").toLowerCase();
+        const incidentIdRaw = String(r?.incident_id || g?.incidentId || g?.lightId || "").trim();
+        const groupDisplayIdRaw = String(g?.displayId || "").trim();
+        const displayId =
+          activeDomain === "potholes"
+            ? (
+              /^PH\d{10}$/i.test(groupDisplayIdRaw)
+                ? groupDisplayIdRaw.toUpperCase()
+                : (
+                  Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
+                    ? makePotholeIdFromCoords(Number(coords.lat), Number(coords.lng))
+                    : ""
+                )
+            )
+            : activeDomain === "water_drain_issues"
+              ? (
+                /^WD\d{10}$/i.test(groupDisplayIdRaw)
+                  ? groupDisplayIdRaw.toUpperCase()
+                  : makeWaterDrainIdFromIncidentId(incidentIdRaw)
+              )
+              : (/^SL\d{10}$/i.test(groupDisplayIdRaw) ? groupDisplayIdRaw.toUpperCase() : displayLightId(incidentIdRaw || g?.lightId, slIdByUuid));
+        const incidentLabel =
+          activeDomain === "potholes"
+            ? `Pothole ID ${displayId || `PH${shortIncidentKey(incidentIdRaw || g?.lightId)}`}`
+            : activeDomain === "water_drain_issues"
+              ? `Water/Drain ID ${displayId || `WD${shortIncidentKey(incidentIdRaw || g?.lightId)}`}`
+              : displayLightId(incidentIdRaw || g?.lightId, slIdByUuid);
+        const displayIdNorm = String(displayId || "").toLowerCase();
+        const matches =
+          reportNo.includes(q) ||
+          name.includes(q) ||
+          email.includes(q) ||
+          lightId.includes(q) ||
+          incidentLabel.toLowerCase().includes(q) ||
+          displayIdNorm.includes(q) ||
+          (digitsQ && phoneNorm.includes(digitsQ));
+        if (!matches) continue;
+        out.push({
+          id: `${g.lightId}:${r.id}`,
+          lightId: g.lightId,
+          row: r,
+          coords,
+          locationLabel,
+          count: Number(g?.count || 0),
+          isStreetlights,
+          incidentLabel,
+        });
+      }
+    }
+    return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
+  }, [
+    searchQuery,
+    sortedGroups,
+    activeDomain,
+    reports,
+    officialLights,
+    slIdByUuid,
+    exportFromDate,
+    exportToDate,
+    parseIsoDate,
+    bypassDateRangeForExactIncidentSearch,
+  ]);
+
+  const parseLocalDateStart = useCallback((v) => {
+    return parseIsoDate(v);
+  }, [parseIsoDate]);
+
+  const parseLocalDateEndExclusive = useCallback((v) => {
+    const d = parseIsoDate(v);
+    if (!d) return null;
+    const next = new Date(d);
+    next.setDate(next.getDate() + 1);
+    return next;
+  }, [parseIsoDate]);
+
+  const escapeIlikeTerm = useCallback((v) => {
+    return String(v || "")
+      .replace(/[%]/g, "\\%")
+      .replace(/[_]/g, "\\_")
+      .replace(/[,]/g, " ")
+      .trim();
+  }, []);
+
+  const isOpenLifecycleState = useCallback((state) => {
+    const s = String(state || "").trim().toLowerCase();
+    if (!s) return true;
+    if (s === "fixed") return false;
+    if (s === "archived") return false;
+    if (s === "closed") return false;
+    if (s === "resolved") return false;
+    if (s === "completed") return false;
+    if (s === "done") return false;
+    if (s === "operational") return false;
+    return true;
+  }, []);
+
+  const matchesStatusFilter = useCallback((state) => {
+    if (statusFilter === "all") return true;
+    const isOpen = isOpenLifecycleState(state);
+    return statusFilter === "open" ? isOpen : !isOpen;
+  }, [statusFilter, isOpenLifecycleState]);
+
+  useEffect(() => {
+    setServerViewsDisabled(false);
+  }, [activeDomain]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadServerDetailRows() {
+      if (!open || !useServerViews) {
+        if (!cancelled) {
+          setServerDetailRows(null);
+          setServerDetailError("");
+          setServerDetailLoading(false);
+        }
+        return;
+      }
+      setServerDetailLoading(true);
+      setServerDetailError("");
+      try {
+        let q = supabase
+          .from("export_incident_detail_v1")
+          .select(
+            "report_id,report_number,domain,incident_id,submitted_at,fixed_at,time_to_close_seconds,current_state,reporter_name,reporter_email,reporter_phone,notes,source"
+          )
+          .eq("domain", activeDomain)
+          .order("submitted_at", { ascending: false })
+          .limit(5000);
+
+        const from = parseLocalDateStart(exportFromDate);
+        const toExclusive = parseLocalDateEndExclusive(exportToDate);
+        if (from) q = q.gte("submitted_at", from.toISOString());
+        if (toExclusive) q = q.lt("submitted_at", toExclusive.toISOString());
+
+        const sq = String(searchQuery || "").trim();
+        if (sq) {
+          const like = `%${escapeIlikeTerm(sq)}%`;
+          q = q.or(
+            [
+              `report_number.ilike.${like}`,
+              `incident_id.ilike.${like}`,
+              `reporter_name.ilike.${like}`,
+              `reporter_email.ilike.${like}`,
+              `reporter_phone.ilike.${like}`,
+            ].join(",")
+          );
+        }
+
+        const { data, error } = await q;
+        if (error) throw error;
+        if (!cancelled) setServerDetailRows(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!cancelled) {
+          if (isLikelyPermanentViewError(e)) setServerViewsDisabled(true);
+          setServerDetailRows(null);
+          setServerDetailError(String(e?.message || e || "Failed to load export dataset"));
+        }
+      } finally {
+        if (!cancelled) setServerDetailLoading(false);
+      }
+    }
+    loadServerDetailRows();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    open,
+    useServerViews,
+    activeDomain,
+    exportFromDate,
+    exportToDate,
+    searchQuery,
+    parseLocalDateStart,
+    parseLocalDateEndExclusive,
+    escapeIlikeTerm,
+    serverViewsDisabled,
+    isLikelyPermanentViewError,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMetricsViews() {
+      if (!open || !useServerViews) {
+        if (!cancelled) {
+          setMetricsViewRows({
+            stateCounts: [],
+            closeStats: null,
+            topRecurring: [],
+          });
+        }
+        return;
+      }
+      try {
+        const [stateCountsRes, closeStatsRes, topRecurringRes] = await Promise.all([
+          supabase
+            .from("metrics_incident_state_counts_v1")
+            .select("domain,current_state,incident_count")
+            .eq("domain", activeDomain),
+          supabase
+            .from("metrics_time_to_close_v1")
+            .select("domain,closed_incident_count,avg_time_to_close_seconds,p50_time_to_close_seconds,p90_time_to_close_seconds")
+            .eq("domain", activeDomain)
+            .maybeSingle(),
+          supabase
+            .from("metrics_top_recurring_incidents_v1")
+            .select("domain,incident_id,reopen_count,last_changed_at")
+            .eq("domain", activeDomain)
+            .order("reopen_count", { ascending: false })
+            .order("last_changed_at", { ascending: false })
+            .limit(5),
+        ]);
+
+        if (stateCountsRes.error) throw stateCountsRes.error;
+        if (closeStatsRes.error && closeStatsRes.status !== 406) throw closeStatsRes.error;
+        if (topRecurringRes.error) throw topRecurringRes.error;
+
+        if (!cancelled) {
+          setMetricsViewRows({
+            stateCounts: Array.isArray(stateCountsRes.data) ? stateCountsRes.data : [],
+            closeStats: closeStatsRes.data || null,
+            topRecurring: Array.isArray(topRecurringRes.data) ? topRecurringRes.data : [],
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setMetricsViewRows({
+            stateCounts: [],
+            closeStats: null,
+            topRecurring: [],
+          });
+        }
+      }
+    }
+    loadMetricsViews();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, useServerViews, activeDomain, serverViewsDisabled]);
+
+  const localExportDetailRows = useMemo(() => {
+    const from = parseLocalDateStart(exportFromDate);
+    const toExclusive = parseLocalDateEndExclusive(exportToDate);
+    const inRange = (ts) => {
+      if (bypassDateRangeForExactIncidentSearch) return true;
+      const n = Number(ts || 0);
+      if (!n) return false;
+      const d = new Date(n);
+      if (from && d < from) return false;
+      if (toExclusive && d >= toExclusive) return false;
+      return true;
+    };
+
+    const detail = [];
+    if (String(searchQuery || "").trim()) {
+      for (const item of matchedSearchRows) {
+        const ts = Number(item?.row?.ts || 0);
+        if (!inRange(ts)) continue;
+        const reportNumber = reportNumberForRow(item.row, activeDomain);
+        const rawIncidentId = item?.isStreetlights
+          ? String(item.lightId || "")
+          : String(item.row?.incident_id || item.lightId || "");
+        const incidentId = (() => {
+          if (activeDomain === "potholes") {
+            const fromRowPid = String(item?.row?.pothole_id || "").trim();
+            if (fromRowPid) return `pothole:${fromRowPid}`;
+            return rawIncidentId.replace(/^potholes:/i, "pothole:");
+          }
+          return rawIncidentId;
+        })();
+        const snapshot = incidentStateByKey?.[incidentSnapshotKey(activeDomain, incidentId)] || null;
+        detail.push({
+          report_id: String(item?.row?.id || ""),
+          report_number: reportNumber,
+          report_type: String(item?.row?.type || item?.row?.report_type || ""),
+          domain: activeDomain,
+          incident_id: incidentId,
+          submitted_at: ts ? new Date(ts).toISOString() : "",
+          fixed_at: snapshot?.state === "fixed" ? String(snapshot?.last_changed_at || "") : "",
+          time_to_close_seconds: "",
+          current_state: String(snapshot?.state || ""),
+          reporter_name: String(item?.row?.reporter_name || ""),
+          reporter_email: String(item?.row?.reporter_email || ""),
+          reporter_phone: String(item?.row?.reporter_phone || ""),
+          notes: String(stripSystemMetadataFromNote(item?.row?.note || "") || ""),
+        });
+      }
+      return detail;
+    }
+
+    if (isAdmin && (activeDomain === "potholes" || activeDomain === "water_drain_issues")) {
+      const byIncident = new Map();
+      for (const r of allDomainReports || []) {
+        let incidentId = "";
+        if (activeDomain === "potholes") {
+          const pid = String(r?.pothole_id || "").trim();
+          if (!pid) continue;
+          incidentId = `pothole:${pid}`;
+        } else {
+          incidentId = String(r?.light_id || "").trim();
+          if (!incidentId) {
+            const lat = Number(r?.lat);
+            const lng = Number(r?.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+            incidentId = lightIdFor(lat, lng);
+          }
+        }
+        if (!byIncident.has(incidentId)) byIncident.set(incidentId, []);
+        byIncident.get(incidentId).push(r);
+      }
+
+      for (const [incidentId, rows] of byIncident.entries()) {
+        const sortedRows = [...rows].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+        const timelineState = deriveIncidentStateFromTimeline(incidentId, sortedRows);
+        for (const r of sortedRows) {
+          const ts = Number(r?.ts || 0);
+          if (!inRange(ts)) continue;
+          detail.push({
+            report_id: String(r?.id || ""),
+            report_number: reportNumberForRow(r, activeDomain),
+            report_type: String(r?.type || r?.report_type || ""),
+            domain: activeDomain,
+            incident_id: incidentId,
+            submitted_at: ts ? new Date(ts).toISOString() : "",
+            fixed_at: timelineState.fixedAtIso,
+            time_to_close_seconds: "",
+            current_state: timelineState.state,
+            reporter_name: String(r?.reporter_name || ""),
+            reporter_email: String(r?.reporter_email || ""),
+            reporter_phone: String(r?.reporter_phone || ""),
+            notes: String(stripSystemMetadataFromNote(r?.note || "") || ""),
+          });
+        }
+      }
+    } else {
+      for (const g of visibleGroups || []) {
+        const incidentId = String(g?.incidentId || g?.lightId || "");
+        const snapshot = incidentStateByKey?.[incidentSnapshotKey(activeDomain, incidentId)] || null;
+        const timelineState = deriveIncidentStateFromTimeline(incidentId, g?.rows || []);
+        for (const r of g?.rows || []) {
+          const ts = Number(r?.ts || 0);
+          if (!inRange(ts)) continue;
+          detail.push({
+            report_id: String(r?.id || ""),
+            report_number: reportNumberForRow(r, activeDomain),
+            report_type: String(r?.type || r?.report_type || ""),
+            domain: activeDomain,
+            incident_id: incidentId,
+            submitted_at: ts ? new Date(ts).toISOString() : "",
+            fixed_at: timelineState.fixedAtIso || (snapshot?.state === "fixed" ? String(snapshot?.last_changed_at || "") : ""),
+            time_to_close_seconds: "",
+            current_state: String(timelineState.state || snapshot?.state || ""),
+            reporter_name: String(r?.reporter_name || ""),
+            reporter_email: String(r?.reporter_email || ""),
+            reporter_phone: String(r?.reporter_phone || ""),
+            notes: String(stripSystemMetadataFromNote(r?.note || "") || ""),
+          });
+        }
+      }
+    }
+    return detail.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
+  }, [
+    isAdmin,
+    allDomainReports,
+    deriveIncidentStateFromTimeline,
+    parseLocalDateStart,
+    parseLocalDateEndExclusive,
+    exportFromDate,
+    exportToDate,
+    searchQuery,
+    matchedSearchRows,
+    visibleGroups,
+    activeDomain,
+    incidentStateByKey,
+    bypassDateRangeForExactIncidentSearch,
+  ]);
+
+  const exportDetailRows = useMemo(() => {
+    const potholeById = new Map(
+      (potholes || []).map((p) => [String(p?.id || "").trim(), p]).filter(([id]) => !!id)
+    );
+    const resolveIncidentPublicId = (domain, incidentId) => {
+      const d = String(domain || "").trim().toLowerCase();
+      const id = String(incidentId || "").trim();
+      if (!id) return "";
+      if (d === "potholes") {
+        const pid = id.replace(/^pothole:/i, "").trim();
+        const p = potholeById.get(pid);
+        if (p && Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))) {
+          return makePotholeIdFromCoords(Number(p.lat), Number(p.lng));
+        }
+        return `PH${shortIncidentKey(id)}`;
+      }
+      if (d === "water_drain_issues") {
+        return makeWaterDrainIdFromIncidentId(id);
+      }
+      return shortIncidentKey(id);
+    };
+
+    let baseRows = useServerViews && Array.isArray(serverDetailRows)
+      ? serverDetailRows.map((r) => {
+        const domain = String(r?.domain ?? activeDomain);
+        const incidentId = String(r?.incident_id ?? "");
+        const snapshot = incidentStateByKey?.[incidentSnapshotKey(domain, incidentId)] || null;
+        const actionRows = Array.isArray(actionsByLightId?.[incidentId]) ? actionsByLightId[incidentId] : [];
+        const latestFixAction = actionRows
+          .filter((a) => String(a?.action || "").toLowerCase() === "fix")
+          .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))[0] || null;
+        const submittedAt = String(r?.submitted_at ?? "");
+        const submittedMs = Date.parse(submittedAt) || 0;
+        const inferredFixedAtFromAction =
+          latestFixAction && Number(latestFixAction?.ts || 0) >= submittedMs
+            ? new Date(Number(latestFixAction.ts)).toISOString()
+            : "";
+        const fixedAt = String(
+          r?.fixed_at ||
+          snapshot?.last_changed_at ||
+          inferredFixedAtFromAction ||
+          ""
+        );
+        const inferredState = String(
+          r?.current_state ||
+          snapshot?.state ||
+          (fixedAt ? "fixed" : "") ||
+          ""
+        );
+        return {
+          report_id: String(r?.report_id ?? ""),
+          report_number: String(r?.report_number ?? ""),
+          report_type: String(r?.report_type ?? ""),
+          domain,
+          incident_id: incidentId,
+          incident_public_id: resolveIncidentPublicId(domain, incidentId),
+          submitted_at: submittedAt,
+          fixed_at: fixedAt,
+          time_to_close_seconds:
+            r?.time_to_close_seconds === null || r?.time_to_close_seconds === undefined
+              ? ""
+              : Number(r.time_to_close_seconds),
+          current_state: inferredState,
+          reporter_name: String(r?.reporter_name ?? ""),
+          reporter_email: String(r?.reporter_email ?? ""),
+          reporter_phone: String(r?.reporter_phone ?? ""),
+          notes: String(r?.notes ?? ""),
+        };
+      })
+      : (localExportDetailRows || []).map((r) => {
+        const domain = String(r?.domain ?? activeDomain);
+        const incidentId = String(r?.incident_id ?? "");
+        return {
+          ...r,
+          incident_public_id: resolveIncidentPublicId(domain, incidentId),
+        };
+      });
+
+    // Hygiene: drop stale incidents tied to deleted/missing official assets for asset-based domains.
+    if (activeDomain === "streetlights") {
+      return baseRows.filter((r) => officialIdSetForExport.has(String(r?.incident_id || "").trim()));
+    }
+    if (activeDomain === "street_signs") {
+      return baseRows.filter((r) => officialSignIdSetForExport.has(String(r?.incident_id || "").trim()));
+    }
+    return baseRows;
+  }, [
+    useServerViews,
+    serverDetailRows,
+    incidentStateByKey,
+    actionsByLightId,
+    localExportDetailRows,
+    potholes,
+    activeDomain,
+    officialIdSetForExport,
+    officialSignIdSetForExport,
+  ]);
+
+  const filteredExportDetailRows = useMemo(
+    () => (exportDetailRows || []).filter((r) => matchesStatusFilter(r?.current_state)),
+    [exportDetailRows, matchesStatusFilter]
+  );
+
+  const exportSummaryRows = useMemo(() => {
+    const byIncident = new Map();
+    for (const r of filteredExportDetailRows) {
+      const key = `${r.domain}::${r.incident_id}`;
+      const prev = byIncident.get(key);
+      if (!prev) {
+        byIncident.set(key, {
+          domain: r.domain,
+          incident_id: r.incident_id,
+          incident_public_id: r.incident_public_id,
+          first_reported_at: r.submitted_at,
+          latest_reported_at: r.submitted_at,
+          fixed_at: r.fixed_at,
+          time_to_close_seconds: r.time_to_close_seconds,
+          current_state: r.current_state,
+          report_count: 1,
+        });
+        continue;
+      }
+      prev.report_count += 1;
+      if (String(r.submitted_at) < String(prev.first_reported_at)) prev.first_reported_at = r.submitted_at;
+      if (String(r.submitted_at) > String(prev.latest_reported_at)) prev.latest_reported_at = r.submitted_at;
+      if (!prev.fixed_at && r.fixed_at) prev.fixed_at = r.fixed_at;
+      if (!prev.current_state && r.current_state) prev.current_state = r.current_state;
+    }
+    const rows = Array.from(byIncident.values()).map((r) => {
+      const firstMs = Date.parse(String(r.first_reported_at || ""));
+      const fixedMs = Date.parse(String(r.fixed_at || ""));
+      const ttc =
+        Number.isFinite(firstMs) && Number.isFinite(fixedMs) && fixedMs >= firstMs
+          ? Math.round((fixedMs - firstMs) / 1000)
+          : "";
+      return { ...r, time_to_close_seconds: ttc };
+    });
+    return rows.sort((a, b) =>
+      String(b.latest_reported_at).localeCompare(String(a.latest_reported_at))
+    );
+  }, [filteredExportDetailRows]);
+
+  const groupByIncidentId = useMemo(() => {
+    const m = new Map();
+    for (const g of groups || []) {
+      const key = String(g?.incidentId || g?.lightId || "").trim();
+      if (!key) continue;
+      m.set(key, g);
+    }
+    return m;
+  }, [groups]);
+
+  const adminTableRows = useMemo(() => {
+    const grouped = new Map();
+    const potholeById = new Map(
+      (potholes || []).map((p) => [String(p?.id || "").trim(), p]).filter(([id]) => !!id)
+    );
+    for (const r of filteredExportDetailRows || []) {
+      const incidentId = String(r?.incident_id || "").trim();
+      if (!incidentId) continue;
+      if (!grouped.has(incidentId)) {
+        const g = groupByIncidentId.get(incidentId);
+        const isStreetlights = activeDomain === "streetlights";
+        let coords = isStreetlights
+          ? getCoordsForLightId(incidentId, reports, officialLights)
+          : {
+              lat: Number(g?.lat ?? g?.rows?.[0]?.lat),
+              lng: Number(g?.lng ?? g?.rows?.[0]?.lng),
+              isOfficial: false,
+            };
+        grouped.set(incidentId, {
+          incident_id: incidentId,
+          incident_display_id: String(g?.lightId || "").trim(),
+          incident_public_id: String(r?.incident_public_id || "").trim(),
+          incident_label: "",
+          primary_report_number: "",
+          current_state: String(r?.current_state || ""),
+          fixed_at: String(r?.fixed_at || ""),
+          report_count: 0,
+          latest_submitted_at: "",
+          coords,
+          rows: [],
+        });
+      }
+      const item = grouped.get(incidentId);
+      item.report_count += 1;
+      item.rows.push({
+        report_id: String(r?.report_id || ""),
+        report_number: String(r?.report_number || ""),
+        report_type: String(r?.report_type || ""),
+        submitted_at: String(r?.submitted_at || ""),
+        reporter_name: String(r?.reporter_name || ""),
+        reporter_email: String(r?.reporter_email || ""),
+        reporter_phone: String(r?.reporter_phone || ""),
+        notes: String(r?.notes || ""),
+      });
+      if (!item.latest_submitted_at || String(r?.submitted_at || "") > String(item.latest_submitted_at)) {
+        item.latest_submitted_at = String(r?.submitted_at || "");
+      }
+      if (!item.incident_public_id && String(r?.incident_public_id || "").trim()) {
+        item.incident_public_id = String(r.incident_public_id || "").trim();
+      }
+      if (!item.fixed_at || String(r?.fixed_at || "") > String(item.fixed_at)) {
+        item.fixed_at = String(r?.fixed_at || "");
+      }
+    }
+
+    const rows = Array.from(grouped.values());
+    for (const row of rows) {
+      if (activeDomain === "potholes" && (!Number.isFinite(Number(row?.coords?.lat)) || !Number.isFinite(Number(row?.coords?.lng)))) {
+        const pid = String(row?.incident_id || "").replace(/^pothole:/i, "").trim();
+        const p = potholeById.get(pid);
+        if (p && Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))) {
+          row.coords = { lat: Number(p.lat), lng: Number(p.lng), isOfficial: false };
+        }
+      }
+      row.rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
+      row.primary_report_number = String(row.rows?.[0]?.report_number || "").trim();
+      const shownDisplay = String(row.incident_display_id || "").trim();
+      if (activeDomain === "potholes") {
+        const ph = /^PH\d{10}$/i.test(shownDisplay)
+          ? shownDisplay.toUpperCase()
+          : (
+            Number.isFinite(Number(row?.coords?.lat)) && Number.isFinite(Number(row?.coords?.lng))
+              ? makePotholeIdFromCoords(Number(row.coords.lat), Number(row.coords.lng))
+              : ""
+          );
+        row.incident_label = `Pothole ID ${ph || `PH${shortIncidentKey(row.incident_id)}`}`;
+      } else if (activeDomain === "water_drain_issues") {
+        const exportedWd = String(row?.incident_public_id || "").trim();
+        const wd = /^WD\d{10}$/i.test(shownDisplay)
+          ? shownDisplay.toUpperCase()
+          : (/^WD\d{10}$/i.test(exportedWd) ? exportedWd.toUpperCase() : makeWaterDrainIdFromIncidentId(row.incident_id));
+        row.incident_label = `Water/Drain ID ${wd}`;
+      } else {
+        row.incident_label = adminIncidentLabelForDomain(
+          activeDomain,
+          row.incident_id,
+          row.primary_report_number,
+          slIdByUuid,
+          row.incident_display_id
+        );
+      }
+      const fixAction = (actionsByLightId?.[row.incident_id] || [])
+        .filter((a) => String(a?.action || "").toLowerCase() === "fix")
+        .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))[0] || null;
+      const reopenActionsRaw = (actionsByLightId?.[row.incident_id] || [])
+        .filter((a) => String(a?.action || "").toLowerCase() === "reopen")
+        .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))
+        .map((a) => ({
+          ts: Number(a?.ts || 0),
+          note: String(a?.note || "").trim(),
+          reporter_user_id: a?.actor_user_id || a?.reporter_user_id || null,
+          reporter_name: String(a?.actor_name || a?.reporter_name || "").trim() || null,
+          reporter_email: String(a?.actor_email || a?.reporter_email || "").trim() || null,
+          reporter_phone: String(a?.actor_phone || a?.reporter_phone || "").trim() || null,
+        }));
+      const seenReopen = new Set();
+      row.reopen_events = reopenActionsRaw.filter((ev) => {
+        const key = [
+          String(Math.floor(Number(ev.ts || 0) / 1000)),
+          String(ev.note || ""),
+          String(ev.reporter_user_id || ""),
+          String(ev.reporter_name || ""),
+        ].join("|");
+        if (seenReopen.has(key)) return false;
+        seenReopen.add(key);
+        return true;
+      });
+      if (fixAction || row.fixed_at) {
+        const fixedByUserId = fixAction?.actor_user_id || fixAction?.reporter_user_id || null;
+        const isCurrentUserFixer = Boolean(
+          fixedByUserId &&
+          session?.user?.id &&
+          String(fixedByUserId) === String(session.user.id)
+        );
+        const fallbackName =
+          (isCurrentUserFixer
+            ? (
+              String(profile?.full_name || "").trim() ||
+              String(session?.user?.user_metadata?.full_name || "").trim() ||
+              String(session?.user?.email || "").split("@")[0]
+            )
+            : "") ||
+          "";
+        const fallbackEmail =
+          (isCurrentUserFixer
+            ? (normalizeEmail(profile?.email || session?.user?.email || "") || "")
+            : "") ||
+          "";
+        const fallbackPhone =
+          (isCurrentUserFixer
+            ? (normalizePhone(profile?.phone || "") || "")
+            : "") ||
+          "";
+        const fixTs = Number(fixAction?.ts || Date.parse(String(row.fixed_at || "")) || 0);
+        row.fixed_event = {
+          ts: fixTs,
+          note: String(fixAction?.note || "").trim(),
+          reporter_user_id: fixedByUserId,
+          reporter_name: String(fixAction?.actor_name || fixAction?.reporter_name || "").trim() || fallbackName || null,
+          reporter_email: String(fixAction?.actor_email || fixAction?.reporter_email || "").trim() || fallbackEmail || null,
+          reporter_phone: String(fixAction?.actor_phone || fixAction?.reporter_phone || "").trim() || fallbackPhone || null,
+        };
+      } else {
+        row.fixed_event = null;
+      }
+      row.latest_activity_at = String(
+        row.fixed_event?.ts && Number(row.fixed_event.ts) > 0
+          ? new Date(Number(row.fixed_event.ts)).toISOString()
+          : row.latest_submitted_at || ""
+      );
+      if (row.latest_submitted_at && row.fixed_event?.ts) {
+        const reportTs = Date.parse(String(row.latest_submitted_at || "")) || 0;
+        const fixedTs = Number(row.fixed_event.ts || 0);
+        if (fixedTs <= reportTs) {
+          row.latest_activity_at = String(row.latest_submitted_at || "");
+        }
+      }
+    }
+
+    const cityFilteredRows = rows.filter((row) => {
+      if (!cityBoundaryLoaded) return true;
+      if (typeof isWithinCityLimits !== "function") return true;
+      if (activeDomain !== "potholes" && activeDomain !== "water_drain_issues") return true;
+      const lat = Number(row?.coords?.lat);
+      const lng = Number(row?.coords?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      return Boolean(isWithinCityLimits(lat, lng));
+    });
+
+    const dir = tableSort?.dir === "asc" ? 1 : -1;
+    const key = String(tableSort?.key || "submitted_at");
+    cityFilteredRows.sort((a, b) => {
+      if (key === "report_count") return (Number(a.report_count || 0) - Number(b.report_count || 0)) * dir;
+      if (key === "utility_reported") {
+        const aa = Boolean(utilityReportedByIncident?.[a?.incident_id]) ? 1 : 0;
+        const bb = Boolean(utilityReportedByIncident?.[b?.incident_id]) ? 1 : 0;
+        return (aa - bb) * dir;
+      }
+      if (key === "submitted_at") {
+        const ta = Date.parse(String(a.latest_activity_at || a.latest_submitted_at || "")) || 0;
+        const tb = Date.parse(String(b.latest_activity_at || b.latest_submitted_at || "")) || 0;
+        return (ta - tb) * dir;
+      }
+      if (key === "incident_id") {
+        const la = String(a?.incident_label || a?.incident_id || "").toLowerCase();
+        const lb = String(b?.incident_label || b?.incident_id || "").toLowerCase();
+        if (la < lb) return -1 * dir;
+        if (la > lb) return 1 * dir;
+        return 0;
+      }
+      const sa = String(a?.[key] || "").toLowerCase();
+      const sb = String(b?.[key] || "").toLowerCase();
+      if (sa < sb) return -1 * dir;
+      if (sa > sb) return 1 * dir;
+      return 0;
+    });
+    return cityFilteredRows;
+  }, [
+    filteredExportDetailRows,
+    groupByIncidentId,
+    activeDomain,
+    reports,
+    potholes,
+    officialLights,
+    slIdByUuid,
+    actionsByLightId,
+    tableSort,
+    utilityReportedByIncident,
+    cityBoundaryLoaded,
+    isWithinCityLimits,
+  ]);
+
+  const displayedAdminRows = adminTableRows;
+
+  useEffect(() => {
+    // Cost guardrail: disable passive streetlight hydration in reports views.
+    // Streetlight utility details should come from persisted DB fields.
+  }, [open, activeDomain, adminTableRows, getStreetlightUtilityDetails, streetlightReportInfoByIncident]);
+
+  const toggleTableSort = useCallback((key) => {
+    setTableSort((prev) => {
+      if (prev?.key === key) {
+        return { key, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { key, dir: key === "submitted_at" || key === "report_count" || key === "utility_reported" ? "desc" : "asc" };
+    });
+  }, []);
+
+  const sortPresetValue = useMemo(() => {
+    const key = String(tableSort?.key || "");
+    const dir = String(tableSort?.dir || "desc");
+    if (key === "submitted_at") return dir === "asc" ? "recent_asc" : "recent_desc";
+    if (key === "report_count") return dir === "asc" ? "reports_asc" : "reports_desc";
+    if (key === "incident_id") return dir === "asc" ? "id_asc" : "id_desc";
+    if (key === "utility_reported") return dir === "asc" ? "utility_asc" : "utility_desc";
+    return "recent_desc";
+  }, [tableSort]);
+
+  const applySortPreset = useCallback((preset) => {
+    const p = String(preset || "").trim().toLowerCase();
+    if (p === "recent_asc") return setTableSort({ key: "submitted_at", dir: "asc" });
+    if (p === "recent_desc") return setTableSort({ key: "submitted_at", dir: "desc" });
+    if (p === "reports_asc") return setTableSort({ key: "report_count", dir: "asc" });
+    if (p === "reports_desc") return setTableSort({ key: "report_count", dir: "desc" });
+    if (p === "id_asc") return setTableSort({ key: "incident_id", dir: "asc" });
+    if (p === "id_desc") return setTableSort({ key: "incident_id", dir: "desc" });
+    if (p === "utility_asc") return setTableSort({ key: "utility_reported", dir: "asc" });
+    if (p === "utility_desc") return setTableSort({ key: "utility_reported", dir: "desc" });
+    setTableSort({ key: "submitted_at", dir: "desc" });
+  }, []);
+
+  const toggleAdminExpanded = useCallback((incidentId) => {
+    const id = String(incidentId || "").trim();
+    if (!id) return;
+    setAdminExpandedSet((prev) => {
+      if (prev.has(id)) return new Set();
+      return new Set([id]);
+    });
+  }, []);
+
+  const adminIncidentDotForRow = useCallback((row) => {
+    const incidentId = String(row?.incident_id || "").trim();
+    if (!incidentId) return { color: "#9e9e9e", label: "Unknown incident" };
+
+    if (activeDomain === "streetlights") {
+      const stateText = String(row?.current_state || "").trim().toLowerCase();
+      if (stateText && !isOpenLifecycleState(stateText)) {
+        return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
+      }
+      const coords = getCoordsForLightId(incidentId, reports, officialLights);
+      if (!coords?.isOfficial) {
+        return { color: "#9e9e9e", label: "Asset missing from official lights" };
+      }
+      const info = computePublicStatusForLightId(incidentId, { reports, fixedLights, lastFixByLightId });
+      if (Boolean(info?.isFixed)) {
+        return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
+      }
+      return statusDotForLightId(incidentId, coords, info, reports);
+    }
+
+    if (activeDomain === "potholes") {
+      if (!isOpenLifecycleState(row?.current_state || "")) {
+        return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
+      }
+      const openCount = Number(row?.report_count || 0);
+      return {
+        color: potholeColorFromCount(openCount > 0 ? openCount : 1),
+        label: "Pothole incident",
+      };
+    }
+    if (activeDomain === "water_drain_issues") {
+      if (!isOpenLifecycleState(row?.current_state || "")) {
+        return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
+      }
+      const openCount = Number(row?.report_count || 0);
+      return {
+        color: openCount <= 1 ? officialStatusFromSinceFixCount(1).color : waterDrainColorFromCount(openCount),
+        label: "Water / Drain incident",
+      };
+    }
+    if (activeDomain === "street_signs") return { color: "#1e88e5", label: "Street sign incident" };
+    if (activeDomain === "power_outage") return { color: "#f39c12", label: "Power outage incident" };
+    if (activeDomain === "water_main") return { color: "#3498db", label: "Water main incident" };
+    return { color: "#616161", label: "Incident" };
+  }, [activeDomain, reports, officialLights, fixedLights, lastFixByLightId]);
+
+  const adminMetrics = useMemo(() => {
+    const summary = exportSummaryRows || [];
+    const filteredDetails = filteredExportDetailRows || [];
+    const allDetails = exportDetailRows || [];
+    const totalReports = filteredDetails.length; // search/filter results
+
+    // Domain totals: derive from full domain/date dataset, not status-filtered slice.
+    const incidentLatestState = new Map();
+    for (const r of allDetails) {
+      const incidentId = String(r?.incident_id || "").trim();
+      if (!incidentId) continue;
+      const ts = Date.parse(String(r?.submitted_at || "")) || 0;
+      const prev = incidentLatestState.get(incidentId);
+      if (!prev || ts >= prev.ts) {
+        incidentLatestState.set(incidentId, {
+          ts,
+          state: String(r?.current_state || "").trim().toLowerCase(),
+        });
+      }
+    }
+    const totalIncidents = incidentLatestState.size;
+    let fixedIncidents = 0;
+    for (const x of incidentLatestState.values()) {
+      if (!isOpenLifecycleState(x?.state || "")) fixedIncidents += 1;
+    }
+    const openIncidents = Math.max(0, totalIncidents - fixedIncidents);
+
+    // Search/filter average time-to-fix based on filtered rows grouped by incident.
+    const byIncident = new Map();
+    for (const r of filteredDetails) {
+      const incidentId = String(r?.incident_id || "").trim();
+      if (!incidentId) continue;
+      const submittedMs = Date.parse(String(r?.submitted_at || "")) || 0;
+      const fixedMs = Date.parse(String(r?.fixed_at || "")) || 0;
+      const prev = byIncident.get(incidentId) || { firstSubmittedMs: 0, fixedMs: 0 };
+      if (!prev.firstSubmittedMs || (submittedMs && submittedMs < prev.firstSubmittedMs)) prev.firstSubmittedMs = submittedMs;
+      if (!prev.fixedMs || (fixedMs && fixedMs > prev.fixedMs)) prev.fixedMs = fixedMs;
+      byIncident.set(incidentId, prev);
+    }
+    let avgTimeToFixSeconds = 0;
+    let closeCount = 0;
+    for (const x of byIncident.values()) {
+      if (!x.firstSubmittedMs || !x.fixedMs || x.fixedMs < x.firstSubmittedMs) continue;
+      avgTimeToFixSeconds += Math.round((x.fixedMs - x.firstSubmittedMs) / 1000);
+      closeCount += 1;
+    }
+    avgTimeToFixSeconds = closeCount > 0 ? Math.round(avgTimeToFixSeconds / closeCount) : 0;
+
+    const topRecurring = Array.isArray(metricsViewRows.topRecurring) && metricsViewRows.topRecurring.length
+      ? metricsViewRows.topRecurring.map((r) => ({
+          domain: r.domain,
+          incident_id: r.incident_id,
+          report_count: Number(r.reopen_count || 0),
+        }))
+      : [...summary]
+          .sort((a, b) => Number(b?.report_count || 0) - Number(a?.report_count || 0))
+          .slice(0, 5);
+    return {
+      totalReports,
+      totalIncidents,
+      openIncidents,
+      fixedIncidents,
+      avgTimeToFixSeconds,
+      topRecurring,
+    };
+  }, [exportSummaryRows, filteredExportDetailRows, exportDetailRows, metricsViewRows, isOpenLifecycleState]);
+
+  const toCsv = useCallback((rows, columns, metadata = null) => {
+    const esc = (v) => {
+      const s = String(v ?? "");
+      if (/[",\n]/.test(s)) return `"${s.replace(/"/g, "\"\"")}"`;
+      return s;
+    };
+    const metaLines = [];
+    if (metadata && typeof metadata === "object") {
+      for (const [k, v] of Object.entries(metadata)) {
+        if (!k) continue;
+        metaLines.push(`# ${String(k)}: ${String(v ?? "")}`);
+      }
+    }
+    const head = columns.join(",");
+    const body = rows.map((r) => columns.map((c) => esc(r[c])).join(",")).join("\n");
+    const metaPrefix = metaLines.length ? `${metaLines.join("\n")}\n` : "";
+    return `${metaPrefix}${head}\n${body}\n`;
+  }, []);
+
+  const buildExportMetadata = useCallback(() => {
+    const from = parseLocalDateStart(exportFromDate);
+    const toExclusive = parseLocalDateEndExclusive(exportToDate);
+    return {
+      export_schema_version: EXPORT_SCHEMA_VERSION,
+      generated_at_utc: new Date().toISOString(),
+      window_start_utc: from ? from.toISOString() : "",
+      window_end_utc: toExclusive ? toExclusive.toISOString() : "",
+      domain: activeDomain || "all",
+      metrics_incidents: Number(adminMetrics.totalIncidents || 0),
+      metrics_open: Number(adminMetrics.openIncidents || 0),
+      metrics_fixed: Number(adminMetrics.fixedIncidents || 0),
+      metrics_reports: Number(adminMetrics.totalReports || 0),
+      metrics_avg_time_to_fix_seconds: Number(adminMetrics.avgTimeToFixSeconds || 0),
+    };
+  }, [
+    parseLocalDateStart,
+    parseLocalDateEndExclusive,
+    exportFromDate,
+    exportToDate,
+    activeDomain,
+    adminMetrics.totalIncidents,
+    adminMetrics.openIncidents,
+    adminMetrics.fixedIncidents,
+    adminMetrics.totalReports,
+    adminMetrics.avgTimeToFixSeconds,
+  ]);
+
+  const downloadCsv = useCallback((filename, csvText) => {
+    const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const logExportAudit = useCallback(
+    async (exportKind, rowCount) => {
+      if (!isAdmin) return;
+      try {
+        const normalizedStatus = String(statusFilter || "").toLowerCase();
+        const validLifecycleStates = new Set([
+          "reported",
+          "confirmed",
+          "in_progress",
+          "fixed",
+          "reopened",
+          "archived",
+        ]);
+        const auditState = validLifecycleStates.has(normalizedStatus) ? normalizedStatus : null;
+        const payload = {
+          p_export_kind: exportKind,
+          p_domain: activeDomain,
+          p_state: auditState,
+          p_from_date: exportFromDate || null,
+          p_to_date: exportToDate || null,
+          p_incident_id: null,
+          p_filters: {
+            search: String(searchQuery || "").trim(),
+            sort: sortMode,
+            domain: activeDomain,
+            status_filter: normalizedStatus || null,
+            source: "reports_modal",
+          },
+          p_row_count: Number(rowCount || 0),
+        };
+        const { error } = await supabase.rpc("log_export_action", payload);
+        if (error) {
+          console.warn("[log_export_action]", error);
+        }
+      } catch (e) {
+        console.warn("[log_export_action] unexpected", e);
+      }
+    },
+    [isAdmin, sortMode, activeDomain, exportFromDate, exportToDate, searchQuery, statusFilter]
+  );
+
+  const exportDetailCsv = useCallback(() => {
+    const cols = [
+      "report_id",
+      "report_number",
+      "domain",
+      "incident_id",
+      "incident_public_id",
+      "submitted_at",
+      "fixed_at",
+      "time_to_close_seconds",
+      "current_state",
+      "reporter_name",
+      "reporter_email",
+      "reporter_phone",
+      "notes",
+    ];
+    const csv = toCsv(filteredExportDetailRows, cols, buildExportMetadata());
+    downloadCsv(`reports_detail_${activeDomain}_${Date.now()}.csv`, csv);
+    void logExportAudit("detail", filteredExportDetailRows.length);
+  }, [toCsv, filteredExportDetailRows, activeDomain, downloadCsv, logExportAudit, buildExportMetadata]);
+
+  const exportSummaryCsv = useCallback(() => {
+    const cols = [
+      "domain",
+      "incident_id",
+      "incident_public_id",
+      "first_reported_at",
+      "latest_reported_at",
+      "fixed_at",
+      "time_to_close_seconds",
+      "current_state",
+      "report_count",
+    ];
+    const csv = toCsv(exportSummaryRows, cols, buildExportMetadata());
+    downloadCsv(`reports_summary_${activeDomain}_${Date.now()}.csv`, csv);
+    void logExportAudit("summary", exportSummaryRows.length);
+  }, [toCsv, exportSummaryRows, activeDomain, downloadCsv, logExportAudit, buildExportMetadata]);
+
+  if (!open) return null;
+  const openReportsModalMaxHeight =
+    "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)";
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10004}
+      panelStyle={{
+        width: "min(980px, calc(100vw - 32px))",
+        maxWidth: "980px",
+        minWidth: "min(680px, calc(100vw - 32px))",
+        height: openReportsModalMaxHeight,
+        maxHeight: openReportsModalMaxHeight,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitle || "Reports"}</div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      {isAdmin && (
+        <div
+          style={{
+            display: "grid",
+            gap: 6,
+            marginTop: 2,
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        >
+          {compactDomainPicker ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                position: "relative",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setCompactDomainMenuOpen((p) => {
+                    const next = !p;
+                    if (next) setCompactFiltersOpen(false);
+                    return next;
+                  });
+                }}
+                style={{
+                  width: "100%",
+                  minHeight: 40,
+                  borderRadius: 10,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  padding: "7px 10px",
+                  fontSize: 13,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  cursor: "pointer",
+                }}
+                aria-label="Report domain"
+                title={`Report domain: ${selectedDomainMeta?.label || activeDomain}`}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <AppIcon src={selectedDomainMeta?.iconSrc} size={28} />
+                  <span>{selectedDomainMeta?.label || activeDomain}</span>
+                </span>
+                  <span style={{ opacity: 0.85 }}>▾</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCompactFiltersOpen((p) => !p);
+                  setCompactDomainMenuOpen(false);
+                }}
+                style={{
+                  width: 54,
+                  minWidth: 54,
+                  height: 40,
+                  borderRadius: 10,
+                  border: compactFiltersOpen
+                    ? "1px solid var(--sl-ui-brand-green-border)"
+                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: compactFiltersOpen
+                    ? "var(--sl-ui-brand-green)"
+                    : "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: compactFiltersOpen ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+                aria-label="Search and filters"
+                title="Search and filters"
+              >
+                <AppIcon src={UI_ICON_SRC.filter} size={24} />
+              </button>
+              {compactDomainMenuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    left: 0,
+                    right: 0,
+                    background: "var(--sl-ui-modal-bg)",
+                    border: "1px solid var(--sl-ui-modal-border)",
+                    borderRadius: 10,
+                    boxShadow: "var(--sl-ui-modal-shadow)",
+                    padding: 6,
+                    display: "grid",
+                    gap: 6,
+                    zIndex: 4,
+                  }}
+                >
+                  {(domainOptions || []).filter((d) => d.enabled).map((d) => {
+                    const selected = activeDomain === d.key;
+                    return (
+                      <button
+                        key={d.key}
+                        type="button"
+                        onClick={() => {
+                          onSelectDomain?.(d.key);
+                          setCompactDomainMenuOpen(false);
+                        }}
+                        style={{
+                          borderRadius: 9,
+                          border: selected
+                            ? "1px solid var(--sl-ui-brand-green-border)"
+                            : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                          background: selected
+                            ? "var(--sl-ui-brand-green)"
+                            : "var(--sl-ui-modal-btn-secondary-bg)",
+                          color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          padding: "7px 9px",
+                          whiteSpace: "nowrap",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 7,
+                          justifyContent: "flex-start",
+                        }}
+                        aria-label={d.label}
+                        title={d.label}
+                      >
+                        <AppIcon src={d.iconSrc} size={26} />
+                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(domainOptions || []).map((d) => {
+                const selected = activeDomain === d.key;
+                return (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => {
+                      if (!d.enabled) return;
+                      onSelectDomain?.(d.key);
+                    }}
+                    disabled={!d.enabled}
+                    style={{
+                      borderRadius: 10,
+                      border: selected
+                        ? "1px solid var(--sl-ui-brand-green-border)"
+                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: selected
+                        ? "var(--sl-ui-brand-green)"
+                        : "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: d.enabled ? "pointer" : "not-allowed",
+                      opacity: d.enabled ? 1 : 0.55,
+                      padding: "8px 10px",
+                      whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                    aria-label={d.label}
+                    title={d.enabled ? d.label : `${d.label} (Soon)`}
+                  >
+                    <AppIcon src={d.iconSrc} size={32} />
+                    <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {compactDomainPicker && !isAdmin ? (
+        <div style={{ marginTop: 6, position: "relative" }}>
+          <button
+            type="button"
+            onClick={() => setCompactFiltersOpen((p) => !p)}
+            style={{
+              width: "100%",
+              minHeight: 40,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              padding: "8px 10px",
+              fontSize: 12.5,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              cursor: "pointer",
+            }}
+          >
+            <span>Search & Filters</span>
+            <span style={{ opacity: 0.85 }}>{compactFiltersOpen ? "▴" : "▾"}</span>
+          </button>
+          {compactFiltersOpen && (
+            <div
+              style={{
+                marginTop: 6,
+                border: "1px solid var(--sl-ui-modal-border)",
+                borderRadius: 10,
+                padding: 8,
+                display: "grid",
+                gap: 8,
+                background: "var(--sl-ui-modal-subtle-bg)",
+              }}
+            >
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <input
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
+                    }}
+                    placeholder="Search by report #, name, phone, or email"
+                    style={{
+                      width: "100%",
+                      padding: "9px 30px 9px 10px",
+                      borderRadius: 10,
+                      border: "1px solid var(--sl-ui-modal-input-border)",
+                      background: "var(--sl-ui-modal-input-bg)",
+                      color: "var(--sl-ui-text)",
+                      fontSize: 12.5,
+                    }}
+                  />
+                  {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+                    <button
+                      type="button"
+                      onClick={clearSearchField}
+                      style={{
+                        position: "absolute",
+                        right: 7,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        width: 18,
+                        height: 18,
+                        borderRadius: 999,
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--sl-ui-text)",
+                        opacity: 0.55,
+                        fontSize: 15,
+                        lineHeight: 1,
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                      aria-label="Clear search"
+                      title="Clear search"
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery(String(searchDraft || "").trim())}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+              {isAdmin && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                    Status
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
+                      style={{
+                        marginTop: 4,
+                        width: "100%",
+                        minHeight: 36,
+                        padding: "6px 8px",
+                        borderRadius: 8,
+                        border: "1px solid var(--sl-ui-modal-input-border)",
+                        background: "var(--sl-ui-modal-input-bg)",
+                        color: "var(--sl-ui-text)",
+                        fontWeight: 800,
+                      }}
+                    >
+                      <option value="open">Open</option>
+                      <option value="closed">Closed</option>
+                      <option value="all">All</option>
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                    Date range
+                    <button
+                      type="button"
+                      onClick={openDatePicker}
+                      style={{
+                        marginTop: 4,
+                        width: "100%",
+                        minHeight: 40,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid var(--sl-ui-modal-input-border)",
+                        background: "var(--sl-ui-modal-input-bg)",
+                        color: "var(--sl-ui-text)",
+                        fontWeight: 800,
+                        textAlign: "left",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
+                    </button>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : compactDomainPicker ? (
+        compactFiltersOpen ? (
+          <div
+            style={{
+              marginTop: 6,
+              border: "1px solid var(--sl-ui-modal-border)",
+              borderRadius: 10,
+              padding: 8,
+              display: "grid",
+              gap: 8,
+              background: "var(--sl-ui-modal-subtle-bg)",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          >
+            <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+              Status
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
+                style={{
+                  marginTop: 4,
+                  width: "100%",
+                  minHeight: 40,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                  fontWeight: 800,
+                }}
+              >
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  value={searchDraft}
+                  onChange={(e) => setSearchDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
+                  }}
+                  placeholder="Search by report #, name, phone, or email"
+                  style={{
+                    width: "100%",
+                    padding: "9px 30px 9px 10px",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-input-border)",
+                    background: "var(--sl-ui-modal-input-bg)",
+                    color: "var(--sl-ui-text)",
+                    fontSize: 12.5,
+                  }}
+                />
+                {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+                  <button
+                    type="button"
+                    onClick={clearSearchField}
+                    style={{
+                      position: "absolute",
+                      right: 7,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      width: 18,
+                      height: 18,
+                      borderRadius: 999,
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--sl-ui-text)",
+                      opacity: 0.55,
+                      fontSize: 15,
+                      lineHeight: 1,
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                    aria-label="Clear search"
+                    title="Clear search"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setSearchQuery(String(searchDraft || "").trim())}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Apply
+              </button>
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+              Date range
+              <button
+                type="button"
+                onClick={openDatePicker}
+                style={{
+                  marginTop: 4,
+                  width: "100%",
+                  minHeight: 40,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                  fontWeight: 800,
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
+              </button>
+            </label>
+            <div style={{ height: 6 }} />
+            <button
+              type="button"
+              onClick={exportSummaryCsv}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 9,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Export summary CSV
+            </button>
+            <button
+              type="button"
+              onClick={exportDetailCsv}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 9,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Export detail CSV
+            </button>
+          </div>
+        ) : null
+      ) : (
+        <>
+          <div style={{ marginTop: 6, minHeight: 42, display: "flex", gap: 8 }}>
+            <div style={{ position: "relative", flex: 1 }}>
+              <input
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
+                }}
+                placeholder="Search by report #, name, phone, or email"
+                style={{
+                  width: "100%",
+                  padding: "9px 30px 9px 10px",
+                  borderRadius: 10,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                  fontSize: 12.5,
+                }}
+              />
+              {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+                <button
+                  type="button"
+                  onClick={clearSearchField}
+                  style={{
+                    position: "absolute",
+                    right: 7,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 18,
+                    height: 18,
+                    borderRadius: 999,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--sl-ui-text)",
+                    opacity: 0.55,
+                    fontSize: 15,
+                    lineHeight: 1,
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSearchQuery(String(searchDraft || "").trim())}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Apply
+            </button>
+          </div>
+
+          {isAdmin && (
+            <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                Status{" "}
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
+                  style={{
+                    marginLeft: 6,
+                    minHeight: 34,
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    border: "1px solid var(--sl-ui-modal-input-border)",
+                    background: "var(--sl-ui-modal-input-bg)",
+                    color: "var(--sl-ui-text)",
+                    fontWeight: 800,
+                  }}
+                >
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                Date range{" "}
+                <button
+                  type="button"
+                  onClick={openDatePicker}
+                  style={{
+                    marginLeft: 6,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid var(--sl-ui-modal-input-border)",
+                    background: "var(--sl-ui-modal-input-bg)",
+                    color: "var(--sl-ui-text)",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    minWidth: 250,
+                    textAlign: "left",
+                  }}
+                >
+                  {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
+                </button>
+              </label>
+              <button
+                type="button"
+                onClick={exportSummaryCsv}
+                style={{
+                  padding: "7px 10px",
+                  borderRadius: 9,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                Export summary CSV
+              </button>
+              <button
+                type="button"
+                onClick={exportDetailCsv}
+                style={{
+                  padding: "7px 10px",
+                  borderRadius: 9,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                Export detail CSV
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {datePickerOpen && (
+        <div
+          onClick={cancelDatePicker}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10055,
+            background: "rgba(8, 12, 18, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 12,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(960px, calc(100vw - 24px))",
+              maxHeight: "calc(100dvh - 40px)",
+              borderRadius: 12,
+              border: "1px solid var(--sl-ui-modal-border)",
+              background: "var(--sl-ui-modal-bg)",
+              boxShadow: "var(--sl-ui-modal-shadow)",
+              display: "grid",
+              gridTemplateRows: "1fr auto",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: compactDomainPicker ? "1fr" : "190px 1fr",
+                minHeight: 0,
+              }}
+            >
+              <div
+                style={{
+                  borderRight: compactDomainPicker ? "none" : "1px solid var(--sl-ui-modal-border)",
+                  borderBottom: compactDomainPicker ? "1px solid var(--sl-ui-modal-border)" : "none",
+                  padding: 10,
+                  display: "grid",
+                  gap: 8,
+                  alignContent: "start",
+                }}
+              >
+                {DATE_PRESET_OPTIONS.map((preset) => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    onClick={() => applyPresetToDraft(preset.key)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 9,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: "grid", minHeight: 0 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "10px 12px",
+                    borderBottom: "1px solid var(--sl-ui-modal-border)",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarMonths(-1)}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                    aria-label="Previous month"
+                    title="Previous month"
+                  >
+                    ‹
+                  </button>
+                  <div style={{ fontSize: 12.5, fontWeight: 900, opacity: 0.9 }}>
+                    {dateRangeLabel(draftRangeFrom || exportFromDate, draftRangeTo || exportToDate)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => shiftCalendarMonths(1)}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                    aria-label="Next month"
+                    title="Next month"
+                  >
+                    ›
+                  </button>
+                </div>
+                <div
+                  style={{
+                    padding: 12,
+                    overflow: "auto",
+                    display: "grid",
+                    gap: 12,
+                    gridTemplateColumns: compactDomainPicker ? "1fr" : "1fr 1fr",
+                  }}
+                >
+                  {[calendarLeftMonth, rightMonthDate].map((monthDate) => {
+                    const cells = monthDate === calendarLeftMonth ? leftMonthCells : rightMonthCells;
+                    return (
+                      <div
+                        key={`${monthDate.getFullYear()}-${monthDate.getMonth()}`}
+                        style={{
+                          border: "1px solid var(--sl-ui-modal-border)",
+                          borderRadius: 10,
+                          padding: 8,
+                          display: "grid",
+                          gap: 6,
+                        }}
+                      >
+                        <div style={{ textAlign: "center", fontWeight: 900 }}>
+                          {formatMonthLabel(monthDate)}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11.5, opacity: 0.85 }}>
+                          {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                            <div key={`${monthDate.getMonth()}-${d}`} style={{ textAlign: "center", fontWeight: 800 }}>
+                              {d}
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                          {cells.map((iso, idx) => {
+                            if (!iso) {
+                              return <div key={`blank-${idx}`} style={{ height: 30 }} />;
+                            }
+                            const inRange = isDateInDraftRange(iso);
+                            const isStart = iso === draftRangeFrom;
+                            const isEnd = iso === draftRangeTo;
+                            return (
+                              <button
+                                key={iso}
+                                type="button"
+                                onClick={() => pickCalendarDate(iso)}
+                                style={{
+                                  height: 30,
+                                  borderRadius: isStart || isEnd ? 8 : inRange ? 6 : 8,
+                                  border: isStart || isEnd
+                                    ? "1px solid var(--sl-ui-brand-green-border)"
+                                    : "1px solid transparent",
+                                  background: isStart || isEnd
+                                    ? "var(--sl-ui-brand-green)"
+                                    : inRange
+                                      ? "rgba(22, 152, 133, 0.24)"
+                                      : "var(--sl-ui-modal-btn-secondary-bg)",
+                                  color: isStart || isEnd ? "white" : "var(--sl-ui-text)",
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                }}
+                                title={iso}
+                              >
+                                {Number(iso.slice(8, 10))}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                borderTop: "1px solid var(--sl-ui-modal-border)",
+                padding: 10,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ fontSize: 12.5, opacity: 0.85 }}>
+                {dateRangeLabel(draftRangeFrom || exportFromDate, draftRangeTo || exportToDate)}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={cancelDatePicker}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={applyDatePicker}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-brand-green-border)",
+                    background: "var(--sl-ui-brand-green)",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div
+          style={{
+            marginTop: 6,
+            display: "grid",
+            gap: 8,
+            border: "1px solid var(--sl-ui-metrics-panel-border)",
+            borderRadius: 10,
+            padding: 8,
+            boxShadow: "inset 0 0 0 1px var(--sl-ui-metrics-panel-border)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setMetricsCollapsed((v) => !v)}
+            style={{
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              borderRadius: 10,
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              padding: "7px 9px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ fontSize: 12 }}>Metrics (domain + date range)</span>
+            <span style={{ opacity: 0.85 }}>{metricsCollapsed ? "▾" : "▴"}</span>
+          </button>
+          {!metricsCollapsed && (compactDomainPicker ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+                {[
+                  { key: "incidents", label: "Incidents", value: adminMetrics.totalIncidents, gridColumn: "1" },
+                  { key: "open", label: "Open", value: adminMetrics.openIncidents, gridColumn: "2" },
+                  { key: "fixed", label: "Fixed", value: adminMetrics.fixedIncidents, gridColumn: "3" },
+                  { key: "reports", label: "Reports", value: adminMetrics.totalReports, gridColumn: "2" },
+                  {
+                    key: "avg",
+                    label: "Avg time to fix",
+                    value: adminMetrics.avgTimeToFixSeconds
+                      ? `${Math.round(adminMetrics.avgTimeToFixSeconds / 3600)}h`
+                      : "N/A",
+                    gridColumn: "3",
+                  },
+                ].map((m) => (
+                  <div
+                    key={`metric-${m.key}`}
+                    style={{
+                      gridColumn: m.gridColumn,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      borderRadius: 10,
+                      padding: "6px 8px",
+                      fontSize: 11.5,
+                      fontWeight: 900,
+                      display: "grid",
+                      gap: 2,
+                      background: "var(--sl-ui-modal-subtle-bg)",
+                    }}
+                  >
+                    <span style={{ opacity: 0.8 }}>{m.label}</span>
+                    <span>{m.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(130px, 1fr))", gap: 8 }}>
+                {[
+                  { key: "incidents", label: "Incidents", value: adminMetrics.totalIncidents, gridColumn: "1" },
+                  { key: "open", label: "Open", value: adminMetrics.openIncidents, gridColumn: "2" },
+                  { key: "fixed", label: "Fixed", value: adminMetrics.fixedIncidents, gridColumn: "3" },
+                  { key: "reports", label: "Reports", value: adminMetrics.totalReports, gridColumn: "2" },
+                  {
+                    key: "avg",
+                    label: "Avg time to fix",
+                    value: adminMetrics.avgTimeToFixSeconds
+                      ? `${Math.round(adminMetrics.avgTimeToFixSeconds / 3600)}h`
+                      : "N/A",
+                    gridColumn: "3",
+                  },
+                ].map((m) => (
+                  <div
+                    key={`metric-${m.key}`}
+                    style={{
+                      gridColumn: m.gridColumn,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      borderRadius: 8,
+                      padding: "7px 8px",
+                      display: "grid",
+                      gap: 2,
+                    }}
+                  >
+                    <div style={{ fontSize: 11.5, opacity: 0.8, fontWeight: 800 }}>{m.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 950 }}>{m.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div style={{ display: "none" }} />
+        </div>
+      )}
+
+      {isAdmin && compactDomainPicker && (
+        <div style={{ marginTop: 6, width: "100%", boxSizing: "border-box" }}>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
+            <span>Sort reports</span>
+            <select
+              value={sortPresetValue}
+              onChange={(e) => applySortPreset(e.target.value)}
+              style={{
+                width: "100%",
+                minHeight: 40,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                fontWeight: 800,
+              }}
+            >
+              <option value="recent_desc">Most recently reported (desc)</option>
+              <option value="recent_asc">Most recently reported (asc)</option>
+              <option value="reports_desc">Most reports (desc)</option>
+              <option value="reports_asc">Most reports (asc)</option>
+              <option value="id_asc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (asc)</option>
+              <option value="id_desc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (desc)</option>
+              {isStreetlightMyReports && (
+                <>
+                  <option value="utility_desc">Utility reported: true first</option>
+                  <option value="utility_asc">Utility reported: false first</option>
+                </>
+              )}
+            </select>
+          </label>
+        </div>
+      )}
+
       <div
         ref={listScrollRef}
         style={{
+          width: "100%",
+          boxSizing: "border-box",
           marginTop: 6,
-          height: "60vh",
-          maxHeight: "60vh",
+          flex: 1,
+          minHeight: 0,
           overflow: "auto",
           border: "1px solid rgba(0,0,0,0.10)",
           borderRadius: 10,
@@ -3370,7 +7640,817 @@ function OpenReportsModal({
           gap: 10,
         }}
       >
-        {String(searchQuery || "").trim() ? (
+        {isAdmin ? (
+          !displayedAdminRows.length ? (
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              {serverDetailLoading ? "Loading rows…" : "No reports in selected filters."}
+            </div>
+          ) : compactDomainPicker ? (
+            <div style={{ display: "grid", gap: 8, width: "100%" }}>
+              {displayedAdminRows.map((r) => (
+                <div
+                  key={`mobile-${r.incident_id}`}
+                  style={{
+                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                    borderRadius: 10,
+                    padding: 10,
+                    display: "grid",
+                    gap: 6,
+                    background: "var(--sl-ui-modal-subtle-bg)",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleAdminExpanded(r.incident_id)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--sl-ui-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      padding: 0,
+                      textAlign: "left",
+                    }}
+                  >
+                    {adminExpandedSet.has(r.incident_id) ? "▾ " : "▸ "}
+                    {r.incident_label || r.incident_id}
+                  </button>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    <b>State:</b> {incidentStateLabel(r.current_state || "")}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    <b>Reports:</b> {Number(r.report_count || 0)}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    <b>Latest report:</b> {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                  </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                      type="button"
+                      onClick={() => {
+                        if (!Number.isFinite(r.coords?.lat) || !Number.isFinite(r.coords?.lng)) return;
+                        onFlyTo?.([r.coords.lat, r.coords.lng], 18, r.incident_id);
+                      }}
+                      style={{
+                        padding: "6px 8px",
+                        borderRadius: 8,
+                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Fly to
+                    </button>
+                    {activeDomain === "streetlights" && canMutateIncidents && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (typeof window !== "undefined") {
+                            window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+                          }
+                        }}
+                        style={{
+                          padding: "6px 8px",
+                          borderRadius: 8,
+                          border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                          background: "var(--sl-ui-modal-btn-secondary-bg)",
+                          color: "var(--sl-ui-modal-btn-secondary-text)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Report Outage to Utility
+                      </button>
+                    )}
+                    {canMutateIncidents && (
+                      <button
+                        type="button"
+                        onClick={() => onMarkFixedIncident?.(r.incident_id, isOpenLifecycleState(r.current_state || "") ? "fix" : "reopen")}
+                        style={{
+                          padding: "6px 8px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "var(--sl-ui-brand-green)",
+                          color: "white",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
+                      </button>
+                    )}
+                    {isStreetlightMyReports && isOpenLifecycleState(r.current_state || "") && (
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(utilityReportedByIncident[r.incident_id])}
+                          onChange={() => toggleUtilityReported(r.incident_id)}
+                        />
+                        Utility reported
+                      </label>
+                    )}
+                  </div>
+                  {adminExpandedSet.has(r.incident_id) && (
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {activeDomain === "streetlights" && (() => {
+                        const util = getStreetlightUtilityForIncident(r.incident_id);
+                        const items = getStreetlightUtilityRows(util, r?.coords || null);
+                        return (
+                          <div
+                            style={{
+                              border: "1px solid var(--sl-ui-open-reports-item-border)",
+                              borderRadius: 8,
+                              padding: "7px 8px",
+                              display: "grid",
+                              gap: 4,
+                              background: "rgba(255,255,255,0.04)",
+                              fontSize: 12,
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            <div style={{ fontWeight: 900 }}>Streetlight Utility Information</div>
+                            {items.map((item) => (
+                              <button
+                                key={`mobile-streetlight-${r.incident_id}-${item.label}`}
+                                type="button"
+                                onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  margin: 0,
+                                  textAlign: "left",
+                                  color: "var(--sl-ui-text)",
+                                  cursor: "copy",
+                                  fontSize: 12,
+                                  lineHeight: 1.3,
+                                }}
+                              >
+                                <b>{item.label}:</b>{" "}
+                                <span
+                                  style={{
+                                    textDecoration: "underline",
+                                    textUnderlineOffset: "2px",
+                                    color: "#7fd7ff",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {item.value}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                      {Array.isArray(r.reopen_events) && r.reopen_events.map((ev) => (
+                        <div
+                          key={`reopen-${r.incident_id}-${ev.ts || 0}`}
+                          style={{
+                            border: "1px solid var(--sl-ui-open-reports-item-border)",
+                            borderRadius: 8,
+                            padding: "7px 8px",
+                            display: "grid",
+                            gap: 4,
+                            background: "rgba(31,93,162,0.16)",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 900 }}>Re-open report</div>
+                            <div style={{ opacity: 0.8 }}>{formatTs(ev.ts)}</div>
+                          </div>
+                          <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                            <b>Re-opened by:</b>{" "}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onReporterDetails?.({
+                                  id: `reopen:${r.incident_id}:${ev.ts || 0}`,
+                                  reporter_user_id: ev.reporter_user_id || null,
+                                  reporter_name: ev.reporter_name || null,
+                                  reporter_email: ev.reporter_email || null,
+                                  reporter_phone: ev.reporter_phone || null,
+                                  note: ev.note || "",
+                                  ts: Number(ev.ts || 0),
+                                  report_number: null,
+                                })
+                              }
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                margin: 0,
+                                color: "var(--sl-ui-brand-green)",
+                                textDecoration: "underline",
+                                cursor: "pointer",
+                                fontWeight: 900,
+                              }}
+                            >
+                              {String(ev.reporter_name || "").trim() || String(ev.reporter_email || "").trim() || "Unknown"}
+                            </button>
+                          </div>
+                          {!!String(ev.note || "").trim() && (
+                            <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                              <b>Note:</b> {ev.note}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {!!r.fixed_event && (
+                        <div
+                          style={{
+                            border: "1px solid var(--sl-ui-open-reports-item-border)",
+                            borderRadius: 8,
+                            padding: "7px 8px",
+                            display: "grid",
+                            gap: 4,
+                            background: "rgba(46,125,50,0.14)",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 900 }}>Fixed report</div>
+                            <div style={{ opacity: 0.8 }}>{formatTs(r.fixed_event.ts)}</div>
+                          </div>
+                          <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                            <b>Fixed by:</b>{" "}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onReporterDetails?.({
+                                  id: `fixed:${r.incident_id}:${r.fixed_event.ts || 0}`,
+                                  reporter_user_id: r.fixed_event.reporter_user_id || null,
+                                  reporter_name: r.fixed_event.reporter_name || null,
+                                  reporter_email: r.fixed_event.reporter_email || null,
+                                  reporter_phone: r.fixed_event.reporter_phone || null,
+                                  note: r.fixed_event.note || "",
+                                  ts: Number(r.fixed_event.ts || 0),
+                                  report_number: null,
+                                })
+                              }
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                margin: 0,
+                                color: "var(--sl-ui-brand-green)",
+                                textDecoration: "underline",
+                                cursor: "pointer",
+                                fontWeight: 900,
+                              }}
+                            >
+                              {String(r.fixed_event.reporter_name || "").trim() || String(r.fixed_event.reporter_email || "").trim() || "Unknown"}
+                            </button>
+                          </div>
+                          {!!String(r.fixed_event.note || "").trim() && (
+                            <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                              <b>Note:</b> {r.fixed_event.note}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {r.rows.map((detail) => {
+                        const imageUrl = readImageUrlFromNote(detail.notes);
+                        const noteText = stripSystemMetadataFromNote(detail.notes) || detail.notes;
+                        const qa = parseStreetlightQaFromNote(detail.notes);
+                        return (
+                          <div
+                            key={`mobile-detail-${r.incident_id}-${detail.report_id}`}
+                            style={{
+                              border: "1px solid var(--sl-ui-open-reports-item-border)",
+                              borderRadius: 8,
+                              padding: "7px 8px",
+                              display: "grid",
+                              gap: 4,
+                              background: "rgba(255,255,255,0.04)",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                              <div style={{ fontWeight: 900 }}>Submitted report</div>
+                              <div style={{ opacity: 0.8 }}>{formatTs(detail.submitted_at)}</div>
+                            </div>
+                            {isStreetlightMyReports && (
+                              <>
+                                <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                  <b>What are you seeing:</b> {REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
+                                </div>
+                                <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                  <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
+                                </div>
+                                <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                  <b>Hazardous situation:</b> {qa?.hazardous ? (qa.hazardous === "yes" ? "Yes" : qa.hazardous === "no" ? "No" : "Unknown") : "Unknown"}
+                                </div>
+                              </>
+                            )}
+                            {canMutateIncidents && (
+                              <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                <b>Submitted by:</b>{" "}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onReporterDetails?.({
+                                      id: detail.report_id,
+                                      reporter_user_id: detail.reporter_user_id || null,
+                                      reporter_name: detail.reporter_name || null,
+                                      reporter_email: detail.reporter_email || null,
+                                      reporter_phone: detail.reporter_phone || null,
+                                      note: detail.notes,
+                                      ts: Date.parse(String(detail.submitted_at || "")) || 0,
+                                      report_number: detail.report_number,
+                                    })
+                                  }
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    padding: 0,
+                                    margin: 0,
+                                    color: "var(--sl-ui-brand-green)",
+                                    textDecoration: "underline",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                  }}
+                                >
+                                  {String(detail.reporter_name || "").trim() || String(detail.reporter_email || "").trim() || "Unknown"}
+                                </button>
+                              </div>
+                            )}
+                            {!!String(noteText || "").trim() && (
+                              <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                <b>Note:</b> {noteText}
+                              </div>
+                            )}
+                            {!!imageUrl && (
+                              <a
+                                href={imageUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  padding: "5px 8px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                                  fontWeight: 900,
+                                  textDecoration: "none",
+                                  width: "fit-content",
+                                }}
+                                title="View attached image"
+                              >
+                                📷 View image
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                width: "100%",
+                overflow: "auto",
+                border: "1px solid var(--sl-ui-open-reports-item-border)",
+                borderRadius: 10,
+                background: "var(--sl-ui-modal-subtle-bg)",
+              }}
+            >
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ position: "sticky", top: 0, background: "var(--sl-ui-modal-bg)", zIndex: 1 }}>
+                    {[
+                      { key: "incident_id", label: activeDomain === "streetlights" ? "Light ID" : "Incident" },
+                      { key: "current_state", label: "State" },
+                      { key: "report_count", label: "Reports" },
+                      { key: "submitted_at", label: "Latest report" },
+                      { key: "actions", label: "Actions" },
+                      ...(isStreetlightMyReports ? [{ key: "utility_reported", label: "Utility reported" }] : []),
+                    ].map((h) => (
+                      <th
+                        key={h.key}
+                        style={{
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          borderBottom: "1px solid var(--sl-ui-open-reports-item-border)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {h.key === "actions" ? (
+                          h.label
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => toggleTableSort(h.key)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "var(--sl-ui-text)",
+                              fontWeight: 900,
+                              padding: 0,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {h.label}
+                            {tableSort.key === h.key ? (tableSort.dir === "asc" ? " ▲" : " ▼") : ""}
+                          </button>
+                        )}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayedAdminRows.map((r) => (
+                    <Fragment key={r.incident_id}>
+                      <tr>
+                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          <button
+                            type="button"
+                            onClick={() => toggleAdminExpanded(r.incident_id)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "var(--sl-ui-text)",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                            title="Toggle incident reports"
+                          >
+                            {adminExpandedSet.has(r.incident_id) ? "▾ " : "▸ "}
+                            {r.incident_label || r.incident_id}
+                            <span
+                              style={{
+                                display: "inline-block",
+                                width: 10,
+                                height: 10,
+                                borderRadius: 999,
+                                background: adminIncidentDotForRow(r).color,
+                                boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+                                marginLeft: 7,
+                                verticalAlign: "middle",
+                              }}
+                              title={adminIncidentDotForRow(r).label}
+                            />
+                          </button>
+                        </td>
+                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          {incidentStateLabel(r.current_state || "")}
+                        </td>
+                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", fontWeight: 900 }}>
+                          {Number(r.report_count || 0)}
+                        </td>
+                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                        </td>
+                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!Number.isFinite(r.coords?.lat) || !Number.isFinite(r.coords?.lng)) return;
+                                onFlyTo?.([r.coords.lat, r.coords.lng], 18, r.incident_id);
+                              }}
+                              style={{
+                                padding: "6px 8px",
+                                borderRadius: 8,
+                                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                color: "var(--sl-ui-modal-btn-secondary-text)",
+                                fontWeight: 900,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Fly to
+                            </button>
+                            {activeDomain === "streetlights" && canMutateIncidents && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (typeof window !== "undefined") {
+                                    window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+                                  }
+                                }}
+                                style={{
+                                  padding: "6px 8px",
+                                  borderRadius: 8,
+                                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                                  fontWeight: 900,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Report Outage to Utility
+                              </button>
+                            )}
+                            {canMutateIncidents && (
+                              <button
+                                type="button"
+                                onClick={() => onMarkFixedIncident?.(r.incident_id, isOpenLifecycleState(r.current_state || "") ? "fix" : "reopen")}
+                                style={{
+                                  padding: "6px 8px",
+                                  borderRadius: 8,
+                                  border: "none",
+                                  background: "var(--sl-ui-brand-green)",
+                                  color: "white",
+                                  fontWeight: 900,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        {isStreetlightMyReports && (
+                          <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                            {isOpenLifecycleState(r.current_state || "") ? (
+                              <input
+                                type="checkbox"
+                                checked={Boolean(utilityReportedByIncident[r.incident_id])}
+                                onChange={() => toggleUtilityReported(r.incident_id)}
+                                aria-label={`Utility reported for ${r.incident_label || r.incident_id}`}
+                              />
+                            ) : null}
+                          </td>
+                        )}
+                      </tr>
+                      {adminExpandedSet.has(r.incident_id) && (
+                        <tr>
+                          <td colSpan={isStreetlightMyReports ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                            <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
+                              {activeDomain === "streetlights" && (() => {
+                                const util = getStreetlightUtilityForIncident(r.incident_id);
+                                const items = getStreetlightUtilityRows(util, r?.coords || null);
+                                return (
+                                  <div
+                                    style={{
+                                      border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                      borderRadius: 8,
+                                      padding: "7px 8px",
+                                      display: "grid",
+                                      gap: 4,
+                                      background: "rgba(255,255,255,0.04)",
+                                      fontSize: 12,
+                                      lineHeight: 1.3,
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 900 }}>Streetlight Utility Information</div>
+                                    {items.map((item) => (
+                                      <button
+                                        key={`desktop-streetlight-${r.incident_id}-${item.label}`}
+                                        type="button"
+                                        onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
+                                        style={{
+                                          border: "none",
+                                          background: "transparent",
+                                          padding: 0,
+                                          margin: 0,
+                                          textAlign: "left",
+                                          color: "var(--sl-ui-text)",
+                                          cursor: "copy",
+                                          fontSize: 12,
+                                          lineHeight: 1.3,
+                                        }}
+                                      >
+                                        <b>{item.label}:</b>{" "}
+                                        <span
+                                          style={{
+                                            textDecoration: "underline",
+                                            textUnderlineOffset: "2px",
+                                            color: "#7fd7ff",
+                                            fontWeight: 700,
+                                          }}
+                                        >
+                                          {item.value}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+                              {Array.isArray(r.reopen_events) && r.reopen_events.map((ev) => (
+                                <div
+                                  key={`reopen-${r.incident_id}-${ev.ts || 0}`}
+                                  style={{
+                                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                    borderRadius: 8,
+                                    padding: "7px 8px",
+                                    display: "grid",
+                                    gap: 4,
+                                    background: "rgba(31,93,162,0.16)",
+                                  }}
+                                >
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                    <div style={{ fontWeight: 900 }}>Re-open report</div>
+                                    <div style={{ opacity: 0.8 }}>{formatTs(ev.ts)}</div>
+                                  </div>
+                                  <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                    <b>Re-opened by:</b>{" "}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onReporterDetails?.({
+                                          id: `reopen:${r.incident_id}:${ev.ts || 0}`,
+                                          reporter_user_id: ev.reporter_user_id || null,
+                                          reporter_name: ev.reporter_name || null,
+                                          reporter_email: ev.reporter_email || null,
+                                          reporter_phone: ev.reporter_phone || null,
+                                          note: ev.note || "",
+                                          ts: Number(ev.ts || 0),
+                                          report_number: null,
+                                        })
+                                      }
+                                      style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        padding: 0,
+                                        margin: 0,
+                                        color: "var(--sl-ui-brand-green)",
+                                        textDecoration: "underline",
+                                        cursor: "pointer",
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      {String(ev.reporter_name || "").trim() || String(ev.reporter_email || "").trim() || "Unknown"}
+                                    </button>
+                                  </div>
+                                  {!!String(ev.note || "").trim() && (
+                                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                      <b>Note:</b> {ev.note}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              {!!r.fixed_event && (
+                                <div
+                                  style={{
+                                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                    borderRadius: 8,
+                                    padding: "7px 8px",
+                                    display: "grid",
+                                    gap: 4,
+                                    background: "rgba(46,125,50,0.14)",
+                                  }}
+                                >
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                    <div style={{ fontWeight: 900 }}>Fixed report</div>
+                                    <div style={{ opacity: 0.8 }}>{formatTs(r.fixed_event.ts)}</div>
+                                  </div>
+                                  <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                    <b>Fixed by:</b>{" "}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onReporterDetails?.({
+                                          id: `fixed:${r.incident_id}:${r.fixed_event.ts || 0}`,
+                                          reporter_user_id: r.fixed_event.reporter_user_id || null,
+                                          reporter_name: r.fixed_event.reporter_name || null,
+                                          reporter_email: r.fixed_event.reporter_email || null,
+                                          reporter_phone: r.fixed_event.reporter_phone || null,
+                                          note: r.fixed_event.note || "",
+                                          ts: Number(r.fixed_event.ts || 0),
+                                          report_number: null,
+                                        })
+                                      }
+                                      style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        padding: 0,
+                                        margin: 0,
+                                        color: "var(--sl-ui-brand-green)",
+                                        textDecoration: "underline",
+                                        cursor: "pointer",
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      {String(r.fixed_event.reporter_name || "").trim() || String(r.fixed_event.reporter_email || "").trim() || "Unknown"}
+                                    </button>
+                                  </div>
+                                  {!!String(r.fixed_event.note || "").trim() && (
+                                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                      <b>Note:</b> {r.fixed_event.note}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {r.rows.map((detail) => (
+                                <div
+                                  key={`${r.incident_id}:${detail.report_id}`}
+                                  style={{
+                                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                    borderRadius: 8,
+                                    padding: "7px 8px",
+                                    display: "grid",
+                                    gap: 4,
+                                    background: "rgba(255,255,255,0.04)",
+                                  }}
+                                >
+                                  {(() => {
+                                    const imageUrl = readImageUrlFromNote(detail.notes);
+                                    const noteText = stripSystemMetadataFromNote(detail.notes) || detail.notes;
+                                    const qa = parseStreetlightQaFromNote(detail.notes);
+                                    return (
+                                      <>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                    <div style={{ fontWeight: 900 }}>Submitted report</div>
+                                    <div style={{ opacity: 0.8 }}>{formatTs(detail.submitted_at)}</div>
+                                  </div>
+                                  {isStreetlightMyReports && (
+                                    <>
+                                      <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                        <b>What are you seeing:</b> {REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
+                                      </div>
+                                      <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                        <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
+                                      </div>
+                                      <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                        <b>Hazardous situation:</b> {qa?.hazardous ? (qa.hazardous === "yes" ? "Yes" : qa.hazardous === "no" ? "No" : "Unknown") : "Unknown"}
+                                      </div>
+                                    </>
+                                  )}
+                                  {canMutateIncidents && (
+                                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                      <b>Submitted by:</b>{" "}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onReporterDetails?.({
+                                            id: detail.report_id,
+                                            reporter_user_id: detail.reporter_user_id || null,
+                                            reporter_name: detail.reporter_name || null,
+                                            reporter_email: detail.reporter_email || null,
+                                            reporter_phone: detail.reporter_phone || null,
+                                            note: detail.notes,
+                                            ts: Date.parse(String(detail.submitted_at || "")) || 0,
+                                            report_number: detail.report_number,
+                                          })
+                                        }
+                                        style={{
+                                          border: "none",
+                                          background: "transparent",
+                                          padding: 0,
+                                          margin: 0,
+                                          color: "var(--sl-ui-brand-green)",
+                                          textDecoration: "underline",
+                                          cursor: "pointer",
+                                          fontWeight: 900,
+                                        }}
+                                      >
+                                        {String(detail.reporter_name || "").trim() || String(detail.reporter_email || "").trim() || "Unknown"}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {!!String(noteText || "").trim() && (
+                                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                      <b>Note:</b> {noteText}
+                                    </div>
+                                  )}
+                                  {!!imageUrl && (
+                                    <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                                      <a
+                                        href={imageUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 6,
+                                          padding: "5px 8px",
+                                          borderRadius: 8,
+                                          border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                          background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                          color: "var(--sl-ui-modal-btn-secondary-text)",
+                                          fontWeight: 900,
+                                          textDecoration: "none",
+                                        }}
+                                        title="View attached image"
+                                      >
+                                        📷 View image
+                                      </a>
+                                    </div>
+                                  )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (String(searchQuery || "").trim() ? (
           !matchedSearchRows.length ? (
             <div style={{ fontSize: 13, opacity: 0.8 }}>No matching reports found.</div>
           ) : (
@@ -3402,7 +8482,7 @@ function OpenReportsModal({
                     }}
                     title="Fly to report location"
                   >
-                    {displayLightId(item.lightId, slIdByUuid)}
+                    {item.incidentLabel || displayLightId(item.lightId, slIdByUuid)}
                   </button>
                   <button
                     onClick={() => onFlyTo?.([item.coords?.lat, item.coords?.lng], 18, item.lightId)}
@@ -3419,6 +8499,28 @@ function OpenReportsModal({
                   >
                     Fly to
                   </button>
+                  {item.isStreetlights && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== "undefined") {
+                          window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+                        }
+                      }}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Report Outage to Utility
+                    </button>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, opacity: 0.9, fontWeight: 900 }}>
                   Report #: {reportNumberForRow(item.row, activeDomain)}
@@ -3436,23 +8538,25 @@ function OpenReportsModal({
                     <b>Note:</b> {stripSystemMetadataFromNote(item.row.note) || item.row.note}
                   </div>
                 )}
-                {isAdmin && (
-                  <div style={{ marginTop: 2, display: "flex", justifyContent: "flex-end" }}>
+                {canMutateIncidents && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Submitted by:</b>{" "}
                     <button
                       type="button"
                       onClick={() => onReporterDetails?.(item.row)}
                       style={{
-                        padding: "6px 9px",
-                        borderRadius: 9,
-                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                        background: "var(--sl-ui-modal-btn-secondary-bg)",
-                        color: "var(--sl-ui-modal-btn-secondary-text)",
-                        fontWeight: 900,
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        color: "var(--sl-ui-brand-green)",
+                        textDecoration: "underline",
                         cursor: "pointer",
-                        fontSize: 11.5,
+                        fontWeight: 900,
+                        fontSize: 12,
                       }}
                     >
-                      Reporter Details
+                      {String(item?.row?.reporter_name || "").trim() || String(item?.row?.reporter_email || "").trim() || "Unknown"}
                     </button>
                   </div>
                 )}
@@ -3460,7 +8564,7 @@ function OpenReportsModal({
             ))
           )
         ) : !visibleGroups?.length ? (
-          <div style={{ fontSize: 13, opacity: 0.8 }}>No open reports right now.</div>
+          <div style={{ fontSize: 13, opacity: 0.8 }}>No reports in selected filters.</div>
         ) : (
           visibleGroups.map((g) => {
             const isStreetlights = activeDomain === "streetlights";
@@ -3473,10 +8577,16 @@ function OpenReportsModal({
                 };
             const info = isStreetlights
               ? computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId })
-              : { majorityLabel: REPORT_DOMAIN_OPTIONS.find((d) => d.key === activeDomain)?.label || "Report" };
+              : { majorityLabel: (domainOptions || []).find((d) => d.key === activeDomain)?.label || "Report" };
             const nonStreetlightDotColor =
               activeDomain === "potholes"
                 ? potholeColorFromCount(Number(g?.count || 0))
+                : activeDomain === "water_drain_issues"
+                  ? ((!isAdmin && Number(g?.count || 0) === 1)
+                      ? officialStatusFromSinceFixCount(1).color
+                      : waterDrainColorFromCount(Number(g?.count || 0)))
+                : activeDomain === "street_signs"
+                  ? "#1e88e5"
                 : activeDomain === "power_outage"
                   ? "#f39c12"
                   : activeDomain === "water_main"
@@ -3492,6 +8602,30 @@ function OpenReportsModal({
               (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
                 ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
                 : "Location unavailable");
+            const groupIncidentId = String(
+              g.incidentId || (isStreetlights ? g.lightId : "")
+            ).trim();
+            const lifecycleSnapshot = groupIncidentId
+              ? incidentStateByKey?.[incidentSnapshotKey(activeDomain, groupIncidentId)] || null
+              : null;
+            const derivedLifecycle = groupIncidentId
+              ? deriveIncidentStateFromTimeline(groupIncidentId, g.rows || [])
+              : null;
+            const lifecycleState = String(
+              lifecycleSnapshot?.state || derivedLifecycle?.state || ""
+            ).trim().toLowerCase();
+            const isFixedLifecycle = Boolean(lifecycleState && !isOpenLifecycleState(lifecycleState));
+            const effectiveNonStreetlightDotColor = isFixedLifecycle
+              ? "var(--sl-ui-brand-green)"
+              : nonStreetlightDotColor;
+            const effectiveNonStreetlightDotLabel = isFixedLifecycle
+              ? "Fixed incident"
+              : info.majorityLabel;
+            const effectiveDot = isStreetlights
+              ? ((Boolean(info?.isFixed) || isFixedLifecycle)
+                  ? { color: "var(--sl-ui-brand-green)", label: "Fixed incident" }
+                  : dot)
+              : { color: effectiveNonStreetlightDotColor, label: effectiveNonStreetlightDotLabel };
 
             return (
               <div
@@ -3514,11 +8648,11 @@ function OpenReportsModal({
                       width: 10,
                       height: 10,
                       borderRadius: 999,
-                      background: dot.color,
+                      background: effectiveDot.color,
                       boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
                       flex: "0 0 auto",
                     }}
-                    title={dot.label}
+                    title={effectiveDot.label}
                   />
 
                   <button
@@ -3585,6 +8719,14 @@ function OpenReportsModal({
                   <b>{g.count}</b> report{g.count === 1 ? "" : "s"}
                   {isStreetlights ? <> • Status: <b>{info.majorityLabel}</b></> : <> • <b>{info.majorityLabel}</b></>}
                 </div>
+                {!!lifecycleSnapshot?.state && (
+                  <div style={{ fontSize: 12, opacity: 0.82 }}>
+                    Lifecycle: <b>{incidentStateLabel(lifecycleSnapshot.state)}</b>
+                    {!!lifecycleSnapshot?.last_changed_at && (
+                      <> • Updated {formatTs(lifecycleSnapshot.last_changed_at)}</>
+                    )}
+                  </div>
+                )}
 
                 {!isStreetlights && (
                   <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
@@ -3623,23 +8765,25 @@ function OpenReportsModal({
                         <div style={{ opacity: 0.9, fontWeight: 900 }}>
                           Report #: {reportNumberForRow(r, activeDomain)}
                         </div>
-                        {isAdmin && (
-                          <div style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}>
+                        {canMutateIncidents && (
+                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                            <b>Submitted by:</b>{" "}
                             <button
                               type="button"
                               onClick={() => onReporterDetails?.(r)}
                               style={{
-                                padding: "6px 9px",
-                                borderRadius: 9,
-                                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                                color: "var(--sl-ui-modal-btn-secondary-text)",
-                                fontWeight: 900,
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                margin: 0,
+                                color: "var(--sl-ui-brand-green)",
+                                textDecoration: "underline",
                                 cursor: "pointer",
-                                fontSize: 11.5,
+                                fontWeight: 900,
+                                fontSize: 12,
                               }}
                             >
-                              Reporter Details
+                              {String(r?.reporter_name || "").trim() || String(r?.reporter_email || "").trim() || "Unknown"}
                             </button>
                           </div>
                         )}
@@ -3656,25 +8800,76 @@ function OpenReportsModal({
               </div>
             );
           })
-        )}
+        ))}
       </div>
+      {!!copyToast && (
+        <div
+          style={{
+            position: "fixed",
+            top: copyToast?.y ?? 48,
+            left: copyToast?.x ?? 18,
+            zIndex: 10050,
+            padding: "7px 11px",
+            borderRadius: 8,
+            border: "1px solid var(--sl-ui-brand-blue-border)",
+            background: "var(--sl-ui-brand-blue)",
+            color: "white",
+            fontSize: 12,
+            fontWeight: 900,
+            boxShadow: "0 8px 20px rgba(0,0,0,0.24)",
+            pointerEvents: "none",
+          }}
+        >
+          {copyToast?.text || "Copied to clipboard"}
+        </div>
+      )}
 
-      <button
-        onClick={onClose}
+      <div
         style={{
           marginTop: 6,
-          padding: 10,
-          width: "100%",
-          borderRadius: 10,
-          border: "none",
-          background: "#111",
-          color: "white",
-          fontWeight: 900,
-          cursor: "pointer",
+          display: "grid",
+          gap: 8,
+          gridTemplateColumns: isStreetlightMyReports ? "1fr 1fr" : "1fr",
         }}
       >
-        Close
-      </button>
+        {isStreetlightMyReports && (
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+              }
+            }}
+            style={{
+              padding: 10,
+              width: "100%",
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-brand-blue-border)",
+              background: "var(--sl-ui-brand-blue)",
+              color: "white",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Report Outage to Utility
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          style={{
+            padding: 10,
+            width: "100%",
+            borderRadius: 10,
+            border: "none",
+            background: "#111",
+            color: "white",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Close
+        </button>
+      </div>
     </ModalShell>
   );
 }
@@ -3796,9 +8991,6 @@ function ManageAccountModal({
         Change Password
       </button>
 
-      <div style={{ fontSize: 11.5, opacity: 0.7, lineHeight: 1.35 }}>
-        Email changes will be a later step (requires verification).
-      </div>
     </ModalShell>
   );
 }
@@ -4294,9 +9486,9 @@ function AccountMenuPanel({
                   padding: 10,
                   width: "100%",
                   borderRadius: 10,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  border: "1px solid var(--sl-ui-brand-blue-border)",
+                  background: "var(--sl-ui-brand-blue)",
+                  color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
                 }}
@@ -4310,9 +9502,9 @@ function AccountMenuPanel({
                   padding: 10,
                   width: "100%",
                   borderRadius: 10,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  border: "1px solid var(--sl-ui-brand-green-border)",
+                  background: "var(--sl-ui-brand-green)",
+                  color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
                 }}
@@ -4337,9 +9529,6 @@ function AccountMenuPanel({
               </button>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 11.5, opacity: 0.7, lineHeight: 1.35 }}>
-              Manage Account editing will require a password challenge (next step).
-            </div>
           </>
         ) : (
           <>
@@ -4499,6 +9688,90 @@ function makePotholeIdFromCoords(lat, lng) {
   return `PH${lng5}${lat5}`;
 }
 
+function makeWaterDrainIdFromIncidentId(incidentId) {
+  const s = String(incidentId || "").trim();
+  if (!s) return "WD0000000000";
+
+  const m = s.match(/^[^:]+:([-]?\d+(?:\.\d+)?):([-]?\d+(?:\.\d+)?)$/);
+  if (m) {
+    const lat5 = String(Math.abs(Number(m[1])).toFixed(5).split(".")[1] || "00000").slice(0, 5).padEnd(5, "0");
+    const lng5 = String(Math.abs(Number(m[2])).toFixed(5).split(".")[1] || "00000").slice(0, 5).padEnd(5, "0");
+    if (/^\d{5}$/.test(lat5) && /^\d{5}$/.test(lng5)) return `WD${lng5}${lat5}`;
+  }
+
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return `WD${String(h >>> 0).padStart(10, "0").slice(-10)}`;
+}
+
+function collectIncidentIdsFromRows(rows, fallbackIncidentId = "") {
+  const out = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+  for (const r of rows || []) push(r?.light_id);
+  push(fallbackIncidentId);
+  return out;
+}
+
+function canonicalWaterDrainIncidentIdFromRows(rows, fallbackIncidentId = "") {
+  const list = collectIncidentIdsFromRows(rows, fallbackIncidentId);
+  if (!list.length) return "";
+
+  const counts = new Map();
+  const oldestById = new Map();
+  for (const r of rows || []) {
+    const id = String(r?.light_id || "").trim();
+    if (!id) continue;
+    const ts = Number(r?.ts || 0);
+    counts.set(id, (counts.get(id) || 0) + 1);
+    const curOldest = Number(oldestById.get(id) || 0);
+    if (!curOldest || (ts > 0 && ts < curOldest)) oldestById.set(id, ts);
+  }
+
+  let bestId = list[0];
+  let bestCount = Number(counts.get(bestId) || 0);
+  let bestOldest = Number(oldestById.get(bestId) || Number.MAX_SAFE_INTEGER);
+  for (const id of list) {
+    const c = Number(counts.get(id) || 0);
+    const oldest = Number(oldestById.get(id) || Number.MAX_SAFE_INTEGER);
+    if (c > bestCount || (c === bestCount && oldest < bestOldest) || (c === bestCount && oldest === bestOldest && id < bestId)) {
+      bestId = id;
+      bestCount = c;
+      bestOldest = oldest;
+    }
+  }
+  return bestId;
+}
+
+function nearestWaterDrainMarkerForPoint(lat, lng, markers, radiusMeters = GROUP_RADIUS_METERS) {
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return null;
+  const arr = Array.isArray(markers) ? markers : [];
+  let best = null;
+  let bestMeters = Infinity;
+  for (const marker of arr) {
+    const mLat = Number(marker?.lat);
+    const mLng = Number(marker?.lng);
+    if (!Number.isFinite(mLat) || !Number.isFinite(mLng)) continue;
+    const d = metersBetween({ lat: nLat, lng: nLng }, { lat: mLat, lng: mLng });
+    if (d <= radiusMeters && d < bestMeters) {
+      bestMeters = d;
+      best = marker;
+    }
+  }
+  if (!best) return null;
+  return { marker: best, distance: bestMeters };
+}
+
 function nearestPotholeForPoint(lat, lng, potholes, radiusMeters = POTHOLE_MERGE_RADIUS_METERS) {
   const arr = Array.isArray(potholes) ? potholes : [];
   let best = null;
@@ -4593,11 +9866,33 @@ function buildLightHistory({ reportRows, fixActionRows }) {
   for (const a of fixActionRows || []) {
     const action = String(a.action || "").toLowerCase();
     const ts = a.ts || 0;
+    const actorName = String(a?.actor_name || a?.reporter_name || "").trim();
+    const actorEmail = normalizeEmail(a?.actor_email || a?.reporter_email || "");
+    const actorPhone = normalizePhone(a?.actor_phone || a?.reporter_phone || "");
+    const actorUserId = String(a?.actor_user_id || a?.reporter_user_id || "").trim();
 
     if (action === "fix") {
-      items.push({ kind: "fix", ts, label: "Marked fixed", note: "" });
+      items.push({
+        kind: "fix",
+        ts,
+        label: "Marked fixed",
+        note: "",
+        actor_name: actorName || null,
+        actor_email: actorEmail || null,
+        actor_phone: actorPhone || null,
+        actor_user_id: actorUserId || null,
+      });
     } else if (action === "reopen") {
-      items.push({ kind: "reopen", ts, label: "Re-opened", note: "" });
+      items.push({
+        kind: "reopen",
+        ts,
+        label: "Re-opened",
+        note: a.note || "",
+        actor_name: actorName || null,
+        actor_email: actorEmail || null,
+        actor_phone: actorPhone || null,
+        actor_user_id: actorUserId || null,
+      });
     }
   }
 
@@ -4645,6 +9940,25 @@ function normalizeOfficialLightRow(row) {
     sl_id: row.sl_id || null,
     lat,
     lng,
+    nearest_address: String(row?.nearest_address || "").trim() || "",
+    nearest_cross_street: String(row?.nearest_cross_street || "").trim() || "",
+    nearest_landmark: String(row?.nearest_landmark || "").trim() || "",
+  };
+}
+
+function normalizeOfficialSignRow(row) {
+  if (!row || !row.id) return null;
+
+  const lat = Number(row.lat);
+  const lng = Number(row.lng);
+  if (!isValidLatLng(lat, lng)) return null;
+
+  return {
+    id: String(row.id).trim(),
+    sign_type: String(row.sign_type || "other").trim().toLowerCase() || "other",
+    lat,
+    lng,
+    active: row.active !== false,
   };
 }
 
@@ -4687,6 +10001,7 @@ export default function App() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
   const [titleLogoError, setTitleLogoError] = useState(false);
+  const [googleMapsAuthError, setGoogleMapsAuthError] = useState("");
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
@@ -4701,6 +10016,33 @@ export default function App() {
     setPrefersDarkMode(Boolean(media.matches));
     media.addEventListener?.("change", onChange);
     return () => media.removeEventListener?.("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const previousHandler = window.gm_authFailure;
+    window.gm_authFailure = () => {
+      const host = String(window.location.host || "").trim();
+      setGoogleMapsAuthError(`Google Maps key is not authorized for ${host || "this host"}.`);
+      if (typeof previousHandler === "function") {
+        try {
+          previousHandler();
+        } catch {
+          // no-op
+        }
+      }
+    };
+    return () => {
+      if (typeof previousHandler === "function") {
+        window.gm_authFailure = previousHandler;
+      } else {
+        try {
+          delete window.gm_authFailure;
+        } catch {
+          // no-op
+        }
+      }
+    };
   }, []);
 
   function cancelFlyAnimation() {
@@ -4790,8 +10132,12 @@ export default function App() {
 
   // OFFICIAL LIGHTS (admin-only)
   const [officialLights, setOfficialLights] = useState([]); // rows: {id, lat, lng}
+  const [officialSigns, setOfficialSigns] = useState([]); // rows: {id, sign_type, lat, lng, active}
   const [potholes, setPotholes] = useState([]); // rows: {id, ph_id, lat, lng, location_label?}
   const [potholeReports, setPotholeReports] = useState([]); // rows: {id, pothole_id, lat, lng, note, ts, reporter_*}
+  const [cityBoundaryGeojson, setCityBoundaryGeojson] = useState(null);
+  const [incidentStateByKey, setIncidentStateByKey] = useState({});
+  const [waterDrainIncidentsById, setWaterDrainIncidentsById] = useState({});
   // Google Maps InfoWindow selection
   const [selectedOfficialId, setSelectedOfficialId] = useState(null);
   const [selectedQueuedTempId, setSelectedQueuedTempId] = useState(null);
@@ -4801,6 +10147,10 @@ export default function App() {
       const has = prev.includes(lightId);
       if (!has && Number(mapZoomRef.current) < 17) {
         openNotice("🔎", "Zoom in to select", "Zoom in closer (level 17+) before selecting lights for bulk reporting.");
+        return prev;
+      }
+      if (!has && prev.length >= BULK_MAX_LIGHTS_PER_SUBMIT) {
+        openNotice("⚠️", "Selection limit", `You can select up to ${BULK_MAX_LIGHTS_PER_SUBMIT} lights per bulk report.`);
         return prev;
       }
       return has ? prev.filter((x) => x !== lightId) : [...prev, lightId];
@@ -4818,6 +10168,7 @@ export default function App() {
   const dragFollowOffTimerRef = useRef(null);
   const [mapInteracting, setMapInteracting] = useState(false);
   const mapInteractIdleTimerRef = useRef(null);
+  const userDragPanRef = useRef(false);
 
   // Google Maps center (actual camera center)
   const [mapCenter, setMapCenter] = useState({ lat: ASHTABULA[0], lng: ASHTABULA[1] });
@@ -4828,6 +10179,8 @@ export default function App() {
 
   const [reportType, setReportType] = useState("out");
   const [note, setNote] = useState("");
+  const [streetlightAreaPowerOn, setStreetlightAreaPowerOn] = useState("");
+  const [streetlightHazardYesNo, setStreetlightHazardYesNo] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4837,6 +10190,8 @@ export default function App() {
   const [fixedLights, setFixedLights] = useState({});
   const [lastFixByLightId, setLastFixByLightId] = useState({});
   const [actionsByLightId, setActionsByLightId] = useState({});
+  const [utilityReportedLightIdSet, setUtilityReportedLightIdSet] = useState(() => new Set());
+  const [utilityReportedAnyLightIdSet, setUtilityReportedAnyLightIdSet] = useState(() => new Set());
 
   // per-light cooldowns: persisted
   const [cooldowns, setCooldowns] = useState(() => pruneCooldowns(loadCooldownsFromStorage()));
@@ -4845,17 +10200,46 @@ export default function App() {
   const [activeLight, setActiveLight] = useState(null);
   const [domainReportTarget, setDomainReportTarget] = useState(null); // { domain, lat, lng, lightId, locationLabel }
   const [domainReportNote, setDomainReportNote] = useState("");
+  const [domainReportImageFile, setDomainReportImageFile] = useState(null);
+  const [domainReportImagePreviewUrl, setDomainReportImagePreviewUrl] = useState("");
+  const [domainReportIssue, setDomainReportIssue] = useState(defaultDomainIssueFor("water_drain_issues"));
   const [potholeConsentChecked, setPotholeConsentChecked] = useState(false);
+  const [streetlightUtilityContext, setStreetlightUtilityContext] = useState({
+    lightId: "",
+    loading: false,
+    nearestAddress: "",
+    nearestStreet: "",
+    nearestCrossStreet: "",
+    nearestIntersection: "",
+    nearestLandmark: "",
+  });
+  const [streetlightLocationInfoOpen, setStreetlightLocationInfoOpen] = useState(false);
 
   useEffect(() => {
     if (!domainReportTarget) {
       setPotholeConsentChecked(false);
+      setDomainReportIssue(defaultDomainIssueFor(""));
+      setDomainReportImageFile(null);
+      setDomainReportImagePreviewUrl("");
       return;
     }
-    if (domainReportTarget?.domain === "potholes") {
+    if (domainReportTarget?.domain === "potholes" || domainReportTarget?.domain === "water_drain_issues") {
       setPotholeConsentChecked(false);
     }
+    setDomainReportIssue(defaultDomainIssueFor(domainReportTarget?.domain));
   }, [domainReportTarget?.domain, domainReportTarget?.lat, domainReportTarget?.lng]);
+
+  useEffect(() => {
+    if (!domainReportImageFile) {
+      setDomainReportImagePreviewUrl("");
+      return;
+    }
+    const url = URL.createObjectURL(domainReportImageFile);
+    setDomainReportImagePreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [domainReportImageFile]);
 
   // Notice modal state
   const [notice, setNotice] = useState({ open: false, icon: "", title: "", message: "", compact: false });
@@ -4863,12 +10247,29 @@ export default function App() {
   const dbConnectionStartedAtRef = useRef(Date.now());
   const dbConnectionNoticeAtRef = useRef(0);
   const dbConnectionFailureStreakRef = useRef(0);
+  const placesLookupBlockedRef = useRef(false);
+  const placesBlockedNoticeShownRef = useRef(false);
   const [toolHintText, setToolHintText] = useState("");
   const [toolHintIndex, setToolHintIndex] = useState(null);
   const toolHintTimerRef = useRef(null);
 
   function openNotice(icon, title, message, opts = {}) {
     const { autoCloseMs = 0, compact = false } = opts;
+    const rawTitle = String(title ?? "").trim();
+    const rawMessage = String(message ?? "").trim();
+    const rawIcon = String(icon ?? "");
+    let safeTitle = rawTitle;
+    let safeMessage = rawMessage;
+    if (!safeTitle && !safeMessage) {
+      if (rawIcon.includes("⚠️")) {
+        safeTitle = "Notice";
+        safeMessage = "Something needs attention.";
+      } else if (rawIcon.includes("ℹ️")) {
+        safeTitle = "Notice";
+        safeMessage = "More information is available.";
+      }
+    }
+    const safeCompact = compact && !rawIcon.includes("⚠️");
 
     // clear any prior timer
     if (noticeTimerRef.current) {
@@ -4876,7 +10277,7 @@ export default function App() {
       noticeTimerRef.current = null;
     }
 
-    setNotice({ open: true, icon, title, message, compact });
+    setNotice({ open: true, icon: rawIcon, title: safeTitle, message: safeMessage, compact: safeCompact });
 
     if (autoCloseMs > 0) {
       noticeTimerRef.current = setTimeout(() => {
@@ -4892,6 +10293,39 @@ export default function App() {
       noticeTimerRef.current = null;
     }
     setNotice((p) => ({ ...p, open: false }));
+  }
+
+  async function copyTextToClipboard(label, value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "Unavailable") {
+      openNotice("⚠️", "Unavailable", `${label} is unavailable.`, { autoCloseMs: 1200, compact: true });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(raw);
+      openNotice("✅", "Copied", `${label} copied.`, { autoCloseMs: 900, compact: true });
+    } catch {
+      openNotice("⚠️", "Copy failed", `Could not copy ${label.toLowerCase()}.`, { autoCloseMs: 1400, compact: true });
+    }
+  }
+
+  function markPlacesLookupBlocked(reason = "") {
+    if (placesLookupBlockedRef.current) return;
+    placesLookupBlockedRef.current = true;
+    const msg = String(reason || "").trim();
+    if (msg) {
+      console.warn("[places] landmark lookups disabled for this session:", msg);
+    } else {
+      console.warn("[places] landmark lookups disabled for this session");
+    }
+    if (isAdmin && !placesBlockedNoticeShownRef.current) {
+      placesBlockedNoticeShownRef.current = true;
+      openNotice(
+        "ℹ️",
+        "Places unavailable",
+        "Closest landmark lookups are temporarily disabled. Reports still submit normally. Check Google API key restrictions for Places API / Places API (New)."
+      );
+    }
   }
 
   function showToolHint(text, ms = 1100, index = null) {
@@ -4951,6 +10385,21 @@ export default function App() {
     return false;
   }
 
+  function isExpectedPermissionError(err) {
+    if (!err) return false;
+    const statusNum = Number(err?.status);
+    const rawCode = String(err?.code || "").toUpperCase();
+    const combined = `${String(err?.message || "").toLowerCase()} ${String(err?.details || "").toLowerCase()} ${String(err?.hint || "").toLowerCase()}`;
+    if (statusNum === 401 || statusNum === 403) return true;
+    if (rawCode === "42501" || rawCode === "PGRST301") return true;
+    return (
+      combined.includes("permission denied") ||
+      combined.includes("row-level security") ||
+      combined.includes("forbidden") ||
+      combined.includes("not authorized")
+    );
+  }
+
   function notifyDbConnectionIssue(errOrStatus) {
     if (!isConnectionLikeDbError(errOrStatus)) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
@@ -4981,6 +10430,8 @@ export default function App() {
     sharedLocation: "",
     sharedAddress: "",
     sharedLandmark: "",
+    currentState: "",
+    lastChangedAt: "",
   });
   const officialLightHistoryCacheRef = useRef(new Map());
 
@@ -4996,12 +10447,15 @@ export default function App() {
 
   const [myReportsOpen, setMyReportsOpen] = useState(false);
   const [myReportsExpanded, setMyReportsExpanded] = useState(() => new Set()); // lightIds expanded
-  const [myReportsDomain, setMyReportsDomain] = useState("streetlights");
+  const [myReportsDomain, setMyReportsDomain] = useState("potholes");
+  const [myReportsFocusIncidentId, setMyReportsFocusIncidentId] = useState("");
+  const [myReportsFocusQuery, setMyReportsFocusQuery] = useState("");
 
   const [openReportsOpen, setOpenReportsOpen] = useState(false);
   const [openReportsExpanded, setOpenReportsExpanded] = useState(() => new Set()); // lightIds expanded
+  const [openReportsInViewOnly, setOpenReportsInViewOnly] = useState(false);
   const [openReportMapFilterOn, setOpenReportMapFilterOn] = useState(false);
-  const [adminReportDomain, setAdminReportDomain] = useState("streetlights");
+  const [adminReportDomain, setAdminReportDomain] = useState("potholes");
   const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
   const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
   const [selectedDomainMarker, setSelectedDomainMarker] = useState(null);
@@ -5020,6 +10474,20 @@ export default function App() {
   function closeMyReports() {
     setMyReportsOpen(false);
     setMyReportsExpanded(new Set());
+    setMyReportsFocusIncidentId("");
+    setMyReportsFocusQuery("");
+  }
+
+  function openMyReports(opts = {}) {
+    const domainKey = String(opts?.domainKey || adminReportDomain || "potholes").trim() || "potholes";
+    const focusIncidentId = String(opts?.focusIncidentId || "").trim();
+    const focusQuery = String(opts?.focusQuery || "").trim();
+    setAdminReportDomain(domainKey);
+    setMyReportsDomain(domainKey);
+    setMyReportsExpanded(focusIncidentId ? new Set([focusIncidentId]) : new Set());
+    setMyReportsFocusIncidentId(focusIncidentId);
+    setMyReportsFocusQuery(focusQuery);
+    setMyReportsOpen(true);
   }
 
   function toggleOpenReportsExpanded(lightId) {
@@ -5034,7 +10502,25 @@ export default function App() {
   function closeOpenReports() {
     setOpenReportsOpen(false);
     setOpenReportsExpanded(new Set());
+    setOpenReportsInViewOnly(false);
   }
+
+  function openOpenReports({ inViewOnly = false } = {}) {
+    setOpenReportsInViewOnly(Boolean(inViewOnly));
+    setOpenReportsExpanded(new Set());
+    setOpenReportsOpen(true);
+  }
+
+  const handleUtilityReportedChange = useCallback((incidentId, reported) => {
+    const id = String(incidentId || "").trim();
+    if (!id) return;
+    setUtilityReportedLightIdSet((prev) => {
+      const next = new Set(prev || []);
+      if (reported) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
 
 
   function openAllReports(title, items, opts = {}) {
@@ -5046,12 +10532,65 @@ export default function App() {
       sharedLocation: String(opts?.sharedLocation || "").trim(),
       sharedAddress: String(opts?.sharedAddress || "").trim(),
       sharedLandmark: String(opts?.sharedLandmark || "").trim(),
+      currentState: String(opts?.currentState || "").trim(),
+      lastChangedAt: String(opts?.lastChangedAt || "").trim(),
     });
   }
 
   function closeAllReports() {
     setAllReportsModal((p) => ({ ...p, open: false }));
   }
+
+  const getIncidentSnapshot = useCallback((domain, incidentId) => {
+    const id = String(incidentId || "").trim();
+    if (!id) return null;
+
+    const candidates = [];
+    const pushCandidate = (d) => {
+      const normalized = normalizeDomainKey(d) || String(d || "").trim().toLowerCase();
+      if (!normalized) return;
+      if (candidates.includes(normalized)) return;
+      candidates.push(normalized);
+    };
+
+    pushCandidate(domain);
+    if (id.startsWith("pothole:")) pushCandidate("potholes");
+    if (id.startsWith("water_drain_issues:")) {
+      // Compatibility: legacy lifecycle rows were written under streetlights domain.
+      pushCandidate("water_drain_issues");
+      pushCandidate("streetlights");
+      pushCandidate("water_main");
+    }
+    if (id.startsWith("street_signs:")) pushCandidate("street_signs");
+    if (id.startsWith("power_outage:")) pushCandidate("power_outage");
+    if (id.startsWith("water_main:")) pushCandidate("water_main");
+    pushCandidate("streetlights");
+
+    for (const d of candidates) {
+      const key = incidentSnapshotKey(d, id);
+      if (!key) continue;
+      const hit = incidentStateByKey?.[key] || null;
+      if (hit) return hit;
+    }
+
+    // Final fallback for mixed historical keys.
+    for (const [key, value] of Object.entries(incidentStateByKey || {})) {
+      if (String(key || "").endsWith(`:${id}`)) return value || null;
+    }
+
+    return null;
+  }, [incidentStateByKey]);
+
+  const domainForIncidentId = useCallback((incidentIdRaw) => {
+    const incidentId = String(incidentIdRaw || "").trim();
+    if (!incidentId) return "streetlights";
+    if (incidentId.startsWith("pothole:")) return "potholes";
+    if (incidentId.startsWith("water_drain_issues:")) return "water_drain_issues";
+    if (incidentId.startsWith("street_signs:")) return "street_signs";
+    if (incidentId.startsWith("power_outage:")) return "power_outage";
+    if (incidentId.startsWith("water_main:")) return "water_main";
+    return "streetlights";
+  }, []);
 
   async function getOfficialLightHistoryDetailed(lightId, { preferCache = true } = {}) {
     const lid = (lightId || "").trim();
@@ -5120,9 +10659,11 @@ export default function App() {
     return out;
   }
 
-  async function openOfficialLightAllReports(lightId) {
+  async function openOfficialLightAllReports(lightId, domain = "streetlights") {
     const lid = (lightId || "").trim();
     if (!lid) return;
+    const domainKey = normalizeDomainKey(domain) || "streetlights";
+    const isStreetSigns = domainKey === "street_signs";
 
     let reportRows = (reports || [])
       .filter((r) => (r.light_id || "").trim() === lid)
@@ -5138,13 +10679,29 @@ export default function App() {
     }
 
     const history = buildLightHistory({ reportRows, fixActionRows });
-    openAllReports("All Reports (Official light)", history);
+    const snapshot = getIncidentSnapshot(domainKey, lid);
+    const title =
+      domainKey === "water_drain_issues"
+        ? `All Reports (${makeWaterDrainIdFromIncidentId(lid)})`
+        : isStreetSigns
+          ? "All Reports (Official sign)"
+          : "All Reports (Official light)";
+    openAllReports(title, history, {
+      domainKey,
+      currentState: snapshot?.state || "",
+      lastChangedAt: snapshot?.last_changed_at || "",
+    });
   }
 
-  function openPotholeAllReportsFromMarker(marker) {
+  async function openPotholeAllReportsFromMarker(marker) {
     const pid = String(marker?.pothole_id || "").trim();
     if (!pid) return;
-    const ph = String(marker?.id || "").trim() || "Pothole";
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    const ph =
+      Number.isFinite(lat) && Number.isFinite(lng)
+        ? makePotholeIdFromCoords(lat, lng)
+        : (String(marker?.id || "").trim() || "PH0000000000");
     const reportRows = (potholeReports || [])
       .filter((r) => String(r?.pothole_id || "").trim() === pid)
       .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))
@@ -5174,25 +10731,84 @@ export default function App() {
     const addrFromNote = readAddressFromNote(reportRows?.[0]?.note);
     const landmarkFromNote = readLandmarkFromNote(reportRows?.[0]?.note);
     const locationLine =
-      Number.isFinite(Number(marker?.lat)) && Number.isFinite(Number(marker?.lng))
-        ? `${Number(marker.lat).toFixed(5)}, ${Number(marker.lng).toFixed(5)}`
+      Number.isFinite(lat) && Number.isFinite(lng)
+        ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
         : "";
-    const addressLine = addrFromNote || "Address unavailable";
+    const markerGeoAddress = String(marker?._geoNearestAddress || "").trim();
+    const markerGeoLandmark = String(marker?._geoNearestLandmark || "").trim();
+    const addressLine = markerGeoAddress || addrFromNote || "Address unavailable";
+    const snapshot = getIncidentSnapshot("potholes", `pothole:${pid}`);
     openAllReports(`All Reports (${ph})`, history, {
       domainKey: "potholes",
       sharedLocation: locationLine,
       sharedAddress: addressLine,
-      sharedLandmark: landmarkFromNote || "No nearby landmark",
+      sharedLandmark: markerGeoLandmark || landmarkFromNote || "No nearby landmark",
+      currentState: snapshot?.state || "",
+      lastChangedAt: snapshot?.last_changed_at || "",
     });
   }
 
-  async function markPotholeFixed(marker) {
+  async function insertLightActionsWithFallback(rows, { selectCols = "" } = {}) {
+    const payload = Array.isArray(rows) ? rows : [];
+    const runInsert = async (insertRows) => {
+      let q = supabase.from("light_actions").insert(insertRows);
+      if (selectCols) q = q.select(selectCols);
+      return await q;
+    };
+
+    const actorColsSupported = lightActionsActorColumnsSupportedRef.current;
+    const payloadNoActorCols = payload.map((r) => {
+      const next = { ...(r || {}) };
+      delete next.actor_name;
+      delete next.actor_email;
+      delete next.actor_phone;
+      return next;
+    });
+    const initialPayload = actorColsSupported === false ? payloadNoActorCols : payload;
+    let { data, error } = await runInsert(initialPayload);
+    if (!error) {
+      if (actorColsSupported === null && initialPayload === payload) {
+        lightActionsActorColumnsSupportedRef.current = true;
+      }
+      return { data, error: null };
+    }
+
+    const msg = String(error?.message || "").toLowerCase();
+    const details = String(error?.details || "").toLowerCase();
+    const hint = String(error?.hint || "").toLowerCase();
+    const text = `${msg} ${details} ${hint}`;
+    const hasActorFieldsInPayload = payload.some((r) =>
+      Object.prototype.hasOwnProperty.call(r || {}, "actor_name") ||
+      Object.prototype.hasOwnProperty.call(r || {}, "actor_email") ||
+      Object.prototype.hasOwnProperty.call(r || {}, "actor_phone")
+    );
+    const isActorColumnMissing =
+      hasActorFieldsInPayload &&
+      (
+        text.includes("actor_name") ||
+        text.includes("actor_email") ||
+        text.includes("actor_phone") ||
+        text.includes("schema cache") ||
+        text.includes("column")
+      );
+
+    if (!isActorColumnMissing) return { data, error };
+    lightActionsActorColumnsSupportedRef.current = false;
+
+    return await runInsert(payloadNoActorCols);
+  }
+
+  async function markPotholeFixed(marker, noteText = "") {
     const pid = String(marker?.pothole_id || "").trim();
     if (!pid || !session?.user?.id) return;
+    const noteClean = String(noteText || "").trim();
     const lightActionId = `pothole:${pid}`;
-    const { error } = await supabase
-      .from("light_actions")
-      .insert([{ light_id: lightActionId, action: "fix", actor_user_id: session.user.id }]);
+    const { error } = await insertLightActionsWithFallback([{
+      light_id: lightActionId,
+      action: "fix",
+      note: noteClean || null,
+      actor_user_id: session.user.id,
+    }]);
     if (error) {
       console.error("[pothole mark fixed] insert error:", error);
       openNotice("⚠️", "Couldn’t mark fixed", error.message || "Please try again.");
@@ -5202,10 +10818,31 @@ export default function App() {
     const ts = Date.now();
     setActionsByLightId((prev) => {
       const list = Array.isArray(prev?.[lightActionId]) ? [...prev[lightActionId]] : [];
-      list.unshift({ action: "fix", ts, note: null, actor_user_id: session.user.id });
+      list.unshift({
+        action: "fix",
+        ts,
+        note: noteClean || null,
+        actor_user_id: session.user.id,
+        actor_name:
+          String(profile?.full_name || "").trim() ||
+          String(session?.user?.user_metadata?.full_name || "").trim() ||
+          String(session?.user?.email || "").split("@")[0] ||
+          null,
+        actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
+        actor_phone: normalizePhone(profile?.phone || "") || null,
+      });
       return { ...(prev || {}), [lightActionId]: list };
     });
     setLastFixByLightId((prev) => ({ ...(prev || {}), [lightActionId]: Math.max(Number(prev?.[lightActionId] || 0), ts) }));
+    setIncidentStateByKey((prev) => {
+      const key = incidentSnapshotKey("potholes", lightActionId);
+      if (!key) return prev;
+      const nextIso = new Date(ts).toISOString();
+      return {
+        ...(prev || {}),
+        [key]: { state: "fixed", last_changed_at: nextIso },
+      };
+    });
     setSelectedDomainMarker(null);
     openNotice("✅", "Marked fixed", "Pothole marked fixed.");
   }
@@ -5244,6 +10881,7 @@ export default function App() {
   const [locating, setLocating] = useState(false);
   const [autoFollow, setAutoFollow] = useState(false);
   const [followCamera, setFollowCamera] = useState(false);
+  const lightActionsActorColumnsSupportedRef = useRef(false); // hard-disable actor_* writes unless explicitly enabled later
   const followHeadingEnabledRef = useRef(true);
 
   const lastTrackedPosRef = useRef(null);
@@ -5307,6 +10945,45 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
+  const [openAbuseFlagSummary, setOpenAbuseFlagSummary] = useState({ total: 0, maxSeverity: 0 });
+  const [moderationFlagsOpen, setModerationFlagsOpen] = useState(false);
+  const [moderationFlagRows, setModerationFlagRows] = useState([]);
+  const [moderationFlagsLoading, setModerationFlagsLoading] = useState(false);
+  const [moderationFlagsError, setModerationFlagsError] = useState("");
+  const abuseFlagBannerShownRef = useRef(false);
+  const isDomainPublic = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim();
+    if (!key) return false;
+    const configured = String(tenantVisibilityByDomain?.[key] || "").trim().toLowerCase();
+    if (configured === "public") return true;
+    if (configured === "internal_only") return false;
+    return DEFAULT_PUBLIC_DOMAINS.has(key);
+  }, [tenantVisibilityByDomain]);
+  const visibleDomainOptions = useMemo(() => {
+    return REPORT_DOMAIN_OPTIONS.filter((d) => isAdmin || isDomainPublic(d.key)).map((d) => ({
+      ...d,
+      enabled: true,
+    }));
+  }, [isAdmin, isDomainPublic]);
+  const openReportsDomainOptions = useMemo(
+    () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
+    [visibleDomainOptions]
+  );
+
+  useEffect(() => {
+    if (!openReportsOpen) return;
+    if (!openReportsDomainOptions.length) return;
+    if (openReportsDomainOptions.some((d) => d.key === adminReportDomain)) return;
+    setAdminReportDomain(openReportsDomainOptions[0].key);
+  }, [openReportsOpen, openReportsDomainOptions, adminReportDomain]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (!myReportsOpen) return;
+    if (myReportsDomain === adminReportDomain) return;
+    setMyReportsDomain(adminReportDomain);
+  }, [isAdmin, myReportsOpen, myReportsDomain, adminReportDomain]);
 
       useEffect(() => {
       // simple bridge so AccountMenuPanel can open auth gate without prop-drilling
@@ -5366,6 +11043,8 @@ export default function App() {
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [pendingGuestAction, setPendingGuestAction] = useState(null); // { kind: "report" | "working" | "bulk", lightId?: string }
   const guestSubmitBypassRef = useRef(false);
+  const domainSubmitInFlightRef = useRef(false);
+  const domainSubmitDedupRef = useRef(new Map());
   const [profile, setProfile] = useState(null); // { full_name, phone, email }
 
 
@@ -5416,9 +11095,23 @@ export default function App() {
   const [pendingWorkingLightId, setPendingWorkingLightId] = useState(null);
   const [markFixedConfirmOpen, setMarkFixedConfirmOpen] = useState(false);
   const [pendingMarkFixedLightId, setPendingMarkFixedLightId] = useState(null);
+  const [pendingMarkFixedClusterReports, setPendingMarkFixedClusterReports] = useState([]);
+  const [pendingMarkFixedPotholeMarker, setPendingMarkFixedPotholeMarker] = useState(null);
+  const [pendingIncidentActionType, setPendingIncidentActionType] = useState("fix"); // fix | reopen
+  const [markFixedNote, setMarkFixedNote] = useState("");
   const [deleteOfficialConfirmOpen, setDeleteOfficialConfirmOpen] = useState(false);
   const [pendingDeleteOfficialLightId, setPendingDeleteOfficialLightId] = useState(null);
+  const [deleteCircleMode, setDeleteCircleMode] = useState(false);
+  const [deleteCircleDraft, setDeleteCircleDraft] = useState(null); // { center: {lat,lng}, radiusMeters }
+  const [deleteCircleConfirmOpen, setDeleteCircleConfirmOpen] = useState(false);
+  const [deleteCircleNote, setDeleteCircleNote] = useState("");
+  const [deleteOfficialSignConfirmOpen, setDeleteOfficialSignConfirmOpen] = useState(false);
+  const [pendingDeleteOfficialSignId, setPendingDeleteOfficialSignId] = useState(null);
   const [clearQueuedConfirmOpen, setClearQueuedConfirmOpen] = useState(false);
+  const [domainSwitchConfirmOpen, setDomainSwitchConfirmOpen] = useState(false);
+  const [pendingDomainSwitchTarget, setPendingDomainSwitchTarget] = useState(null);
+  const [queueSignTypeOpen, setQueueSignTypeOpen] = useState(false);
+  const [pendingQueuedSign, setPendingQueuedSign] = useState(null); // {lat, lng, sign_type}
   const [potholeAdvisoryOpen, setPotholeAdvisoryOpen] = useState(false);
   const [pendingPotholeDomainTarget, setPendingPotholeDomainTarget] = useState(null);
 
@@ -5438,6 +11131,10 @@ export default function App() {
     }
     setBulkSelectedIds((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= BULK_MAX_LIGHTS_PER_SUBMIT) {
+        openNotice("⚠️", "Selection limit", `You can select up to ${BULK_MAX_LIGHTS_PER_SUBMIT} lights per bulk report.`);
+        return prev;
+      }
       return [...prev, id];
     });
   }
@@ -5448,11 +11145,19 @@ export default function App() {
     clearBulkSelection();
   }
 
+  function resetDeleteCircleTool() {
+    setDeleteCircleMode(false);
+    setDeleteCircleDraft(null);
+    setDeleteCircleConfirmOpen(false);
+    setDeleteCircleNote("");
+  }
+
   const [exitMappingConfirmOpen, setExitMappingConfirmOpen] = useState(false);
 
   function exitMappingMode() {
     setMappingMode(false);
     setMappingQueue([]);
+    setSelectedQueuedTempId(null);
   }
 
   function requestClearQueuedLights() {
@@ -5472,6 +11177,54 @@ export default function App() {
       return;
     }
     exitMappingMode();
+  }
+
+  function requestAdminDomainSwitch(domainKey, domainLabel) {
+    const nextKey = String(domainKey || "").trim();
+    if (!nextKey) return;
+    if (nextKey === adminReportDomain) {
+      setAdminDomainMenuOpen(false);
+      return;
+    }
+    if (mappingMode && mappingQueue.length > 0) {
+      setPendingDomainSwitchTarget({ key: nextKey, label: String(domainLabel || nextKey) });
+      setDomainSwitchConfirmOpen(true);
+      return;
+    }
+    setAdminReportDomain(nextKey);
+    setAdminDomainMenuOpen(false);
+    showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 4);
+  }
+
+  function cancelAdminDomainSwitch() {
+    setDomainSwitchConfirmOpen(false);
+    setPendingDomainSwitchTarget(null);
+  }
+
+  async function placeQueuedAndSwitchDomain() {
+    if (!pendingDomainSwitchTarget?.key) {
+      cancelAdminDomainSwitch();
+      return;
+    }
+    const ok = await confirmMappingQueue();
+    if (!ok) return;
+    setAdminReportDomain(pendingDomainSwitchTarget.key);
+    setAdminDomainMenuOpen(false);
+    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 4);
+    cancelAdminDomainSwitch();
+  }
+
+  function clearQueuedAndSwitchDomain() {
+    if (!pendingDomainSwitchTarget?.key) {
+      cancelAdminDomainSwitch();
+      return;
+    }
+    setMappingQueue([]);
+    setSelectedQueuedTempId(null);
+    setAdminReportDomain(pendingDomainSwitchTarget.key);
+    setAdminDomainMenuOpen(false);
+    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 4);
+    cancelAdminDomainSwitch();
   }
 
   async function saveAndExitMappingMode() {
@@ -5500,7 +11253,7 @@ export default function App() {
   // ADMIN LIGHT MAPPING QUEUE
   // =========================
   const [mappingQueue, setMappingQueue] = useState([]);
-  // { lat, lng, tempId }
+  // rows: { lat, lng, tempId, domain, sl_id?, sign_type? }
 
   function queueOfficialLight(lat, lng) {
     if (!isValidLatLng(lat, lng)) return;
@@ -5518,8 +11271,81 @@ export default function App() {
 
     setMappingQueue((prev) => [
       ...prev,
-      { lat: Number(lat), lng: Number(lng), tempId, sl_id },
+      { lat: Number(lat), lng: Number(lng), tempId, sl_id, domain: "streetlights" },
     ]);
+  }
+
+  function queueOfficialSign(lat, lng, signType) {
+    if (!isValidLatLng(lat, lng)) return;
+    if (Number(mapZoom) < MAPPING_MIN_ZOOM) {
+      openNotice(
+        "⚠️",
+        "Zoom in to place signs",
+        `Zoom to at least level ${MAPPING_MIN_ZOOM} to place official signs.`
+      );
+      return;
+    }
+    const nextType = String(signType || "").trim().toLowerCase();
+    if (!STREET_SIGN_TYPE_VALUES.has(nextType)) {
+      openNotice("⚠️", "Sign type required", "Select a sign type before adding this sign to the queue.");
+      return;
+    }
+
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setMappingQueue((prev) => [
+      ...prev,
+      {
+        lat: Number(lat),
+        lng: Number(lng),
+        tempId,
+        domain: "street_signs",
+        sign_type: nextType,
+      },
+    ]);
+    // Keep mapping flow fast: do not auto-open queued popup after sign type confirmation.
+    setSelectedQueuedTempId(null);
+  }
+
+  function requestQueueOfficialSign(lat, lng) {
+    if (!isValidLatLng(lat, lng)) return;
+    if (Number(mapZoom) < MAPPING_MIN_ZOOM) {
+      openNotice(
+        "⚠️",
+        "Zoom in to place signs",
+        `Zoom to at least level ${MAPPING_MIN_ZOOM} to place official signs.`
+      );
+      return;
+    }
+    setPendingQueuedSign({
+      lat: Number(lat),
+      lng: Number(lng),
+      sign_type: "",
+    });
+    setQueueSignTypeOpen(true);
+  }
+
+  function cancelQueueOfficialSign() {
+    setQueueSignTypeOpen(false);
+    setPendingQueuedSign(null);
+  }
+
+  function confirmQueueOfficialSign() {
+    const next = pendingQueuedSign;
+    if (!next) return;
+    queueOfficialSign(next.lat, next.lng, next.sign_type);
+    setQueueSignTypeOpen(false);
+    setPendingQueuedSign(null);
+  }
+
+  function updateQueuedSignType(tempId, signType) {
+    const nextType = String(signType || "other").trim().toLowerCase() || "other";
+    setMappingQueue((prev) =>
+      prev.map((q) =>
+        q.tempId === tempId && q.domain === "street_signs"
+          ? { ...q, sign_type: nextType }
+          : q
+      )
+    );
   }
 
 
@@ -5617,7 +11443,9 @@ export default function App() {
         .maybeSingle();
 
       if (error) {
-        console.error(error);
+        if (!isExpectedPermissionError(error)) {
+          console.error(error);
+        }
         setIsAdmin(false);
         return;
       }
@@ -5627,6 +11455,146 @@ export default function App() {
 
     checkAdmin();
   }, [session]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTenantVisibilityConfig() {
+      // Week 3 noise hardening: keep default visibility unless this feature is explicitly enabled.
+      if (!authReady) return;
+      if (!ENABLE_TENANT_VISIBILITY_CONFIG || !isAdmin) {
+        if (!cancelled) setTenantVisibilityByDomain({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from("tenant_visibility_config")
+        .select("domain,visibility");
+
+      if (cancelled) return;
+      if (error) {
+        const errCode = String(error?.code || "").trim();
+        const errMsg = String(error?.message || "").trim();
+        const isDenied = errCode === "42501" || /permission denied|forbidden/i.test(errMsg);
+        if (isDenied) {
+          // Graceful fallback: keep default visibility and avoid noisy warnings/notices on auth refresh.
+          setTenantVisibilityByDomain({});
+          return;
+        }
+        console.warn("[tenant_visibility_config]", errMsg || error);
+        return;
+      }
+
+      const next = {};
+      for (const row of data || []) {
+        const key = String(row?.domain || "").trim();
+        if (!key) continue;
+        next[key] = String(row?.visibility || "").trim().toLowerCase();
+      }
+      setTenantVisibilityByDomain(next);
+    }
+    loadTenantVisibilityConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, isAdmin]);
+
+  useEffect(() => {
+    if (!visibleDomainOptions.length) return;
+    const hasAdminDomain = visibleDomainOptions.some((d) => d.key === adminReportDomain);
+    if (!hasAdminDomain) setAdminReportDomain(visibleDomainOptions[0].key);
+    const hasMyDomain = visibleDomainOptions.some((d) => d.key === myReportsDomain);
+    if (!hasMyDomain) setMyReportsDomain(visibleDomainOptions[0].key);
+  }, [visibleDomainOptions, adminReportDomain, myReportsDomain]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOpenAbuseFlags() {
+      if (!isAdmin) {
+        if (!cancelled) setOpenAbuseFlagSummary({ total: 0, maxSeverity: 0 });
+        abuseFlagBannerShownRef.current = false;
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("metrics_open_abuse_flags_v1")
+        .select("open_flag_count,severity");
+
+      if (cancelled) return;
+      if (error) {
+        if (!isExpectedPermissionError(error)) {
+          console.warn("[abuse flags]", error?.message || error);
+        }
+        return;
+      }
+
+      let total = 0;
+      let maxSeverity = 0;
+      for (const r of data || []) {
+        const count = Math.max(0, Number(r?.open_flag_count || 0));
+        const sev = Math.max(0, Number(r?.severity || 0));
+        total += count;
+        if (sev > maxSeverity) maxSeverity = sev;
+      }
+
+      setOpenAbuseFlagSummary({ total, maxSeverity });
+
+      if (total > 0 && !abuseFlagBannerShownRef.current) {
+        // Keep admin anomaly totals in state, but avoid disruptive modal on login/refresh.
+        abuseFlagBannerShownRef.current = true;
+      } else if (total === 0) {
+        abuseFlagBannerShownRef.current = false;
+      }
+    }
+
+    loadOpenAbuseFlags();
+    const timer = setInterval(loadOpenAbuseFlags, 60000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isAdmin]);
+
+  const loadModerationFlagRows = useCallback(async () => {
+    if (!isAdmin) {
+      setModerationFlagRows([]);
+      setModerationFlagsError("");
+      setModerationFlagsLoading(false);
+      return;
+    }
+    setModerationFlagsLoading(true);
+    setModerationFlagsError("");
+    const tryQueries = [
+      () => supabase.from("abuse_events").select("*").order("created_at", { ascending: false }).limit(300),
+      () => supabase.from("abuse_events").select("*").order("ts", { ascending: false }).limit(300),
+      () => supabase.from("abuse_events").select("*").order("id", { ascending: false }).limit(300),
+    ];
+    let lastErr = null;
+    for (const run of tryQueries) {
+      try {
+        const { data, error } = await run();
+        if (error) {
+          lastErr = error;
+          continue;
+        }
+        const rows = Array.isArray(data) ? data : [];
+        setModerationFlagRows(rows);
+        setModerationFlagsError("");
+        setModerationFlagsLoading(false);
+        return;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    setModerationFlagRows([]);
+    setModerationFlagsError(String(lastErr?.message || lastErr || "Unable to load moderation flags"));
+    setModerationFlagsLoading(false);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!moderationFlagsOpen) return;
+    void loadModerationFlagRows();
+  }, [moderationFlagsOpen, loadModerationFlagRows]);
 
     useEffect(() => {
       let cancelled = false;
@@ -6098,8 +12066,9 @@ export default function App() {
     while (true) {
       const { data, error } = await supabase
         .from("official_lights")
-        .select("id, sl_id, lat, lng")
+        .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark")
         .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
 
       if (error) throw error;
@@ -6113,6 +12082,70 @@ export default function App() {
     return all;
   }
 
+  async function fetchAllOfficialSigns() {
+    const pageSize = 1000;
+    let from = 0;
+    let all = [];
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("official_signs")
+        .select("id, sign_type, lat, lng, active")
+        .eq("active", true)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return all;
+  }
+
+  async function fetchAllIncidentStateCurrent() {
+    const pageSize = 1000;
+    let from = 0;
+    let all = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from("incident_state_current")
+        .select("domain, incident_id, state, last_changed_at")
+        .order("last_changed_at", { ascending: false })
+        .order("domain", { ascending: true })
+        .order("incident_id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      const batch = data || [];
+      all = all.concat(batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
+  }
+
+  async function fetchAllWaterDrainIncidents() {
+    const pageSize = 1000;
+    let from = 0;
+    let all = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from("water_drain_incidents")
+        .select("incident_id, wd_id, issue_type, lat, lng, nearest_address, nearest_cross_street, nearest_landmark, geo_updated_at, updated_at")
+        .order("updated_at", { ascending: false })
+        .order("incident_id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      const batch = data || [];
+      all = all.concat(batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
+  }
+
   useEffect(() => {
     if (!authReady) return; // ✅ wait until auth restored
     async function loadAll() {
@@ -6120,7 +12153,8 @@ export default function App() {
       setError("");
 
       const isAuthed = Boolean(session?.user?.id);
-      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number";
+      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
+      const reportSelectPublicWithNumber = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number";
       const reportSelectPublicLegacy = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
       const reportSelectFull = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, reporter_name, reporter_phone, reporter_email";
       const actionsSelectPublic = "id, light_id, action, created_at";
@@ -6150,6 +12184,21 @@ export default function App() {
             .eq("reporter_user_id", session.user.id)
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
+      const utilityStatusPromise = isAuthed
+        ? supabase
+            .from("utility_report_status")
+            .select("incident_id")
+            .eq("tenant_key", activeTenantKey())
+            .eq("user_id", session.user.id)
+            .order("updated_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
+      const utilityStatusAllPromise = isAdmin
+        ? supabase
+            .from("utility_report_status")
+            .select("incident_id")
+            .eq("tenant_key", activeTenantKey())
+            .order("updated_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null });
 
       const actionsPromise = isAdmin
         ? supabase.from("light_actions").select(actionsSelectFull).order("created_at", { ascending: false })
@@ -6158,11 +12207,15 @@ export default function App() {
       const [
         { data: reportDataRaw, error: repErrRaw },
         { data: ownReportData, error: ownRepErr },
+        { data: utilityStatusData, error: utilityStatusErr },
+        { data: utilityStatusAllData, error: utilityStatusAllErr },
         { data: fixedData, error: fixErr },
         { data: actionData, error: actErr },
       ] = await Promise.all([
         reportsPromise,
         ownReportsPromise,
+        utilityStatusPromise,
+        utilityStatusAllPromise,
         supabase.from("fixed_lights").select("*"),
         actionsPromise,
       ]);
@@ -6172,7 +12225,7 @@ export default function App() {
         try {
           const fallback = await supabase
             .from("reports")
-            .select(reportSelectPublic)
+            .select(reportSelectPublicWithNumber)
             .order("created_at", { ascending: false });
           if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length) {
             reportData = fallback.data;
@@ -6206,11 +12259,67 @@ export default function App() {
 
       let officialData = [];
       let offErr = null;
+      let officialSignData = [];
+      let signErr = null;
+      let incidentStateRows = [];
+      let incidentStateErr = null;
+      let waterDrainIncidentRows = [];
+      let waterDrainIncidentErr = null;
+      let cityBoundaryErr = null;
       try {
         officialData = await fetchAllOfficialLights();
       } catch (e) {
         offErr = e;
         console.error("[official_lights] load error:", e);
+      }
+      try {
+        officialSignData = await fetchAllOfficialSigns();
+      } catch (e) {
+        signErr = e;
+        console.error("[official_signs] load error:", e);
+      }
+      try {
+        incidentStateRows = await fetchAllIncidentStateCurrent();
+      } catch (e) {
+        incidentStateErr = e;
+        if (!isExpectedPermissionError(e)) {
+          console.warn("[incident_state_current] load warning:", e?.message || e);
+        }
+      }
+      try {
+        waterDrainIncidentRows = await fetchAllWaterDrainIncidents();
+      } catch (e) {
+        waterDrainIncidentErr = e;
+        const msg = String(e?.message || "").toLowerCase();
+        if (!(msg.includes("does not exist") || msg.includes("relation") || msg.includes("schema cache"))) {
+          console.warn("[water_drain_incidents] load warning:", e?.message || e);
+        }
+      }
+      try {
+        const boundaryKey = tenantBoundaryConfigKey();
+        let { data: cfg, error: cfgErr } = await supabase
+          .from("app_config")
+          .select("value")
+          .eq("key", boundaryKey)
+          .maybeSingle();
+        if ((!cfg?.value || cfgErr) && boundaryKey !== "ashtabula_city_geojson") {
+          const fallback = await supabase
+            .from("app_config")
+            .select("value")
+            .eq("key", "ashtabula_city_geojson")
+            .maybeSingle();
+          if (!fallback.error && fallback.data?.value) {
+            cfg = fallback.data;
+            cfgErr = null;
+          }
+        }
+        cityBoundaryErr = cfgErr || null;
+        if (!cfgErr) setCityBoundaryGeojson(cfg?.value || null);
+      } catch (e) {
+        cityBoundaryErr = e;
+      }
+      if (cityBoundaryErr) {
+        console.warn("[app_config city boundary] load warning:", cityBoundaryErr?.message || cityBoundaryErr);
       }
 
       if (offErr) {
@@ -6221,6 +12330,62 @@ export default function App() {
             .map(normalizeOfficialLightRow)
             .filter(Boolean)
         );
+      }
+      if (!signErr) {
+        setOfficialSigns(
+          (officialSignData || [])
+            .map(normalizeOfficialSignRow)
+            .filter(Boolean)
+        );
+      }
+      if (!incidentStateErr) {
+        const next = {};
+        for (const row of incidentStateRows || []) {
+          const key = incidentSnapshotKey(row?.domain, row?.incident_id);
+          if (!key) continue;
+          next[key] = {
+            state: String(row?.state || "").trim(),
+            last_changed_at: row?.last_changed_at || null,
+          };
+        }
+        setIncidentStateByKey(next);
+        setLastFixByLightId((prev) => {
+          const out = { ...(prev || {}) };
+          for (const [key, snap] of Object.entries(next || {})) {
+            const keyStr = String(key || "");
+            const sep = keyStr.indexOf(":");
+            if (sep < 0) continue;
+            const incidentId = keyStr.slice(sep + 1).trim();
+            if (!incidentId) continue;
+            const state = String(snap?.state || "").trim().toLowerCase();
+            if (!(state === "fixed" || state === "archived")) continue;
+            const ts = Date.parse(String(snap?.last_changed_at || "")) || 0;
+            if (!ts) continue;
+            if (!out[incidentId] || ts > Number(out[incidentId] || 0)) {
+              out[incidentId] = ts;
+            }
+          }
+          return out;
+        });
+      }
+      if (!waterDrainIncidentErr) {
+        const nextWaterCache = {};
+        for (const row of waterDrainIncidentRows || []) {
+          const key = String(row?.incident_id || "").trim();
+          if (!key) continue;
+          nextWaterCache[key] = {
+            wd_id: String(row?.wd_id || "").trim(),
+            issue_type: String(row?.issue_type || "").trim().toLowerCase(),
+            lat: Number(row?.lat),
+            lng: Number(row?.lng),
+            nearest_address: String(row?.nearest_address || "").trim(),
+            nearest_cross_street: String(row?.nearest_cross_street || "").trim(),
+            nearest_landmark: String(row?.nearest_landmark || "").trim(),
+            geo_updated_at: row?.geo_updated_at || null,
+            updated_at: row?.updated_at || null,
+          };
+        }
+        setWaterDrainIncidentsById(nextWaterCache);
       }
 
       const officialIdByAlias = new Map();
@@ -6275,10 +12440,24 @@ export default function App() {
       }
 
       if (repErr) {
-        console.error(repErr);
+        if (!isExpectedPermissionError(repErr)) {
+          console.error(repErr);
+        }
       }
       if (ownRepErr) {
-        console.error("[reports own] load error:", ownRepErr);
+        if (!isExpectedPermissionError(ownRepErr)) {
+          console.error("[reports own] load error:", ownRepErr);
+        }
+      }
+      if (utilityStatusErr) {
+        if (!isExpectedPermissionError(utilityStatusErr)) {
+          console.error("[utility_report_status] load error:", utilityStatusErr);
+        }
+      }
+      if (utilityStatusAllErr) {
+        if (!isExpectedPermissionError(utilityStatusAllErr)) {
+          console.error("[utility_report_status all] load error:", utilityStatusAllErr);
+        }
       }
 
       const normalizedPublicReports = (reportData || []).map((r) => ({
@@ -6318,6 +12497,28 @@ export default function App() {
       for (const r of normalizedOwnReports) reportMap.set(r.id, r); // own rows overwrite public-safe rows
       setReports(Array.from(reportMap.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0)));
 
+      const utilitySet = new Set();
+      for (const row of utilityStatusData || []) {
+        const rawId = String(row?.incident_id || "").trim();
+        if (!rawId) continue;
+        const normalizedId = canonicalOfficialLightId(rawId, null, null, officialIdByAlias, officialIdByCoordKey);
+        const id = String(normalizedId || "").trim();
+        if (!id || !officialIdByAlias.has(id)) continue;
+        utilitySet.add(id);
+      }
+      setUtilityReportedLightIdSet(utilitySet);
+
+      const utilityAnySet = new Set();
+      for (const row of utilityStatusAllData || []) {
+        const rawId = String(row?.incident_id || "").trim();
+        if (!rawId) continue;
+        const normalizedId = canonicalOfficialLightId(rawId, null, null, officialIdByAlias, officialIdByCoordKey);
+        const id = String(normalizedId || "").trim();
+        if (!id || !officialIdByAlias.has(id)) continue;
+        utilityAnySet.add(id);
+      }
+      setUtilityReportedAnyLightIdSet(utilityAnySet);
+
       const fixedMap = {};
       for (const row of fixedData || []) fixedMap[row.light_id] = new Date(row.fixed_at).getTime();
       setFixedLights(fixedMap);
@@ -6327,7 +12528,9 @@ export default function App() {
         console.error(fixErr);
       }
       if (actErr) {
-        console.error(actErr);
+        if (!isExpectedPermissionError(actErr)) {
+          console.error(actErr);
+        }
       }
       else {
         for (const a of actionData || []) {
@@ -6364,7 +12567,7 @@ export default function App() {
         setLastFixByLightId(map);
       }
 
-      const loadHadConnectionFailure = [repErr, ownRepErr, fixErr, actErr, offErr, potholeErr, potholeRepErr].some((e) =>
+      const loadHadConnectionFailure = [repErr, ownRepErr, utilityStatusErr, fixErr, actErr, offErr, signErr, potholeErr, potholeRepErr, incidentStateErr].some((e) =>
         isConnectionLikeDbError(e)
       );
       if (loadHadConnectionFailure) notifyDbConnectionIssue({ message: "connection check failed" });
@@ -6390,6 +12593,62 @@ export default function App() {
   // Realtime subscriptions
   // -------------------------
   useEffect(() => {
+    const viewerUserId = String(session?.user?.id || "").trim();
+    let utilityRefreshTimer = null;
+    let utilityRefreshInFlight = false;
+
+    const refreshUtilityStatusSets = async () => {
+      if (utilityRefreshInFlight) return;
+      utilityRefreshInFlight = true;
+      try {
+        const tenantKey = activeTenantKey();
+        if (viewerUserId) {
+          const { data, error } = await supabase
+            .from("utility_report_status")
+            .select("incident_id")
+            .eq("tenant_key", tenantKey)
+            .eq("user_id", viewerUserId)
+            .order("updated_at", { ascending: false });
+          if (!error) {
+            const next = new Set();
+            for (const row of data || []) {
+              const incidentId = String(row?.incident_id || "").trim();
+              if (incidentId) next.add(incidentId);
+            }
+            setUtilityReportedLightIdSet(next);
+          }
+        }
+
+        if (isAdmin) {
+          const { data, error } = await supabase
+            .from("utility_report_status")
+            .select("incident_id")
+            .eq("tenant_key", tenantKey)
+            .order("updated_at", { ascending: false });
+          if (!error) {
+            const next = new Set();
+            for (const row of data || []) {
+              const incidentId = String(row?.incident_id || "").trim();
+              if (incidentId) next.add(incidentId);
+            }
+            setUtilityReportedAnyLightIdSet(next);
+          }
+        }
+      } catch (e) {
+        console.warn("[utility_report_status realtime refresh] warning:", e?.message || e);
+      } finally {
+        utilityRefreshInFlight = false;
+      }
+    };
+
+    const scheduleUtilityStatusRefresh = () => {
+      if (utilityRefreshTimer) clearTimeout(utilityRefreshTimer);
+      utilityRefreshTimer = setTimeout(() => {
+        utilityRefreshTimer = null;
+        refreshUtilityStatusSets();
+      }, 180);
+    };
+
     const reportsChannel = isAdmin ? supabase
       .channel("realtime-reports")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "reports" }, (payload) => {
@@ -6415,6 +12674,23 @@ export default function App() {
           if (prev.some((x) => x.id === incoming.id)) return prev;
           return [incoming, ...prev];
         });
+
+        const incidentId = String(r?.light_id || "").trim();
+        if (incidentId) {
+          const nextIso = r?.created_at ? String(r.created_at) : new Date(incoming.ts || Date.now()).toISOString();
+          setIncidentStateByKey((prev) => {
+            const key = incidentSnapshotKey("streetlights", incidentId);
+            if (!key) return prev;
+            const prevIso = String(prev?.[key]?.last_changed_at || "");
+            const prevTs = Date.parse(prevIso) || 0;
+            const nextTs = Date.parse(nextIso) || 0;
+            if (prevTs > nextTs) return prev;
+            return {
+              ...(prev || {}),
+              [key]: { state: "reported", last_changed_at: nextIso },
+            };
+          });
+        }
       })
       .subscribe() : null;
 
@@ -6458,7 +12734,8 @@ export default function App() {
           const actorUserId = a.actor_user_id || a.reporter_user_id || null;
           const actorNameRaw = (a.actor_name || a.reporter_name || noteContact.name || "").trim();
           const actorNameFallback = actorEmail ? String(actorEmail).split("@")[0] : "";
-          list.unshift({
+          const incoming = {
+            action_id: a.id || null,
             action: a.action,
             ts,
             note: a.note || null,
@@ -6470,18 +12747,58 @@ export default function App() {
             reporter_name: (a.reporter_name || "").trim() || actorNameRaw || actorNameFallback || null,
             reporter_email: a.reporter_email || actorEmail,
             reporter_phone: a.reporter_phone || actorPhone,
+          };
+          const alreadyExists = list.some((x) => {
+            const sameId = incoming.action_id && x?.action_id && String(x.action_id) === String(incoming.action_id);
+            if (sameId) return true;
+            // Guard against local-optimistic + realtime duplicate rows.
+            return (
+              String(x?.action || "").toLowerCase() === String(incoming.action || "").toLowerCase()
+              && Number(x?.ts || 0) === Number(incoming.ts || 0)
+              && String(x?.note || "") === String(incoming.note || "")
+              && String(x?.actor_user_id || "") === String(incoming.actor_user_id || "")
+            );
           });
+          if (alreadyExists) return prev;
+          list.unshift(incoming);
           return { ...prev, [a.light_id]: list };
         });
 
+        const incidentId = String(a?.light_id || "").trim();
         const t = String(a.action || "").toLowerCase();
-        if (t !== "fix") return;
+        if (t === "fix") {
+          setLastFixByLightId((prev) => {
+            const cur = prev[a.light_id] || 0;
+            if (ts <= cur) return prev;
+            return { ...prev, [a.light_id]: ts };
+          });
+        } else if (t === "reopen") {
+          setLastFixByLightId((prev) => {
+            if (!Object.prototype.hasOwnProperty.call(prev || {}, a.light_id)) return prev;
+            const next = { ...(prev || {}) };
+            delete next[a.light_id];
+            return next;
+          });
+        } else {
+          return;
+        }
 
-        setLastFixByLightId((prev) => {
-          const cur = prev[a.light_id] || 0;
-          if (ts <= cur) return prev;
-          return { ...prev, [a.light_id]: ts };
-        });
+        if (incidentId) {
+          const incidentDomain = domainForIncidentId(incidentId);
+          const nextIso = a?.created_at ? String(a.created_at) : new Date(ts || Date.now()).toISOString();
+          setIncidentStateByKey((prev) => {
+            const key = incidentSnapshotKey(incidentDomain, incidentId);
+            if (!key) return prev;
+            const prevIso = String(prev?.[key]?.last_changed_at || "");
+            const prevTs = Date.parse(prevIso) || 0;
+            const nextTs = Date.parse(nextIso) || 0;
+            if (prevTs > nextTs) return prev;
+            return {
+              ...(prev || {}),
+              [key]: { state: t === "fix" ? "fixed" : "reopened", last_changed_at: nextIso },
+            };
+          });
+        }
       })
       .subscribe() : null;
 
@@ -6586,22 +12903,143 @@ export default function App() {
           if (prev.some((x) => x.id === incoming.id)) return prev;
           return [incoming, ...prev];
         });
+
+        const pid = String(r?.pothole_id || "").trim();
+        if (pid) {
+          const nextIso = r?.created_at ? String(r.created_at) : new Date(incoming.ts || Date.now()).toISOString();
+          setIncidentStateByKey((prev) => {
+            const key = incidentSnapshotKey("potholes", `pothole:${pid}`);
+            if (!key) return prev;
+            const prevIso = String(prev?.[key]?.last_changed_at || "");
+            const prevTs = Date.parse(prevIso) || 0;
+            const nextTs = Date.parse(nextIso) || 0;
+            if (prevTs > nextTs) return prev;
+            return {
+              ...(prev || {}),
+              [key]: { state: "reported", last_changed_at: nextIso },
+            };
+          });
+        }
+      })
+      .subscribe();
+
+    const waterDrainIncidentsChannel = supabase
+      .channel("realtime-water-drain-incidents")
+      .on("postgres_changes", { event: "*", schema: "public", table: "water_drain_incidents" }, (payload) => {
+        const eventType = String(payload?.eventType || "").toUpperCase();
+        if (eventType === "DELETE") {
+          const incidentId = String(payload?.old?.incident_id || "").trim();
+          if (!incidentId) return;
+          setWaterDrainIncidentsById((prev) => {
+            if (!Object.prototype.hasOwnProperty.call(prev || {}, incidentId)) return prev;
+            const next = { ...(prev || {}) };
+            delete next[incidentId];
+            return next;
+          });
+          return;
+        }
+
+        const row = payload?.new;
+        const incidentId = String(row?.incident_id || "").trim();
+        if (!incidentId) return;
+        setWaterDrainIncidentsById((prev) => ({
+          ...(prev || {}),
+          [incidentId]: {
+            wd_id: String(row?.wd_id || "").trim(),
+            issue_type: String(row?.issue_type || "").trim().toLowerCase(),
+            lat: Number(row?.lat),
+            lng: Number(row?.lng),
+            nearest_address: String(row?.nearest_address || "").trim(),
+            nearest_cross_street: String(row?.nearest_cross_street || "").trim(),
+            nearest_landmark: String(row?.nearest_landmark || "").trim(),
+            geo_updated_at: row?.geo_updated_at || null,
+            updated_at: row?.updated_at || null,
+          },
+        }));
+      })
+      .subscribe();
+
+    const utilityStatusChannel = (isAdmin || viewerUserId) ? supabase
+      .channel("realtime-utility-report-status")
+      .on("postgres_changes", { event: "*", schema: "public", table: "utility_report_status" }, () => {
+        scheduleUtilityStatusRefresh();
+      })
+      .subscribe() : null;
+
+    const incidentStateChannel = supabase
+      .channel("realtime-incident-state-current")
+      .on("postgres_changes", { event: "*", schema: "public", table: "incident_state_current" }, (payload) => {
+        const row = payload?.new;
+        const oldRow = payload?.old;
+        const eventType = String(payload?.eventType || "").toUpperCase();
+        const incidentId = String((eventType === "DELETE" ? oldRow?.incident_id : row?.incident_id) || "").trim();
+        const stateLower = String(row?.state || "").trim().toLowerCase();
+        const changedAtIso = String(row?.last_changed_at || "").trim();
+        const changedAtTs = Date.parse(changedAtIso) || 0;
+
+        setIncidentStateByKey((prev) => {
+          const next = { ...(prev || {}) };
+          const newKey = incidentSnapshotKey(row?.domain, row?.incident_id);
+          const oldKey = incidentSnapshotKey(oldRow?.domain, oldRow?.incident_id);
+          if (eventType === "DELETE") {
+            if (oldKey) delete next[oldKey];
+            return next;
+          }
+          if (oldKey && oldKey !== newKey) delete next[oldKey];
+          if (newKey) {
+            next[newKey] = {
+              state: String(row?.state || "").trim(),
+              last_changed_at: row?.last_changed_at || null,
+            };
+          }
+          return next;
+        });
+
+        if (incidentId) {
+          setLastFixByLightId((prev) => {
+            const next = { ...(prev || {}) };
+            const prevTs = Number(next[incidentId] || 0);
+            if (eventType === "DELETE") return next;
+            if (stateLower === "fixed" || stateLower === "archived") {
+              if (!changedAtTs || changedAtTs >= prevTs) {
+                next[incidentId] = changedAtTs || Date.now();
+              }
+              return next;
+            }
+            if (
+              stateLower === "reported"
+              || stateLower === "reopened"
+              || stateLower === "confirmed"
+            ) {
+              if (Object.prototype.hasOwnProperty.call(next, incidentId)) {
+                delete next[incidentId];
+              }
+              return next;
+            }
+            return next;
+          });
+        }
       })
       .subscribe();
 
 
     return () => {
+      if (utilityRefreshTimer) clearTimeout(utilityRefreshTimer);
       if (reportsChannel) supabase.removeChannel(reportsChannel);
       if (fixedChannel) supabase.removeChannel(fixedChannel);
       if (actionsChannel) supabase.removeChannel(actionsChannel);
       if (officialChannel) supabase.removeChannel(officialChannel);
       if (potholesChannel) supabase.removeChannel(potholesChannel);
       if (potholeReportsChannel) supabase.removeChannel(potholeReportsChannel);
+      if (waterDrainIncidentsChannel) supabase.removeChannel(waterDrainIncidentsChannel);
+      if (utilityStatusChannel) supabase.removeChannel(utilityStatusChannel);
+      if (incidentStateChannel) supabase.removeChannel(incidentStateChannel);
     };
-  }, [isAdmin]);
+  }, [isAdmin, session?.user?.id, domainForIncidentId]);
 
   // Build a fast lookup of official IDs
   const officialIdSet = useMemo(() => new Set(officialLights.map((o) => o.id)), [officialLights]);
+  const officialSignIdSet = useMemo(() => new Set((officialSigns || []).map((s) => String(s?.id || "").trim()).filter(Boolean)), [officialSigns]);
 
 
   const slIdByUuid = useMemo(() => {
@@ -6628,16 +13066,43 @@ export default function App() {
   }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
 
   const isStreetlightsDomain = adminReportDomain === "streetlights";
+  const isStreetSignsDomain = adminReportDomain === "street_signs";
   const isPotholesDomain = adminReportDomain === "potholes";
+  const isWaterDrainDomain = adminReportDomain === "water_drain_issues";
+  const canUseStreetlightBulk = isStreetlightsDomain;
+  const mappingUnitLabel = isStreetSignsDomain ? "Sign" : "Light";
+  const cityLimitPolygons = useMemo(
+    () => extractPolygonsFromGeoJson(cityBoundaryGeojson),
+    [cityBoundaryGeojson]
+  );
+  const cityBoundaryOuterRings = useMemo(
+    () => (cityLimitPolygons || []).map((poly) => poly?.[0]).filter((ring) => Array.isArray(ring) && ring.length >= 3),
+    [cityLimitPolygons]
+  );
+  const cityOutsideMaskPaths = useMemo(() => {
+    if (!cityBoundaryOuterRings.length) return [];
+    const outerRing = buildWorldMaskRing();
+    const holeRings = cityBoundaryOuterRings
+      .map((ring) => orientRing(ring, "counterclockwise"))
+      .filter((ring) => ring.length >= 3);
+    return [outerRing, ...holeRings];
+  }, [cityBoundaryOuterRings]);
+  const restrictPublicMarkersToCity = !isAdmin && cityLimitPolygons.length > 0;
+  const isWithinAshtabulaCityLimits = useCallback(
+    (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
+    [cityLimitPolygons]
+  );
 
   const selectedDomainReports = useMemo(() => {
     if (isPotholesDomain) return potholeReports;
     const all = Array.isArray(reports) ? reports : [];
-    return all.filter((r) => reportDomainForRow(r, officialIdSet) === adminReportDomain);
-  }, [isPotholesDomain, potholeReports, reports, officialIdSet, adminReportDomain]);
+    return all.filter((r) => reportDomainForRow(r, officialIdSet, officialSignIdSet) === adminReportDomain);
+  }, [isPotholesDomain, potholeReports, reports, officialIdSet, officialSignIdSet, adminReportDomain]);
 
   const potholeLastFixById = useMemo(() => {
     const out = {};
+
+    // Source 1: action history (when available)
     const byId = actionsByLightId || {};
     for (const [lid, acts] of Object.entries(byId)) {
       if (!String(lid || "").startsWith("pothole:")) continue;
@@ -6650,15 +13115,115 @@ export default function App() {
         if (!out[pid] || ts > out[pid]) out[pid] = ts;
       }
     }
+
+    // Source 2: lifecycle snapshot (works for public clients without action feed)
+    for (const [key, snap] of Object.entries(incidentStateByKey || {})) {
+      const keyStr = String(key || "");
+      const sep = keyStr.indexOf(":");
+      if (sep < 0) continue;
+      const incidentId = keyStr.slice(sep + 1).trim();
+      if (!incidentId.startsWith("pothole:")) continue;
+      const state = String(snap?.state || "").trim().toLowerCase();
+      if (!(state === "fixed" || state === "archived")) continue;
+      const pid = incidentId.slice("pothole:".length).trim();
+      if (!pid) continue;
+      const ts = Date.parse(String(snap?.last_changed_at || "")) || 0;
+      if (!ts) continue;
+      if (!out[pid] || ts > out[pid]) out[pid] = ts;
+    }
+
     return out;
-  }, [actionsByLightId]);
+  }, [actionsByLightId, incidentStateByKey]);
 
   const renderedOfficialLights = useMemo(() => {
     if (!isStreetlightsDomain) return [];
     const base = (Array.isArray(officialLights) ? officialLights : []).map(normalizeOfficialLightRow).filter(Boolean);
-    if (!(isAdmin && openReportMapFilterOn)) return base;
-    return base.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
-  }, [officialLights, isStreetlightsDomain, isAdmin, openReportMapFilterOn, openReportOfficialIdSet]);
+    const cityFiltered = restrictPublicMarkersToCity
+      ? base.filter((l) => isWithinAshtabulaCityLimits(l.lat, l.lng))
+      : base;
+    // In mapping mode, always show full official asset layer so existing lights are never hidden.
+    if (mappingMode) return cityFiltered;
+    if (!(isAdmin && openReportMapFilterOn)) return cityFiltered;
+    return cityFiltered.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
+  }, [
+    officialLights,
+    isStreetlightsDomain,
+    isAdmin,
+    mappingMode,
+    openReportMapFilterOn,
+    openReportOfficialIdSet,
+    restrictPublicMarkersToCity,
+    isWithinAshtabulaCityLimits,
+  ]);
+
+  const deleteCircleCandidateIds = useMemo(() => {
+    if (!deleteCircleDraft?.center) return [];
+    const centerLat = Number(deleteCircleDraft.center.lat);
+    const centerLng = Number(deleteCircleDraft.center.lng);
+    const radius = Number(deleteCircleDraft.radiusMeters || 0);
+    if (!isValidLatLng(centerLat, centerLng) || !Number.isFinite(radius) || radius <= 0) return [];
+    const ids = [];
+    if (isStreetlightsDomain) {
+      for (const row of officialLights || []) {
+        const light = normalizeOfficialLightRow(row);
+        if (!light) continue;
+        const lid = String(light.id || "").trim();
+        if (!lid || !openReportOfficialIdSet.has(lid)) continue;
+        const dist = metersBetween(
+          { lat: centerLat, lng: centerLng },
+          { lat: Number(light.lat), lng: Number(light.lng) }
+        );
+        if (dist <= radius) ids.push(lid);
+      }
+      return ids.filter(Boolean);
+    }
+    if (isPotholesDomain) {
+      for (const p of potholes || []) {
+        const pid = String(p?.id || "").trim();
+        const lat = Number(p?.lat);
+        const lng = Number(p?.lng);
+        if (!pid || !isValidLatLng(lat, lng)) continue;
+        const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
+        const openCount = (potholeReports || []).filter((r) => String(r?.pothole_id || "").trim() === pid && Number(r?.ts || 0) > lastFixTs).length;
+        if (openCount <= 0) continue;
+        const dist = metersBetween({ lat: centerLat, lng: centerLng }, { lat, lng });
+        if (dist <= radius) ids.push(`pothole:${pid}`);
+      }
+      return Array.from(new Set(ids.filter(Boolean)));
+    }
+    if (isWaterDrainDomain || isStreetSignsDomain) {
+      const byIncident = new Map();
+      for (const r of selectedDomainReports || []) {
+        const incidentId = String(r?.light_id || "").trim();
+        const lat = Number(r?.lat);
+        const lng = Number(r?.lng);
+        if (!incidentId || !isValidLatLng(lat, lng)) continue;
+        const prev = byIncident.get(incidentId);
+        const ts = Number(r?.ts || 0);
+        if (!prev || ts > Number(prev?.ts || 0)) {
+          byIncident.set(incidentId, { incidentId, lat, lng, ts });
+        }
+      }
+      for (const x of byIncident.values()) {
+        const dist = metersBetween({ lat: centerLat, lng: centerLng }, { lat: Number(x.lat), lng: Number(x.lng) });
+        if (dist <= radius) ids.push(String(x.incidentId || "").trim());
+      }
+      return Array.from(new Set(ids.filter(Boolean)));
+    }
+    return Array.from(new Set(ids.filter(Boolean)));
+  }, [
+    deleteCircleDraft,
+    isStreetlightsDomain,
+    isPotholesDomain,
+    isWaterDrainDomain,
+    isStreetSignsDomain,
+    officialLights,
+    openReportOfficialIdSet,
+    potholes,
+    potholeReports,
+    potholeLastFixById,
+    selectedDomainReports,
+  ]);
 
   const nonStreetlightDomainMarkers = useMemo(() => {
     if (isStreetlightsDomain) return [];
@@ -6667,7 +13232,7 @@ export default function App() {
       for (const p of potholes || []) {
         if (!p?.id || !isValidLatLng(Number(p.lat), Number(p.lng))) continue;
         byId.set(p.id, {
-          id: p.ph_id || `PH-${String(p.id).slice(0, 6)}`,
+          id: String(p.ph_id || "").trim() || makePotholeIdFromCoords(Number(p.lat), Number(p.lng)),
           pothole_id: p.id,
           lat: Number(p.lat),
           lng: Number(p.lng),
@@ -6690,6 +13255,77 @@ export default function App() {
       }
       return Array.from(byId.values()).sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
     }
+    if (isStreetSignsDomain) {
+      const byId = new Map();
+      for (const s of officialSigns || []) {
+        const id = String(s?.id || "").trim();
+        if (!id || !isValidLatLng(Number(s?.lat), Number(s?.lng))) continue;
+        const lastFixTs = Math.max(Number(lastFixByLightId?.[id] || 0), Number(fixedLights?.[id] || 0));
+        byId.set(id, {
+          id,
+          sign_type: String(s?.sign_type || "other").trim().toLowerCase() || "other",
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          count: 0,
+          lastTs: 0,
+          lastFixTs,
+        });
+      }
+      for (const r of selectedDomainReports || []) {
+        const lid = String(r?.light_id || "").trim();
+        const marker = byId.get(lid);
+        if (!marker) continue;
+        const ts = Number(r?.ts || 0);
+        const lastFixTs = Number(marker.lastFixTs || 0);
+        if (lastFixTs && ts <= lastFixTs) continue;
+        marker.count += 1;
+        if (ts > marker.lastTs) marker.lastTs = ts;
+      }
+      return Array.from(byId.values())
+        .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+    }
+    if (isWaterDrainDomain) {
+      const clustered = groupIntoLights(
+        (selectedDomainReports || [])
+          .filter((r) => isValidLatLng(Number(r?.lat), Number(r?.lng)))
+          .map((r) => ({
+            ...r,
+            lat: Number(r.lat),
+            lng: Number(r.lng),
+            light_id: String(r?.light_id || "").trim() || lightIdFor(Number(r.lat), Number(r.lng)),
+          }))
+      );
+      return clustered
+        .map((c) => {
+          const fallbackIncidentId = String(c?.lightId || lightIdFor(Number(c?.lat || 0), Number(c?.lng || 0))).trim();
+          const allRows = [...(c?.reports || [])].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+          const incidentIds = collectIncidentIdsFromRows(allRows, fallbackIncidentId);
+          const canonicalIncidentId = canonicalWaterDrainIncidentIdFromRows(allRows, fallbackIncidentId);
+          const maxLastFixTs = incidentIds.reduce(
+            (max, incidentId) => Math.max(max, Number(lastFixByLightId?.[String(incidentId || "").trim()] || 0)),
+            0
+          );
+          const rows = allRows.filter((r) => {
+            const rowIncidentId = String(r?.light_id || canonicalIncidentId).trim();
+            const fixTs = Number(lastFixByLightId?.[rowIncidentId] || 0);
+            return Number(r?.ts || 0) > fixTs;
+          });
+          return {
+            id: canonicalIncidentId || fallbackIncidentId,
+            incident_ids: incidentIds,
+            display_id: makeWaterDrainIdFromIncidentId(canonicalIncidentId || fallbackIncidentId),
+            lat: Number(c?.lat),
+            lng: Number(c?.lng),
+            count: rows.length,
+            lastTs: Number(rows?.[0]?.ts || 0),
+            location_label: readLocationFromNote(rows?.[0]?.note) || "",
+            rows,
+            lastFixTs: maxLastFixTs,
+          };
+        })
+        .filter((x) => isValidLatLng(Number(x?.lat), Number(x?.lng)) && Number(x?.count || 0) > 0)
+        .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+    }
     const byLight = new Map();
     for (const r of selectedDomainReports) {
       const lat = Number(r.lat);
@@ -6705,13 +13341,13 @@ export default function App() {
       }
     }
     return Array.from(byLight.values());
-  }, [isStreetlightsDomain, isPotholesDomain, potholes, potholeReports, selectedDomainReports, potholeLastFixById]);
+  }, [isStreetlightsDomain, isPotholesDomain, isStreetSignsDomain, isWaterDrainDomain, potholes, potholeReports, selectedDomainReports, potholeLastFixById, officialSigns, lastFixByLightId, fixedLights]);
 
   const viewerIdentityKey = useMemo(
     () => reporterIdentityKey({ session, profile, guestInfo }),
     [session?.user?.id, guestInfo?.email, guestInfo?.phone, guestInfo?.name]
   );
-  const viewerOpenOutageLightIdSet = useMemo(() => {
+  const viewerSavedStreetlightLightIdSet = useMemo(() => {
     const out = new Set();
     if (!viewerIdentityKey) return out;
 
@@ -6719,22 +13355,84 @@ export default function App() {
       if (!isOutageReportType(r)) continue;
       const lid = (r.light_id || "").trim();
       if (!lid || !officialIdSet.has(lid)) continue;
-
-      const lastFixTs = Math.max(lastFixByLightId?.[lid] || 0, fixedLights?.[lid] || 0);
-      const ts = Number(r.ts || 0);
-      if (!Number.isFinite(ts) || (lastFixTs && ts <= lastFixTs)) continue;
-
       if (reportIdentityKey(r) === viewerIdentityKey) out.add(lid);
     }
 
     return out;
-  }, [viewerIdentityKey, reports, officialIdSet, fixedLights, lastFixByLightId]);
+  }, [viewerIdentityKey, reports, officialIdSet]);
+
+  const viewerUtilityReportedLightIdSet = useMemo(() => {
+    const out = new Set();
+    if (!viewerIdentityKey) return out;
+    for (const lid of utilityReportedLightIdSet || []) {
+      const id = String(lid || "").trim();
+      if (!id || !officialIdSet.has(id)) continue;
+      out.add(id);
+    }
+    return out;
+  }, [viewerIdentityKey, utilityReportedLightIdSet, officialIdSet]);
+
+  const viewerStreetlightRingOpenIdSet = useMemo(() => {
+    const openSet = new Set();
+    const candidateIds = new Set([
+      ...(viewerSavedStreetlightLightIdSet || []),
+      ...(viewerUtilityReportedLightIdSet || []),
+    ]);
+    if (!candidateIds.size) return openSet;
+
+    for (const lidRaw of candidateIds) {
+      const lid = String(lidRaw || "").trim();
+      if (!lid) continue;
+
+      const timeline = Array.isArray(actionsByLightId?.[lid]) ? actionsByLightId[lid] : [];
+      let lastFixTs = Math.max(
+        Number(lastFixByLightId?.[lid] || 0),
+        Number(fixedLights?.[lid] || 0)
+      );
+      let lastReopenTs = 0;
+
+      for (const a of timeline) {
+        const ts = Number(a?.ts || 0);
+        if (!Number.isFinite(ts) || ts <= 0) continue;
+        const kind = String(a?.action || "").trim().toLowerCase();
+        if (kind === "fix") lastFixTs = Math.max(lastFixTs, ts);
+        if (kind === "reopen") lastReopenTs = Math.max(lastReopenTs, ts);
+      }
+
+      let lastReportTs = 0;
+      for (const r of reports || []) {
+        if (!isOutageReportType(r)) continue;
+        if (String(r?.light_id || "").trim() !== lid) continue;
+        const ts = Number(r?.ts || 0);
+        if (Number.isFinite(ts) && ts > lastReportTs) lastReportTs = ts;
+      }
+
+      const isOpen =
+        (lastReportTs > lastFixTs) ||
+        (lastReopenTs > lastFixTs) ||
+        (lastFixTs <= 0);
+
+      if (isOpen) openSet.add(lid);
+    }
+
+    return openSet;
+  }, [
+    viewerSavedStreetlightLightIdSet,
+    viewerUtilityReportedLightIdSet,
+    actionsByLightId,
+    lastFixByLightId,
+    fixedLights,
+    reports,
+  ]);
 
   const officialMarkerRingColorForViewer = useCallback((lightId) => {
     const lid = (lightId || "").trim();
     if (!lid) return "#fff";
-    return viewerOpenOutageLightIdSet.has(lid) ? "#1e88e5" : "#fff";
-  }, [viewerOpenOutageLightIdSet]);
+    if (!viewerStreetlightRingOpenIdSet.has(lid)) return "#fff";
+    if (viewerUtilityReportedLightIdSet.has(lid)) return "#1e88e5";
+    if (viewerSavedStreetlightLightIdSet.has(lid)) return "#2ecc71";
+    return "#fff";
+  }, [viewerStreetlightRingOpenIdSet, viewerUtilityReportedLightIdSet, viewerSavedStreetlightLightIdSet]);
 
   const viewerReportedPotholeIdSet = useMemo(() => {
     const out = new Set();
@@ -6747,11 +13445,84 @@ export default function App() {
     return out;
   }, [viewerIdentityKey, potholeReports]);
 
+  const viewerReportedWaterIncidentIdSet = useMemo(() => {
+    const out = new Set();
+    if (!viewerIdentityKey) return out;
+    if (!isWaterDrainDomain) return out;
+    for (const m of nonStreetlightDomainMarkers || []) {
+      const incidentId = String(m?.id || "").trim();
+      if (!incidentId) continue;
+      const rows = Array.isArray(m?.rows) ? m.rows : [];
+      if (rows.some((r) => reportIdentityKey(r) === viewerIdentityKey)) out.add(incidentId);
+    }
+    return out;
+  }, [viewerIdentityKey, isWaterDrainDomain, nonStreetlightDomainMarkers]);
+
   const renderedDomainMarkers = useMemo(() => {
-    if (!isPotholesDomain) return nonStreetlightDomainMarkers;
+    if (isStreetSignsDomain) {
+      const adminView = Boolean(isAdmin);
+      const shaped = (nonStreetlightDomainMarkers || [])
+        .map((m) => {
+          const count = Number(m?.count || 0);
+          if (!adminView && count < 1) return null;
+          return {
+            ...m,
+            color: officialStatusFromSinceFixCount(count).color,
+            ringColor: "#fff",
+            glyph: signMarkerGlyphForType(m?.sign_type),
+            glyphSrc: signMarkerIconSrcForType(m?.sign_type),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+      if (!restrictPublicMarkersToCity) return shaped;
+      return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    }
+
+    if (isWaterDrainDomain) {
+      const isLoggedIn = Boolean(session?.user?.id);
+      const adminView = Boolean(isAdmin);
+      const shaped = (nonStreetlightDomainMarkers || [])
+        .map((m) => {
+          const count = Number(m?.count || 0);
+          const incidentId = String(m?.id || "").trim();
+          const userReported = incidentId ? viewerReportedWaterIncidentIdSet.has(incidentId) : false;
+          if (adminView) {
+            if (count < 1) return null;
+            return {
+              ...m,
+              color: waterDrainColorFromCount(count),
+              ringColor: userReported ? "#1e88e5" : "#fff",
+              glyph: "",
+              glyphSrc: UI_ICON_SRC.waterMain,
+            };
+          }
+          const isPublic = count >= 2;
+          const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          if (!isPublic && !isPrivateOwn) return null;
+          const privateOwnYellow = officialStatusFromSinceFixCount(1).color;
+          return {
+            ...m,
+            color: isPrivateOwn ? privateOwnYellow : waterDrainColorFromCount(count),
+            ringColor: userReported ? "#1e88e5" : "#fff",
+            glyph: "",
+            glyphSrc: UI_ICON_SRC.waterMain,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+      if (!restrictPublicMarkersToCity) return shaped;
+      return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    }
+
+    if (!isPotholesDomain) {
+      const base = Array.isArray(nonStreetlightDomainMarkers) ? nonStreetlightDomainMarkers : [];
+      if (!restrictPublicMarkersToCity) return base;
+      return base.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    }
     const isLoggedIn = Boolean(session?.user?.id);
     const adminView = Boolean(isAdmin);
-    return (nonStreetlightDomainMarkers || [])
+    const shaped = (nonStreetlightDomainMarkers || [])
       .map((m) => {
         const pid = String(m?.pothole_id || "").trim();
         const count = Number(m?.count || 0);
@@ -6762,7 +13533,8 @@ export default function App() {
             ...m,
             color: potholeColorFromCount(count),
             ringColor: userReported ? "#1e88e5" : "#fff",
-            glyph: "🕳️",
+            glyph: "",
+            glyphSrc: UI_ICON_SRC.pothole,
           };
         }
         const isPublic = count >= 2;
@@ -6772,12 +13544,26 @@ export default function App() {
           ...m,
           color: potholeColorFromCount(count),
           ringColor: userReported ? "#1e88e5" : "#fff",
-          glyph: "🕳️",
+          glyph: "",
+          glyphSrc: UI_ICON_SRC.pothole,
         };
       })
       .filter(Boolean)
       .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
-  }, [isPotholesDomain, nonStreetlightDomainMarkers, viewerReportedPotholeIdSet, session?.user?.id, isAdmin]);
+    if (!restrictPublicMarkersToCity) return shaped;
+    return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+  }, [
+    isStreetSignsDomain,
+    isWaterDrainDomain,
+    isPotholesDomain,
+    nonStreetlightDomainMarkers,
+    viewerReportedWaterIncidentIdSet,
+    viewerReportedPotholeIdSet,
+    session?.user?.id,
+    isAdmin,
+    restrictPublicMarkersToCity,
+    isWithinAshtabulaCityLimits,
+  ]);
 
   const selectedOfficialLightForPopup = useMemo(() => {
     if (bulkMode || !isStreetlightsDomain) return null;
@@ -6792,8 +13578,188 @@ export default function App() {
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(ol.lat, ol.lng) || null;
   }, [selectedOfficialLightForPopup, mapCenter, mapZoom, mapInteracting]);
 
+  useEffect(() => {
+    setStreetlightLocationInfoOpen(false);
+  }, [selectedOfficialLightForPopup?.id]);
+
+  useEffect(() => {
+    const selected = selectedOfficialLightForPopup;
+    if (!(isStreetlightsDomain && selected)) {
+      setStreetlightUtilityContext({
+        lightId: "",
+        loading: false,
+        nearestAddress: "",
+        nearestStreet: "",
+        nearestCrossStreet: "",
+        nearestIntersection: "",
+        nearestLandmark: "",
+      });
+      return;
+    }
+
+    const lid = String(selected?.id || "").trim();
+    setStreetlightUtilityContext({
+      lightId: lid,
+      loading: false,
+      nearestAddress: String(selected?.nearest_address || "").trim() || "Address unavailable",
+      nearestStreet: "",
+      nearestCrossStreet: String(selected?.nearest_cross_street || "").trim(),
+      nearestIntersection: "",
+      nearestLandmark: String(selected?.nearest_landmark || "").trim(),
+    });
+  }, [
+    isStreetlightsDomain,
+    selectedOfficialLightForPopup?.id,
+    selectedOfficialLightForPopup?.nearest_address,
+    selectedOfficialLightForPopup?.nearest_cross_street,
+    selectedOfficialLightForPopup?.nearest_landmark,
+  ]);
+
+  const streetlightAddressParts = useMemo(() => {
+    const raw = String(streetlightUtilityContext?.nearestAddress || "").trim();
+    const fallback = {
+      houseNumber: "",
+      street: "Address unavailable",
+      ruralRoute: "",
+      city: "",
+      state: "",
+      zip: "",
+    };
+    if (!raw) return fallback;
+
+    const tokens = raw
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .filter((x) => x.toLowerCase() !== "usa");
+    if (!tokens.length) return fallback;
+
+    const line1 = tokens[0] || "";
+    const line2 = tokens[1] || "";
+    const line3 = tokens[2] || "";
+    const line1Match = line1.match(/^\s*(\d+[A-Za-z0-9\-]*)\s+(.+)\s*$/);
+    const houseNumber = String(line1Match?.[1] || "").trim();
+    const street = String(line1Match?.[2] || line1 || "").trim() || "Address unavailable";
+    const ruralRouteSource = [line1, line2].find((part) => /\b(rr|rural route|county road|cr)\b/i.test(part)) || "";
+    const ruralRoute = ruralRouteSource && ruralRouteSource !== line1 ? ruralRouteSource : "";
+    const city = line2 && line2 !== ruralRoute ? line2 : (line3 || "");
+    const stateZipSource = tokens.find((part) => /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(part)) || "";
+    const stateZipMatch = stateZipSource.match(/\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/);
+    const state = stateZipMatch?.[1] || "";
+    const zip = stateZipMatch?.[2] || "";
+
+    return {
+      houseNumber,
+      street,
+      ruralRoute,
+      city,
+      state,
+      zip,
+    };
+  }, [streetlightUtilityContext?.nearestAddress]);
+
+  const ensureStreetlightLocationInfoForPopup = useCallback(async (light) => {
+    const lid = String(light?.id || "").trim();
+    const lat = Number(light?.lat);
+    const lng = Number(light?.lng);
+    if (!lid || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const fromDb = (officialLights || []).find((x) => String(x?.id || "").trim() === lid) || light;
+    const existingAddress = String(fromDb?.nearest_address || "").trim();
+    const existingCrossStreet = String(fromDb?.nearest_cross_street || "").trim();
+    const existingLandmark = String(fromDb?.nearest_landmark || "").trim();
+    const hasCachedGeo = Boolean(existingAddress || existingCrossStreet || existingLandmark);
+
+    if (hasCachedGeo) {
+      setStreetlightUtilityContext((prev) => ({
+        ...prev,
+        lightId: lid,
+        loading: false,
+        nearestAddress: existingAddress || prev.nearestAddress || "Address unavailable",
+        nearestCrossStreet: existingCrossStreet || prev.nearestCrossStreet || "",
+        nearestLandmark: existingLandmark || prev.nearestLandmark || "",
+      }));
+      return;
+    }
+
+    setStreetlightUtilityContext((prev) => ({
+      ...prev,
+      lightId: lid,
+      loading: true,
+    }));
+
+    try {
+      const geo = await reverseGeocodeRoadLabel(lat, lng, { mode: "quick" });
+      const nearestAddress = String(geo?.nearestAddress || "").trim();
+      const nearestStreet = String(geo?.nearestStreet || "").trim();
+      const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
+      const nearestLandmark = String(geo?.nearestLandmark || "").trim();
+      const nearestIntersection = String(geo?.nearestIntersection || "").trim();
+
+      if (nearestAddress || nearestCrossStreet || nearestLandmark) {
+        const { error: cacheErr } = await supabase.functions.invoke("cache-official-light-geo", {
+          body: {
+            tenant_key: activeTenantKey(),
+            domain: "streetlights",
+            incident_id: lid,
+            light_id: lid,
+            nearest_address: nearestAddress || null,
+            nearest_cross_street: nearestCrossStreet || null,
+            nearest_landmark: nearestLandmark || null,
+          },
+        });
+        if (cacheErr) {
+          console.warn("[cache-official-light-geo] streetlight popup cache warning:", cacheErr);
+        }
+        setOfficialLights((prev) => (prev || []).map((row) => {
+          if (String(row?.id || "").trim() !== lid) return row;
+          return {
+            ...row,
+            nearest_address: nearestAddress || row?.nearest_address || "",
+            nearest_cross_street: nearestCrossStreet || row?.nearest_cross_street || "",
+            nearest_landmark: nearestLandmark || row?.nearest_landmark || "",
+          };
+        }));
+      }
+
+      setStreetlightUtilityContext((prev) => ({
+        ...prev,
+        lightId: lid,
+        loading: false,
+        nearestAddress: nearestAddress || existingAddress || "Address unavailable",
+        nearestStreet: nearestStreet || "",
+        nearestCrossStreet: nearestCrossStreet || existingCrossStreet || "",
+        nearestIntersection: nearestIntersection || "",
+        nearestLandmark: nearestLandmark || existingLandmark || "",
+      }));
+    } catch {
+      setStreetlightUtilityContext((prev) => ({ ...prev, lightId: lid, loading: false }));
+    }
+  }, [officialLights, reverseGeocodeRoadLabel]);
+
+  const selectedDomainPopupPixel = useMemo(() => {
+    const marker = selectedDomainMarker;
+    if (!marker) return null;
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(lat, lng) || null;
+  }, [selectedDomainMarker, mapCenter, mapZoom, mapInteracting]);
+
+  const selectedOfficialLifecycleSnapshot = useMemo(() => {
+    if (!selectedOfficialLightForPopup) return null;
+    return getIncidentSnapshot("streetlights", selectedOfficialLightForPopup.id);
+  }, [selectedOfficialLightForPopup, getIncidentSnapshot]);
+
+  const selectedStreetSignLifecycleSnapshot = useMemo(() => {
+    if (!(adminReportDomain === "street_signs" && selectedDomainMarker)) return null;
+    const signId = String(selectedDomainMarker?.id || "").trim();
+    if (!signId) return null;
+    return getIncidentSnapshot("street_signs", signId);
+  }, [adminReportDomain, selectedDomainMarker, getIncidentSnapshot]);
+
   const selectedPotholeInfo = useMemo(() => {
-    if (!(isAdmin && adminReportDomain === "potholes" && selectedDomainMarker)) return null;
+    if (!(adminReportDomain === "potholes" && selectedDomainMarker)) return null;
     const pid = String(selectedDomainMarker?.pothole_id || "").trim();
     if (!pid) return null;
     const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
@@ -6805,19 +13771,125 @@ export default function App() {
     const addrFromNote = readAddressFromNote(latest?.note);
     const landmarkFromNote = readLandmarkFromNote(latest?.note);
     const baseLocation =
+      String(selectedDomainMarker?._geoNearestAddress || "").trim() ||
       String(selectedDomainMarker?.location_label || "").trim() ||
       addrFromNote ||
       readLocationFromNote(latest?.note) ||
       (Number.isFinite(Number(selectedDomainMarker?.lat)) && Number.isFinite(Number(selectedDomainMarker?.lng))
         ? `${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`
         : "Location unavailable");
+    const resolvedLandmark = String(selectedDomainMarker?._geoNearestLandmark || "").trim() || landmarkFromNote;
     const locationLabel =
-      landmarkFromNote ? `${baseLocation} (Near: ${landmarkFromNote})` : baseLocation;
+      resolvedLandmark ? `${baseLocation} (Near: ${resolvedLandmark})` : baseLocation;
+    const lifecycleSnapshot = getIncidentSnapshot("potholes", `pothole:${pid}`);
+    const latestReportTs = Number(rows?.[0]?.ts || 0);
+    const derivedState =
+      String(lifecycleSnapshot?.state || "").trim() ||
+      (rows.length > 0 ? "reported" : "");
+    const derivedLastChangedAt =
+      String(lifecycleSnapshot?.last_changed_at || "").trim() ||
+      (latestReportTs ? new Date(latestReportTs).toISOString() : "");
     return {
       openCount: rows.length,
       locationLabel,
+      currentState: derivedState,
+      lastChangedAt: derivedLastChangedAt,
     };
-  }, [isAdmin, adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById]);
+  }, [adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById, getIncidentSnapshot]);
+
+  const selectedWaterDrainInfo = useMemo(() => {
+    if (!(adminReportDomain === "water_drain_issues" && selectedDomainMarker)) return null;
+    const markerIncidentId = String(selectedDomainMarker?.id || "").trim();
+    const allRows = Array.isArray(selectedDomainMarker?.rows) ? [...selectedDomainMarker.rows] : [];
+    allRows.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const incidentIds = collectIncidentIdsFromRows(
+      allRows,
+      markerIncidentId || String(selectedDomainMarker?.incident_ids?.[0] || "").trim()
+    );
+    const incidentId = markerIncidentId || incidentIds[0] || "";
+    const cached = waterDrainIncidentsById?.[incidentId]
+      || incidentIds.map((id) => waterDrainIncidentsById?.[id]).find(Boolean)
+      || null;
+    const maxLastFixTs = incidentIds.reduce(
+      (max, id) => Math.max(max, Number(lastFixByLightId?.[String(id || "").trim()] || 0)),
+      0
+    );
+    const rows = allRows.filter((r) => {
+      const rowIncidentId = String(r?.light_id || incidentId).trim();
+      const fixTs = Number(lastFixByLightId?.[rowIncidentId] || 0);
+      return Number(r?.ts || 0) > fixTs;
+    });
+    const latestTs = Number(rows?.[0]?.ts || selectedDomainMarker?.lastTs || 0);
+    const counts = new Map();
+    const latestByType = new Map();
+    for (const r of rows) {
+      let t = String(r?.type || r?.report_type || "").trim().toLowerCase() || "other";
+      if (t === "other") {
+        const fromNote = waterDrainIssueKeyFromNote(r?.note);
+        if (fromNote) t = fromNote;
+      }
+      const ts = Number(r?.ts || 0);
+      counts.set(t, (counts.get(t) || 0) + 1);
+      latestByType.set(t, Math.max(Number(latestByType.get(t) || 0), ts));
+    }
+    let issueType = "";
+    let bestCount = -1;
+    let bestLatest = -1;
+    for (const [typeKey, count] of counts.entries()) {
+      const latest = Number(latestByType.get(typeKey) || 0);
+      if (count > bestCount || (count === bestCount && latest > bestLatest)) {
+        issueType = typeKey;
+        bestCount = count;
+        bestLatest = latest;
+      }
+    }
+    const latest = rows?.[0] || null;
+    const addrFromNote = readAddressFromNote(latest?.note);
+    const landmarkFromNote = readLandmarkFromNote(latest?.note);
+    const locationLabel =
+      String(cached?.nearest_address || "").trim() ||
+      String(selectedDomainMarker?._geoNearestAddress || "").trim() ||
+      String(selectedDomainMarker?.location_label || "").trim() ||
+      addrFromNote ||
+      readLocationFromNote(latest?.note) ||
+      (Number.isFinite(Number(selectedDomainMarker?.lat)) && Number.isFinite(Number(selectedDomainMarker?.lng))
+        ? `${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`
+        : "Location unavailable");
+    const resolvedLandmark =
+      String(cached?.nearest_landmark || "").trim() ||
+      String(selectedDomainMarker?._geoNearestLandmark || "").trim() ||
+      landmarkFromNote;
+    const lifecycleSnapshot = incidentIds
+      .map((id) => ({ id, snap: getIncidentSnapshot("water_drain_issues", id) }))
+      .map((entry) => ({
+        ...entry,
+        ts: Date.parse(String(entry?.snap?.last_changed_at || "")) || 0,
+      }))
+      .sort((a, b) => b.ts - a.ts)
+      .find((entry) => Boolean(entry?.snap))
+      ?.snap || null;
+    const currentState =
+      String(lifecycleSnapshot?.state || "").trim() ||
+      (rows.length > 0 ? "reported" : (maxLastFixTs > 0 ? "fixed" : ""));
+    const lastChangedAt =
+      String(lifecycleSnapshot?.last_changed_at || "").trim() ||
+      (latestTs ? new Date(latestTs).toISOString() : "") ||
+      (maxLastFixTs ? new Date(maxLastFixTs).toISOString() : "");
+    const displayId = String(cached?.wd_id || "").trim() || makeWaterDrainIdFromIncidentId(incidentId);
+
+    return {
+      displayId,
+      issueLabel: formatWaterDrainIssueLabel(String(cached?.issue_type || "").trim() || issueType),
+      lastReportedTs: latestTs,
+      openCount: rows.length,
+      isFixedNow: rows.length <= 0 && maxLastFixTs > 0,
+      locationLabel: resolvedLandmark ? `${locationLabel} (Near: ${resolvedLandmark})` : locationLabel,
+      currentState,
+      lastChangedAt,
+      incidentId,
+      incidentIds,
+    };
+  }, [adminReportDomain, selectedDomainMarker, lastFixByLightId, getIncidentSnapshot, waterDrainIncidentsById]);
 
   useEffect(() => {
     if (!isStreetlightsDomain) {
@@ -6831,10 +13903,20 @@ export default function App() {
   }, [isStreetlightsDomain, isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
 
   useEffect(() => {
-    if (adminReportDomain !== "potholes" && selectedDomainMarker) {
-      setSelectedDomainMarker(null);
-    }
+    const keep =
+      adminReportDomain === "potholes" ||
+      adminReportDomain === "street_signs" ||
+      adminReportDomain === "water_drain_issues";
+    if (!keep && selectedDomainMarker) setSelectedDomainMarker(null);
   }, [adminReportDomain, selectedDomainMarker]);
+
+  useEffect(() => {
+    if (!queueSignTypeOpen) return;
+    if (!(mappingMode && isAdmin && adminReportDomain === "street_signs")) {
+      setQueueSignTypeOpen(false);
+      setPendingQueuedSign(null);
+    }
+  }, [queueSignTypeOpen, mappingMode, isAdmin, adminReportDomain]);
 
 
   const selectedQueuedLightForPopup = useMemo(() => {
@@ -6875,6 +13957,27 @@ export default function App() {
 
       return out;
     }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
+
+    const openIncidentCountByOfficialId = useMemo(() => {
+      const out = {};
+      for (const r of reports || []) {
+        const lid = String(r?.light_id || "").trim();
+        if (!lid) continue;
+        const isOfficial = officialIdSet.has(lid) || officialSignIdSet.has(lid);
+        if (!isOfficial) continue;
+
+        const domain = reportDomainForRow(r, officialIdSet, officialSignIdSet);
+        if (domain === "streetlights" && !isOutageReportType(r)) continue;
+        if (domain !== "streetlights" && normalizeReportQuality(r?.report_quality) === "good") continue;
+
+        const lastFixTs = Math.max(Number(lastFixByLightId?.[lid] || 0), Number(fixedLights?.[lid] || 0));
+        const ts = Number(r?.ts || 0);
+        if (lastFixTs && ts <= lastFixTs) continue;
+
+        out[lid] = Number(out[lid] || 0) + 1;
+      }
+      return out;
+    }, [reports, officialIdSet, officialSignIdSet, fixedLights, lastFixByLightId]);
 
     // ✅ Simple status mapping based on count since last fix
     function statusColorFromSinceFixCount(n) {
@@ -7014,6 +14117,7 @@ export default function App() {
   const officialMarkerColorForViewer = useCallback((lightId) => {
     const lid = (lightId || "").trim();
     if (!lid) return "#111";
+    if (!ENABLE_STREETLIGHT_IN_APP_REPORTING) return "#111";
 
     if (globallyWorkingResolvedSet.has(lid)) return "#111";
     const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
@@ -7041,6 +14145,7 @@ export default function App() {
   function officialStatusLabelForViewer(lightId) {
     const lid = (lightId || "").trim();
     if (!lid) return "Operational";
+    if (!ENABLE_STREETLIGHT_IN_APP_REPORTING) return "Utility asset";
 
     if (globallyWorkingResolvedSet.has(lid)) return "Operational";
 
@@ -7056,6 +14161,7 @@ export default function App() {
   const handleOfficialMarkerClick = useCallback((lightId) => {
     if (mappingMode) {
       setSelectedQueuedTempId(null);
+      setSelectedDomainMarker(null);
       setSelectedOfficialId(lightId);
       return;
     }
@@ -7065,47 +14171,61 @@ export default function App() {
       return;
     }
 
+    setSelectedQueuedTempId(null);
+    setSelectedDomainMarker(null);
     setSelectedOfficialId(lightId);
   }, [mappingMode, bulkMode, toggleBulkSelect]);
 
+  const selectDomainMarkerWithGeo = useCallback((marker) => {
+    if (!marker) return;
+    const domainKey = String(adminReportDomain || "").trim();
+    const shouldEnrich = domainKey === "potholes" || domainKey === "water_drain_issues";
+    setSelectedDomainMarker(marker);
+    if (!shouldEnrich) return;
+
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!isValidLatLng(lat, lng)) return;
+
+    const markerId = String(marker?.id || marker?.pothole_id || "").trim();
+    const markerLightId = String(marker?.lightId || "").trim();
+    const markerKey = [domainKey, markerId, markerLightId, lat.toFixed(6), lng.toFixed(6)].join("|");
+
+    // Passive marker-click geocoding disabled for cost control.
+    // Marker details should come from persisted data only.
+  }, [adminReportDomain, isValidLatLng, reverseGeocodeRoadLabel]);
+
   // Only "community" reports get clustered into community lights
   const communityReports = useMemo(
-    () => reports.filter((r) => !officialIdSet.has(r.light_id)),
-    [reports, officialIdSet]
+    () => reports.filter((r) => !officialIdSet.has(r.light_id) && !officialSignIdSet.has(r.light_id)),
+    [reports, officialIdSet, officialSignIdSet]
   );
 
   const myReportDomainCounts = useMemo(() => {
-    const uid = session?.user?.id;
-    const empty = { streetlights: 0, potholes: 0, power_outage: 0, water_main: 0 };
-    if (!uid) return empty;
+    const identityKey = viewerIdentityKey;
+    const empty = { streetlights: 0, street_signs: 0, potholes: 0, water_drain_issues: 0, power_outage: 0, water_main: 0 };
+    if (!identityKey) return empty;
 
     const counts = { ...empty };
     for (const r of reports || []) {
-      if (r?.reporter_user_id !== uid) continue;
-      const domain = reportDomainForRow(r, officialIdSet);
+      if (reportIdentityKey(r) !== identityKey) continue;
+      const domain = reportDomainForRow(r, officialIdSet, officialSignIdSet);
       if (Object.prototype.hasOwnProperty.call(counts, domain)) counts[domain] += 1;
     }
     for (const r of potholeReports || []) {
-      if (r?.reporter_user_id !== uid) continue;
+      if (reportIdentityKey(r) !== identityKey) continue;
       counts.potholes += 1;
     }
     return counts;
-  }, [session?.user?.id, reports, potholeReports, officialIdSet]);
+  }, [viewerIdentityKey, reports, potholeReports, officialIdSet, officialSignIdSet]);
 
   const myReportsByLight = useMemo(() => {
-    const uid = session?.user?.id;
-    if (!uid) return [];
+    const identityKey = viewerIdentityKey;
+    if (!identityKey) return [];
 
     if (myReportsDomain === "potholes") {
       const potholeById = new Map((potholes || []).map((p) => [String(p?.id || "").trim(), p]));
-      const totalByPotholeId = new Map();
-      for (const row of potholeReports || []) {
-        const pid = String(row?.pothole_id || "").trim();
-        if (!pid) continue;
-        totalByPotholeId.set(pid, (totalByPotholeId.get(pid) || 0) + 1);
-      }
-
-      const mineRows = (potholeReports || []).filter((r) => r?.reporter_user_id === uid);
+      const mineRows = (potholeReports || []).filter((r) => reportIdentityKey(r) === identityKey);
       const map = new Map(); // potholeId -> rows
       for (const r of mineRows) {
         const pid = String(r?.pothole_id || "").trim();
@@ -7130,7 +14250,7 @@ export default function App() {
             ? { lat: Number(p.lat), lng: Number(p.lng), isOfficial: false }
             : { lat: avg.lat / n, lng: avg.lng / n, isOfficial: false },
           mineRows: rows,
-          totalCount: Number(totalByPotholeId.get(pid) || rows.length || 0),
+          totalCount: Number(rows.length || 0),
           lastTs: rows?.[0]?.ts || 0,
         };
       });
@@ -7142,7 +14262,8 @@ export default function App() {
     // reports you already store are normalized as:
     // { id, lat, lng, type, note, ts, light_id }
     const mine = reports.filter((r) => (
-      r.reporter_user_id === uid && reportDomainForRow(r, officialIdSet) === myReportsDomain
+      reportIdentityKey(r) === identityKey &&
+      reportDomainForRow(r, officialIdSet, officialSignIdSet) === myReportsDomain
     ));
 
     const map = new Map(); // lightId -> array of reports
@@ -7168,63 +14289,313 @@ export default function App() {
 
     groups.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
     return groups;
-  }, [session?.user?.id, reports, potholeReports, potholes, officialIdSet, myReportsDomain]);
+  }, [viewerIdentityKey, reports, potholeReports, potholes, officialIdSet, officialSignIdSet, myReportsDomain]);
 
-  const openReportsByLight = useMemo(() => {
-    // "Open" means: reports exist since last fix (or ever, if never fixed)
-    const map = new Map(); // lightId -> rows (since-fix)
-    const all = Array.isArray(reports) ? reports : [];
+  const myReportsAllDomainRows = useMemo(
+    () => (myReportsByLight || []).flatMap((g) => (Array.isArray(g?.mineRows) ? g.mineRows : [])),
+    [myReportsByLight]
+  );
 
-    for (const r of all) {
-      if (!isOutageReportType(r)) continue;
-      const lightId = (r.light_id || "").trim();
-      if (!lightId) continue;
+  const myReportsStandardGroups = useMemo(() => {
+    return (myReportsByLight || []).map((g) => {
+      const rows = Array.isArray(g?.mineRows) ? g.mineRows : [];
+      const lightId = String(g?.lightId || "").trim();
+      const incidentId = myReportsDomain === "potholes"
+        ? String(lightId || "").replace(/^potholes:/i, "pothole:")
+        : lightId;
+      return {
+        ...g,
+        incidentId,
+        rows,
+        count: Number(g?.totalCount || rows.length || 0),
+        lastTs: Number(g?.lastTs || rows?.[0]?.ts || 0),
+      };
+    });
+  }, [myReportsByLight, myReportsDomain]);
 
-      // Only official lights
-      if (officialIdSet && !officialIdSet.has(lightId)) continue;
+  const activeAggregationStrategy = useMemo(() => {
+    if (adminReportDomain === "streetlights") return "asset_based";
+    if (adminReportDomain === "street_signs") return "asset_based";
+    if (adminReportDomain === "potholes") return "proximity_based";
+    if (adminReportDomain === "water_drain_issues") return "water_proximity";
+    if (adminReportDomain === "power_outage") return "area_based";
+    if (adminReportDomain === "water_main") return "severity_based";
+    return "asset_based";
+  }, [adminReportDomain]);
 
-      const lastFixTs = Math.max(lastFixByLightId?.[lightId] || 0, fixedLights?.[lightId] || 0);
-      if (lastFixTs && (r.ts || 0) <= lastFixTs) continue; // not "open" (pre-fix)
+  const aggregationStrategies = useMemo(() => {
+    return {
+      asset_based: () => {
+        const grouped = new Map(); // incident_id -> rows
+        if (adminReportDomain === "streetlights") {
+          for (const r of reports || []) {
+            if (!isOutageReportType(r)) continue;
+            const incidentId = String(r?.light_id || "").trim();
+            if (!incidentId || !officialIdSet.has(incidentId)) continue;
+            const lastFixTs = Math.max(lastFixByLightId?.[incidentId] || 0, fixedLights?.[incidentId] || 0);
+            const ts = Number(r?.ts || 0);
+            if (lastFixTs && ts <= lastFixTs) continue;
+            if (!grouped.has(incidentId)) grouped.set(incidentId, []);
+            grouped.get(incidentId).push(r);
+          }
+        } else if (adminReportDomain === "street_signs") {
+          for (const r of reports || []) {
+            const incidentId = String(r?.light_id || "").trim();
+            if (!incidentId || !officialSignIdSet.has(incidentId)) continue;
+            if (reportDomainForRow(r, officialIdSet, officialSignIdSet) !== "street_signs") continue;
+            if (!grouped.has(incidentId)) grouped.set(incidentId, []);
+            grouped.get(incidentId).push(r);
+          }
+        }
+        return Array.from(grouped.entries()).map(([incidentId, rows]) => {
+          const orderedRows = [...rows].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+          const center = adminReportDomain === "street_signs"
+            ? (() => {
+                const s = (officialSigns || []).find((x) => String(x?.id || "").trim() === incidentId);
+                if (!s) return null;
+                return { lat: Number(s.lat), lng: Number(s.lng), isOfficial: true };
+              })()
+            : getCoordsForLightId(incidentId, reports, officialLights);
+          return {
+            incident_id: incidentId,
+            domain: adminReportDomain === "street_signs" ? "street_signs" : "streetlights",
+            count: orderedRows.length,
+            last_ts: Number(orderedRows?.[0]?.ts || 0),
+            center: center ? { lat: Number(center.lat), lng: Number(center.lng) } : null,
+            rows: orderedRows,
+            display_id: incidentId,
+            location_label: "",
+          };
+        });
+      },
+      proximity_based: () => {
+        return (nonStreetlightDomainMarkers || [])
+          .filter((m) => Number(m?.count || 0) > 0)
+          .map((m) => {
+            const pid = String(m?.pothole_id || "").trim();
+            const lastFixTs = Number(m?.lastFixTs || 0);
+            const rows = (potholeReports || [])
+              .filter((r) => String(r?.pothole_id || "").trim() === pid)
+              .filter((r) => Number(r?.ts || 0) > lastFixTs)
+              .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+            return {
+              incident_id: `pothole:${pid}`,
+              domain: "potholes",
+              count: Number(m?.count || 0),
+              last_ts: Number(m?.lastTs || 0),
+              center: isValidLatLng(Number(m?.lat), Number(m?.lng))
+                ? { lat: Number(m.lat), lng: Number(m.lng) }
+                : null,
+              rows,
+              display_id: String(m?.id || "").trim(),
+              location_label: String(m?.location_label || "").trim(),
+            };
+          });
+      },
+      water_proximity: () => {
+        const rows = (selectedDomainReports || [])
+          .filter((r) => isValidLatLng(Number(r?.lat), Number(r?.lng)))
+          .map((r) => ({
+            ...r,
+            lat: Number(r.lat),
+            lng: Number(r.lng),
+            light_id: String(r?.light_id || "").trim() || lightIdFor(Number(r.lat), Number(r.lng)),
+          }));
+        const clusters = groupIntoLights(rows);
+        return clusters
+          .map((c) => {
+            const incidentId = String(c?.lightId || lightIdFor(Number(c?.lat || 0), Number(c?.lng || 0))).trim();
+            const clusterRows = [...(c?.reports || [])].sort((a, b) => (Number(b?.ts || 0) - Number(a?.ts || 0)));
+            const displayId = String(selectedWaterDrainInfo?.displayId || "").trim() || makeWaterDrainIdFromIncidentId(incidentId);
+            const locationLabel =
+              readLocationFromNote(clusterRows?.[0]?.note) ||
+              (isValidLatLng(Number(c?.lat), Number(c?.lng))
+                ? `${Number(c.lat).toFixed(5)}, ${Number(c.lng).toFixed(5)}`
+                : "");
+            return {
+              incident_id: incidentId,
+              domain: "water_drain_issues",
+              count: clusterRows.length,
+              last_ts: Number(clusterRows?.[0]?.ts || 0),
+              center: isValidLatLng(Number(c?.lat), Number(c?.lng))
+                ? { lat: Number(c.lat), lng: Number(c.lng) }
+                : null,
+              rows: clusterRows,
+              display_id: displayId,
+              location_label: locationLabel,
+            };
+          })
+          .filter((x) => Number(x?.count || 0) > 0);
+      },
+      area_based: () => {
+        return (nonStreetlightDomainMarkers || []).map((m) => ({
+          incident_id: String(m?.id || "").trim(),
+          domain: "power_outage",
+          count: Number(m?.count || 0),
+          last_ts: Number(m?.lastTs || 0),
+          center: isValidLatLng(Number(m?.lat), Number(m?.lng))
+            ? { lat: Number(m.lat), lng: Number(m.lng) }
+            : null,
+          rows: selectedDomainReports
+            .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+          display_id: String(m?.id || "").trim(),
+          location_label: "",
+        }));
+      },
+      severity_based: () => {
+        return (nonStreetlightDomainMarkers || []).map((m) => ({
+          incident_id: String(m?.id || "").trim(),
+          domain: "water_main",
+          count: Number(m?.count || 0),
+          last_ts: Number(m?.lastTs || 0),
+          center: isValidLatLng(Number(m?.lat), Number(m?.lng))
+            ? { lat: Number(m.lat), lng: Number(m.lng) }
+            : null,
+          rows: selectedDomainReports
+            .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+          display_id: String(m?.id || "").trim(),
+          location_label: "",
+        }));
+      },
+    };
+  }, [
+    adminReportDomain,
+    reports,
+    officialIdSet,
+    officialSignIdSet,
+    lastFixByLightId,
+    fixedLights,
+    officialLights,
+    officialSigns,
+    nonStreetlightDomainMarkers,
+    potholeReports,
+    selectedDomainReports,
+  ]);
 
-      if (!map.has(lightId)) map.set(lightId, []);
-      map.get(lightId).push(r);
-    }
-
-    // sort each group newest first
-    for (const [lid, arr] of map.entries()) {
-      arr.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    }
-
-    // groups sorted by MOST reports → least; tie-breaker: newest activity
-    const groups = Array.from(map.entries()).map(([lightId, rows]) => ({
-      lightId,
-      rows,
-      count: rows.length,
-      lastTs: rows?.[0]?.ts || 0,
-    }));
-
-    groups.sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
-    return groups;
-  }, [reports, officialIdSet, fixedLights, lastFixByLightId]);
+  const openIncidentGroupsNormalized = useMemo(() => {
+    const builder = aggregationStrategies?.[activeAggregationStrategy];
+    const groups = typeof builder === "function" ? builder() : [];
+    return (Array.isArray(groups) ? groups : [])
+      .filter((g) => Number(g?.count || 0) > 0)
+      .sort((a, b) => (Number(b?.count || 0) - Number(a?.count || 0)) || (Number(b?.last_ts || 0) - Number(a?.last_ts || 0)));
+  }, [aggregationStrategies, activeAggregationStrategy]);
 
   const openReportsInViewCount = useMemo(() => {
-    const list = isStreetlightsDomain
-      ? (Array.isArray(openReportsByLight) ? openReportsByLight : [])
-      : (Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : []);
-    if (!list.length) return 0;
-    if (!mapBounds) return list.length;
+    const inView = (lat, lng) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      if (!mapBounds) return true;
+      return isPointInBounds(lat, lng, mapBounds);
+    };
+
+    if (adminReportDomain === "streetlights") {
+      let count = 0;
+      for (const l of renderedOfficialLights || []) {
+        const lid = String(l?.id || "").trim();
+        if (!lid) continue;
+        const lat = Number(l?.lat);
+        const lng = Number(l?.lng);
+        if (!inView(lat, lng)) continue;
+        const markerColor = String(officialMarkerColorForViewer(lid) || "").trim().toLowerCase();
+        // Operational/closed lights are rendered black and should not count as open reports in view.
+        if (markerColor === "#111" || markerColor === "#111111" || markerColor === "black") continue;
+        count += 1;
+      }
+      return count;
+    }
+
     let count = 0;
-    for (const g of list) {
-      const coords = isStreetlightsDomain
-        ? getCoordsForLightId(g.lightId, reports, officialLights)
-        : { lat: g.lat, lng: g.lng };
-      const lat = Number(coords?.lat);
-      const lng = Number(coords?.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-      if (isPointInBounds(lat, lng, mapBounds)) count += 1;
+    for (const m of renderedDomainMarkers || []) {
+      const lat = Number(m?.lat);
+      const lng = Number(m?.lng);
+      if (inView(lat, lng) && Number(m?.count || 0) > 0) count += 1;
     }
     return count;
-  }, [isStreetlightsDomain, openReportsByLight, renderedDomainMarkers, mapBounds, reports, officialLights]);
+  }, [adminReportDomain, renderedOfficialLights, renderedDomainMarkers, officialMarkerColorForViewer, mapBounds]);
+
+  const streetlightPersonalInViewStats = useMemo(() => {
+    const empty = { saved: 0, utility: 0 };
+    if (!isStreetlightsDomain) return empty;
+
+    const inView = (lat, lng) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      if (!mapBounds) return true;
+      return isPointInBounds(lat, lng, mapBounds);
+    };
+
+    let saved = 0;
+    let utility = 0;
+    for (const l of renderedOfficialLights || []) {
+      const lid = String(l?.id || "").trim();
+      if (!lid) continue;
+      const lat = Number(l?.lat);
+      const lng = Number(l?.lng);
+      if (!inView(lat, lng)) continue;
+      if (isAdmin) {
+        const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
+        if (sinceFixCount >= 1) {
+          saved += 1;
+          if (utilityReportedAnyLightIdSet.has(lid)) utility += 1;
+        }
+        continue;
+      }
+
+      if (!viewerStreetlightRingOpenIdSet.has(lid)) continue;
+      if (viewerSavedStreetlightLightIdSet.has(lid)) saved += 1;
+      if (viewerUtilityReportedLightIdSet.has(lid)) utility += 1;
+    }
+
+    return { saved, utility };
+  }, [
+    isStreetlightsDomain,
+    isAdmin,
+    mapBounds,
+    renderedOfficialLights,
+    reportsByOfficialId,
+    utilityReportedAnyLightIdSet,
+    viewerStreetlightRingOpenIdSet,
+    viewerSavedStreetlightLightIdSet,
+    viewerUtilityReportedLightIdSet,
+  ]);
+
+  const openReportsModalGroupsBase = useMemo(() => {
+    return (openIncidentGroupsNormalized || [])
+      .map((g) => ({
+        lightId: String(g?.display_id || g?.incident_id || "").trim(),
+        incidentId: String(g?.incident_id || "").trim(),
+        count: Number(g?.count || 0),
+        lastTs: Number(g?.last_ts || 0),
+        rows: Array.isArray(g?.rows) ? g.rows : [],
+        lat: Number(g?.center?.lat),
+        lng: Number(g?.center?.lng),
+        location_label: String(g?.location_label || "").trim(),
+        domain: String(g?.domain || adminReportDomain || "").trim(),
+      }))
+      .filter((g) => {
+        if (String(g?.domain || "").trim() !== "streetlights") return true;
+        const incidentId = String(g?.incidentId || "").trim();
+        return incidentId && officialIdSet.has(incidentId);
+      })
+      .filter((g) => {
+        const domain = String(g?.domain || "").trim();
+        if (domain !== "potholes" && domain !== "water_drain_issues") return true;
+        if (cityLimitPolygons.length <= 0) return true;
+        return isWithinAshtabulaCityLimits(g?.lat, g?.lng);
+      });
+  }, [openIncidentGroupsNormalized, adminReportDomain, officialIdSet, cityLimitPolygons.length, isWithinAshtabulaCityLimits]);
+
+  const openReportsModalGroups = useMemo(() => {
+    const base = Array.isArray(openReportsModalGroupsBase) ? openReportsModalGroupsBase : [];
+    if (!openReportsInViewOnly || !mapBounds) return base;
+
+    return base.filter((g) => {
+      const lat = Number(g?.lat);
+      const lng = Number(g?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      return isPointInBounds(lat, lng, mapBounds);
+    });
+  }, [openReportsModalGroupsBase, openReportsInViewOnly, mapBounds]);
 
   // -------------------------
   // Google Maps marker status helper
@@ -7368,8 +14739,12 @@ export default function App() {
     setContactChoiceOpen(true);
   }
 
-  async function reverseGeocodeRoadLabel(lat, lng) {
+  async function reverseGeocodeRoadLabel(lat, lng, options = {}) {
     const fallbackLabel = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    const mode = String(options?.mode || "full").trim().toLowerCase();
+    const includeLandmark = mode !== "quick";
+    const includeIntersection = mode !== "quick";
+    const includeCrossStreet = mode !== "quick";
 
     const distanceMeters = (aLat, aLng, bLat, bLng) => {
       const R = 6371000;
@@ -7409,76 +14784,445 @@ export default function App() {
       }
     };
 
-    const lookupNearestLandmark = async (qlat, qlng) => {
+    const lookupStreetNameAt = async (qlat, qlng) => {
       try {
-        const placesNS = window.google?.maps?.places;
-        if (!placesNS?.PlacesService) return "";
-        const service = new placesNS.PlacesService(document.createElement("div"));
-
-        const nearbyByType = async (type) =>
-          new Promise((resolve) => {
-            service.nearbySearch(
-              {
-                location: { lat: qlat, lng: qlng },
-                radius: 152, // ~500 ft
-                type,
-              },
-              (results, status) => {
-                resolve({
-                  results: Array.isArray(results) ? results : [],
-                  ok:
-                    status === placesNS.PlacesServiceStatus.OK ||
-                    status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
-                });
-              }
-            );
+        const geocoder = new window.google.maps.Geocoder();
+        const res = await new Promise((resolve) => {
+          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
+            resolve({ results: Array.isArray(results) ? results : [], status });
           });
+        });
+        if (res.status !== "OK" || !res.results.length) return "";
+        for (const r of res.results) {
+          const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+          const routeComp = comps.find((c) =>
+            (Array.isArray(c?.types) ? c.types : []).includes("route")
+          );
+          const routeName = String(routeComp?.long_name || "").trim();
+          if (routeName) return routeName;
+        }
+      } catch {
+        // ignore
+      }
+      return "";
+    };
 
-        const candidates = [];
-        for (const type of ["establishment", "point_of_interest"]) {
-          const res = await nearbyByType(type);
-          if (!res.ok || !res.results.length) continue;
+    const lookupClosestCrossStreetAt = async (qlat, qlng, onStreetName) => {
+      const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const onStreetKey = normalizeRoad(onStreetName);
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        const probeStep = 0.00045;
+        const probes = [
+          [qlat, qlng],
+          [qlat + probeStep, qlng],
+          [qlat - probeStep, qlng],
+          [qlat, qlng + probeStep],
+          [qlat, qlng - probeStep],
+          [qlat + probeStep, qlng + probeStep],
+          [qlat + probeStep, qlng - probeStep],
+          [qlat - probeStep, qlng + probeStep],
+          [qlat - probeStep, qlng - probeStep],
+        ];
+        const bestByRoute = new Map();
+        for (const [plat, plng] of probes) {
+          const res = await new Promise((resolve) => {
+            geocoder.geocode({ location: { lat: plat, lng: plng } }, (results, status) => {
+              resolve({ results: Array.isArray(results) ? results : [], status });
+            });
+          });
+          if (res.status !== "OK" || !res.results.length) continue;
           for (const r of res.results) {
-            const nm = String(r?.name || "").trim();
             const rLat = Number(r?.geometry?.location?.lat?.());
             const rLng = Number(r?.geometry?.location?.lng?.());
-            if (!nm || !Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
-            candidates.push({ name: nm, d: distanceMeters(qlat, qlng, rLat, rLng) });
+            if (!Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+            const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+            const routeComp = comps.find((c) => (Array.isArray(c?.types) ? c.types : []).includes("route"));
+            const routeName = String(routeComp?.long_name || "").trim();
+            if (!routeName) continue;
+            const routeKey = normalizeRoad(routeName);
+            if (!routeKey) continue;
+            if (onStreetKey) {
+              if (routeKey === onStreetKey) continue;
+              if (routeKey.includes(onStreetKey) || onStreetKey.includes(routeKey)) continue;
+            }
+            const d = distanceMeters(qlat, qlng, rLat, rLng);
+            const existing = bestByRoute.get(routeKey);
+            if (!existing || d < existing.distance) {
+              bestByRoute.set(routeKey, { name: routeName, distance: d });
+            }
           }
-          if (candidates.length) break;
+        }
+        const nearest = Array.from(bestByRoute.values()).sort((a, b) => a.distance - b.distance)[0];
+        return String(nearest?.name || "").trim();
+      } catch {
+        return "";
+      }
+    };
+
+    const bearingDegrees = (fromLat, fromLng, toLat, toLng) => {
+      const toRad = (v) => (v * Math.PI) / 180;
+      const toDeg = (v) => (v * 180) / Math.PI;
+      const phi1 = toRad(fromLat);
+      const phi2 = toRad(toLat);
+      const lam1 = toRad(fromLng);
+      const lam2 = toRad(toLng);
+      const y = Math.sin(lam2 - lam1) * Math.cos(phi2);
+      const x =
+        Math.cos(phi1) * Math.sin(phi2) -
+        Math.sin(phi1) * Math.cos(phi2) * Math.cos(lam2 - lam1);
+      return (toDeg(Math.atan2(y, x)) + 360) % 360;
+    };
+
+    const directionFromBearing = (deg) => {
+      const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+      const idx = Math.round((deg % 360) / 45) % 8;
+      return dirs[idx];
+    };
+
+    const lookupNearestIntersectionWithDirection = async (qlat, qlng) => {
+      const routeNameFromResult = (r) => {
+        const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+        const routeComp = comps.find((c) =>
+          (Array.isArray(c?.types) ? c.types : []).includes("route")
+        );
+        return String(routeComp?.long_name || "").trim();
+      };
+
+      const extractIntersectionRoutes = (r) => {
+        const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+        const names = [];
+        for (const c of comps) {
+          const ct = Array.isArray(c?.types) ? c.types : [];
+          if (!ct.includes("route")) continue;
+          const nm = String(c?.long_name || "").trim();
+          if (nm) names.push(nm);
+        }
+        return Array.from(new Set(names));
+      };
+
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        const centerGeocode = await new Promise((resolve) => {
+          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
+            resolve({ results: Array.isArray(results) ? results : [], status });
+          });
+        });
+        let preferredRoute = "";
+        if (centerGeocode.status === "OK" && centerGeocode.results.length) {
+          preferredRoute = routeNameFromResult(centerGeocode.results[0]);
+        }
+        const preferredRoutePoints = [];
+
+        const probeStep = 0.00035; // ~115 ft
+        const probes = [
+          [qlat, qlng],
+          [qlat + probeStep, qlng],
+          [qlat - probeStep, qlng],
+          [qlat, qlng + probeStep],
+          [qlat, qlng - probeStep],
+          [qlat + probeStep, qlng + probeStep],
+          [qlat + probeStep, qlng - probeStep],
+          [qlat - probeStep, qlng + probeStep],
+          [qlat - probeStep, qlng - probeStep],
+        ];
+
+        const candidates = [];
+        for (const [plat, plng] of probes) {
+          const res = await new Promise((resolve) => {
+            geocoder.geocode({ location: { lat: plat, lng: plng } }, (results, status) => {
+              resolve({ results: Array.isArray(results) ? results : [], status });
+            });
+          });
+          if (res.status !== "OK" || !res.results.length) continue;
+          for (const r of res.results) {
+            const t = Array.isArray(r?.types) ? r.types : [];
+            const rLat = Number(r?.geometry?.location?.lat?.());
+            const rLng = Number(r?.geometry?.location?.lng?.());
+            const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+            const routeComp = comps.find((c) =>
+              (Array.isArray(c?.types) ? c.types : []).includes("route")
+            );
+            const routeName = String(routeComp?.long_name || "").trim();
+            if (
+              preferredRoute &&
+              routeName &&
+              routeName.toLowerCase() === preferredRoute.toLowerCase()
+            ) {
+              preferredRoutePoints.push([rLat, rLng]);
+            }
+            if (routeName && Number.isFinite(rLat) && Number.isFinite(rLng)) {
+              routeCandidates.push({
+                name: routeName,
+                lat: rLat,
+                lng: rLng,
+                distance: distanceMeters(qlat, qlng, rLat, rLng),
+              });
+            }
+            if (!t.includes("intersection")) continue;
+            if (!Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+            const label = String(r?.formatted_address || "").trim();
+            if (!label) continue;
+            candidates.push({
+              label,
+              lat: rLat,
+              lng: rLng,
+              routes: extractIntersectionRoutes(r),
+              distance: distanceMeters(qlat, qlng, rLat, rLng),
+            });
+          }
         }
 
         if (candidates.length) {
-          candidates.sort((a, b) => a.d - b.d);
-          return candidates[0]?.name || "";
-        }
-
-        // Fallback 2: distance-ranked search without a strict type
-        const byDistance = await new Promise((resolve) => {
-          service.nearbySearch(
-            {
-              location: { lat: qlat, lng: qlng },
-              rankBy: placesNS.RankBy.DISTANCE,
-              keyword: "business",
-            },
-            (results, status) => {
-              resolve({
-                results: Array.isArray(results) ? results : [],
-                ok:
-                  status === placesNS.PlacesServiceStatus.OK ||
-                  status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
-              });
+          let ranked = candidates;
+          if (preferredRoute) {
+            const preferredKey = preferredRoute.toLowerCase();
+            const matched = candidates.filter((c) =>
+              (c.routes || []).some((nm) => String(nm || "").toLowerCase() === preferredKey)
+            );
+            if (matched.length) ranked = matched;
+          }
+          ranked.sort((a, b) => a.distance - b.distance);
+          const nearest = ranked[0];
+          if (nearest.distance <= 8) return `At ${nearest.label}`;
+          const formatIntersection = (c) => {
+            const cross = (c.routes || []).find(
+              (nm) => String(nm || "").toLowerCase() !== String(preferredRoute || "").toLowerCase()
+            );
+            if (preferredRoute && cross) return `${preferredRoute} & ${cross}`;
+            return c.label;
+          };
+          let isEastWest = null;
+          if (preferredRoutePoints.length >= 2) {
+            let minLat = Infinity;
+            let maxLat = -Infinity;
+            let minLng = Infinity;
+            let maxLng = -Infinity;
+            for (const [plat, plng] of preferredRoutePoints) {
+              if (plat < minLat) minLat = plat;
+              if (plat > maxLat) maxLat = plat;
+              if (plng < minLng) minLng = plng;
+              if (plng > maxLng) maxLng = plng;
             }
+            const midLat = (minLat + maxLat) / 2;
+            const latMeters = (maxLat - minLat) * 111320;
+            const lngMeters = (maxLng - minLng) * 111320 * Math.cos((midLat * Math.PI) / 180);
+            isEastWest = Math.abs(lngMeters) >= Math.abs(latMeters);
+
+            if (preferredRoute) {
+              const onRoute = ranked.filter((c) =>
+                (c.routes || []).some(
+                  (nm) => String(nm || "").toLowerCase() === String(preferredRoute || "").toLowerCase()
+                )
+              );
+              if (onRoute.length >= 2) {
+                let nearestPos = null;
+                let nearestNeg = null;
+                for (const c of onRoute) {
+                  const delta = isEastWest ? qlng - c.lng : qlat - c.lat;
+                  if (delta >= 0) {
+                    if (!nearestPos || Math.abs(delta) < Math.abs(nearestPos.delta)) nearestPos = { c, delta };
+                  } else {
+                    if (!nearestNeg || Math.abs(delta) < Math.abs(nearestNeg.delta)) nearestNeg = { c, delta };
+                  }
+                }
+                if (nearestPos && nearestNeg) {
+                  const left = isEastWest ? nearestNeg.c : nearestNeg.c;  // west/south side
+                  const right = isEastWest ? nearestPos.c : nearestPos.c; // east/north side
+                  return `On ${preferredRoute}, between ${formatIntersection(left)} and ${formatIntersection(right)}`;
+                }
+              }
+              // If we know the road but cannot confidently bracket between two intersections,
+              // prefer "near" phrasing over a cardinal direction.
+              return `On ${preferredRoute} near ${formatIntersection(nearest)}`;
+            }
+          }
+          if (preferredRoute) {
+            return `On ${preferredRoute} near ${formatIntersection(nearest)}`;
+          }
+          const dir = directionFromBearing(
+            bearingDegrees(nearest.lat, nearest.lng, qlat, qlng)
           );
-        });
-        if (byDistance.ok && byDistance.results.length) {
-          const named = byDistance.results
-            .map((r) => String(r?.name || "").trim())
-            .filter(Boolean);
-          if (named.length) return named[0];
+          return `${dir} of ${formatIntersection(nearest)}`;
+        }
+      } catch {
+        // continue to route-based fallback below
+      }
+
+      // Fallback: derive nearest cross streets from route components.
+      try {
+        const geocoder = new window.google.maps.Geocoder();
+        const probeStep = 0.00055; // ~180 ft
+        const probes = [
+          [qlat, qlng],
+          [qlat + probeStep, qlng],
+          [qlat - probeStep, qlng],
+          [qlat, qlng + probeStep],
+          [qlat, qlng - probeStep],
+          [qlat + probeStep, qlng + probeStep],
+          [qlat + probeStep, qlng - probeStep],
+          [qlat - probeStep, qlng + probeStep],
+          [qlat - probeStep, qlng - probeStep],
+        ];
+
+        const routeHits = [];
+        for (const [plat, plng] of probes) {
+          const res = await new Promise((resolve) => {
+            geocoder.geocode({ location: { lat: plat, lng: plng } }, (results, status) => {
+              resolve({ results: Array.isArray(results) ? results : [], status });
+            });
+          });
+          if (res.status !== "OK" || !res.results.length) continue;
+          for (const r of res.results) {
+            const rLat = Number(r?.geometry?.location?.lat?.());
+            const rLng = Number(r?.geometry?.location?.lng?.());
+            if (!Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+            const comps = Array.isArray(r?.address_components) ? r.address_components : [];
+            const routeComp = comps.find((c) =>
+              (Array.isArray(c?.types) ? c.types : []).includes("route")
+            );
+            const routeName = String(routeComp?.long_name || "").trim();
+            if (!routeName) continue;
+            routeHits.push({
+              name: routeName,
+              lat: rLat,
+              lng: rLng,
+              distance: distanceMeters(qlat, qlng, rLat, rLng),
+            });
+          }
         }
 
-        // Fallback: geocoder sometimes includes place names (premise/establishment)
+        if (!routeHits.length) return "";
+
+        // Keep nearest hit per distinct route name.
+        const byRoute = new Map();
+        for (const hit of routeHits) {
+          const key = hit.name.toLowerCase();
+          const cur = byRoute.get(key);
+          if (!cur || hit.distance < cur.distance) byRoute.set(key, hit);
+        }
+        const uniqueRoutes = Array.from(byRoute.values()).sort((a, b) => a.distance - b.distance);
+        if (uniqueRoutes.length < 2) return "";
+
+        const a = uniqueRoutes[0];
+        const b = uniqueRoutes[1];
+        const midpointLat = (a.lat + b.lat) / 2;
+        const midpointLng = (a.lng + b.lng) / 2;
+        const dir = directionFromBearing(
+          bearingDegrees(midpointLat, midpointLng, qlat, qlng)
+        );
+        return `${dir} of ${a.name} & ${b.name}`;
+      } catch {
+        return "";
+      }
+    };
+
+    const lookupNearestLandmark = async (qlat, qlng) => {
+      const sanitizeLandmarkName = (raw) => {
+        const v = String(raw || "").trim();
+        if (!v) return "";
+        const lower = v.toLowerCase();
+        if (
+          lower === "ashtabula" ||
+          lower === "ohio" ||
+          lower === "usa" ||
+          lower === "ashtabula county" ||
+          lower === "ashtabula, ohio" ||
+          lower === "ashtabula, oh"
+        ) {
+          return "";
+        }
+        if (/^\d+\s*\/\s*\d+$/.test(v)) return "";
+        if (/^\d+$/.test(v)) return "";
+        return v;
+      };
+      try {
+        if (placesLookupBlockedRef.current) return "";
+        if (ENABLE_LEGACY_PLACES_SERVICE) {
+          const placesNS = window.google?.maps?.places;
+          if (placesNS?.PlacesService) {
+            const service = new placesNS.PlacesService(document.createElement("div"));
+
+            const nearbyByType = async (type) =>
+              new Promise((resolve) => {
+                service.nearbySearch(
+                  {
+                    location: { lat: qlat, lng: qlng },
+                    radius: 152, // ~500 ft
+                    type,
+                  },
+                  (results, status) => {
+                    const blocked =
+                      status === placesNS.PlacesServiceStatus.REQUEST_DENIED;
+                    if (blocked) {
+                      markPlacesLookupBlocked("REQUEST_DENIED");
+                    }
+                    resolve({
+                      results: Array.isArray(results) ? results : [],
+                      ok:
+                        status === placesNS.PlacesServiceStatus.OK ||
+                        status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
+                      blocked,
+                    });
+                  }
+                );
+              });
+
+            const candidates = [];
+            for (const type of ["establishment", "point_of_interest"]) {
+              const res = await nearbyByType(type);
+              if (res?.blocked) return "";
+              if (!res.ok || !res.results.length) continue;
+              for (const r of res.results) {
+                const nm = String(r?.name || "").trim();
+                const rLat = Number(r?.geometry?.location?.lat?.());
+                const rLng = Number(r?.geometry?.location?.lng?.());
+                if (!nm || !Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
+                candidates.push({ name: nm, d: distanceMeters(qlat, qlng, rLat, rLng) });
+              }
+              if (candidates.length) break;
+            }
+
+            if (candidates.length) {
+              candidates.sort((a, b) => a.d - b.d);
+              return sanitizeLandmarkName(candidates[0]?.name || "");
+            }
+
+            // Fallback 2: distance-ranked search without a strict type
+            const byDistance = await new Promise((resolve) => {
+              service.nearbySearch(
+                {
+                  location: { lat: qlat, lng: qlng },
+                  rankBy: placesNS.RankBy.DISTANCE,
+                  keyword: "business",
+                },
+                (results, status) => {
+                  const blocked =
+                    status === placesNS.PlacesServiceStatus.REQUEST_DENIED;
+                  if (blocked) {
+                    markPlacesLookupBlocked("REQUEST_DENIED");
+                  }
+                  resolve({
+                    results: Array.isArray(results) ? results : [],
+                    ok:
+                      status === placesNS.PlacesServiceStatus.OK ||
+                      status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
+                    blocked,
+                  });
+                }
+              );
+            });
+            if (byDistance?.blocked) return "";
+            if (byDistance.ok && byDistance.results.length) {
+              const named = byDistance.results
+                .map((r) => String(r?.name || "").trim())
+                .filter(Boolean);
+              if (named.length) return sanitizeLandmarkName(named[0]);
+            }
+          }
+        }
+
+        // Geocoder fallback: avoids legacy PlacesService warning noise.
         const geocoder = new window.google.maps.Geocoder();
         const geo = await new Promise((resolve) => {
           geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
@@ -7495,13 +15239,21 @@ export default function App() {
             return ct.includes("establishment") || ct.includes("point_of_interest") || ct.includes("premise");
           });
           const compName = String(namedComp?.long_name || "").trim();
-          if (compName && !/^\d+\s/.test(compName)) return compName;
+          if (compName && !/^\d+\s/.test(compName)) return sanitizeLandmarkName(compName);
           const formatted = String(r?.formatted_address || "").trim();
           const firstChunk = formatted.split(",")[0]?.trim() || "";
-          if (firstChunk && !/^\d+\s/.test(firstChunk)) return firstChunk;
+          if (firstChunk && !/^\d+\s/.test(firstChunk)) return sanitizeLandmarkName(firstChunk);
         }
         return "";
-      } catch {
+      } catch (e) {
+        const msg = String(e?.message || e || "").toLowerCase();
+        if (
+          msg.includes("apitargetblockedmaperror") ||
+          msg.includes("request_denied") ||
+          msg.includes("not authorized to use this service or api")
+        ) {
+          markPlacesLookupBlocked(msg);
+        }
         return "";
       }
     };
@@ -7529,13 +15281,27 @@ export default function App() {
             }
             if (best) {
               const isRoad = best.distance <= POTHOLE_ROAD_HIT_METERS;
-              const nearestAddress = (await geocodeAddressAt(best.lat, best.lng)) || "";
-              const nearestLandmark = await lookupNearestLandmark(best.lat, best.lng);
+              const [nearestAddressRaw, nearestStreetRaw, nearestLandmarkRaw, nearestIntersectionRaw] = await Promise.all([
+                geocodeAddressAt(best.lat, best.lng),
+                includeCrossStreet ? lookupStreetNameAt(best.lat, best.lng) : Promise.resolve(""),
+                includeLandmark ? lookupNearestLandmark(best.lat, best.lng) : Promise.resolve(""),
+                includeIntersection ? lookupNearestIntersectionWithDirection(best.lat, best.lng) : Promise.resolve(""),
+              ]);
+              const nearestAddress = String(nearestAddressRaw || "").trim();
+              const nearestStreet = String(nearestStreetRaw || "").trim();
+              const nearestCrossStreet = includeCrossStreet
+                ? ((await lookupClosestCrossStreetAt(best.lat, best.lng, nearestStreet)) || "")
+                : "";
+              const nearestLandmark = String(nearestLandmarkRaw || "").trim();
+              const nearestIntersection = String(nearestIntersectionRaw || "").trim();
               return {
                 isRoad,
                 label: nearestAddress || fallbackLabel,
                 nearestAddress,
+                nearestStreet,
+                nearestCrossStreet,
                 nearestLandmark,
+                nearestIntersection,
                 snappedLat: best.lat,
                 snappedLng: best.lng,
                 distance: best.distance,
@@ -7607,13 +15373,26 @@ export default function App() {
       }
 
       if (best) {
+        const [nearestStreetRaw, nearestLandmarkRaw, nearestIntersectionRaw] = await Promise.all([
+          includeCrossStreet ? lookupStreetNameAt(best.lat, best.lng) : Promise.resolve(""),
+          includeLandmark ? lookupNearestLandmark(best.lat, best.lng) : Promise.resolve(""),
+          includeIntersection ? lookupNearestIntersectionWithDirection(best.lat, best.lng) : Promise.resolve(""),
+        ]);
         const nearestAddress = bestLabel || "";
-        const nearestLandmark = await lookupNearestLandmark(best.lat, best.lng);
+        const nearestStreet = String(nearestStreetRaw || "").trim();
+        const nearestCrossStreet = includeCrossStreet
+          ? ((await lookupClosestCrossStreetAt(best.lat, best.lng, nearestStreet)) || "")
+          : "";
+        const nearestLandmark = String(nearestLandmarkRaw || "").trim();
+        const nearestIntersection = String(nearestIntersectionRaw || "").trim();
         return {
           isRoad: best.distance <= POTHOLE_ROAD_HIT_METERS,
           label: nearestAddress || fallbackLabel,
           nearestAddress,
+          nearestStreet,
+          nearestCrossStreet,
           nearestLandmark,
+          nearestIntersection,
           snappedLat: best.lat,
           snappedLng: best.lng,
           distance: best.distance,
@@ -7622,13 +15401,26 @@ export default function App() {
       }
 
       if (gotAnyResults) {
+        const [nearestStreetRaw, nearestLandmarkRaw, nearestIntersectionRaw] = await Promise.all([
+          includeCrossStreet ? lookupStreetNameAt(lat, lng) : Promise.resolve(""),
+          includeLandmark ? lookupNearestLandmark(lat, lng) : Promise.resolve(""),
+          includeIntersection ? lookupNearestIntersectionWithDirection(lat, lng) : Promise.resolve(""),
+        ]);
         const nearestAddress = bestLabel || "";
-        const nearestLandmark = await lookupNearestLandmark(lat, lng);
+        const nearestStreet = String(nearestStreetRaw || "").trim();
+        const nearestCrossStreet = includeCrossStreet
+          ? ((await lookupClosestCrossStreetAt(lat, lng, nearestStreet)) || "")
+          : "";
+        const nearestLandmark = String(nearestLandmarkRaw || "").trim();
+        const nearestIntersection = String(nearestIntersectionRaw || "").trim();
         return {
           isRoad: false,
           label: nearestAddress || fallbackLabel,
           nearestAddress,
+          nearestStreet,
+          nearestCrossStreet,
           nearestLandmark,
+          nearestIntersection,
           snappedLat: null,
           snappedLng: null,
           distance: Infinity,
@@ -7644,7 +15436,10 @@ export default function App() {
       isRoad: true,
       label: fallbackLabel,
       nearestAddress: "",
+      nearestStreet: "",
+      nearestCrossStreet: "",
       nearestLandmark: "",
+      nearestIntersection: "",
       snappedLat: lat,
       snappedLng: lng,
       distance: Infinity,
@@ -7682,12 +15477,16 @@ export default function App() {
     lng,
     closestAddress,
     closestLandmark,
+    closestCrossStreet,
+    closestIntersection,
     submittedAtIso,
     reporter,
   }) {
     try {
-      await supabase.functions.invoke("email-pothole-report", {
+      const tenantKey = activeTenantKey();
+      const { data, error } = await supabase.functions.invoke("email-pothole-report", {
         body: {
+          tenant_key: tenantKey,
           title: "Attention Public Works, Pothole report",
           potholeCode: String(potholeCode || "").trim(),
           reportNumber: String(reportNumber || "").trim(),
@@ -7699,6 +15498,8 @@ export default function App() {
           },
           closestAddress: String(closestAddress || "").trim() || "Address unavailable",
           closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
           submittedAtIso: String(submittedAtIso || new Date().toISOString()),
           submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
           reporter: {
@@ -7710,61 +15511,301 @@ export default function App() {
           },
         },
       });
+      if (error) {
+        console.warn("[pothole email notice] invoke error:", error?.message || error);
+        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
+      }
+      const skipped = Boolean(data?.skipped);
+      const ok = data?.ok !== false && !skipped;
+      const reason = String(data?.reason || "").trim();
+      if (!ok) {
+        console.warn("[pothole email notice] not sent:", data);
+      }
+      return {
+        ok,
+        skipped,
+        reason: reason || (skipped ? "skipped" : ""),
+      };
     } catch (e) {
       console.warn("[pothole email notice] invoke failed:", e?.message || e);
+      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
     }
   }
 
+  async function sendWaterDrainEmailNotice({
+    issueTypeLabel,
+    reportNumber,
+    notes,
+    lat,
+    lng,
+    closestAddress,
+    closestLandmark,
+    closestCrossStreet,
+    closestIntersection,
+    submittedAtIso,
+    reporter,
+  }) {
+    try {
+      const tenantKey = activeTenantKey();
+      const { data, error } = await supabase.functions.invoke("email-water-drain-report", {
+        body: {
+          tenant_key: tenantKey,
+          title: "Attention Public Works, Water/Drain issue report",
+          issueType: String(issueTypeLabel || "").trim() || "Water / Drain Issue",
+          reportNumber: String(reportNumber || "").trim(),
+          notes: String(notes || "").trim(),
+          location: {
+            lat: Number(lat),
+            lng: Number(lng),
+            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+          },
+          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
+          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+          reporter: {
+            type: reporter?.type === "guest" ? "guest" : "user",
+            userId: reporter?.userId || null,
+            name: String(reporter?.name || "").trim() || "Unknown",
+            email: String(reporter?.email || "").trim() || "Not provided",
+            phone: String(reporter?.phone || "").trim() || "Not provided",
+          },
+        },
+      });
+      if (error) {
+        console.warn("[water/drain email notice] invoke error:", error?.message || error);
+        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
+      }
+
+      const skipped = Boolean(data?.skipped);
+      const ok = data?.ok !== false && !skipped;
+      const reason = String(data?.reason || "").trim();
+      if (!ok) {
+        console.warn("[water/drain email notice] not sent:", data);
+      }
+      return {
+        ok,
+        skipped,
+        reason: reason || (skipped ? "skipped" : ""),
+      };
+    } catch (e) {
+      console.warn("[water/drain email notice] invoke failed:", e?.message || e);
+      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
+    }
+  }
+
+  function notifyAsyncEmailDelivery(domainLabel, noticeRes) {
+    const label = String(domainLabel || "Report").trim();
+    if (noticeRes?.ok) return;
+    const reason = String(noticeRes?.reason || "").trim();
+    if (noticeRes?.skipped) {
+      console.info(`[${label} email notice] skipped by tenant config`);
+      return;
+    }
+    console.warn(`[${label} email notice] not confirmed${reason ? ` (${reason})` : ""}`);
+  }
+
+  async function uploadDomainReportImageIfAny(file, domainKey, reportKeyHint = "") {
+    const f = file instanceof File ? file : null;
+    if (!f) return "";
+    const tenantKey = activeTenantKey();
+    const domain = normalizeDomainKey(domainKey || "general");
+    const ext = extFromFileName(f.name, "jpg");
+    const ts = Date.now();
+    const rand = Math.random().toString(36).slice(2, 9);
+    const keyHint = String(reportKeyHint || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+    const path = `${tenantKey}/${domain}/${new Date().toISOString().slice(0, 10)}/${ts}_${keyHint || "report"}_${rand}.${ext}`;
+    const { error: upErr } = await supabase.storage.from("report-images").upload(path, f, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: f.type || undefined,
+    });
+    if (upErr) throw upErr;
+    const { data } = supabase.storage.from("report-images").getPublicUrl(path);
+    return String(data?.publicUrl || "").trim();
+  }
+
+  function municipalBoundaryGate(domainKey, lat, lng, { showNotice = true } = {}) {
+    const domain = normalizeDomainKey(domainKey);
+    const municipalDomain = domain === "potholes" || domain === "water_drain_issues";
+    if (!municipalDomain || isAdmin) return true;
+    const nLat = Number(lat);
+    const nLng = Number(lng);
+    if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) {
+      if (showNotice) {
+        openNotice("⚠️", "Location unavailable", "Could not validate city limits for this report.");
+      }
+      return false;
+    }
+    // Boundary unavailable should not block reporting (fail-open fallback).
+    if (cityLimitPolygons.length <= 0) {
+      console.warn("[municipalBoundaryGate] boundary unavailable; allowing submit without boundary check");
+      return true;
+    }
+    if (!isWithinAshtabulaCityLimits(nLat, nLng)) {
+      if (showNotice) {
+        openNotice(
+          "⚠️",
+          "Outside city limits",
+          "You are outside of the city limits. This report will not be submitted to the city."
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
   async function submitDomainReport() {
-    const target = domainReportTarget;
-    if (!target || saving) return;
-    if (target.domain === "potholes" && !potholeConsentChecked) {
-      openNotice(
-        "⚠️",
-        "Consent required",
-        "Please confirm authorization to submit your pothole report and contact information."
-      );
-      return;
+    const targetRaw = domainReportTarget;
+    if (!targetRaw || saving || domainSubmitInFlightRef.current) return;
+    let target = targetRaw;
+    const targetDomain = normalizeDomainKey(targetRaw?.domain);
+    if (targetDomain === "water_drain_issues") {
+      const near = nearestWaterDrainMarkerForPoint(targetRaw?.lat, targetRaw?.lng, nonStreetlightDomainMarkers);
+      const resolvedIncidentId = String(near?.marker?.id || "").trim();
+      if (resolvedIncidentId && resolvedIncidentId !== String(targetRaw?.lightId || "").trim()) {
+        target = {
+          ...targetRaw,
+          lightId: resolvedIncidentId,
+          locationLabel:
+            String(near?.marker?.location_label || "").trim()
+            || String(targetRaw?.locationLabel || "").trim(),
+        };
+      }
     }
-
-    const isAuthed = Boolean(session?.user?.id);
-    const usingGuestBypass = !isAuthed && guestSubmitBypassRef.current;
-    if (!isAuthed && !usingGuestBypass) {
-      requestGuestChallenge("domain");
-      return;
+    const submitKey = domainSubmitIdempotencyKey({
+      target,
+      issue: domainReportIssue,
+      note: domainReportNote,
+    });
+    const nowTs = Date.now();
+    const dedupeMap = domainSubmitDedupRef.current;
+    for (const [k, ts] of dedupeMap.entries()) {
+      if (!k || !Number.isFinite(Number(ts)) || (nowTs - Number(ts)) > DOMAIN_SUBMIT_DEDUPE_WINDOW_MS) {
+        dedupeMap.delete(k);
+      }
     }
-    const guestSource = usingGuestBypass ? guestInfoDraft : guestInfo;
-    if (usingGuestBypass) guestSubmitBypassRef.current = false;
-
-    const authedEmail = session?.user?.email || "";
-    const authedName =
-      (profile?.full_name || "").trim() ||
-      (session?.user?.user_metadata?.full_name || "").trim() ||
-      (authedEmail ? authedEmail.split("@")[0] : "User");
-    const name = isAuthed ? authedName : (guestSource.name || "");
-    const phone = isAuthed ? (profile?.phone || "") : (guestSource.phone || "");
-    const email = isAuthed ? ((profile?.email || authedEmail) || "") : (guestSource.email || "");
-
-    if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
-      requestGuestChallenge("domain");
-      openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting.");
-      return;
+    if (submitKey) {
+      const prevTs = Number(dedupeMap.get(submitKey) || 0);
+      if (prevTs > 0 && (nowTs - prevTs) < DOMAIN_SUBMIT_DEDUPE_WINDOW_MS) {
+        openNotice("ℹ️", "Already processing", "This report is already being submitted. Please wait a moment.");
+        return;
+      }
+      dedupeMap.set(submitKey, nowTs);
     }
-
+    domainSubmitInFlightRef.current = true;
     setSaving(true);
+    let persistedSubmission = false;
+    try {
+      const boundaryLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target.sourceLat) : Number(target?.lat);
+      const boundaryLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target.sourceLng) : Number(target?.lng);
+      if (!municipalBoundaryGate(target.domain, boundaryLat, boundaryLng, { showNotice: true })) {
+        return;
+      }
+      if ((target.domain === "potholes" || target.domain === "water_drain_issues") && !potholeConsentChecked) {
+        openNotice(
+          "⚠️",
+          "Consent required",
+          `Please confirm authorization to submit your ${target.domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and contact information.`
+        );
+        return;
+      }
 
-    if (target.domain === "potholes") {
+      const isAuthed = Boolean(session?.user?.id);
+      const usingGuestBypass = !isAuthed && guestSubmitBypassRef.current;
+      if (!isAuthed && !usingGuestBypass) {
+        requestGuestChallenge("domain");
+        return;
+      }
+      const guestSource = usingGuestBypass ? guestInfoDraft : guestInfo;
+      if (usingGuestBypass) guestSubmitBypassRef.current = false;
+
+      const authedEmail = session?.user?.email || "";
+      const authedName =
+        (profile?.full_name || "").trim() ||
+        (session?.user?.user_metadata?.full_name || "").trim() ||
+        (authedEmail ? authedEmail.split("@")[0] : "User");
+      const name = isAuthed ? authedName : (guestSource.name || "");
+      const phone = isAuthed ? (profile?.phone || "") : (guestSource.phone || "");
+      const email = isAuthed ? ((profile?.email || authedEmail) || "") : (guestSource.email || "");
+      const identityGuestInfo = isAuthed ? null : { name, phone, email };
+
+      if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+        requestGuestChallenge("domain");
+        openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting.");
+        return;
+      }
+
+      const abuseGate = await registerAbuseEventWithServer({
+        session,
+        profile,
+        guestInfo: identityGuestInfo,
+        domain: target.domain || selectedDomain,
+        idempotencyKey: submitKey,
+        bypass: false,
+      });
+      if (!abuseGate.allowed) {
+        openRateLimitNotice(openNotice, abuseGate);
+        return;
+      }
+      if (abuseGate.duplicate) {
+        openNotice("ℹ️", "Already submitted", "Duplicate report blocked. If needed, edit your note and submit again.");
+        return;
+      }
+
+      if (target.domain === "potholes") {
+      const submitGeoPromise = reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "quick" });
+      const potholeImageUploadPromise = domainReportImageFile
+        ? uploadDomainReportImageIfAny(domainReportImageFile, "potholes", target.lightId || target.pothole_id || "")
+            .catch((e) => {
+              console.warn("[pothole image upload] failed:", e?.message || e);
+              openNotice("⚠️", "Image upload failed", "Your report will still submit, but the image could not be uploaded.");
+              return "";
+            })
+        : Promise.resolve("");
+      const [submitGeo, imageUrl] = await Promise.all([submitGeoPromise, potholeImageUploadPromise]);
+      if (!submitGeo.isRoad) {
+        openNotice("⚠️", "Road required", "Pothole reports must be placed on a road.");
+        return;
+      }
+      if (submitGeo.validationUnavailable) {
+        openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
+        return;
+      }
+      const submitLat = Number.isFinite(Number(submitGeo.snappedLat)) ? Number(submitGeo.snappedLat) : Number(target.lat);
+      const submitLng = Number.isFinite(Number(submitGeo.snappedLng)) ? Number(submitGeo.snappedLng) : Number(target.lng);
       let potholeId = (target.pothole_id || "").trim();
       let phId = (target.lightId || "").trim();
       const potholeAddress =
-        String(target.nearestAddress || "").trim() || "Address unavailable";
-      const potholeLandmark = String(target.nearestLandmark || "").trim();
+        String(submitGeo.nearestAddress || target.nearestAddress || "").trim() || "Address unavailable";
+      const potholeLandmark = String(submitGeo.nearestLandmark || target.nearestLandmark || "").trim();
+      const potholeCrossStreet = String(submitGeo.nearestCrossStreet || target.nearestCrossStreet || "").trim();
+      const potholeIntersection = String(submitGeo.nearestIntersection || target.nearestIntersection || "").trim();
 
       if (!potholeId) {
-        const nearest = nearestPotholeForPoint(target.lat, target.lng, potholes, POTHOLE_MERGE_RADIUS_METERS);
+        const nearest = nearestPotholeForPoint(submitLat, submitLng, potholes, POTHOLE_MERGE_RADIUS_METERS);
         if (nearest?.id) {
           potholeId = nearest.id;
           phId = nearest.ph_id || phId;
+        }
+      }
+
+      if (potholeId) {
+        const potholeIncidentId = `pothole:${String(potholeId || "").trim()}`;
+        if (!canIdentityReportLight(potholeIncidentId, {
+          session,
+          profile,
+          guestInfo: identityGuestInfo,
+          reports,
+          fixedLights,
+          lastFixByLightId,
+          potholeReports,
+          potholeLastFixById,
+        })) {
+          openNotice("⏳", "Already reported", "You already reported this pothole. You can report again after it is marked fixed.");
+          return;
         }
       }
 
@@ -7772,16 +15813,15 @@ export default function App() {
         const insPothole = await supabase
           .from("potholes")
           .insert([{
-            ph_id: phId || makePotholeIdFromCoords(target.lat, target.lng),
-            lat: target.lat,
-            lng: target.lng,
+            ph_id: phId || makePotholeIdFromCoords(submitLat, submitLng),
+            lat: submitLat,
+            lng: submitLng,
             location_label: potholeAddress || null,
             created_by: session?.user?.id || null,
           }])
           .select("id, ph_id, lat, lng, location_label")
           .single();
         if (insPothole.error) {
-          setSaving(false);
           console.error(insPothole.error);
           openNotice("⚠️", "Couldn’t submit", insPothole.error?.message || "Failed to create pothole location.");
           return;
@@ -7804,17 +15844,40 @@ export default function App() {
         }
       }
 
+      if (potholeId && (potholeAddress || potholeCrossStreet || potholeLandmark)) {
+        void (async () => {
+          const { data: cacheData, error: cacheErr } = await supabase.functions.invoke("cache-official-light-geo", {
+            body: {
+              tenant_key: activeTenantKey(),
+              domain: "potholes",
+              incident_id: potholeId,
+              nearest_address: potholeAddress || null,
+              nearest_cross_street: potholeCrossStreet || null,
+              nearest_landmark: potholeLandmark || null,
+            },
+          });
+          if (cacheErr) {
+            console.warn("[cache-domain-geo potholes] non-fatal error:", cacheErr);
+            return;
+          }
+          setPotholes((prev) => (prev || []).map((row) => {
+            if (String(row?.id || "").trim() !== String(potholeId || "").trim()) return row;
+            return {
+              ...row,
+              nearest_address: potholeAddress || row?.nearest_address || "",
+              nearest_cross_street: potholeCrossStreet || row?.nearest_cross_street || "",
+              nearest_landmark: potholeLandmark || row?.nearest_landmark || "",
+              location_label: potholeAddress || row?.location_label || "",
+            };
+          }));
+        })();
+      }
+
       const potholeReportPayload = {
         pothole_id: potholeId,
-        lat: target.lat,
-        lng: target.lng,
-        note: [
-          `Address: ${potholeAddress}`,
-          `Landmark: ${potholeLandmark || "No nearby landmark"}`,
-          domainReportNote.trim() || null,
-        ]
-          .filter(Boolean)
-          .join(" | "),
+        lat: submitLat,
+        lng: submitLng,
+        note: [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ") || null,
         reporter_user_id: isAuthed ? session.user.id : null,
         reporter_name: name.trim(),
         reporter_phone: phone.trim() || null,
@@ -7827,7 +15890,6 @@ export default function App() {
         .select("*")
         .single();
 
-      setSaving(false);
       if (insReport.error) {
         console.error(insReport.error);
         openNotice("⚠️", "Couldn’t submit", insReport.error?.message || "Failed to submit pothole report.");
@@ -7850,16 +15912,19 @@ export default function App() {
       if (saved.id) {
         setPotholeReports((prev) => (prev.some((x) => x.id === saved.id) ? prev : [saved, ...prev]));
       }
+      persistedSubmission = true;
 
       const submittedAtIso = insReport.data?.created_at || new Date().toISOString();
-      sendPotholeEmailNotice({
+      void sendPotholeEmailNotice({
         potholeCode: phId || target.lightId || saved.pothole_id || "Pothole",
         reportNumber: insReport.data?.report_number || saved.report_number || "",
         notes: insReport.data?.note || potholeReportPayload.note || "",
-        lat: Number(insReport.data?.lat ?? target.lat),
-        lng: Number(insReport.data?.lng ?? target.lng),
+        lat: Number(insReport.data?.lat ?? submitLat),
+        lng: Number(insReport.data?.lng ?? submitLng),
         closestAddress: potholeAddress,
         closestLandmark: potholeLandmark || "No nearby landmark",
+        closestCrossStreet: potholeCrossStreet || "No nearby cross street",
+        closestIntersection: potholeIntersection || "No nearby intersection",
         submittedAtIso,
         reporter: {
           type: isAuthed ? "user" : "guest",
@@ -7868,17 +15933,83 @@ export default function App() {
           email: email.trim(),
           phone: phone.trim(),
         },
+      }).then((noticeRes) => {
+        notifyAsyncEmailDelivery("Pothole", noticeRes);
       });
-    } else {
+      } else {
+      const isStreetSignsTarget = target.domain === "street_signs";
+      const isWaterDrainTarget = target.domain === "water_drain_issues";
+      const canonicalWaterDrainIncidentId = isWaterDrainTarget
+        ? String(target?.lightId || "").trim()
+        : "";
+      if (isWaterDrainTarget && canonicalWaterDrainIncidentId) {
+        if (!canIdentityReportLight(canonicalWaterDrainIncidentId, {
+          session,
+          profile,
+          guestInfo: identityGuestInfo,
+          reports,
+          fixedLights,
+          lastFixByLightId,
+        })) {
+          openNotice("⏳", "Already reported", "You already reported this water/drain issue. You can report again after it is marked fixed.");
+          return;
+        }
+      }
+      const waterGeoPromise = isWaterDrainTarget
+        ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "quick" })
+        : Promise.resolve(null);
+      const waterImageUploadPromise = (isWaterDrainTarget && domainReportImageFile)
+        ? uploadDomainReportImageIfAny(domainReportImageFile, "water_drain_issues", target.lightId || "")
+            .catch((e) => {
+              console.warn("[water/drain image upload] failed:", e?.message || e);
+              openNotice("⚠️", "Image upload failed", "Your report will still submit, but the image could not be uploaded.");
+              return "";
+            })
+        : Promise.resolve("");
+      const [waterSubmitGeo, imageUrl] = await Promise.all([waterGeoPromise, waterImageUploadPromise]);
+      const waterNearestAddress = String(waterSubmitGeo?.nearestAddress || target.nearestAddress || "").trim();
+      const waterNearestLandmark = String(waterSubmitGeo?.nearestLandmark || target.nearestLandmark || "").trim();
+      const waterNearestCrossStreet = String(waterSubmitGeo?.nearestCrossStreet || target.nearestCrossStreet || "").trim();
+      const waterNearestIntersection = String(waterSubmitGeo?.nearestIntersection || target.nearestIntersection || "").trim();
+      const signIssue = isStreetSignsTarget
+        ? STREET_SIGN_ISSUE_OPTIONS.find((x) => x.value === domainReportIssue)?.label || "Other"
+        : "";
+      const waterDrainIssue = isWaterDrainTarget
+        ? WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === domainReportIssue)?.label || "Water / Drain Issue"
+        : "";
+      const issueNote = isStreetSignsTarget
+        ? `Sign issue: ${signIssue}`
+        : isWaterDrainTarget
+          ? `Water issue: ${waterDrainIssue}`
+          : null;
+      const signTypeNote = isStreetSignsTarget
+        ? `Sign type: ${String(target.signType || "").trim() || "Unknown"}`
+        : null;
+      const reportType = isWaterDrainTarget
+        ? String(domainReportIssue || WATER_DRAIN_ISSUE_OPTIONS[0].value).trim().toLowerCase()
+        : "other";
+      const normalizedReportType = reportType === "sewer_backup" || reportType === "storm_drain_clog"
+        ? reportType
+        : "storm_drain_clog";
       const payload = {
         lat: target.lat,
         lng: target.lng,
+        // Keep DB-compatible value to avoid expected 400 noise from report_type check constraints.
+        // Water/drain subtype is preserved in note text and email payload.
         report_type: "other",
         report_quality: "bad",
-        note: [`Location: ${target.locationLabel || `${target.lat.toFixed(5)}, ${target.lng.toFixed(5)}`}`, domainReportNote.trim() || null]
+        note: [
+          `Location: ${waterNearestAddress || target.locationLabel || `${target.lat.toFixed(5)}, ${target.lng.toFixed(5)}`}`,
+          signTypeNote,
+          issueNote,
+          domainReportNote.trim() || null,
+          imageUrl ? `Image: ${imageUrl}` : null,
+        ]
           .filter(Boolean)
           .join(" | "),
-        light_id: target.lightId,
+        light_id: (isWaterDrainTarget && canonicalWaterDrainIncidentId)
+          ? canonicalWaterDrainIncidentId
+          : (String(target.lightId || "").trim() || `${isWaterDrainTarget ? "water_main" : target.domain}:${target.lat.toFixed(5)}:${target.lng.toFixed(5)}`),
         reporter_user_id: isAuthed ? session.user.id : null,
         reporter_name: name.trim(),
         reporter_phone: phone.trim() || null,
@@ -7886,7 +16017,6 @@ export default function App() {
       };
 
       const { data, error: insErr } = await insertReportWithFallback(payload);
-      setSaving(false);
 
       if (insErr) {
         console.error(insErr);
@@ -7910,13 +16040,102 @@ export default function App() {
         reporter_email: data.reporter_email || null,
       };
       setReports((prev) => [saved, ...prev]);
+      persistedSubmission = true;
+
+      if (isWaterDrainTarget && saved?.light_id) {
+        const nearestAddress = String(waterNearestAddress || "").trim();
+        const nearestCrossStreet = String(waterNearestCrossStreet || "").trim();
+        const nearestLandmark = String(waterNearestLandmark || "").trim();
+        if (nearestAddress || nearestCrossStreet || nearestLandmark) {
+          void (async () => {
+            const { data: cacheData, error: cacheErr } = await supabase.functions.invoke("cache-official-light-geo", {
+              body: {
+                tenant_key: activeTenantKey(),
+                domain: "water_main",
+                incident_id: String(saved.light_id || "").trim(),
+                lat: Number(data?.lat ?? target.lat),
+                lng: Number(data?.lng ?? target.lng),
+                issue_type: normalizedReportType,
+                nearest_address: nearestAddress || null,
+                nearest_cross_street: nearestCrossStreet || null,
+                nearest_landmark: nearestLandmark || null,
+              },
+            });
+            if (cacheErr) {
+              console.warn("[cache-domain-geo water_drain_issues] non-fatal error:", cacheErr);
+              return;
+            }
+            const incidentKey = String(saved.light_id || "").trim();
+            if (incidentKey) {
+              setWaterDrainIncidentsById((prev) => ({
+                ...(prev || {}),
+                [incidentKey]: {
+                  wd_id: String(cacheData?.row?.wd_id || "").trim() || makeWaterDrainIdFromIncidentId(incidentKey),
+                  issue_type: normalizedReportType,
+                  lat: Number(data?.lat ?? target.lat),
+                  lng: Number(data?.lng ?? target.lng),
+                  nearest_address: nearestAddress || "",
+                  nearest_cross_street: nearestCrossStreet || "",
+                  nearest_landmark: nearestLandmark || "",
+                  geo_updated_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                },
+              }));
+            }
+          })();
+        }
+      }
+
+      if (isWaterDrainTarget) {
+        const issueLabel =
+          WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === normalizedReportType)?.label ||
+          waterDrainIssue ||
+          "Water / Drain Issue";
+        const submittedAtIso = data?.created_at || new Date().toISOString();
+        const nearestAddress = String(waterNearestAddress || "").trim() || "Address unavailable";
+        const nearestLandmark = String(waterNearestLandmark || "").trim() || "No nearby landmark";
+        const nearestCrossStreet = String(waterNearestCrossStreet || "").trim() || "No nearby cross street";
+        const nearestIntersection = String(waterNearestIntersection || "").trim() || "No nearby intersection";
+        const userNotesOnly = [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ");
+        void sendWaterDrainEmailNotice({
+          issueTypeLabel: issueLabel,
+          reportNumber: data?.report_number || saved.report_number || "",
+          notes: userNotesOnly,
+          lat: Number(data?.lat ?? target.lat),
+          lng: Number(data?.lng ?? target.lng),
+          closestAddress: nearestAddress,
+          closestLandmark: nearestLandmark,
+          closestCrossStreet: nearestCrossStreet,
+          closestIntersection: nearestIntersection,
+          submittedAtIso,
+          reporter: {
+            type: isAuthed ? "user" : "guest",
+            userId: isAuthed ? (session?.user?.id || null) : null,
+            name: name.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+          },
+        }).then((noticeRes) => {
+          notifyAsyncEmailDelivery("Water / Drain", noticeRes);
+        });
+      }
     }
 
-    if (!isAuthed) clearGuestContact();
-    setDomainReportNote("");
-    setPotholeConsentChecked(false);
-    setDomainReportTarget(null);
-    openNotice("✅", "Reported", `${target.domainLabel || "Issue"} reported successfully.`);
+      if (!isAuthed) clearGuestContact();
+      setDomainReportNote("");
+      setDomainReportImageFile(null);
+      setDomainReportImagePreviewUrl("");
+      setDomainReportIssue(defaultDomainIssueFor(target.domain));
+      setPotholeConsentChecked(false);
+      setDomainReportTarget(null);
+      openNotice("✅", "Reported", `${target.domainLabel || "Issue"} reported successfully.`);
+    } finally {
+      if (!persistedSubmission && submitKey) {
+        domainSubmitDedupRef.current.delete(submitKey);
+      }
+      setSaving(false);
+      domainSubmitInFlightRef.current = false;
+    }
   }
 
 
@@ -7931,7 +16150,13 @@ function canRetryInsertWithoutSelect(err) {
 }
 
 async function insertReportWithFallback(payload) {
-    const tryValues = [payload.report_type];
+    const extraTypeCandidates = Array.isArray(payload?.report_type_candidates)
+      ? payload.report_type_candidates
+      : [];
+    const tryValues = [payload.report_type, ...extraTypeCandidates]
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .filter((v, i, arr) => arr.indexOf(v) === i);
 
     if (payload.report_type === "downed_pole") {
       tryValues.push("pole_down");
@@ -7941,7 +16166,8 @@ async function insertReportWithFallback(payload) {
     let lastErr = null;
 
     for (const rt of tryValues) {
-      const attempt = { ...payload, report_type: rt };
+      const { report_type_candidates, ...payloadBase } = payload || {};
+      const attempt = { ...payloadBase, report_type: rt };
       const canReadInsertedRow = Boolean(attempt.reporter_user_id);
       let data = null;
       let insErr = null;
@@ -8036,6 +16262,18 @@ async function insertReportWithFallback(payload) {
     if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
       requestGuestChallenge("working", lid);
       openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting Is working.");
+      return;
+    }
+
+    const abuseGate = await registerAbuseEventWithServer({
+      session,
+      profile,
+      guestInfo: isAuthed ? null : { name, phone, email },
+      domain: "streetlights",
+      bypass: false,
+    });
+    if (!abuseGate.allowed) {
+      openRateLimitNotice(openNotice, abuseGate);
       return;
     }
 
@@ -8156,14 +16394,16 @@ async function insertReportWithFallback(payload) {
   }
 
   function openConfirmForLight({ lat, lng, lightId, isOfficial = false, reports = [] }) {
-    if (isOfficial && Number(mapZoomRef.current || mapZoom) < 17) {
-      openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting a report on a light.");
+    if (isOfficial && Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+      openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before submitting a report on a light.`);
       return;
     }
     setPicked([lat, lng]);
     setActiveLight({ lat, lng, lightId, isOfficial, reports });
     setNote("");           // optional: reset note each time
     setReportType("out");  // optional: default each time
+    setStreetlightAreaPowerOn("");
+    setStreetlightHazardYesNo("");
   }
 
   async function submitReport() {
@@ -8223,6 +16463,63 @@ async function insertReportWithFallback(payload) {
           return;
         }
 
+        const abuseGate = await registerAbuseEventWithServer({
+          session,
+          profile,
+          guestInfo: identityGuestInfo,
+          domain: "streetlights",
+          bypass: false,
+        });
+        if (!abuseGate.allowed) {
+          openRateLimitNotice(openNotice, abuseGate);
+          return;
+        }
+
+        // Explicit-action geo persistence for official streetlights:
+        // only call GCP if official_lights is missing cached geo fields.
+        if (activeLight?.isOfficial && lightId) {
+          const existing = (officialLights || []).find((x) => String(x?.id || "").trim() === String(lightId || "").trim());
+          const hasCachedGeo =
+            Boolean(String(existing?.nearest_address || "").trim()) ||
+            Boolean(String(existing?.nearest_cross_street || "").trim()) ||
+            Boolean(String(existing?.nearest_landmark || "").trim());
+          if (!hasCachedGeo && Number.isFinite(Number(picked?.[0])) && Number.isFinite(Number(picked?.[1]))) {
+            try {
+              const geo = await reverseGeocodeRoadLabel(Number(picked[0]), Number(picked[1]), { mode: "quick" });
+              const nearestAddress = String(geo?.nearestAddress || "").trim();
+              const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
+              const nearestLandmark = String(geo?.nearestLandmark || "").trim();
+              if (nearestAddress || nearestCrossStreet || nearestLandmark) {
+                const { data: cacheData, error: cacheErr } = await supabase.functions.invoke("cache-official-light-geo", {
+                  body: {
+                    tenant_key: activeTenantKey(),
+                    domain: "streetlights",
+                    incident_id: lightId,
+                    light_id: lightId,
+                    nearest_address: nearestAddress || null,
+                    nearest_cross_street: nearestCrossStreet || null,
+                    nearest_landmark: nearestLandmark || null,
+                  },
+                });
+                if (cacheErr) {
+                  console.warn("[cache-official-light-geo] non-fatal error:", cacheErr);
+                }
+                setOfficialLights((prev) => (prev || []).map((row) => {
+                  if (String(row?.id || "").trim() !== String(lightId || "").trim()) return row;
+                  return {
+                    ...row,
+                    nearest_address: nearestAddress || row?.nearest_address || "",
+                    nearest_cross_street: nearestCrossStreet || row?.nearest_cross_street || "",
+                    nearest_landmark: nearestLandmark || row?.nearest_landmark || "",
+                  };
+                }));
+              }
+            } catch {
+              // non-fatal: reporting flow continues even if geo enrichment fails
+            }
+          }
+        }
+
         setSaving(true);
 
         const payload = {
@@ -8230,7 +16527,7 @@ async function insertReportWithFallback(payload) {
           lng: picked[1],
           report_type: reportType,
           report_quality: "bad",
-          note: note.trim() || null,
+          note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo) || null,
           light_id: lightId,
 
           reporter_user_id: isAuthed ? session.user.id : null,
@@ -8269,6 +16566,8 @@ async function insertReportWithFallback(payload) {
     };
 
     setReports((prev) => [saved, ...prev]);
+    // A new saved report starts a fresh utility-follow-up cycle for this user/light.
+    await clearUtilityReportedForViewer(saved.light_id || lightId);
 
     if (!session?.user?.id) {
       setCooldowns((prev) => {
@@ -8281,6 +16580,8 @@ async function insertReportWithFallback(payload) {
     setActiveLight(null);
     setPicked(null);
     setNote("");
+    setStreetlightAreaPowerOn("");
+    setStreetlightHazardYesNo("");
     setSaving(false);
     if (!isAuthed) clearGuestContact();
 
@@ -8289,7 +16590,7 @@ async function insertReportWithFallback(payload) {
     setTimeout(() => closeAnyPopup(), 0);
     suppressMapClickRef.current.until = Date.now() + 900;
 
-    openNotice("✅", "Outage reported successfully", "", { autoCloseMs: 900 });
+    openNotice("✅", "Report saved", "Saved to My Reports for utility follow-up.", { autoCloseMs: 1200 });
   }
 
   // ✅ Auto-resume pending report after successful login
@@ -8326,11 +16627,11 @@ async function insertReportWithFallback(payload) {
   // CMD+F: async function confirmMappingQueue
   async function confirmMappingQueue() {
     if (!session?.user?.id) {
-      openNotice("⚠️", "Not signed in", "You must be logged in to place lights.");
+      openNotice("⚠️", "Not signed in", "You must be logged in to place mapped assets.");
       return false;
     }
     if (!isAdmin) {
-      openNotice("⚠️", "Admin only", "Only admins can place official lights.");
+      openNotice("⚠️", "Admin only", "Only admins can place mapped assets.");
       return false;
     }
     if (!mappingQueue.length) return true;
@@ -8338,31 +16639,95 @@ async function insertReportWithFallback(payload) {
     setSaving(true);
 
     try {
-      // Build rows (and de-dupe by sl_id)
-      const rows = mappingQueue.map((q) => ({
+      const lightRows = mappingQueue
+        .filter((q) => (q?.domain || "streetlights") === "streetlights")
+        .map((q) => ({
         sl_id: makeLightIdFromCoords(q.lat, q.lng),
         lat: Number(q.lat),
         lng: Number(q.lng),
         created_by: session.user.id,
       }));
 
-      const uniqueRows = rows.filter(
+      const uniqueLightRows = lightRows.filter(
         (r, i, arr) => arr.findIndex((x) => x.sl_id === r.sl_id) === i
       );
 
-      const { data, error } = await supabase
-        .from("official_lights")
-        .insert(uniqueRows)
-        .select("id, sl_id, lat, lng")
+      const signRows = mappingQueue
+        .filter((q) => q?.domain === "street_signs")
+        .map((q) => ({
+          sign_type: String(q.sign_type || "other").trim().toLowerCase() || "other",
+          lat: Number(q.lat),
+          lng: Number(q.lng),
+          created_by: session.user.id,
+        }));
 
-      if (error) {
-        console.error("[confirmMappingQueue] insert error:", error);
-        openNotice("⚠️", "Save failed", error.message || "Could not save mapped lights.");
-        setSaving(false);
-        return false;
+      const uniqueSignRows = signRows.filter(
+        (r, i, arr) =>
+          arr.findIndex(
+            (x) =>
+              x.sign_type === r.sign_type &&
+              Math.abs(Number(x.lat) - Number(r.lat)) < 0.000001 &&
+              Math.abs(Number(x.lng) - Number(r.lng)) < 0.000001
+          ) === i
+      );
+
+      let insertedLights = [];
+      let insertedSigns = [];
+      let existingLights = [];
+      let duplicateLightCount = 0;
+
+      if (uniqueLightRows.length) {
+        const slIds = uniqueLightRows.map((r) => String(r.sl_id || "").trim()).filter(Boolean);
+        if (slIds.length) {
+          const { data: existingData, error: existingErr } = await supabase
+            .from("official_lights")
+            .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark")
+            .in("sl_id", slIds);
+          if (existingErr) {
+            console.error("[confirmMappingQueue] lights pre-check error:", existingErr);
+            openNotice("⚠️", "Save failed", existingErr.message || "Could not validate mapped lights.");
+            setSaving(false);
+            return false;
+          }
+          existingLights = (existingData || [])
+            .map(normalizeOfficialLightRow)
+            .filter(Boolean);
+          const existingSlSet = new Set(existingLights.map((x) => String(x?.sl_id || "").trim()).filter(Boolean));
+          duplicateLightCount = existingSlSet.size;
+          const rowsToInsert = uniqueLightRows.filter((r) => !existingSlSet.has(String(r.sl_id || "").trim()));
+          if (rowsToInsert.length) {
+            const { data, error } = await supabase
+              .from("official_lights")
+              .insert(rowsToInsert)
+              .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark");
+            if (error) {
+              console.error("[confirmMappingQueue] lights insert error:", error);
+              openNotice("⚠️", "Save failed", error.message || "Could not save mapped lights.");
+              setSaving(false);
+              return false;
+            }
+            insertedLights = data || [];
+          } else {
+            insertedLights = [];
+          }
+        }
       }
 
-      const cleanInserted = (data || [])
+      if (uniqueSignRows.length) {
+        const { data, error } = await supabase
+          .from("official_signs")
+          .insert(uniqueSignRows)
+          .select("id, sign_type, lat, lng, active");
+        if (error) {
+          console.error("[confirmMappingQueue] signs insert error:", error);
+          openNotice("⚠️", "Save failed", error.message || "Could not save mapped signs.");
+          setSaving(false);
+          return false;
+        }
+        insertedSigns = data || [];
+      }
+
+      const cleanInsertedLights = insertedLights
         .map((r) => ({
           id: r.id,
           sl_id: r.sl_id || null,
@@ -8370,11 +16735,27 @@ async function insertReportWithFallback(payload) {
           lng: Number(r.lng),
         }))
         .filter((r) => r.id && isValidLatLng(r.lat, r.lng));
+      const cleanExistingLights = (existingLights || [])
+        .map((r) => normalizeOfficialLightRow(r))
+        .filter(Boolean);
+
+      const cleanInsertedSigns = insertedSigns
+        .map((r) => normalizeOfficialSignRow(r))
+        .filter(Boolean);
 
       // Merge + de-dupe by id
       setOfficialLights((prev) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        for (const row of cleanInserted) {
+        for (const row of [...cleanExistingLights, ...cleanInsertedLights]) {
+          const idx = next.findIndex((x) => x.id === row.id);
+          if (idx >= 0) next[idx] = { ...next[idx], ...row };
+          else next.push(row);
+        }
+        return next;
+      });
+      setOfficialSigns((prev) => {
+        const next = Array.isArray(prev) ? [...prev] : [];
+        for (const row of cleanInsertedSigns) {
           const idx = next.findIndex((x) => x.id === row.id);
           if (idx >= 0) next[idx] = { ...next[idx], ...row };
           else next.push(row);
@@ -8383,13 +16764,31 @@ async function insertReportWithFallback(payload) {
       });
 
       setMappingQueue([]);
-      openNotice("✅", "Lights added successfully.", "", { autoCloseMs: 1200 });
+      const lightCount = cleanInsertedLights.length;
+      const signCount = cleanInsertedSigns.length;
+      if (lightCount > 0 && signCount > 0) {
+        openNotice("✅", "Assets added successfully.", `${lightCount} light${lightCount === 1 ? "" : "s"}, ${signCount} sign${signCount === 1 ? "" : "s"}.`, { autoCloseMs: 1400 });
+      } else if (signCount > 0) {
+        openNotice("✅", "Signs added successfully.", "", { autoCloseMs: 1200 });
+      } else if (lightCount > 0) {
+        openNotice("✅", "Lights added successfully.", "", { autoCloseMs: 1200 });
+      } else {
+        openNotice("⚠️", "Nothing saved", "Queued lights already existed or no valid mapped assets were queued.");
+      }
+      if (duplicateLightCount > 0) {
+        openNotice(
+          "ℹ️",
+          "Existing lights skipped",
+          `${duplicateLightCount} queued light${duplicateLightCount === 1 ? "" : "s"} already existed and were not re-added.`,
+          { autoCloseMs: 1800 }
+        );
+      }
 
       setSaving(false);
       return true;
     } catch (e) {
       console.error("[confirmMappingQueue] exception:", e);
-      openNotice("⚠️", "Save failed", "Unexpected error saving mapped lights.");
+      openNotice("⚠️", "Save failed", "Unexpected error saving mapped assets.");
       setSaving(false);
       return false;
     }
@@ -8399,13 +16798,17 @@ async function insertReportWithFallback(payload) {
   async function submitBulkReports() {
   if (saving) return;
 
-  if (Number(mapZoomRef.current || mapZoom) < 17) {
-    openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
+  if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+    openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before submitting bulk reports.`);
     return;
   }
 
   const ids = bulkSelectedIds;
   if (!ids.length) return;
+  if (ids.length > BULK_MAX_LIGHTS_PER_SUBMIT) {
+    openNotice("⚠️", "Selection limit", `You can submit up to ${BULK_MAX_LIGHTS_PER_SUBMIT} lights in one bulk report.`);
+    return;
+  }
   
 
   // guests must have contact; authed users are never blocked
@@ -8433,6 +16836,21 @@ async function insertReportWithFallback(payload) {
       requestGuestChallenge("bulk");
       return;
     }
+  }
+
+  const abuseGate = await registerAbuseEventWithServer({
+    session,
+    profile,
+    guestInfo: isAuthed ? null : { name, phone, email },
+    domain: "streetlights",
+    // Bulk submit is one user action; count as one event for per-minute throttle.
+    count: 1,
+    unitCount: ids.length,
+    bypass: false,
+  });
+  if (!abuseGate.allowed) {
+    openRateLimitNotice(openNotice, abuseGate);
+    return;
   }
 
 
@@ -8476,7 +16894,7 @@ async function insertReportWithFallback(payload) {
       lng: ol.lng,
       report_type: reportType,
       report_quality: "bad",
-      note: note.trim() || null,
+      note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo) || null,
       light_id: lightId,
 
       reporter_user_id: isAuthed ? session.user.id : null,
@@ -8513,6 +16931,8 @@ async function insertReportWithFallback(payload) {
     };
 
     setReports((prev) => [saved, ...prev]);
+    // New save should show as saved-only (green) until user marks utility reported again.
+    await clearUtilityReportedForViewer(saved.light_id || lightId);
 
     // update per-light cooldown
     if (!session?.user?.id) {
@@ -8528,10 +16948,12 @@ async function insertReportWithFallback(payload) {
   setBulkConfirmOpen(false);
   clearBulkSelection();
   setNote("");
+  setStreetlightAreaPowerOn("");
+  setStreetlightHazardYesNo("");
   if (!isAuthed) clearGuestContact();
 
   if (okCount > 0) {
-    openNotice("✅", "Submitted", `Submitted ${okCount} report${okCount === 1 ? "" : "s"}.`);
+    openNotice("✅", "Reports saved", `Saved ${okCount} report${okCount === 1 ? "" : "s"} to My Reports.`);
   } else if (skipAlreadyReported > 0) {
     openNotice("⏳", "Already reported", "Some selected lights were already reported by you and are waiting to be marked fixed.");
   } else {
@@ -8558,7 +16980,7 @@ async function insertReportWithFallback(payload) {
         lng,
         created_by: session?.user?.id
       }])
-      .select("id, sl_id, lat, lng")
+      .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark")
       .single();
 
     if (error) {
@@ -8603,11 +17025,124 @@ async function insertReportWithFallback(payload) {
     }
   }
 
+  async function deleteOfficialLightsByIds(ids = []) {
+    if (!isAdmin) return;
+    const uniqueIds = Array.from(new Set((ids || []).map((x) => String(x || "").trim()).filter(Boolean)));
+    if (!uniqueIds.length) {
+      openNotice("⚠️", "No lights selected", "No lights were found in the selected circle.");
+      return;
+    }
+
+    closeAnyPopup();
+    suppressPopupsSafe(1600);
+    setDeleteCircleConfirmOpen(false);
+    setSaving(true);
+
+    const snapshot = [...officialLights];
+    const idSet = new Set(uniqueIds);
+    setOfficialLights((prev) => prev.filter((x) => !idSet.has(String(x?.id || "").trim())));
+    if (selectedOfficialId && idSet.has(String(selectedOfficialId || "").trim())) {
+      setSelectedOfficialId(null);
+    }
+
+    try {
+      const chunkSize = 200;
+      for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+        const chunk = uniqueIds.slice(i, i + chunkSize);
+        const { error } = await supabase.from("official_lights").delete().in("id", chunk);
+        if (error) throw error;
+      }
+      setDeleteCircleDraft(null);
+      openNotice(
+        "✅",
+        "Lights deleted",
+        `${uniqueIds.length} official light${uniqueIds.length === 1 ? "" : "s"} deleted.`
+      );
+    } catch (err) {
+      console.error(err);
+      setOfficialLights(snapshot);
+      openNotice("⚠️", "Couldn’t delete lights", err?.message || "Delete failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function markIncidentsFixedByIds(ids = [], noteText = "") {
+    if (!isAdmin) return;
+    const uniqueIds = Array.from(new Set((ids || []).map((x) => String(x || "").trim()).filter(Boolean)));
+    if (!uniqueIds.length) {
+      openNotice("⚠️", "No incidents selected", "No report incidents were found in the selected circle.");
+      return;
+    }
+    const noteClean = String(noteText || "").trim();
+    closeAnyPopup();
+    suppressPopupsSafe(1200);
+    setDeleteCircleConfirmOpen(false);
+    setSaving(true);
+    try {
+      for (const id of uniqueIds) {
+        if (id.startsWith("pothole:")) {
+          const pid = String(id.slice("pothole:".length) || "").trim();
+          if (!pid) continue;
+          const pothole = (potholes || []).find((p) => String(p?.id || "").trim() === pid);
+          await markPotholeFixed(
+            {
+              pothole_id: pid,
+              lat: Number(pothole?.lat || 0),
+              lng: Number(pothole?.lng || 0),
+              ph_id: String(pothole?.ph_id || "").trim() || makePotholeIdFromCoords(Number(pothole?.lat || 0), Number(pothole?.lng || 0)),
+            },
+            noteClean
+          );
+          continue;
+        }
+        await markFixed({ lightId: id, isOfficial: true }, noteClean);
+      }
+      setDeleteCircleDraft(null);
+      setDeleteCircleNote("");
+      openNotice(
+        "✅",
+        "Incidents marked fixed",
+        `${uniqueIds.length} incident${uniqueIds.length === 1 ? "" : "s"} marked fixed.`
+      );
+    } catch (err) {
+      console.error(err);
+      openNotice("⚠️", "Couldn’t mark incidents fixed", err?.message || "Action failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteOfficialSign(id) {
+    if (!isAdmin) return;
+
+    closeAnyPopup();
+    suppressPopupsSafe(1600);
+
+    const snapshot = [...officialSigns];
+    setOfficialSigns((prev) => prev.filter((x) => x.id !== id));
+
+    try {
+      const { error } = await supabase.from("official_signs").delete().eq("id", id);
+      if (error) {
+        console.error(error);
+        setOfficialSigns(snapshot);
+        openNotice("⚠️", "Couldn’t delete sign", error.message || "Delete failed.");
+      }
+    } catch (err) {
+      console.error(err);
+      setOfficialSigns(snapshot);
+      openNotice("⚠️", "Couldn’t delete sign", "Delete failed.");
+    }
+  }
+
   // CMD+F: function isLightFixed
   function isLightFixed(lightId) {
     const id = (lightId || "").trim();
     if (!id) return false;
     const lastFixTs = Math.max(lastFixByLightId?.[id] || 0, fixedLights?.[id] || 0);
+    const sinceFixCount = Number(openIncidentCountByOfficialId?.[id] || 0);
+    if (sinceFixCount > 0) return false;
     return Boolean(lastFixTs);
   }
 
@@ -8618,9 +17153,30 @@ async function insertReportWithFallback(payload) {
     return markFixed(light);
   }
 
-  async function markFixed(light) {
-    if (!light) return;
+  function openMarkFixedDialogForLight(lightId, actionType = "fix", clusterReports = null) {
+    const lid = String(lightId || "").trim();
+    if (!lid) return;
+    setPendingMarkFixedPotholeMarker(null);
+    setPendingMarkFixedLightId(lid);
+    setPendingMarkFixedClusterReports(Array.isArray(clusterReports) ? clusterReports : []);
+    setPendingIncidentActionType(actionType === "reopen" ? "reopen" : "fix");
+    setMarkFixedNote("");
+    setMarkFixedConfirmOpen(true);
+  }
 
+  function openMarkFixedDialogForPothole(marker, actionType = "fix") {
+    if (!marker) return;
+    setPendingMarkFixedLightId(null);
+    setPendingMarkFixedClusterReports([]);
+    setPendingMarkFixedPotholeMarker(marker);
+    setPendingIncidentActionType(actionType === "reopen" ? "reopen" : "fix");
+    setMarkFixedNote("");
+    setMarkFixedConfirmOpen(true);
+  }
+
+  async function markFixed(light, noteText = "") {
+    if (!light) return;
+    const noteClean = String(noteText || "").trim();
     const isOfficial = Boolean(light?.isOfficial);
 
     const ids = isOfficial
@@ -8628,16 +17184,15 @@ async function insertReportWithFallback(payload) {
       : uniqueLightIdsForCluster(light); // community cluster = many ids
 
     // 1) Write to light_actions for EACH affected light_id (this is the permanent history)
-    const { data: actRows, error: actErr } = await supabase
-      .from("light_actions")
-      .insert(
-        ids.map((id) => ({
-          light_id: id,
-          action: "fix",
-          actor_user_id: session?.user?.id || null,
-        }))
-      )
-      .select("light_id, created_at");
+    const { data: actRows, error: actErr } = await insertLightActionsWithFallback(
+      ids.map((id) => ({
+        light_id: id,
+        action: "fix",
+        note: noteClean || null,
+        actor_user_id: session?.user?.id || null,
+      })),
+      { selectCols: "light_id, created_at" }
+    );
 
     if (actErr) {
       console.error(actErr);
@@ -8654,15 +17209,19 @@ async function insertReportWithFallback(payload) {
     const fixIso = newest?.iso || new Date().toISOString();
     const fixMs = new Date(fixIso).getTime();
 
-    // 2) Update fixed_lights cache for fast reads
-    const { error: fixErr } = await supabase
-      .from("fixed_lights")
-      .upsert(ids.map((id) => ({ light_id: id, fixed_at: fixIso })));
+    // 2) Update fixed_lights cache only for official streetlights.
+    // Other domains (potholes/water/signs) rely on action log + lastFixByLightId.
+    const allOfficialLights = ids.every((id) => officialIdSet.has(String(id || "").trim()));
+    if (allOfficialLights) {
+      const { error: fixErr } = await supabase
+        .from("fixed_lights")
+        .upsert(ids.map((id) => ({ light_id: id, fixed_at: fixIso })));
 
-    if (fixErr) {
-      console.error(fixErr);
-      openNotice("⚠️", "Action failed", "Couldn’t update fixed state.");
-      return;
+      if (fixErr) {
+        console.error(fixErr);
+        openNotice("⚠️", "Action failed", "Couldn’t update fixed state.");
+        return;
+      }
     }
 
     // 3) Update local state so UI reflects instantly
@@ -8677,11 +17236,54 @@ async function insertReportWithFallback(payload) {
       for (const id of ids) next[id] = fixMs;
       return next;
     });
+    setIncidentStateByKey((prev) => {
+      const next = { ...(prev || {}) };
+      const nextIso = new Date(fixMs).toISOString();
+      for (const id of ids) {
+        const d = domainForIncidentId(id);
+        const key = incidentSnapshotKey(d, id);
+        if (!key) continue;
+        next[key] = { state: "fixed", last_changed_at: nextIso };
+      }
+      return next;
+    });
+    setActionsByLightId((prev) => {
+      const next = { ...(prev || {}) };
+      for (const id of ids) {
+        const list = Array.isArray(next[id]) ? [...next[id]] : [];
+        list.unshift({
+          action: "fix",
+          ts: fixMs,
+          note: noteClean || null,
+          actor_user_id: session?.user?.id || null,
+          actor_name:
+            String(profile?.full_name || "").trim() ||
+            String(session?.user?.user_metadata?.full_name || "").trim() ||
+            String(session?.user?.email || "").split("@")[0] ||
+            null,
+          actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
+          actor_phone: normalizePhone(profile?.phone || "") || null,
+        });
+        next[id] = list;
+      }
+      return next;
+    });
+    const idForMessage = String(ids?.[0] || "").trim();
+    if (idForMessage.startsWith("water_drain_issues:")) {
+      setSelectedDomainMarker(null);
+      openNotice("✅", "Marked fixed", "Water / Drain issue marked fixed.");
+    } else if (idForMessage.startsWith("street_signs:")) {
+      setSelectedDomainMarker(null);
+      openNotice("✅", "Marked fixed", "Street sign issue marked fixed.");
+    } else if (idForMessage && !idForMessage.startsWith("pothole:")) {
+      openNotice("✅", "Marked fixed", "Incident marked fixed.");
+    }
   }
 
 
-  async function reopenLight(light) {
+  async function reopenLight(light, noteText = "") {
     if (!light) return;
+    const noteClean = String(noteText || "").trim();
 
     const isOfficial = Boolean(light?.isOfficial);
 
@@ -8696,6 +17298,7 @@ async function insertReportWithFallback(payload) {
         ids.map((id) => ({
           light_id: id,
           action: "reopen",
+          note: noteClean || null,
           actor_user_id: session?.user?.id || null,
         }))
       );
@@ -8726,6 +17329,90 @@ async function insertReportWithFallback(payload) {
       for (const id of ids) delete next[id];
       return next;
     });
+    setActionsByLightId((prev) => {
+      const next = { ...(prev || {}) };
+      const ts = Date.now();
+      for (const id of ids) {
+        const list = Array.isArray(next[id]) ? [...next[id]] : [];
+        list.unshift({
+          action: "reopen",
+          ts,
+          note: noteClean || null,
+          actor_user_id: session?.user?.id || null,
+          actor_name:
+            String(profile?.full_name || "").trim() ||
+            String(session?.user?.user_metadata?.full_name || "").trim() ||
+            String(session?.user?.email || "").split("@")[0] ||
+            null,
+          actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
+          actor_phone: normalizePhone(profile?.phone || "") || null,
+        });
+        next[id] = list;
+      }
+      return next;
+    });
+    setIncidentStateByKey((prev) => {
+      const next = { ...(prev || {}) };
+      const tsIso = new Date().toISOString();
+      for (const id of ids) {
+        const d = domainForIncidentId(id);
+        const key = incidentSnapshotKey(d, id);
+        if (!key) continue;
+        next[key] = { state: "reopened", last_changed_at: tsIso };
+      }
+      return next;
+    });
+    openNotice("✅", "Re-opened", "Incident re-opened.");
+  }
+
+  async function markUtilityReportedForViewer(lightId) {
+    const lid = String(lightId || "").trim();
+    const uid = String(session?.user?.id || "").trim();
+    if (!lid || !uid) return;
+    setUtilityReportedLightIdSet((prev) => {
+      const next = new Set(prev || []);
+      next.add(lid);
+      return next;
+    });
+    const { error } = await supabase
+      .from("utility_report_status")
+      .upsert(
+        [{
+          tenant_key: activeTenantKey(),
+          user_id: uid,
+          incident_id: lid,
+          reported_at: new Date().toISOString(),
+        }],
+        { onConflict: "tenant_key,user_id,incident_id" }
+      );
+    if (error) {
+      console.warn("[utility_report_status] upsert warning:", error?.message || error);
+      setUtilityReportedLightIdSet((prev) => {
+        const next = new Set(prev || []);
+        next.delete(lid);
+        return next;
+      });
+    }
+  }
+
+  async function clearUtilityReportedForViewer(lightId) {
+    const lid = String(lightId || "").trim();
+    const uid = String(session?.user?.id || "").trim();
+    if (!lid || !uid) return;
+    setUtilityReportedLightIdSet((prev) => {
+      const next = new Set(prev || []);
+      next.delete(lid);
+      return next;
+    });
+    const { error } = await supabase
+      .from("utility_report_status")
+      .delete()
+      .eq("tenant_key", activeTenantKey())
+      .eq("user_id", uid)
+      .eq("incident_id", lid);
+    if (error) {
+      console.warn("[utility_report_status] clear warning:", error?.message || error);
+    }
   }
 
   // Helper: always forces map camera move
@@ -8818,6 +17505,7 @@ async function insertReportWithFallback(payload) {
 
     flyInfoTimerRef.current = setTimeout(() => {
       setSelectedQueuedTempId(null);
+      setSelectedDomainMarker(null);
       setSelectedOfficialId(lid);
       flyInfoTimerRef.current = null;
     }, 700);
@@ -9188,12 +17876,13 @@ async function insertReportWithFallback(payload) {
   // Uses Vite env var: VITE_GOOGLE_MAPS_API_KEY
   const { isLoaded, loadError } = useJsApiLoader({
     id: "google-map-script",
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+    googleMapsApiKey: GMAPS_ACTIVE_KEY,
     libraries: GMAPS_LIBRARIES,
   });
 
   // Touch fallback: tap once, then quickly tap+hold and drag up/down to zoom.
   useEffect(() => {
+    if (!ENABLE_TOUCH_DRAG_ZOOM) return;
     if (!isTouchDevice) return;
     if (!isLoaded) return;
     const map = mapRef.current;
@@ -9395,7 +18084,7 @@ async function insertReportWithFallback(payload) {
     padding: "10px 12px",
     borderRadius: 12,
     border: "none",
-    background: "#1976d2",
+    background: "var(--sl-ui-brand-blue)",
     color: "white",
     fontWeight: 900,
     cursor: "pointer",
@@ -9411,13 +18100,58 @@ async function insertReportWithFallback(payload) {
     fontWeight: 900,
     cursor: "pointer",
   };
+  const markerPopupCardStyle = {
+    minWidth: 210,
+    display: "grid",
+    gap: 8,
+    background: "var(--sl-ui-modal-bg)",
+    border: "1px solid var(--sl-ui-modal-border)",
+    borderRadius: 12,
+    boxShadow: "var(--sl-ui-modal-shadow)",
+    padding: 10,
+    color: "var(--sl-ui-text)",
+  };
+  const markerPopupActionSecondary = {
+    ...btnPopupSecondary,
+    padding: "8px 10px",
+    borderRadius: 9,
+  };
+  const markerPopupActionPrimary = {
+    ...btnPopupPrimary,
+    padding: "8px 10px",
+    borderRadius: 9,
+  };
+  const markerPopupActionDanger = {
+    ...markerPopupActionPrimary,
+    background: "#d32f2f",
+  };
+  const markerPopupCopyValueStyle = {
+    wordBreak: "break-word",
+    textDecoration: "underline",
+    textUnderlineOffset: "2px",
+    color: "#7fd7ff",
+    fontWeight: 700,
+  };
+  const markerPopupCopyRowStyle = {
+    borderRadius: 7,
+    padding: "2px 4px",
+    cursor: "copy",
+    userSelect: "text",
+    fontSize: 12,
+    opacity: 0.92,
+    lineHeight: 1.35,
+  };
 
   const canShowOfficialLightsByZoom = true;
   const showOfficialLights = canShowOfficialLightsByZoom;
   const adminDomainMeta =
-    REPORT_DOMAIN_OPTIONS.find((d) => d.key === adminReportDomain) || REPORT_DOMAIN_OPTIONS[0];
+    visibleDomainOptions.find((d) => d.key === adminReportDomain) || visibleDomainOptions[0] || REPORT_DOMAIN_OPTIONS[0];
   const domainMarkerColor = adminReportDomain === "potholes"
     ? "#8e24aa"
+    : adminReportDomain === "street_signs"
+      ? "#1e88e5"
+    : adminReportDomain === "water_drain_issues"
+      ? "#0288d1"
     : adminReportDomain === "power_outage"
       ? "#d32f2f"
       : adminReportDomain === "water_main"
@@ -9446,9 +18180,10 @@ async function insertReportWithFallback(payload) {
   }, [canShowOfficialLightsByZoom, selectedOfficialId]);
 
   useEffect(() => {
-    if (isStreetlightsDomain) return;
+    if (isStreetlightsDomain || isStreetSignsDomain) return;
     if (bulkMode) {
       setBulkMode(false);
+      setBulkConfirmOpen(false);
       clearBulkSelection();
     }
     if (mappingMode) {
@@ -9459,12 +18194,29 @@ async function insertReportWithFallback(payload) {
     if (selectedOfficialId) setSelectedOfficialId(null);
   }, [
     isStreetlightsDomain,
+    isStreetSignsDomain,
     bulkMode,
     mappingMode,
     openReportMapFilterOn,
     selectedOfficialId,
     clearBulkSelection,
   ]);
+
+  useEffect(() => {
+    if (isAdmin) return;
+    if (!deleteCircleMode && !deleteCircleDraft && !deleteCircleConfirmOpen) return;
+    setDeleteCircleMode(false);
+    setDeleteCircleDraft(null);
+    setDeleteCircleConfirmOpen(false);
+    setDeleteCircleNote("");
+  }, [isAdmin, deleteCircleMode, deleteCircleDraft, deleteCircleConfirmOpen]);
+
+  useEffect(() => {
+    if (canUseStreetlightBulk || !bulkMode) return;
+    setBulkMode(false);
+    setBulkConfirmOpen(false);
+    clearBulkSelection();
+  }, [canUseStreetlightBulk, bulkMode, clearBulkSelection]);
 
   const beginMapInteraction = useCallback(() => {
     if (mapInteractIdleTimerRef.current) {
@@ -9495,10 +18247,28 @@ async function insertReportWithFallback(payload) {
     }
   }, []);
 
-  if (loadError) {
+  if (!GMAPS_ACTIVE_KEY) {
     return (
       <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        Google Maps failed to load. Check your API key + referrer restrictions.
+        Google Maps key is missing. Set `VITE_GOOGLE_MAPS_API_KEY` (and optionally `VITE_GOOGLE_MAPS_API_KEY_DEV` for localhost/ngrok).
+      </div>
+    );
+  }
+
+  if (loadError || googleMapsAuthError) {
+    const activeHost = typeof window !== "undefined" ? String(window.location.host || "").trim() : "";
+    const referrerHint = activeHost
+      ? `${typeof window !== "undefined" ? window.location.protocol : "https:"}//${activeHost}/*`
+      : "(your-current-host)/*";
+    return (
+      <div style={{ padding: 16, fontFamily: "system-ui" }}>
+        <div style={{ marginBottom: 8 }}>
+          {googleMapsAuthError || "Google Maps failed to load. Check API key and referrer restrictions."}
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.85 }}>
+          Add this referrer in Google Cloud Console for your browser key:
+          <div style={{ marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{referrerHint}</div>
+        </div>
       </div>
     );
   }
@@ -9535,6 +18305,10 @@ async function insertReportWithFallback(payload) {
         #root { height: 100%; overflow: hidden; }
 
         :root {
+          --sl-ui-brand-green: #2a7262;
+          --sl-ui-brand-green-border: #2a7262;
+          --sl-ui-brand-blue: #1a3153;
+          --sl-ui-brand-blue-border: #1a3153;
           --sl-ui-surface-bg: rgba(255,255,255,0.96);
           --sl-ui-surface-border: rgba(0,0,0,0.10);
           --sl-ui-surface-shadow: 0 10px 22px rgba(0,0,0,0.18);
@@ -9562,6 +18336,10 @@ async function insertReportWithFallback(payload) {
           --sl-ui-alert-danger-border: rgba(183,28,28,0.35);
           --sl-ui-alert-danger-text: #b71c1c;
           --sl-ui-open-reports-item-border: rgba(0,0,0,0.10);
+          --sl-ui-metrics-panel-border: rgba(0,0,0,0.22);
+          --sl-ui-tool-active-bg: var(--sl-ui-brand-green);
+          --sl-ui-tool-active-border: var(--sl-ui-brand-green-border);
+          --sl-ui-tool-active-text: #fff;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -9593,22 +18371,7 @@ async function insertReportWithFallback(payload) {
             --sl-ui-alert-danger-border: rgba(183,28,28,0.455);
             --sl-ui-alert-danger-text: #fff;
             --sl-ui-open-reports-item-border: #ffffff;
-          }
-
-          .sl-map-tool .sl-map-tool-btn.is-on,
-          .sl-map-tool .sl-bulk-tool-btn.is-on,
-          .sl-map-tool .sl-open-filter-btn.is-on,
-          .sl-map-tool .sl-account-btn.is-on {
-            background: rgba(57, 211, 83, 0.96);
-            color: #111;
-            border: 1px solid rgba(255,255,255,0.18) !important;
-            box-shadow:
-              inset 0 1px 0 rgba(255,255,255,0.34),
-              inset 0 -2px 0 rgba(0,0,0,0.14),
-              0 6px 14px rgba(0,0,0,0.34),
-              0 12px 20px rgba(0,0,0,0.24) !important;
-            background: rgba(57, 211, 83, 0.96) !important;
-            color: #111 !important;
+            --sl-ui-metrics-panel-border: rgba(255,255,255,0.46);
           }
 
           .sl-map-tool .sl-map-tool-mini.is-on,
@@ -9658,15 +18421,17 @@ async function insertReportWithFallback(payload) {
         }
 
         .sl-map-tool-btn {
-          width: 44px;
-          height: 44px;
-          border-radius: 12px;
+          width: 48px;
+          height: 48px;
+          border-radius: 13px;
           border: 1px solid var(--sl-ui-tool-btn-border);
           background: var(--sl-ui-tool-btn-bg);
           box-shadow: var(--sl-ui-tool-btn-shadow);
           display: grid;
           place-items: center;
-          font-size: 18px;
+          padding: 0;
+          line-height: 1;
+          font-size: 20px;
           font-weight: 900;
           cursor: pointer;
           -webkit-tap-highlight-color: transparent;
@@ -9681,15 +18446,17 @@ async function insertReportWithFallback(payload) {
         }
 
         .sl-map-tool-mini {
-          width: 44px;
-          height: 44px;
-          border-radius: 12px;
+          width: 48px;
+          height: 48px;
+          border-radius: 13px;
           border: 1px solid var(--sl-ui-tool-btn-border);
           background: var(--sl-ui-tool-btn-bg);
           box-shadow: var(--sl-ui-tool-btn-shadow);
           display: grid;
           place-items: center;
-          font-size: 16px;
+          padding: 0;
+          line-height: 1;
+          font-size: 18px;
           font-weight: 950;
           cursor: pointer;
           -webkit-tap-highlight-color: transparent;
@@ -9701,6 +18468,38 @@ async function insertReportWithFallback(payload) {
           background: rgba(17,17,17,0.92);
           color: white;
           border: 1px solid rgba(0,0,0,0.35);
+        }
+
+        .sl-map-tool-mini.sl-has-submenu {
+          position: relative;
+          overflow: visible;
+        }
+
+        .sl-map-tool-mini.sl-has-submenu::after {
+          content: "";
+          position: absolute;
+          right: 6px;
+          bottom: 6px;
+          width: 3px;
+          height: 3px;
+          border-radius: 999px;
+          background: #1976d2;
+          box-shadow: -4px 0 0 #1976d2, -8px 0 0 #1976d2;
+          opacity: 0.95;
+          pointer-events: none;
+        }
+
+        .sl-map-tool .sl-bulk-tool-btn.is-on,
+        .sl-map-tool .sl-account-btn.signed-in {
+          background: var(--sl-ui-tool-active-bg) !important;
+          color: var(--sl-ui-tool-active-text) !important;
+          border: 1px solid var(--sl-ui-tool-active-border) !important;
+        }
+
+        .sl-map-tool-btn img,
+        .sl-map-tool-mini img {
+          display: block;
+          margin: 0 auto;
         }
 
         .sl-map-tool-hint {
@@ -9844,6 +18643,19 @@ async function insertReportWithFallback(payload) {
           setAuthGateOpen(true);
         }}
         onGuest={() => {
+          const pendingKind = String(pendingGuestAction?.kind || "").trim().toLowerCase();
+          const fromStreetlightSaveFlow =
+            pendingKind === "report" ||
+            pendingKind === "bulk" ||
+            Boolean(activeLight) ||
+            Boolean(bulkConfirmOpen);
+          if (fromStreetlightSaveFlow) {
+            setContactChoiceOpen(false);
+            setPendingSubmit(false);
+            setPendingGuestAction(null);
+            openNotice("⚠️", "Account required", "Account Required to Save Light");
+            return;
+          }
           setContactChoiceOpen(false);
           setGuestInfoDraft({
             name: "",
@@ -9858,6 +18670,8 @@ async function insertReportWithFallback(payload) {
         open={infoMenuOpen}
         onClose={() => setInfoMenuOpen(false)}
         isAdmin={isAdmin}
+        onOpenTerms={() => setTermsOpen(true)}
+        onOpenPrivacy={() => setPrivacyOpen(true)}
       />
 
       <NoticeModal
@@ -9872,11 +18686,11 @@ async function insertReportWithFallback(payload) {
 
       <ModalShell open={exitMappingConfirmOpen} zIndex={10012}>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 950, fontSize: 16 }}>Save queued lights?</div>
+          <div style={{ fontWeight: 950, fontSize: 16 }}>Save queued assets?</div>
 
           <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
-            You have <b>{mappingQueue.length}</b> queued light{mappingQueue.length === 1 ? "" : "s"}.
-            Place them before turning mapping off?
+            You have <b>{mappingQueue.length}</b> queued asset{mappingQueue.length === 1 ? "" : "s"}.
+            Save them before turning mapping off?
           </div>
 
           <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
@@ -9893,7 +18707,7 @@ async function insertReportWithFallback(payload) {
                 padding: 12,
                 borderRadius: 12,
                 border: "none",
-                background: "#2e7d32",
+                background: "var(--sl-ui-brand-green)",
                 color: "white",
                 fontWeight: 900,
                 cursor: saving ? "not-allowed" : "pointer",
@@ -9947,10 +18761,10 @@ async function insertReportWithFallback(payload) {
 
       <ModalShell open={clearQueuedConfirmOpen} zIndex={10012}>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 950, fontSize: 16 }}>Clear queued lights?</div>
+          <div style={{ fontWeight: 950, fontSize: 16 }}>Clear queued assets?</div>
 
           <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
-            Remove <b>{mappingQueue.length}</b> queued light{mappingQueue.length === 1 ? "" : "s"} that have not been saved yet?
+            Remove <b>{mappingQueue.length}</b> queued asset{mappingQueue.length === 1 ? "" : "s"} that have not been saved yet?
           </div>
 
           <div style={{ display: "grid", gap: 8 }}>
@@ -9967,12 +18781,155 @@ async function insertReportWithFallback(payload) {
                 cursor: "pointer",
               }}
             >
-              Clear Queued Lights
+              Clear Queued Assets
             </button>
 
             <button
               type="button"
               onClick={() => setClearQueuedConfirmOpen(false)}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell open={domainSwitchConfirmOpen} zIndex={10012}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 950, fontSize: 16 }}>Switch report domain?</div>
+
+          <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
+            You have <b>{mappingQueue.length}</b> queued asset{mappingQueue.length === 1 ? "" : "s"} in mapping mode.
+            Place or clear queued assets before switching to <b>{String(pendingDomainSwitchTarget?.label || "the selected domain")}</b>.
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              type="button"
+              onClick={placeQueuedAndSwitchDomain}
+              disabled={saving}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "none",
+                background: "var(--sl-ui-brand-green)",
+                color: "white",
+                fontWeight: 900,
+                cursor: saving ? "not-allowed" : "pointer",
+                opacity: saving ? 0.7 : 1,
+              }}
+            >
+              {saving ? "Placing..." : "Place & Switch"}
+            </button>
+
+            <button
+              type="button"
+              onClick={clearQueuedAndSwitchDomain}
+              disabled={saving}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "none",
+                background: "#d32f2f",
+                color: "white",
+                fontWeight: 900,
+                cursor: saving ? "not-allowed" : "pointer",
+                opacity: saving ? 0.7 : 1,
+              }}
+            >
+              Clear & Switch
+            </button>
+
+            <button
+              type="button"
+              onClick={cancelAdminDomainSwitch}
+              disabled={saving}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: saving ? "not-allowed" : "pointer",
+                opacity: saving ? 0.7 : 1,
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell open={queueSignTypeOpen} zIndex={10012}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 950, fontSize: 16 }}>Select sign type</div>
+          <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
+            Choose the official sign type before adding this asset to the queue.
+          </div>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, opacity: 0.9 }}>Sign type</span>
+            <select
+              value={String(pendingQueuedSign?.sign_type || "")}
+              onChange={(e) =>
+                setPendingQueuedSign((prev) =>
+                  prev
+                    ? { ...prev, sign_type: String(e.target.value || "").trim().toLowerCase() }
+                    : prev
+                )
+              }
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                fontWeight: 700,
+              }}
+            >
+              <option value="" disabled>
+                Select sign type...
+              </option>
+              {STREET_SIGN_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
+            <button
+              type="button"
+              onClick={confirmQueueOfficialSign}
+              disabled={!STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase())}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "none",
+                background: "var(--sl-ui-brand-green)",
+                color: "white",
+                fontWeight: 900,
+                cursor: STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase()) ? "pointer" : "not-allowed",
+                opacity: STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase()) ? 1 : 0.6,
+              }}
+            >
+              Add to Queue
+            </button>
+            <button
+              type="button"
+              onClick={cancelQueueOfficialSign}
               style={{
                 padding: 12,
                 borderRadius: 12,
@@ -10005,6 +18962,9 @@ async function insertReportWithFallback(payload) {
                 setPotholeAdvisoryOpen(false);
                 setPendingPotholeDomainTarget(null);
                 if (!next) return;
+                if (!municipalBoundaryGate("potholes", next?.sourceLat ?? next?.lat, next?.sourceLng ?? next?.lng, { showNotice: true })) {
+                  return;
+                }
                 setDomainReportTarget(next);
                 setDomainReportNote("");
               }}
@@ -10012,11 +18972,12 @@ async function insertReportWithFallback(payload) {
                 padding: 12,
                 borderRadius: 12,
                 border: "none",
-                background: "#1976d2",
+                background: "var(--sl-ui-brand-blue)",
                 color: "white",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
+              disabled={!pendingPotholeDomainTarget}
             >
               OK
             </button>
@@ -10052,6 +19013,8 @@ async function insertReportWithFallback(payload) {
           setActiveLight(null);
           setPicked(null);
           setNote("");
+          setStreetlightAreaPowerOn("");
+          setStreetlightHazardYesNo("");
 
           // close bulk
           setBulkConfirmOpen(false);
@@ -10064,7 +19027,13 @@ async function insertReportWithFallback(payload) {
         setReportType={setReportType}
         note={note}
         setNote={setNote}
+        areaPowerOn={streetlightAreaPowerOn}
+        setAreaPowerOn={setStreetlightAreaPowerOn}
+        hazardYesNo={streetlightHazardYesNo}
+        setHazardYesNo={setStreetlightHazardYesNo}
         saving={saving}
+        titleLabel={bulkConfirmOpen ? "Save selected lights?" : "Save this light?"}
+        confirmLabel={bulkConfirmOpen ? "Save lights" : "Save light"}
       />
 
       <DomainReportModal
@@ -10074,12 +19043,20 @@ async function insertReportWithFallback(payload) {
         locationLabel={domainReportTarget?.locationLabel || ""}
         note={domainReportNote}
         setNote={setDomainReportNote}
+        streetSignIssue={domainReportIssue}
+        setStreetSignIssue={setDomainReportIssue}
         consentChecked={potholeConsentChecked}
         setConsentChecked={setPotholeConsentChecked}
+        imageFile={domainReportImageFile}
+        imagePreviewUrl={domainReportImagePreviewUrl}
+        setImageFile={setDomainReportImageFile}
         saving={saving}
         onCancel={() => {
           setDomainReportTarget(null);
           setDomainReportNote("");
+          setDomainReportImageFile(null);
+          setDomainReportImagePreviewUrl("");
+          setDomainReportIssue(defaultDomainIssueFor(""));
           setPotholeConsentChecked(false);
         }}
         onSubmit={submitDomainReport}
@@ -10119,31 +19096,147 @@ async function insertReportWithFallback(payload) {
 
       <ModalShell open={markFixedConfirmOpen} zIndex={10012}>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Mark Fixed</div>
-          <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
-            Mark this light as fixed?
+          <div style={{ fontSize: 16, fontWeight: 950 }}>
+            {pendingIncidentActionType === "reopen" ? "Re-open Incident" : "Mark Fixed"}
           </div>
+          <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
+            {pendingIncidentActionType === "reopen"
+              ? "Add optional re-open notes, then confirm."
+              : "Add optional resolution notes, then confirm."}
+          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
+            <textarea
+              value={markFixedNote}
+              onChange={(e) => setMarkFixedNote(e.target.value)}
+              placeholder={pendingIncidentActionType === "reopen"
+                ? "Why is this being re-opened? (new damage, recurring issue, etc.)"
+                : "What was fixed? (crew notes, observed condition, etc.)"}
+              style={{
+                minHeight: 88,
+                resize: "vertical",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                padding: 10,
+                fontSize: 14,
+                lineHeight: 1.35,
+              }}
+            />
+          </label>
           <div style={{ display: "grid", gap: 8 }}>
             <button
               onClick={async () => {
                 const lid = (pendingMarkFixedLightId || "").trim();
+                const clusterReports = Array.isArray(pendingMarkFixedClusterReports) ? pendingMarkFixedClusterReports : [];
+                const potholeMarker = pendingMarkFixedPotholeMarker;
+                const noteText = String(markFixedNote || "").trim();
+                const actionType = pendingIncidentActionType === "reopen" ? "reopen" : "fix";
                 setMarkFixedConfirmOpen(false);
                 setPendingMarkFixedLightId(null);
+                setPendingMarkFixedClusterReports([]);
+                setPendingMarkFixedPotholeMarker(null);
+                setPendingIncidentActionType("fix");
+                setMarkFixedNote("");
+                if (potholeMarker) {
+                  if (actionType === "reopen") {
+                    const pid = String(potholeMarker?.pothole_id || "").trim();
+                    if (!pid) return;
+                    await reopenLight({ lightId: `pothole:${pid}`, isOfficial: true }, noteText);
+                    return;
+                  }
+                  await markPotholeFixed(potholeMarker, noteText);
+                  return;
+                }
                 if (!lid) return;
-                await toggleFixed(lid);
+                const clusterLight = (clusterReports.length > 0)
+                  ? { lightId: lid, isOfficial: false, reports: clusterReports }
+                  : { lightId: lid, isOfficial: true };
+                if (actionType === "reopen") {
+                  await reopenLight(clusterLight, noteText);
+                  return;
+                }
+                await markFixed(clusterLight, noteText);
               }}
               style={btnPopupPrimary}
             >
-              Confirm
+              {pendingIncidentActionType === "reopen" ? "Confirm Re-open" : "Confirm"}
             </button>
             <button
               onClick={() => {
                 setMarkFixedConfirmOpen(false);
                 setPendingMarkFixedLightId(null);
+                setPendingMarkFixedClusterReports([]);
+                setPendingMarkFixedPotholeMarker(null);
+                setPendingIncidentActionType("fix");
+                setMarkFixedNote("");
               }}
               style={btnPopupSecondary}
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <ModalShell open={deleteCircleConfirmOpen} zIndex={10012}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Circle Mark Fixed</div>
+          <div style={{ fontSize: 13, opacity: 0.92, lineHeight: 1.4 }}>
+            Mark fixed <b>{deleteCircleCandidateIds.length}</b> incident{deleteCircleCandidateIds.length === 1 ? "" : "s"} inside this circle?
+          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
+            <textarea
+              value={deleteCircleNote}
+              onChange={(e) => setDeleteCircleNote(e.target.value)}
+              placeholder="Resolution notes for this batch mark-fixed action"
+              style={{
+                minHeight: 72,
+                resize: "vertical",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                padding: 10,
+                fontSize: 14,
+                lineHeight: 1.35,
+              }}
+            />
+          </label>
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              onClick={async () => {
+                if (saving) return;
+                await markIncidentsFixedByIds(deleteCircleCandidateIds, String(deleteCircleNote || "").trim());
+              }}
+              style={btnPopupPrimary}
+              disabled={saving || deleteCircleCandidateIds.length === 0}
+            >
+              {saving ? "Applying..." : `Mark fixed ${deleteCircleCandidateIds.length}`}
+            </button>
+            <button
+              onClick={() => {
+                if (saving) return;
+                setDeleteCircleConfirmOpen(false);
+              }}
+              style={btnPopupSecondary}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (saving) return;
+                setDeleteCircleConfirmOpen(false);
+                setDeleteCircleDraft(null);
+                setDeleteCircleNote("");
+              }}
+              style={btnPopupSecondary}
+              disabled={saving}
+            >
+              Clear Circle
             </button>
           </div>
         </div>
@@ -10182,6 +19275,39 @@ async function insertReportWithFallback(payload) {
         </div>
       </ModalShell>
 
+      <ModalShell open={deleteOfficialSignConfirmOpen} zIndex={10012}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Delete Sign</div>
+          <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
+            Delete this saved sign?
+          </div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              onClick={async () => {
+                const sid = (pendingDeleteOfficialSignId || "").trim();
+                setDeleteOfficialSignConfirmOpen(false);
+                setPendingDeleteOfficialSignId(null);
+                if (!sid) return;
+                await deleteOfficialSign(sid);
+                closeAnyPopup();
+              }}
+              style={btnPopupPrimary}
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() => {
+                setDeleteOfficialSignConfirmOpen(false);
+                setPendingDeleteOfficialSignId(null);
+              }}
+              style={btnPopupSecondary}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
       <AllReportsModal
         open={allReportsModal.open}
         title={allReportsModal.title}
@@ -10190,6 +19316,9 @@ async function insertReportWithFallback(payload) {
         sharedLocation={allReportsModal.sharedLocation}
         sharedAddress={allReportsModal.sharedAddress}
         sharedLandmark={allReportsModal.sharedLandmark}
+        currentState={allReportsModal.currentState}
+        lastChangedAt={allReportsModal.lastChangedAt}
+        onCopyField={copyTextToClipboard}
         onClose={closeAllReports}
         onReporterDetails={openReporterDetails}
       />
@@ -10200,19 +19329,33 @@ async function insertReportWithFallback(payload) {
         onClose={closeReporterDetails}
       />
 
-      <MyReportsModal
+      <ModerationFlagsModal
+        open={moderationFlagsOpen}
+        onClose={() => setModerationFlagsOpen(false)}
+        rows={moderationFlagRows}
+        loading={moderationFlagsLoading}
+        error={moderationFlagsError}
+        onRefresh={() => void loadModerationFlagRows()}
+      />
+
+      <OpenReportsModal
         open={myReportsOpen}
         onClose={closeMyReports}
+        isAdmin={true}
+        modalTitle="My Reports"
         activeDomain={myReportsDomain}
+        domainOptions={visibleDomainOptions}
         onSelectDomain={(domainKey) => {
           setMyReportsDomain(domainKey);
+          setAdminReportDomain(domainKey);
           setMyReportsExpanded(new Set());
         }}
-        domainCounts={myReportDomainCounts}
-        groups={myReportsByLight}
+        groups={myReportsStandardGroups}
         expandedSet={myReportsExpanded}
         onToggleExpand={toggleMyReportsExpanded}
         reports={reports}
+        potholes={potholes}
+        allDomainReports={myReportsAllDomainRows}
         officialLights={officialLights}
         slIdByUuid={slIdByUuid}
         fixedLights={fixedLights}
@@ -10221,6 +19364,25 @@ async function insertReportWithFallback(payload) {
           closeMyReports();
           flyToLightAndOpen(pos, zoom, lightId);
         }}
+        onMarkFixedIncident={null}
+        onOpenAllReports={openAllReports}
+        onReporterDetails={openReporterDetails}
+        actionsByLightId={actionsByLightId}
+        session={session}
+        profile={profile}
+        incidentStateByKey={incidentStateByKey}
+        officialSignIdSetForExport={officialSignIdSet}
+        cityBoundaryLoaded={cityLimitPolygons.length > 0}
+        isWithinCityLimits={isWithinAshtabulaCityLimits}
+        getStreetlightUtilityDetails={reverseGeocodeRoadLabel}
+        onUtilityReportedChange={handleUtilityReportedChange}
+        focusIncidentId={myReportsFocusIncidentId}
+        initialSearchQuery={myReportsFocusQuery}
+        mapBounds={mapBounds}
+        onInitialFocusApplied={() => {
+          setMyReportsFocusIncidentId("");
+          setMyReportsFocusQuery("");
+        }}
       />
 
       <OpenReportsModal
@@ -10228,37 +19390,14 @@ async function insertReportWithFallback(payload) {
         onClose={closeOpenReports}
         isAdmin={isAdmin}
         activeDomain={adminReportDomain}
+        domainOptions={openReportsDomainOptions}
         onSelectDomain={setAdminReportDomain}
-        groups={
-          adminReportDomain === "streetlights"
-            ? openReportsByLight
-            : adminReportDomain === "potholes"
-              ? nonStreetlightDomainMarkers
-                  .filter((m) => Number(m?.count || 0) > 0)
-                  .map((m) => ({
-                  lightId: m.id,
-                  count: m.count,
-                  lastTs: m.lastTs,
-                  rows: (potholeReports || [])
-                    .filter((r) => String(r.pothole_id || "").trim() === String(m.pothole_id || "").trim())
-                    .filter((r) => Number(r?.ts || 0) > Number(m?.lastFixTs || 0))
-                    .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
-                  lat: m.lat,
-                  lng: m.lng,
-                  location_label: m.location_label || "",
-                }))
-            : nonStreetlightDomainMarkers.map((m) => ({
-                lightId: m.id,
-                count: m.count,
-                lastTs: m.lastTs,
-                rows: selectedDomainReports
-                  .filter((r) => String(r.light_id || "").trim() === m.id)
-                  .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
-              }))
-        }
+        groups={openReportsModalGroups}
         expandedSet={openReportsExpanded}
         onToggleExpand={toggleOpenReportsExpanded}
         reports={reports}
+        potholes={potholes}
+        allDomainReports={selectedDomainReports}
         officialLights={officialLights}
         slIdByUuid={slIdByUuid}
         fixedLights={fixedLights}
@@ -10267,10 +19406,45 @@ async function insertReportWithFallback(payload) {
           closeOpenReports();
           flyToLightAndOpen(pos, zoom, lightId);
         }}
+        onMarkFixedIncident={(incidentId, actionType = "fix") => {
+          const desiredAction = actionType === "reopen" ? "reopen" : "fix";
+          const incidentKey = String(incidentId || "").trim();
+          if (!incidentKey) return;
+          closeOpenReports();
+          if (incidentKey.startsWith("pothole:")) {
+            const pid = String(incidentKey.slice("pothole:".length) || "").trim();
+            if (!pid) return;
+            const m = (potholes || []).find((p) => String(p?.id || "").trim() === pid);
+            openMarkFixedDialogForPothole({
+              pothole_id: pid,
+              lat: Number(m?.lat || 0),
+              lng: Number(m?.lng || 0),
+              ph_id: String(m?.ph_id || "").trim() || makePotholeIdFromCoords(Number(m?.lat || 0), Number(m?.lng || 0)),
+            }, desiredAction);
+            return;
+          }
+          if (desiredAction === "reopen") {
+            openMarkFixedDialogForLight(incidentKey, "reopen");
+            return;
+          }
+          if (isStreetlightsDomain && isLightFixed(incidentKey)) {
+            toggleFixed(incidentKey);
+            return;
+          }
+          openMarkFixedDialogForLight(incidentKey, "fix");
+        }}
         onOpenAllReports={(lightId) => {
           openOfficialLightAllReports(lightId);
         }}
         onReporterDetails={openReporterDetails}
+        actionsByLightId={actionsByLightId}
+        session={session}
+        profile={profile}
+        incidentStateByKey={incidentStateByKey}
+        officialSignIdSetForExport={officialSignIdSet}
+        cityBoundaryLoaded={cityLimitPolygons.length > 0}
+        isWithinCityLimits={isWithinAshtabulaCityLimits}
+        onUtilityReportedChange={handleUtilityReportedChange}
       />
 
       <ManageAccountModal
@@ -10359,6 +19533,11 @@ async function insertReportWithFallback(payload) {
         }}
         onDragStart={() => {
           beginMapInteraction();
+          userDragPanRef.current = true;
+          if (followCamera) {
+            stopFollowCameraAnimation();
+            setFollowCamera(false);
+          }
         }}
         onZoomChanged={() => {
           beginMapInteraction();
@@ -10371,6 +19550,7 @@ async function insertReportWithFallback(payload) {
         }}
         onIdle={() => {
           endMapInteractionSoon(750);
+          userDragPanRef.current = false;
           const map = mapRef.current;
           if (!map) return;
 
@@ -10433,6 +19613,26 @@ async function insertReportWithFallback(payload) {
           if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
           const lat = Number(e?.latLng?.lat?.());
           const lng = Number(e?.latLng?.lng?.());
+          if (deleteCircleMode && isAdmin) {
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            if (!deleteCircleDraft?.center) {
+              setDeleteCircleDraft({ center: { lat, lng }, radiusMeters: 0 });
+              openNotice("🟢", "Circle center set", "Tap a second point to set the radius.", { autoCloseMs: 1200, compact: true });
+              return;
+            }
+            const center = deleteCircleDraft.center;
+            const radiusMeters = metersBetween(
+              { lat: Number(center.lat), lng: Number(center.lng) },
+              { lat, lng }
+            );
+            if (!Number.isFinite(radiusMeters) || radiusMeters < 2) {
+              openNotice("⚠️", "Radius too small", "Tap farther from the center to define a larger circle.");
+              return;
+            }
+            setDeleteCircleDraft({ center, radiusMeters });
+            setDeleteCircleConfirmOpen(true);
+            return;
+          }
           if (showOfficialLights && Number.isFinite(lat) && Number.isFinite(lng)) {
             const hitOfficialId = officialCanvasOverlayRef.current?.hitTestByLatLng?.(lat, lng);
             if (hitOfficialId) {
@@ -10448,71 +19648,101 @@ async function insertReportWithFallback(payload) {
             setSelectedDomainMarker(null);
           }
 
+          if (!isAdmin && !visibleDomainOptions.some((d) => d.key === adminReportDomain)) {
+            openNotice("⚠️", "Domain unavailable", "This report domain is not enabled for public reporting.");
+            return;
+          }
+
+          if (mappingMode && isAdmin && adminReportDomain === "street_signs") {
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            requestQueueOfficialSign(lat, lng);
+            return;
+          }
+
           if (adminReportDomain !== "streetlights") {
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
             (async () => {
-              if (adminReportDomain === "potholes" && Number(mapZoomRef.current || mapZoom) < 17) {
-                openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before placing a pothole report.");
+              if (adminReportDomain === "street_signs") {
+                openNotice("🛑", "Street signs", "Tap a mapped street-sign marker to view details and report.");
                 return;
               }
-              let geo = {
+              if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+                openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before placing a report.`);
+                return;
+              }
+              if (!municipalBoundaryGate(adminReportDomain, lat, lng, { showNotice: true })) {
+                return;
+              }
+              if (adminReportDomain === "potholes") {
+                const domainLabel =
+                  visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Report";
+                const targetToken = `pothole:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+                const provisionalTarget = {
+                  domain: adminReportDomain,
+                  domainLabel,
+                  lat,
+                  lng,
+                  sourceLat: lat,
+                  sourceLng: lng,
+                  lightId: makePotholeIdFromCoords(lat, lng),
+                  pothole_id: null,
+                  locationLabel: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+                  nearestAddress: "",
+                  nearestLandmark: "",
+                  nearestCrossStreet: "",
+                  nearestIntersection: "",
+                  _targetToken: targetToken,
+                };
+                setPendingPotholeDomainTarget(provisionalTarget);
+                setPotholeAdvisoryOpen(true);
+                return;
+              }
+              const geo = {
                 isRoad: true,
                 label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
                 nearestAddress: "",
                 nearestLandmark: "",
+                nearestCrossStreet: "",
+                nearestIntersection: "",
+                nearestStreet: "",
                 snappedLat: lat,
                 snappedLng: lng,
               };
-              let targetLat = lat;
-              let targetLng = lng;
-              if (adminReportDomain === "potholes") {
-                geo = await reverseGeocodeRoadLabel(lat, lng);
-                if (!geo.isRoad) {
-                  openNotice("⚠️", "Road required", "Pothole reports must be placed on a road.");
-                  return;
-                }
-                if (geo.validationUnavailable) {
-                  openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
-                  return;
-                }
-                if (Number.isFinite(geo.snappedLat) && Number.isFinite(geo.snappedLng)) {
-                  targetLat = Number(geo.snappedLat);
-                  targetLng = Number(geo.snappedLng);
-                }
-              }
-              let potholeId = null;
-              let potholeCode = "";
-              if (adminReportDomain === "potholes") {
-                const nearest = nearestPotholeForPoint(targetLat, targetLng, potholes, POTHOLE_MERGE_RADIUS_METERS);
-                if (nearest?.id) {
-                  potholeId = nearest.id;
-                  potholeCode = (nearest.ph_id || "").trim();
-                }
-              }
-              const lightId =
-                adminReportDomain === "potholes"
-                  ? (potholeCode || makePotholeIdFromCoords(targetLat, targetLng))
-                  : `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`;
+              const targetLat = lat;
+              const targetLng = lng;
+              const nearestWaterMarker = adminReportDomain === "water_drain_issues"
+                ? nearestWaterDrainMarkerForPoint(targetLat, targetLng, nonStreetlightDomainMarkers)
+                : null;
+              const resolvedWaterIncidentId = String(nearestWaterMarker?.marker?.id || "").trim();
+              const lightId = adminReportDomain === "water_drain_issues"
+                ? (resolvedWaterIncidentId || `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`)
+                : `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`;
               const domainLabel =
-                REPORT_DOMAIN_OPTIONS.find((d) => d.key === adminReportDomain)?.label || "Report";
+                visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Report";
               const nextTarget = {
                 domain: adminReportDomain,
                 domainLabel,
                 lat: targetLat,
                 lng: targetLng,
+                sourceLat: lat,
+                sourceLng: lng,
                 lightId,
-                pothole_id: potholeId,
-                locationLabel: geo.nearestAddress || geo.label || `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
+                pothole_id: null,
+                locationLabel:
+                  String(nearestWaterMarker?.marker?.location_label || "").trim()
+                  || geo.nearestAddress
+                  || geo.label
+                  || `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
                 nearestAddress: geo.nearestAddress || "",
                 nearestLandmark: geo.nearestLandmark || "",
+                nearestCrossStreet: geo.nearestCrossStreet || "",
+                nearestIntersection: geo.nearestIntersection || "",
               };
-              if (adminReportDomain === "potholes") {
-                setPendingPotholeDomainTarget(nextTarget);
-                setPotholeAdvisoryOpen(true);
-                return;
-              }
               setDomainReportTarget(nextTarget);
               setDomainReportNote("");
+
+              // Cost guardrail: no passive geocode on click.
+              // Geocoding runs only during explicit submit flows.
             })();
             return;
           }
@@ -10523,6 +19753,32 @@ async function insertReportWithFallback(payload) {
           queueOfficialLight(lat, lng);
         }}
       >
+        {cityOutsideMaskPaths.length > 0 && (
+          <PolygonF
+            paths={cityOutsideMaskPaths}
+            options={{
+              clickable: false,
+              strokeOpacity: 0,
+              fillColor: "#0b0f17",
+              fillOpacity: 0.42,
+              zIndex: 1,
+            }}
+          />
+        )}
+        {cityBoundaryOuterRings.map((ring, idx) => (
+          <PolygonF
+            key={`city-boundary-${idx}`}
+            paths={ring}
+            options={{
+              clickable: false,
+              strokeColor: "#e53935",
+              strokeOpacity: 1,
+              strokeWeight: 4,
+              fillOpacity: 0,
+              zIndex: 2200,
+            }}
+          />
+        ))}
         {userLoc && (
           <SmoothUserMarker position={{ lat: userLoc[0], lng: userLoc[1] }} />
         )}
@@ -10530,22 +19786,58 @@ async function insertReportWithFallback(payload) {
         <OfficialLightsCanvasOverlay
           ref={officialCanvasOverlayRef}
           map={gmapsRef}
-          show={showOfficialLights}
+          show={showOfficialLights && !mapInteracting}
           lights={renderedOfficialLights}
           bulkMode={bulkMode}
           bulkSelectedSet={bulkSelectedSet}
           getMarkerColor={officialMarkerColorForViewer}
           getMarkerRingColor={officialMarkerRingColorForViewer}
         />
+        {deleteCircleMode && isAdmin && deleteCircleDraft?.center && (
+          <CircleF
+            center={deleteCircleDraft.center}
+            radius={Math.max(2, Number(deleteCircleDraft.radiusMeters || 0))}
+            options={{
+              clickable: false,
+              draggable: false,
+              editable: false,
+              strokeColor: "#ff1744",
+              strokeOpacity: 0.95,
+              strokeWeight: 2,
+              fillColor: "#ff1744",
+              fillOpacity: 0.12,
+              zIndex: 2100,
+            }}
+          />
+        )}
 
         {!isStreetlightsDomain && renderedDomainMarkers.map((m) => (
           <MarkerF
             key={`domain-${adminReportDomain}-${m.id}`}
             position={{ lat: m.lat, lng: m.lng }}
-            icon={gmapsDotIcon(m.color || domainMarkerColor, m.ringColor || "#fff", m.glyph || adminDomainMeta.icon || "💡")}
+            icon={
+              adminReportDomain === "street_signs"
+                ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
+                : gmapsDotIcon(
+                    m.color || domainMarkerColor,
+                    m.ringColor || "#fff",
+                    m.glyph || adminDomainMeta.icon || "💡",
+                    m.glyphSrc || adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight
+                  )
+            }
             onClick={() => {
-              if (isAdmin && adminReportDomain === "potholes") {
+              setSelectedQueuedTempId(null);
+              setSelectedOfficialId(null);
+              if (adminReportDomain === "potholes") {
+                selectDomainMarkerWithGeo(m);
+                return;
+              }
+              if (adminReportDomain === "street_signs") {
                 setSelectedDomainMarker(m);
+                return;
+              }
+              if (adminReportDomain === "water_drain_issues") {
+                selectDomainMarkerWithGeo(m);
                 return;
               }
               openNotice(
@@ -10558,65 +19850,26 @@ async function insertReportWithFallback(payload) {
           />
         ))}
 
-        {isAdmin && adminReportDomain === "potholes" && selectedDomainMarker && (
-          <InfoWindowF
-            position={{ lat: Number(selectedDomainMarker.lat), lng: Number(selectedDomainMarker.lng) }}
-            onCloseClick={() => setSelectedDomainMarker(null)}
-            options={{ disableAutoPan: true }}
-          >
-            <div style={{ minWidth: 210, display: "grid", gap: 8 }}>
-              <div style={{ fontWeight: 950, fontSize: 13 }}>
-                Pothole ID: {selectedDomainMarker.id || "Pothole"}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
-                <b>Location:</b> {selectedPotholeInfo?.locationLabel || "Location unavailable"}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.9 }}>
-                <b>{Number(selectedPotholeInfo?.openCount || selectedDomainMarker.count || 0)}</b> open report{Number(selectedPotholeInfo?.openCount || selectedDomainMarker.count || 0) === 1 ? "" : "s"}
-              </div>
-              <button
-                type="button"
-                onClick={() => openPotholeAllReportsFromMarker(selectedDomainMarker)}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 9,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                All Reports
-              </button>
-              <button
-                type="button"
-                onClick={() => markPotholeFixed(selectedDomainMarker)}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 9,
-                  border: "none",
-                  background: "#2e7d32",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Mark Fixed
-              </button>
-            </div>
-          </InfoWindowF>
-        )}
-
-
         {/* Queued markers (mapping mode preview) */}
         {mappingMode && isAdmin && (mappingQueue || []).map((q) => (
           <MarkerF
             key={q.tempId}
             position={{ lat: q.lat, lng: q.lng }}
-            icon={gmapsDotIcon("#2ecc71")}
+            icon={(q.domain || "streetlights") === "street_signs"
+              ? gmapsImageIcon(signMarkerIconSrcForType(q.sign_type), STREET_SIGN_MARKER_SIZE, {
+                  border: true,
+                  borderColor: "#39ff14",
+                  borderWidth: 3,
+                })
+              : gmapsDotIcon(
+                  "#2ecc71",
+                  "#fff",
+                  "💡",
+                  UI_ICON_SRC.streetlight
+                )}
             onClick={() => {
               setSelectedOfficialId(null);
+              setSelectedDomainMarker(null);
               setSelectedQueuedTempId(q.tempId);
             }}
           />
@@ -10641,15 +19894,8 @@ async function insertReportWithFallback(payload) {
         >
           <div
             style={{
-              background: "var(--sl-ui-modal-bg)",
-              border: "1px solid var(--sl-ui-modal-border)",
-              borderRadius: 12,
-              boxShadow: "var(--sl-ui-modal-shadow)",
-              padding: 10,
-              minWidth: 210,
-              display: "grid",
+              ...markerPopupCardStyle,
               gap: 10,
-              color: "var(--sl-ui-text)",
             }}
           >
             <button
@@ -10675,101 +19921,203 @@ async function insertReportWithFallback(payload) {
               ×
             </button>
 
-            <div style={{ fontWeight: 900, paddingRight: 26 }}>Streetlight</div>
-
-            <div style={{ fontSize: 12, opacity: 0.75, fontWeight: 800 }}>
-              Light ID:{" "}
-              <span
-                style={{
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                }}
-              >
-                {(selectedOfficialLightForPopup.sl_id || "").trim() || displayLightId(selectedOfficialLightForPopup.id, slIdByUuid)}
-              </span>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>
+              Streetlight • {displayLightId(selectedOfficialLightForPopup?.id, slIdByUuid)}
             </div>
-
-            <div style={{ fontSize: 13 }}>
-              Status: <b>{officialStatusLabelForViewer(selectedOfficialLightForPopup.id)}</b>
+            <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.78, marginTop: -7, letterSpacing: 0.1 }}>
+              Utility-owned
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                const nextOpen = !streetlightLocationInfoOpen;
+                setStreetlightLocationInfoOpen(nextOpen);
+                if (nextOpen) {
+                  void ensureStreetlightLocationInfoForPopup(selectedOfficialLightForPopup);
+                }
+              }}
+              style={btnPopupSecondary}
+            >
+              {streetlightLocationInfoOpen ? "Hide Location Info" : "Location Info"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+                }
+              }}
+              style={{ ...btnPopupPrimary, background: "var(--sl-ui-brand-blue)" }}
+            >
+              Report Outage to Utility
+            </button>
 
             {(() => {
-              const canReportIssueHere = Number(mapZoom) >= 17;
+              const lid = String(selectedOfficialLightForPopup?.id || "").trim();
+              const alreadySaved = lid ? viewerSavedStreetlightLightIdSet.has(lid) : false;
+              const currentlyOpen = lid ? viewerStreetlightRingOpenIdSet.has(lid) : false;
+              const hideSaveForOpenSaved = alreadySaved && currentlyOpen;
+              if (hideSaveForOpenSaved) return null;
+              const canSaveReportHere = Number(mapZoom) >= REPORTING_MIN_ZOOM;
               return (
-            <button
-              style={{ ...btnPopupPrimary, opacity: canReportIssueHere ? 1 : 0.6, cursor: canReportIssueHere ? "pointer" : "not-allowed" }}
-              disabled={!canReportIssueHere}
-              onClick={() => {
-                openConfirmForLight({
-                  lat: selectedOfficialLightForPopup.lat,
-                  lng: selectedOfficialLightForPopup.lng,
-                  lightId: selectedOfficialLightForPopup.id,
-                  isOfficial: true,
-                });
-              }}
-              title={canReportIssueHere ? "Report issue" : "Zoom to level 17+ to report"}
-            >
-              Report issue
-            </button>
+                <button
+                  style={{ ...btnPopupPrimary, background: "var(--sl-ui-brand-green)", opacity: canSaveReportHere ? 1 : 0.6, cursor: canSaveReportHere ? "pointer" : "not-allowed" }}
+                  disabled={!canSaveReportHere}
+                  onClick={() => {
+                    openConfirmForLight({
+                      lat: selectedOfficialLightForPopup.lat,
+                      lng: selectedOfficialLightForPopup.lng,
+                      lightId: selectedOfficialLightForPopup.id,
+                      isOfficial: true,
+                    });
+                  }}
+                  title={canSaveReportHere ? "Save light" : "Zoom in closer to save"}
+                >
+                  Save light
+                </button>
               );
             })()}
+            {(() => {
+              const lid = String(selectedOfficialLightForPopup?.id || "").trim();
+              if (!lid) return null;
+              if (!session?.user?.id) return null;
+              if (!viewerSavedStreetlightLightIdSet.has(lid)) return null;
+              return (
+                <button
+                  type="button"
+                  onClick={() =>
+                    openMyReports({
+                      domainKey: "streetlights",
+                      focusIncidentId: lid,
+                      focusQuery: displayLightId(lid, slIdByUuid),
+                    })
+                  }
+                  style={btnPopupSecondary}
+                >
+                  View My Report
+                </button>
+              );
+            })()}
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd27d", lineHeight: 1.35 }}>
+              Immediate danger? Call 911.
+            </div>
 
-            {Number(mapZoom) < 17 && (
-              <div style={{ fontSize: 11.5, opacity: 0.78, lineHeight: 1.25 }}>
-                Zoom in closer (17+) to report this light.
+            {streetlightLocationInfoOpen && (
+              <div style={{ display: "grid", gap: 6 }}>
+                {streetlightUtilityContext.loading ? (
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>Loading location details...</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 11, opacity: 0.72, fontWeight: 400 }}>
+                      (Tap or click any line below to copy)
+                    </div>
+                    <div style={{ display: "grid", gap: 1, fontSize: 12, opacity: 0.95, lineHeight: 1.2 }}>
+                      {(() => {
+                        const latVal = Number(selectedOfficialLightForPopup?.lat);
+                        const lngVal = Number(selectedOfficialLightForPopup?.lng);
+                        const coordsText =
+                          Number.isFinite(latVal) && Number.isFinite(lngVal)
+                            ? `${latVal.toFixed(6)}, ${lngVal.toFixed(6)}`
+                            : "Unavailable";
+                        const onStreet = String(streetlightUtilityContext.nearestStreet || "").trim();
+                        const intersectionRaw = String(streetlightUtilityContext.nearestIntersection || "").trim();
+                        const nearestCrossStreetRaw = String(streetlightUtilityContext.nearestCrossStreet || "").trim();
+                        const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                        const onStreetKey = normalizeRoad(onStreet);
+                        const crossStreet = (() => {
+                          if (nearestCrossStreetRaw) return nearestCrossStreetRaw;
+                          if (!intersectionRaw) return "";
+                          const cleaned = intersectionRaw
+                            .replace(/\b(at|on|between|near|of|north|south|east|west|n|s|e|w)\b/gi, " ")
+                            .replace(/\s+/g, " ")
+                            .trim();
+                          const tokens = cleaned
+                            .split(/&|\/|,|\band\b|\bnear\b|\bbetween\b|\bof\b/i)
+                            .map((x) => String(x || "").trim())
+                            .filter(Boolean);
+                          for (const token of tokens) {
+                            const tokenKey = normalizeRoad(token);
+                            if (!tokenKey) continue;
+                            if (!onStreetKey) return token;
+                            if (tokenKey === onStreetKey) continue;
+                            if (tokenKey.includes(onStreetKey) || onStreetKey.includes(tokenKey)) continue;
+                            return token;
+                          }
+                          return "";
+                        })();
+
+                        const items = [
+                          { label: "House Number", value: streetlightAddressParts.houseNumber || "Unavailable" },
+                          { label: "Street", value: streetlightAddressParts.street || "Unavailable" },
+                          ...(streetlightAddressParts.ruralRoute
+                            ? [{ label: "Rural Route", value: streetlightAddressParts.ruralRoute }]
+                            : []),
+                          { label: "City", value: streetlightAddressParts.city || "Unavailable" },
+                          { label: "State", value: streetlightAddressParts.state || "Unavailable" },
+                          { label: "ZIP", value: streetlightAddressParts.zip || "Unavailable" },
+                          {
+                            label: "Cross Street",
+                            value: crossStreet || "Unavailable",
+                          },
+                          {
+                            label: "Nearest Landmark",
+                            value: streetlightUtilityContext.nearestLandmark || "Unavailable",
+                          },
+                          { label: "Coordinates", value: coordsText },
+                        ];
+
+                        return items.map((item) => (
+                          <div
+                            key={item.label}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => copyTextToClipboard(item.label, item.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                copyTextToClipboard(item.label, item.value);
+                              }
+                            }}
+                            title={`Click to copy ${item.label}`}
+                            style={{
+                              borderRadius: 7,
+                              padding: "2px 4px",
+                              cursor: "copy",
+                              userSelect: "text",
+                            }}
+                          >
+                            <span style={{ fontWeight: 800, opacity: 0.9 }}>{item.label}:</span>{" "}
+                            <span
+                              style={{
+                                wordBreak: "break-word",
+                                textDecoration: "underline",
+                                textUnderlineOffset: "2px",
+                                color: "#7fd7ff",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {item.value}
+                            </span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                      Use this location information to submit directly to the electric utility.
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
+                      Verify all information before submitting to the utility company. CityReport.io provides reference data
+                      and is not responsible for submission errors.
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
-            {!isAdmin && officialMarkerColorForViewer(selectedOfficialLightForPopup.id) !== "#111" && (
-              <button
-                style={btnPopupSecondary}
-                onClick={() => {
-                  setPendingWorkingLightId(selectedOfficialLightForPopup.id);
-                  setIsWorkingConfirmOpen(true);
-                }}
-              >
-                Is working
-              </button>
-            )}
-
-            {isAdmin && (
-              <button
-                style={btnPopupSecondary}
-                onClick={() => {
-                  if (isLightFixed(selectedOfficialLightForPopup.id)) {
-                    toggleFixed(selectedOfficialLightForPopup.id);
-                    return;
-                  }
-                  setPendingMarkFixedLightId(selectedOfficialLightForPopup.id);
-                  setMarkFixedConfirmOpen(true);
-                }}
-              >
-                {isLightFixed(selectedOfficialLightForPopup.id) ? "Re-open" : "Mark fixed"}
-              </button>
-            )}
-
-            {isAdmin && (
-              <div style={{ height: 1, background: "rgba(0,0,0,0.2)", margin: "2px 0" }} />
-            )}
-
-            {isAdmin && (
-              <button
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-                onClick={() => {
-                  openOfficialLightAllReports(selectedOfficialLightForPopup.id);
-                }}
-              >
-                All Reports
-              </button>
+            {Number(mapZoom) < REPORTING_MIN_ZOOM && (
+              <div style={{ fontSize: 11.5, opacity: 0.78, lineHeight: 1.25 }}>
+                Zoom in closer to save this light.
+              </div>
             )}
 
             {mappingMode && isAdmin && (
@@ -10810,6 +20158,516 @@ async function insertReportWithFallback(payload) {
         </div>
       )}
 
+      {!bulkMode && adminReportDomain === "potholes" && selectedDomainMarker && selectedDomainPopupPixel && (
+        <div
+          style={{
+            position: "absolute",
+            left: selectedDomainPopupPixel.x,
+            top: selectedDomainPopupPixel.y,
+            transform: "translate(-50%, calc(-100% - 14px))",
+            zIndex: 2600,
+            pointerEvents: "auto",
+            maxWidth: "min(280px, calc(100vw - 20px))",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div style={{ ...markerPopupCardStyle, gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedDomainMarker(null)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                marginLeft: "auto",
+                right: 8,
+                top: 8,
+                width: 26,
+                height: 26,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                cursor: "pointer",
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>Pothole Issue</div>
+            {(() => {
+              const lat = Number(selectedDomainMarker?.lat);
+              const lng = Number(selectedDomainMarker?.lng);
+              const coordsText =
+                Number.isFinite(lat) && Number.isFinite(lng)
+                  ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+                  : "Unavailable";
+              const locationLabelRaw = String(selectedPotholeInfo?.locationLabel || "").trim();
+              const nearMatch = locationLabelRaw.match(/\s*\(Near:\s*(.*?)\)\s*$/i);
+              const nearestLandmark = String(nearMatch?.[1] || "").trim();
+              const nearestAddress = nearMatch
+                ? locationLabelRaw.replace(/\s*\(Near:\s*.*?\)\s*$/i, "").trim()
+                : locationLabelRaw;
+              const displayId = makePotholeIdFromCoords(lat, lng);
+              return (
+                <>
+                  <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+                    <b>ID:</b> {displayId || "PH0000000000"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyTextToClipboard("Closest address", nearestAddress || "Unavailable")}
+                    title="Click to copy location"
+                    style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+                  >
+                    <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
+                    <span style={markerPopupCopyValueStyle}>{nearestAddress || "Unavailable"}</span>
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => copyTextToClipboard("Coordinates", coordsText)}
+                      title="Click to copy coordinates"
+                      style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+                    >
+                      <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Coordinates:</span>{" "}
+                      <span style={markerPopupCopyValueStyle}>{coordsText}</span>
+                    </button>
+                  )}
+                  <div style={markerPopupCopyRowStyle}>
+                    <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                    <span>{nearestLandmark || "No nearby landmark"}</span>
+                  </div>
+                </>
+              );
+            })()}
+            {isAdmin && (
+              <>
+                <div style={{ height: 4 }} />
+                <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+                  <b>State:</b> {incidentStateLabel(selectedPotholeInfo?.currentState || "reported")}{" "}
+                  <span style={{ opacity: 0.75 }}>•</span>{" "}
+                  <b>Reports:</b> {Number(selectedPotholeInfo?.openCount || selectedDomainMarker.count || 0)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                  <b>Last updated:</b>{" "}
+                  {String(selectedPotholeInfo?.lastChangedAt || "").trim()
+                    ? formatTs(selectedPotholeInfo.lastChangedAt)
+                    : "Unknown"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openPotholeAllReportsFromMarker(selectedDomainMarker)}
+                  style={markerPopupActionSecondary}
+                >
+                  All Reports
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                    const potholeLightId = pid ? `pothole:${pid}` : "";
+                    const isFixedNow = potholeLightId ? isLightFixed(potholeLightId) : false;
+                    if (isFixedNow && potholeLightId) {
+                      toggleFixed(potholeLightId);
+                      return;
+                    }
+                    openMarkFixedDialogForPothole(selectedDomainMarker);
+                  }}
+                  style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                >
+                  {(() => {
+                    const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                    const potholeLightId = pid ? `pothole:${pid}` : "";
+                    return potholeLightId && isLightFixed(potholeLightId) ? "Re-open" : "Mark fixed";
+                  })()}
+                </button>
+              </>
+            )}
+            {!isAdmin && (() => {
+              const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+              const userReported = Boolean(pid && viewerReportedPotholeIdSet.has(pid));
+              if (!session?.user?.id || !userReported) return null;
+              const lat = Number(selectedDomainMarker?.lat);
+              const lng = Number(selectedDomainMarker?.lng);
+              const ph = Number.isFinite(lat) && Number.isFinite(lng)
+                ? makePotholeIdFromCoords(lat, lng)
+                : "";
+              return (
+                <>
+                  <div style={{ height: 4 }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openMyReports({
+                        domainKey: "potholes",
+                        focusIncidentId: `pothole:${pid}`,
+                        focusQuery: ph || pid,
+                      });
+                    }}
+                    style={markerPopupActionSecondary}
+                  >
+                    View Report
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: -7,
+              width: 12,
+              height: 12,
+              background: "var(--sl-ui-modal-bg)",
+              borderRight: "1px solid var(--sl-ui-modal-border)",
+              borderBottom: "1px solid var(--sl-ui-modal-border)",
+              transform: "translateX(-50%) rotate(45deg)",
+            }}
+          />
+        </div>
+      )}
+
+      {!bulkMode && adminReportDomain === "water_drain_issues" && selectedDomainMarker && selectedDomainPopupPixel && (
+        <div
+          style={{
+            position: "absolute",
+            left: selectedDomainPopupPixel.x,
+            top: selectedDomainPopupPixel.y,
+            transform: "translate(-50%, calc(-100% - 14px))",
+            zIndex: 2600,
+            pointerEvents: "auto",
+            maxWidth: "min(280px, calc(100vw - 20px))",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div style={{ ...markerPopupCardStyle, gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedDomainMarker(null)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                marginLeft: "auto",
+                right: 8,
+                top: 8,
+                width: 26,
+                height: 26,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                cursor: "pointer",
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>Water / Drain Issue</div>
+            {(() => {
+              const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
+              const displayId = String(selectedWaterDrainInfo?.displayId || "").trim() || makeWaterDrainIdFromIncidentId(incidentId);
+              const lat = Number(selectedDomainMarker?.lat);
+              const lng = Number(selectedDomainMarker?.lng);
+              const coordsText =
+                Number.isFinite(lat) && Number.isFinite(lng)
+                  ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+                  : "Unavailable";
+              const locationLabelRaw = String(selectedWaterDrainInfo?.locationLabel || "").trim();
+              const nearMatch = locationLabelRaw.match(/\s*\(Near:\s*(.*?)\)\s*$/i);
+              const nearestLandmark = String(nearMatch?.[1] || "").trim();
+              const nearestAddress = nearMatch
+                ? locationLabelRaw.replace(/\s*\(Near:\s*.*?\)\s*$/i, "").trim()
+                : locationLabelRaw;
+              return (
+                <>
+                  <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+                    <b>ID:</b> {displayId || "WD0000000000"}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                    <b>Issue type:</b> {selectedWaterDrainInfo?.issueLabel || "Water / Drain Issue"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyTextToClipboard("Closest address", nearestAddress || "Unavailable")}
+                    title="Click to copy location"
+                    style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+                  >
+                    <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
+                    <span style={markerPopupCopyValueStyle}>{nearestAddress || "Unavailable"}</span>
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => copyTextToClipboard("Coordinates", coordsText)}
+                      title="Click to copy coordinates"
+                      style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+                    >
+                      <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Coordinates:</span>{" "}
+                      <span style={markerPopupCopyValueStyle}>{coordsText}</span>
+                    </button>
+                  )}
+                  <div style={markerPopupCopyRowStyle}>
+                    <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                    <span>{nearestLandmark || "No nearby landmark"}</span>
+                  </div>
+                </>
+              );
+            })()}
+            {isAdmin && (() => {
+              const incidentId = String(selectedDomainMarker?.id || "").trim();
+              const clusterRows = Array.isArray(selectedDomainMarker?.rows) ? selectedDomainMarker.rows : [];
+              const clusterLight = { lightId: incidentId, isOfficial: false, reports: clusterRows };
+              const openCount = Number(selectedWaterDrainInfo?.openCount || 0);
+              const isFixedNow = Boolean(selectedWaterDrainInfo?.isFixedNow);
+              return (
+                <>
+                  <div style={{ height: 4 }} />
+                  <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+                    <b>State:</b> {incidentStateLabel(selectedWaterDrainInfo?.currentState || (isFixedNow ? "fixed" : "reported"))}{" "}
+                    <span style={{ opacity: 0.75 }}>•</span>{" "}
+                    <b>Reports:</b> {openCount}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                    <b>Last updated:</b>{" "}
+                    {String(selectedWaterDrainInfo?.lastChangedAt || "").trim()
+                      ? formatTs(selectedWaterDrainInfo.lastChangedAt)
+                      : (selectedWaterDrainInfo?.lastReportedTs ? formatTs(selectedWaterDrainInfo.lastReportedTs) : "Unknown")}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openOfficialLightAllReports(incidentId, "water_drain_issues")}
+                    style={markerPopupActionSecondary}
+                  >
+                    All Reports
+                  </button>
+                  {(openCount > 0 || isFixedNow) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isFixedNow) {
+                          reopenLight(clusterLight);
+                          return;
+                        }
+                        openMarkFixedDialogForLight(incidentId, "fix", clusterRows);
+                      }}
+                      style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                    >
+                      {isFixedNow ? "Re-open" : "Mark fixed"}
+                    </button>
+                  )}
+                </>
+              );
+            })()}
+            {!isAdmin && (() => {
+              const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
+              const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
+              if (!session?.user?.id || !userReported) return null;
+              const wd = makeWaterDrainIdFromIncidentId(incidentId);
+              return (
+                <>
+                  <div style={{ height: 4 }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openMyReports({
+                        domainKey: "water_drain_issues",
+                        focusIncidentId: incidentId,
+                        focusQuery: wd || incidentId,
+                      });
+                    }}
+                    style={markerPopupActionSecondary}
+                  >
+                    View Report
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: -7,
+              width: 12,
+              height: 12,
+              background: "var(--sl-ui-modal-bg)",
+              borderRight: "1px solid var(--sl-ui-modal-border)",
+              borderBottom: "1px solid var(--sl-ui-modal-border)",
+              transform: "translateX(-50%) rotate(45deg)",
+            }}
+          />
+        </div>
+      )}
+
+      {!bulkMode && adminReportDomain === "street_signs" && selectedDomainMarker && selectedDomainPopupPixel && (
+        <div
+          style={{
+            position: "absolute",
+            left: selectedDomainPopupPixel.x,
+            top: selectedDomainPopupPixel.y,
+            transform: "translate(-50%, calc(-100% - 14px))",
+            zIndex: 2600,
+            pointerEvents: "auto",
+            maxWidth: "min(280px, calc(100vw - 20px))",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div style={{ ...markerPopupCardStyle, gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedDomainMarker(null)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                marginLeft: "auto",
+                right: 8,
+                top: 8,
+                width: 26,
+                height: 26,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                cursor: "pointer",
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>
+              Sign ID: {String(selectedDomainMarker.id || "").slice(0, 8) || "Sign"}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.9 }}>
+              <b>Sign type:</b> {formatStreetSignTypeLabel(selectedDomainMarker.sign_type)}
+            </div>
+            {(() => {
+              const signId = String(selectedDomainMarker.id || "").trim();
+              const openCount = Number(openIncidentCountByOfficialId?.[signId] || 0);
+              const statusInfo = officialStatusFromSinceFixCount(openCount);
+              const isFixedNow = isLightFixed(signId);
+              const lifecycleState = String(selectedStreetSignLifecycleSnapshot?.state || "").trim();
+              const lifecycleChangedAt = String(selectedStreetSignLifecycleSnapshot?.last_changed_at || "").trim();
+              return (
+                <>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    <b>Likelihood:</b> {statusInfo.label}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9 }}>
+                    <b>{openCount}</b> open report{openCount === 1 ? "" : "s"}
+                  </div>
+                  {!!lifecycleState && (
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                      <b>Current state:</b> {incidentStateLabel(lifecycleState)}
+                      {!!lifecycleChangedAt && (
+                        <> • <b>Last updated:</b> {formatTs(lifecycleChangedAt)}</>
+                      )}
+                    </div>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openOfficialLightAllReports(signId, "street_signs")}
+                        style={markerPopupActionSecondary}
+                      >
+                        All Reports
+                      </button>
+                      {openCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isFixedNow) {
+                              toggleFixed(signId);
+                              return;
+                            }
+                            openMarkFixedDialogForLight(signId);
+                          }}
+                          style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                        >
+                          {isFixedNow ? "Re-open" : "Mark fixed"}
+                        </button>
+                      )}
+                      {mappingMode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPendingDeleteOfficialSignId(signId);
+                            setDeleteOfficialSignConfirmOpen(true);
+                          }}
+                          style={markerPopupActionDanger}
+                        >
+                          Delete Sign
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()}
+            {Number(mapZoom) < REPORTING_MIN_ZOOM && (
+              <div style={{ fontSize: 11.5, opacity: 0.78, lineHeight: 1.25 }}>
+                Zoom in closer to report this sign.
+              </div>
+            )}
+            <button
+              type="button"
+              disabled={Number(mapZoom) < REPORTING_MIN_ZOOM}
+              onClick={() => {
+                const signType = formatStreetSignTypeLabel(selectedDomainMarker.sign_type);
+                const domainLabel =
+                  visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Street signs";
+                setDomainReportTarget({
+                  domain: "street_signs",
+                  domainLabel,
+                  lat: Number(selectedDomainMarker.lat),
+                  lng: Number(selectedDomainMarker.lng),
+                  lightId: String(selectedDomainMarker.id || "").trim(),
+                  locationLabel: `${signType} • ${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`,
+                  signType,
+                  nearestAddress: "",
+                  nearestLandmark: "",
+                  nearestIntersection: "",
+                });
+                setDomainReportIssue(defaultDomainIssueFor("street_signs"));
+                setDomainReportNote("");
+              }}
+              style={{
+                ...markerPopupActionPrimary,
+                background: "var(--sl-ui-brand-blue)",
+                cursor: Number(mapZoom) < REPORTING_MIN_ZOOM ? "not-allowed" : "pointer",
+                opacity: Number(mapZoom) < REPORTING_MIN_ZOOM ? 0.6 : 1,
+              }}
+              title={Number(mapZoom) >= REPORTING_MIN_ZOOM ? "Report issue" : "Zoom in closer to report"}
+            >
+              Report issue
+            </button>
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: -7,
+              width: 12,
+              height: 12,
+              background: "var(--sl-ui-modal-bg)",
+              borderRight: "1px solid var(--sl-ui-modal-border)",
+              borderBottom: "1px solid var(--sl-ui-modal-border)",
+              transform: "translateX(-50%) rotate(45deg)",
+            }}
+          />
+        </div>
+      )}
+
       {!bulkMode && selectedQueuedLightForPopup && selectedQueuedPopupPixel && (
         <div
           style={{
@@ -10827,15 +20685,8 @@ async function insertReportWithFallback(payload) {
         >
           <div
             style={{
-              background: "var(--sl-ui-modal-bg)",
-              border: "1px solid var(--sl-ui-modal-border)",
-              borderRadius: 12,
-              boxShadow: "var(--sl-ui-modal-shadow)",
-              padding: 10,
-              minWidth: 210,
-              display: "grid",
+              ...markerPopupCardStyle,
               gap: 10,
-              color: "var(--sl-ui-text)",
             }}
           >
             <button
@@ -10861,8 +20712,36 @@ async function insertReportWithFallback(payload) {
               ×
             </button>
 
-            <div style={{ fontWeight: 900, paddingRight: 26 }}>Queued light</div>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>
+              {(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" ? "Queued sign" : "Queued light"}
+            </div>
             <div style={{ fontSize: 12.5, opacity: 0.8 }}>Not saved yet</div>
+            {(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" && (
+              <label style={{ display: "grid", gap: 6, fontSize: 12.5, opacity: 0.95 }}>
+                <span style={{ fontWeight: 800 }}>Sign type</span>
+                <select
+                  value={String(selectedQueuedLightForPopup.sign_type || "other")}
+                  onChange={(e) =>
+                    updateQueuedSignType(selectedQueuedLightForPopup.tempId, e.target.value)
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 700,
+                  }}
+                >
+                  {STREET_SIGN_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <button
               style={{
@@ -10881,7 +20760,7 @@ async function insertReportWithFallback(payload) {
                 openNotice("✅", "", "", { autoCloseMs: 500, compact: true });
               }}
             >
-              Delete Light
+              {(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" ? "Delete Sign" : "Delete Light"}
             </button>
 
             <button style={btnPopupSecondary} onClick={() => setSelectedQueuedTempId(null)}>
@@ -10916,7 +20795,7 @@ async function insertReportWithFallback(payload) {
             style={{
               position: "absolute",
               right: "calc(100% + 10px)",
-              top: `${(Number.isFinite(toolHintIndex) ? toolHintIndex : 0) * 52 + 22}px`,
+              top: `${(Number.isFinite(toolHintIndex) ? toolHintIndex : 0) * 56 + 24}px`,
               transform: "translateY(-50%)",
               pointerEvents: "none",
               zIndex: 1,
@@ -10927,17 +20806,24 @@ async function insertReportWithFallback(payload) {
         )}
         <button
           type="button"
-          className={`sl-map-tool-mini sl-account-btn ${(accountMenuOpen || !!session?.user) ? "is-on" : ""}`}
+          className={`sl-map-tool-mini sl-account-btn ${accountMenuOpen ? "is-on" : ""} ${session?.user ? "signed-in" : ""}`}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!session?.user?.id) {
+              setAccountMenuOpen(false);
+              setAccountView("menu");
+              setAuthGateStep("welcome");
+              setAuthGateOpen(true);
+              return;
+            }
             setAccountMenuOpen((p) => !p);
           }}
           aria-label="Account menu"
           title={session ? "Account" : "Login / Account"}
         >
-          👤
-        </button>
+            <AppIcon src={UI_ICON_SRC.account} size={38} />
+          </button>
 
         {/* Satellite toggle */}
         <button
@@ -10955,8 +20841,11 @@ async function insertReportWithFallback(payload) {
           title={mapType === "satellite" ? "Satellite" : "Street map"}
           aria-label="Toggle satellite map"
         >
-          {mapType === "satellite" ? "🗺️" : "🛰️"}
-        </button>
+            <AppIcon
+              src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite}
+              size={38}
+            />
+          </button>
 
         <button
           type="button"
@@ -10984,7 +20873,7 @@ async function insertReportWithFallback(payload) {
           title="Reset heading"
           aria-label="Reset heading"
         >
-          🧭
+          <AppIcon src={UI_ICON_SRC.headingReset} size={38} />
         </button>
 
         <button
@@ -11008,14 +20897,14 @@ async function insertReportWithFallback(payload) {
           title="Find my location"
           aria-label="Find my location"
         >
-          📍
-        </button>
+            <AppIcon src={UI_ICON_SRC.location} size={38} />
+          </button>
 
         {
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              className={`sl-map-tool-mini ${adminDomainMenuOpen ? "is-on" : ""}`}
+              className={`sl-map-tool-mini sl-has-submenu ${adminDomainMenuOpen ? "is-on" : ""}`}
               title={`Report domain: ${adminDomainMeta.label}`}
               aria-label="Select report domain"
               onClick={(e) => {
@@ -11029,7 +20918,7 @@ async function insertReportWithFallback(payload) {
                 showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 4);
               }}
             >
-              {adminDomainMeta.icon}
+              <AppIcon src={adminDomainMeta.iconSrc} size={38} />
             </button>
             {adminDomainMenuOpen && (
               <div
@@ -11051,7 +20940,7 @@ async function insertReportWithFallback(payload) {
                   minWidth: 170,
                 }}
               >
-                {REPORT_DOMAIN_OPTIONS.map((d) => {
+                {visibleDomainOptions.map((d) => {
                   const isOn = d.key === adminReportDomain;
                   return (
                     <button
@@ -11059,9 +20948,7 @@ async function insertReportWithFallback(payload) {
                       type="button"
                       onClick={() => {
                         if (!d.enabled) return;
-                        setAdminReportDomain(d.key);
-                        setAdminDomainMenuOpen(false);
-                        showToolHint(`Domain: ${d.label}`, 1000, 4);
+                        requestAdminDomainSwitch(d.key, d.label);
                       }}
                       disabled={!d.enabled}
                       style={{
@@ -11071,13 +20958,13 @@ async function insertReportWithFallback(payload) {
                         padding: "7px 9px",
                         borderRadius: 9,
                         border: isOn
-                          ? "1px solid #1b5e20"
+                          ? "1px solid var(--sl-ui-tool-active-border)"
                           : "1px solid var(--sl-ui-modal-btn-secondary-border)",
                         background: isOn
-                          ? "#2e7d32"
+                          ? "var(--sl-ui-tool-active-bg)"
                           : "var(--sl-ui-modal-btn-secondary-bg)",
                         color: isOn
-                          ? "white"
+                          ? "var(--sl-ui-tool-active-text)"
                           : "var(--sl-ui-modal-btn-secondary-text)",
                         fontWeight: 900,
                         cursor: d.enabled ? "pointer" : "not-allowed",
@@ -11085,7 +20972,7 @@ async function insertReportWithFallback(payload) {
                         justifyContent: "flex-start",
                       }}
                     >
-                      <span aria-hidden="true">{d.icon}</span>
+                      <AppIcon src={d.iconSrc} size={30} />
                       <span style={{ fontSize: 12.5 }}>{d.label}</span>
                     </button>
                   );
@@ -11095,7 +20982,7 @@ async function insertReportWithFallback(payload) {
           </div>
         }
 
-        {isStreetlightsDomain && (
+        {canUseStreetlightBulk && (
           <button
             type="button"
             className={`sl-map-tool-mini sl-bulk-tool-btn ${bulkMode ? "is-on" : ""}`}
@@ -11107,9 +20994,12 @@ async function insertReportWithFallback(payload) {
 
               setBulkMode((on) => {
                 const next = !on;
-                showToolHint(next ? "Report multiple lights" : "Report one light", 1100, 5);
+                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 5);
 
                 if (next) {
+                  setDeleteCircleMode(false);
+                  setDeleteCircleDraft(null);
+                  setDeleteCircleConfirmOpen(false);
                   setSelectedOfficialId(null);
                   setMappingMode(false);
                   setMappingQueue([]);
@@ -11126,44 +21016,14 @@ async function insertReportWithFallback(payload) {
             title={bulkMode ? "Bulk selection ON" : "Bulk selection OFF"}
             aria-label="Toggle bulk selection"
           >
-            <span
-              aria-hidden="true"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 0,
-                transform: "translateY(0.5px)",
-              }}
-            >
-              {["#111", "#111"].map((fill, i) => (
-                <span
-                  key={i}
-                  style={{
-                    width: 13,
-                    height: 13,
-                    borderRadius: 999,
-                    background: fill,
-                    border: "1.5px solid #fff",
-                    display: "grid",
-                    placeItems: "center",
-                    fontSize: 7,
-                    lineHeight: 1,
-                    marginLeft: i === 0 ? 0 : -2,
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
-                  }}
-                >
-                  <span style={{ transform: "translateY(0.1px)" }}>💡</span>
-                </span>
-              ))}
-            </span>
+            <AppIcon src={UI_ICON_SRC.bulk} size={38} />
           </button>
         )}
         {(isAdmin || showAdminTools) && (
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              className={`sl-map-tool-mini ${adminToolboxOpen ? "is-on" : ""}`}
+              className={`sl-map-tool-mini sl-has-submenu ${adminToolboxOpen ? "is-on" : ""}`}
               title="Admin tools"
               aria-label="Admin tools"
               onClick={(e) => {
@@ -11177,7 +21037,7 @@ async function insertReportWithFallback(payload) {
                 showToolHint("Admin tools", 1000, 6);
               }}
             >
-              🧰
+              <AppIcon src={UI_ICON_SRC.toolbox} size={38} />
             </button>
 
             {adminToolboxOpen && (
@@ -11208,7 +21068,7 @@ async function insertReportWithFallback(payload) {
                       e.stopPropagation();
                       if (mappingMode) requestExitMappingMode();
                       if (bulkMode) setBulkMode(false);
-                      setOpenReportsOpen(true);
+                      openOpenReports({ inViewOnly: false });
                       setAdminToolboxOpen(false);
                     }}
                     style={{
@@ -11225,9 +21085,9 @@ async function insertReportWithFallback(payload) {
                       justifyContent: "flex-start",
                     }}
                   >
-                    <span aria-hidden="true">📋</span>
-                    <span style={{ fontSize: 12.5 }}>Open Reports</span>
-                  </button>
+                      <AppIcon src={UI_ICON_SRC.openReports} size={30} />
+                      <span style={{ fontSize: 12.5 }}>Reports</span>
+                    </button>
                 )}
 
                 {isAdmin && isStreetlightsDomain && (
@@ -11236,9 +21096,26 @@ async function insertReportWithFallback(payload) {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setOpenReportMapFilterOn((on) => {
+                      setDeleteCircleMode((on) => {
                         const next = !on;
-                        showToolHint(next ? "Open-report filter on" : "Open-report filter off", 1100, 1);
+                        if (next) {
+                          setDeleteCircleDraft(null);
+                          setDeleteCircleConfirmOpen(false);
+                          setDeleteCircleNote("");
+                          setMappingMode(false);
+                          setMappingQueue([]);
+                          setBulkMode(false);
+                          setBulkConfirmOpen(false);
+                          clearBulkSelection();
+                          closeAnyPopup();
+                          suppressPopupsSafe(1200);
+                          openNotice("🟢", "Circle mark fixed on", "Tap map once for center, then again for radius.");
+                        } else {
+                          setDeleteCircleDraft(null);
+                          setDeleteCircleConfirmOpen(false);
+                          setDeleteCircleNote("");
+                          openNotice("✅", "Circle mark fixed off", "", { autoCloseMs: 800, compact: true });
+                        }
                         return next;
                       });
                     }}
@@ -11248,26 +21125,28 @@ async function insertReportWithFallback(payload) {
                       gap: 8,
                       padding: "7px 9px",
                       borderRadius: 9,
-                      border: openReportMapFilterOn
-                        ? "1px solid #1b5e20"
+                      border: deleteCircleMode
+                        ? "1px solid #ff1744"
                         : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      background: openReportMapFilterOn
-                        ? "#2e7d32"
+                      background: deleteCircleMode
+                        ? "rgba(255, 23, 68, 0.12)"
                         : "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: openReportMapFilterOn
-                        ? "white"
+                      color: deleteCircleMode
+                        ? "#ff1744"
                         : "var(--sl-ui-modal-btn-secondary-text)",
                       fontWeight: 900,
                       cursor: "pointer",
                       justifyContent: "flex-start",
                     }}
                   >
-                    <span aria-hidden="true">🔎</span>
-                    <span style={{ fontSize: 12.5 }}>Open Filter</span>
+                    <span style={{ fontSize: 16, lineHeight: 1 }}>◯</span>
+                    <span style={{ fontSize: 12.5 }}>
+                      {deleteCircleMode ? "Circle Mark Fixed On" : "Circle Mark Fixed"}
+                    </span>
                   </button>
                 )}
 
-                {showAdminTools && isStreetlightsDomain && (
+                {showAdminTools && (isStreetlightsDomain || isStreetSignsDomain) && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -11281,6 +21160,10 @@ async function insertReportWithFallback(payload) {
                           setBulkMode(false);
                           setBulkConfirmOpen(false);
                           clearBulkSelection();
+                          setDeleteCircleMode(false);
+                          setDeleteCircleDraft(null);
+                          setDeleteCircleConfirmOpen(false);
+                          setDeleteCircleNote("");
                           suppressPopupsSafe(1600);
                           closeAnyPopup();
                         } else if (mappingQueue.length > 0) {
@@ -11298,17 +21181,23 @@ async function insertReportWithFallback(payload) {
                       gap: 8,
                       padding: "7px 9px",
                       borderRadius: 9,
-                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      background: mappingMode ? "#2e7d32" : "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: mappingMode ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                      border: mappingMode
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: mappingMode
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: mappingMode
+                        ? "var(--sl-ui-tool-active-text)"
+                        : "var(--sl-ui-modal-btn-secondary-text)",
                       fontWeight: 900,
                       cursor: "pointer",
                       justifyContent: "flex-start",
                     }}
                   >
-                    <span aria-hidden="true">💡</span>
-                    <span style={{ fontSize: 12.5 }}>{mappingMode ? "Mapping On" : "Mapping"}</span>
-                  </button>
+                      <AppIcon src={UI_ICON_SRC.mapping} size={30} />
+                      <span style={{ fontSize: 12.5 }}>{mappingMode ? "Mapping On" : "Mapping"}</span>
+                    </button>
                 )}
               </div>
             )}
@@ -11338,39 +21227,39 @@ async function insertReportWithFallback(payload) {
             padding: "0 16px",
           }}
         >
-	          <div
+            <div
               style={{
                 position: "relative",
                 width: "min(720px, calc(100vw - 32px))",
                 marginLeft: 0,
               }}
             >
-	            <div
-	              style={{
-	                position: "fixed",
-	                right: 14,
-	                top: 22,
-	                transform: "none",
-	                display: "grid",
-	                gap: 8,
-	                pointerEvents: "auto",
+              <div
+                style={{
+                  position: "fixed",
+                  left: 16,
+                  top: 16,
+                  transform: "none",
+                  display: "grid",
+                  gap: 8,
+                  pointerEvents: "auto",
                   zIndex: 2201,
-	              }}
-	            >
+                }}
+              >
               <button
                 type="button"
                 onClick={() => nudgeMapZoom(1)}
                 aria-label="Zoom in"
                 title="Zoom in"
-	                style={{
-	                  width: 40,
-	                  height: 40,
-	                  borderRadius: 10,
-	                  border: "1px solid var(--sl-ui-zoom-border)",
-	                  background: "var(--sl-ui-zoom-bg)",
-	                  boxShadow: "var(--sl-ui-zoom-shadow)",
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow)",
                     color: "var(--sl-ui-text)",
-	                  fontSize: 22,
+                    fontSize: 22,
                   fontWeight: 900,
                   cursor: "pointer",
                   lineHeight: 1,
@@ -11383,15 +21272,15 @@ async function insertReportWithFallback(payload) {
                 onClick={() => nudgeMapZoom(-1)}
                 aria-label="Zoom out"
                 title="Zoom out"
-	                style={{
-	                  width: 40,
-	                  height: 40,
-	                  borderRadius: 10,
-	                  border: "1px solid var(--sl-ui-zoom-border)",
-	                  background: "var(--sl-ui-zoom-bg)",
-	                  boxShadow: "var(--sl-ui-zoom-shadow)",
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow)",
                     color: "var(--sl-ui-text)",
-	                  fontSize: 22,
+                    fontSize: 22,
                   fontWeight: 900,
                   cursor: "pointer",
                   lineHeight: 1,
@@ -11402,22 +21291,27 @@ async function insertReportWithFallback(payload) {
             </div>
 
             <div
-	              style={{
-	                background: "var(--sl-ui-surface-bg)",
-	                border: "1px solid var(--sl-ui-surface-border)",
-	                borderRadius: 14,
-	                boxShadow: "var(--sl-ui-surface-shadow)",
-	                padding: "12px 14px",
-	                display: "grid",
-	                gap: 6,
-	                position: "relative",
+                style={{
+                  background: "var(--sl-ui-surface-bg)",
+                  border: "1px solid var(--sl-ui-surface-border)",
+                  borderRadius: 14,
+                  boxShadow: "var(--sl-ui-surface-shadow)",
+                  padding: "15px 14px",
+                  display: "grid",
+                  gap: 6,
+                  position: "relative",
                   color: "var(--sl-ui-text)",
-	              }}
+                }}
             >
               {titleLogoError ? (
-                <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                  CityReport.io
-                </div>
+                <>
+                  <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
+                    CityReport.io
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.78, textAlign: "center", lineHeight: 1.2 }}>
+                    transparent reporting, visible progress.
+                  </div>
+                </>
               ) : (
                 <img
                   src={titleLogoSrc}
@@ -11428,19 +21322,189 @@ async function insertReportWithFallback(payload) {
                     margin: "0 auto",
                     width: "100%",
                     maxWidth: "100%",
-                    height: 72,
+                    height: 90,
                     objectFit: "contain",
                   }}
                 />
               )}
 
-              <div style={{ fontSize: 14, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
-                Local Infrastructure Status Tracker
               </div>
 
-	            </div>
-	          </div>
-	        </div>
+            <div
+              style={{
+                marginTop: 8,
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                width: "min(720px, calc(100vw - 100px))",
+                pointerEvents: "auto",
+              }}
+            >
+              <div style={{ display: "none", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => nudgeMapZoom(1)}
+                  aria-label="Zoom in"
+                  title="Zoom in"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow)",
+                    color: "var(--sl-ui-text)",
+                    fontSize: 22,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => nudgeMapZoom(-1)}
+                  aria-label="Zoom out"
+                  title="Zoom out"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow)",
+                    color: "var(--sl-ui-text)",
+                    fontSize: 22,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  –
+                </button>
+              </div>
+              <div
+                onClick={() => {
+                  if (!isAdmin) return;
+                  openOpenReports({ inViewOnly: true });
+                }}
+                role={isAdmin ? "button" : undefined}
+                tabIndex={isAdmin ? 0 : -1}
+                onKeyDown={(e) => {
+                  if (!isAdmin) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openOpenReports({ inViewOnly: true });
+                  }
+                }}
+                style={{
+                  width: "fit-content",
+                  maxWidth: "min(720px, calc(100vw - 100px))",
+                  marginTop: 2,
+                  fontSize: 11.5,
+                  opacity: 1,
+                  textAlign: "left",
+                  color: inViewCounterColor,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  border: `1px solid ${inViewCounterBorder}`,
+                  background: inViewCounterBg,
+                  boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                  backdropFilter: "blur(2px)",
+                  WebkitBackdropFilter: "blur(2px)",
+                  cursor: isAdmin ? "pointer" : "default",
+                }}
+              >
+                Open reports in view: <b>{openReportsInViewCount}</b>
+              </div>
+              {isStreetlightsDomain && (
+                <>
+                  <div
+                    style={{
+                      width: "fit-content",
+                      maxWidth: "min(720px, calc(100vw - 100px))",
+                      marginTop: 2,
+                      fontSize: 11.5,
+                      opacity: 1,
+                      textAlign: "left",
+                      color: inViewCounterColor,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${inViewCounterBorder}`,
+                      background: inViewCounterBg,
+                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                      backdropFilter: "blur(2px)",
+                      WebkitBackdropFilter: "blur(2px)",
+                      cursor: "default",
+                    }}
+                  >
+                    Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
+                  </div>
+                  <div
+                    style={{
+                      width: "fit-content",
+                      maxWidth: "min(720px, calc(100vw - 100px))",
+                      marginTop: 2,
+                      fontSize: 11.5,
+                      opacity: 1,
+                      textAlign: "left",
+                      color: inViewCounterColor,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${inViewCounterBorder}`,
+                      background: inViewCounterBg,
+                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                      backdropFilter: "blur(2px)",
+                      WebkitBackdropFilter: "blur(2px)",
+                      cursor: "default",
+                    }}
+                  >
+                    Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
+                  </div>
+                </>
+              )}
+              {isAdmin && openAbuseFlagSummary.total > 0 && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setModerationFlagsOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setModerationFlagsOpen(true);
+                    }
+                  }}
+                  style={{
+                    width: "fit-content",
+                    maxWidth: "min(720px, calc(100vw - 100px))",
+                    marginTop: 4,
+                    fontSize: 11.5,
+                    fontWeight: 850,
+                    textAlign: "left",
+                    color: "#fff",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    background:
+                      openAbuseFlagSummary.maxSeverity >= 3
+                        ? "rgba(183, 28, 28, 0.86)"
+                        : openAbuseFlagSummary.maxSeverity >= 2
+                          ? "rgba(239, 108, 0, 0.84)"
+                          : "rgba(33, 150, 83, 0.80)",
+                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                    backdropFilter: "blur(2px)",
+                    WebkitBackdropFilter: "blur(2px)",
+                    cursor: "pointer",
+                  }}
+                  title="Open moderation flags"
+                >
+                  Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
+                </div>
+              )}
+            </div>
+            </div>
+          </div>
 
         {/* Account menu panel (desktop) */}
         <AccountMenuPanel
@@ -11458,7 +21522,7 @@ async function insertReportWithFallback(payload) {
           }}
           onMyReports={() => {
             setAccountMenuOpen(false);
-            setMyReportsOpen(true);
+            openMyReports();
           }}
           onLogout={() => {
             signOut();
@@ -11470,7 +21534,7 @@ async function insertReportWithFallback(payload) {
         {/* =========================
               Bulk Action Bar (desktop)
             ========================= */}
-          {bulkMode && (
+          {canUseStreetlightBulk && bulkMode && (
             <div
               className="sl-overlay-pass"
               style={{
@@ -11487,11 +21551,28 @@ async function insertReportWithFallback(payload) {
                   width: "min(720px, calc(100vw - 32px))",
                   margin: "0 auto",
                   display: "flex",
-                  gap: 10,
+                  flexDirection: "column",
+                  gap: 8,
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
               >
+                <div
+                  style={{
+                    alignSelf: "center",
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    letterSpacing: 0.2,
+                    color: "#fff",
+                    background: "rgba(0,0,0,0.68)",
+                    boxShadow: "0 8px 18px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  Max {BULK_MAX_LIGHTS_PER_SUBMIT} lights per bulk report
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
                 <button
                   onClick={(e) => {
                     e.preventDefault();
@@ -11524,8 +21605,8 @@ async function insertReportWithFallback(payload) {
                       return;
                     }
 
-                    if (Number(mapZoomRef.current || mapZoom) < 17) {
-                      openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
+                    if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+                      openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before submitting bulk reports.`);
                       return;
                     }
 
@@ -11534,6 +21615,8 @@ async function insertReportWithFallback(payload) {
 
                     setNote("");
                     setReportType("out");
+                    setStreetlightAreaPowerOn("");
+                    setStreetlightHazardYesNo("");
                     setBulkConfirmOpen(true);
                   }}
                   disabled={bulkSelectedCount === 0 || saving}
@@ -11542,7 +21625,7 @@ async function insertReportWithFallback(payload) {
                     padding: 10,
                     borderRadius: 12,
                     border: "none",
-                    background: "#1976d2",
+                    background: "var(--sl-ui-brand-green)",
                     color: "white",
                     boxShadow: "0 10px 22px rgba(0,0,0,0.18)",
                     fontWeight: 900,
@@ -11550,8 +21633,9 @@ async function insertReportWithFallback(payload) {
                     opacity: bulkSelectedCount === 0 || saving ? 0.6 : 1,
                   }}
                 >
-                  Report {bulkSelectedCount ? `(${bulkSelectedCount})` : ""}
+                  Save light{bulkSelectedCount === 1 ? "" : "s"} {bulkSelectedCount ? `(${bulkSelectedCount})` : ""}
                 </button>
+                </div>
               </div>
             </div>
           )}
@@ -11598,12 +21682,12 @@ async function insertReportWithFallback(payload) {
                     padding: 10,
                     borderRadius: 12,
                     border: "none",
-                    background: "#2e7d32",
+                    background: "var(--sl-ui-brand-green)",
                     color: "white",
                     fontWeight: 900,
                   }}
                 >
-                  Place {mappingQueue.length} Light{mappingQueue.length !== 1 && "s"}
+                  Place {mappingQueue.length} {mappingUnitLabel}{mappingQueue.length !== 1 && "s"}
                 </button>
               </div>
             </div>
@@ -11624,6 +21708,7 @@ async function insertReportWithFallback(payload) {
         >
           <div
             style={{
+              display: "none",
               width: "fit-content",
               maxWidth: "min(720px, calc(100vw - 32px))",
               margin: "0 auto 6px",
@@ -11643,19 +21728,19 @@ async function insertReportWithFallback(payload) {
             Open reports in view: <b>{openReportsInViewCount}</b>
           </div>
           <div
-	            style={{
-	              width: "min(720px, calc(100vw - 32px))",
-	              margin: "0 auto",
-	              background: "var(--sl-ui-surface-bg)",
-	              border: "1px solid var(--sl-ui-surface-border)",
-	              borderRadius: 14,
-	              boxShadow: "var(--sl-ui-surface-shadow-bottom)",
+              style={{
+                width: "min(720px, calc(100vw - 32px))",
+                margin: "0 auto",
+                background: "var(--sl-ui-surface-bg)",
+                border: "1px solid var(--sl-ui-surface-border)",
+                borderRadius: 14,
+                boxShadow: "var(--sl-ui-surface-shadow-bottom)",
               padding: 12,
               display: "grid",
               gap: 8,
               position: "relative",
                 color: "var(--sl-ui-text)",
-	            }}
+              }}
           >
             <button
               type="button"
@@ -11669,7 +21754,7 @@ async function insertReportWithFallback(payload) {
                 width: 32,
                 height: 32,
                 borderRadius: 999,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                border: "none",
                 background: "var(--sl-ui-modal-btn-secondary-bg)",
                 color: "var(--sl-ui-modal-btn-secondary-text)",
                 fontWeight: 900,
@@ -11680,12 +21765,12 @@ async function insertReportWithFallback(payload) {
                 zIndex: 2,
               }}
             >
-              ℹ
+              <AppIcon src={UI_ICON_SRC.info} size={20} />
             </button>
             <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34 }}>
-              <b>About:</b> Community reporting tool to help track streetlight issues.
+              <b>About:</b> Community reporting tool to help track local infrastructure issues.
               <br />
-              <b>Disclaimer:</b> This does not replace emergency services or official utility reporting.
+              <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
             </div>
           </div>
         </div>
@@ -11703,42 +21788,42 @@ async function insertReportWithFallback(payload) {
             zIndex: 1600,
             display: "grid",
             placeItems: "center",
-            padding: "0 50px",
+            padding: "0 10px",
           }}
         >
-	          <div
+            <div
               style={{
                 position: "relative",
-                width: "min(466px, calc(100vw - 94px))",
-                marginLeft: -38,
+                width: "min(520px, calc(100vw - 20px))",
+                marginLeft: 0,
               }}
             >
-	            <div
-	              style={{
-	                position: "fixed",
-	                right: 14,
-	                top: "calc(10px + env(safe-area-inset-top))",
-	                transform: "none",
-	                display: "grid",
-	                gap: 6,
-	                pointerEvents: "auto",
+              <div
+                style={{
+                  position: "fixed",
+                  left: 10,
+                  bottom: "calc(10px + env(safe-area-inset-bottom) + 86px)",
+                  transform: "none",
+                  display: "none",
+                  gap: 6,
+                  pointerEvents: "auto",
                   zIndex: 2201,
-	              }}
-	            >
+                }}
+              >
               <button
                 type="button"
                 onClick={() => nudgeMapZoom(1)}
                 aria-label="Zoom in"
                 title="Zoom in"
-	                style={{
-	                  width: 34,
-	                  height: 34,
-	                  borderRadius: 9,
-	                  border: "1px solid var(--sl-ui-zoom-border)",
-	                  background: "var(--sl-ui-zoom-bg)",
-	                  boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
                     color: "var(--sl-ui-text)",
-	                  fontSize: 20,
+                    fontSize: 20,
                   fontWeight: 900,
                   cursor: "pointer",
                   lineHeight: 1,
@@ -11751,15 +21836,15 @@ async function insertReportWithFallback(payload) {
                 onClick={() => nudgeMapZoom(-1)}
                 aria-label="Zoom out"
                 title="Zoom out"
-	                style={{
-	                  width: 34,
-	                  height: 34,
-	                  borderRadius: 9,
-	                  border: "1px solid var(--sl-ui-zoom-border)",
-	                  background: "var(--sl-ui-zoom-bg)",
-	                  boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
                     color: "var(--sl-ui-text)",
-	                  fontSize: 20,
+                    fontSize: 20,
                   fontWeight: 900,
                   cursor: "pointer",
                   lineHeight: 1,
@@ -11770,17 +21855,17 @@ async function insertReportWithFallback(payload) {
             </div>
 
             <div
-	              style={{
-	                background: "var(--sl-ui-surface-bg)",
-	                border: "1px solid var(--sl-ui-surface-border)",
-	                borderRadius: 12,
-	                boxShadow: "var(--sl-ui-surface-shadow)",
-	                padding: "10px 12px",
-	                display: "grid",
-	                gap: 5,
-	                position: "relative",
+                style={{
+                  background: "var(--sl-ui-surface-bg)",
+                  border: "1px solid var(--sl-ui-surface-border)",
+                  borderRadius: 12,
+                  boxShadow: "var(--sl-ui-surface-shadow)",
+                  padding: "12px 12px",
+                  display: "grid",
+                  gap: 5,
+                  position: "relative",
                   color: "var(--sl-ui-text)",
-	              }}
+                }}
             >
             {/* Account Menu panel (mobile) */}
             <AccountMenuPanel
@@ -11798,7 +21883,7 @@ async function insertReportWithFallback(payload) {
               }}
               onMyReports={() => {
                 setAccountMenuOpen(false);
-                setMyReportsOpen(true);
+                openMyReports();
               }}
               onLogout={() => {
                 signOut();
@@ -11806,39 +21891,214 @@ async function insertReportWithFallback(payload) {
               }}
             />
 
-            {titleLogoError ? (
-              <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-                CityReport.io
-              </div>
-            ) : (
-              <img
-                src={titleLogoSrc}
-                alt={TITLE_LOGO_ALT}
-                onError={() => setTitleLogoError(true)}
+              {titleLogoError ? (
+                <>
+                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
+                  CityReport.io
+                </div>
+                  <div style={{ fontSize: 11, opacity: 0.78, textAlign: "center", lineHeight: 1.2 }}>
+                    transparent reporting, visible progress.
+                  </div>
+                </>
+              ) : (
+                <img
+                  src={titleLogoSrc}
+                  alt={TITLE_LOGO_ALT}
+                  onError={() => setTitleLogoError(true)}
                 style={{
                   display: "block",
                   margin: "0 auto",
                   width: "100%",
                   maxWidth: "100%",
-                  height: 50,
+                  height: 63,
                   objectFit: "contain",
                 }}
               />
             )}
 
-            <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center", lineHeight: 1.2 }}>
-              Local Infrastructure Status Tracker
-            </div>
+              </div>
 
-	            </div>
-	          </div>
-	        </div>
+            <div
+              style={{
+                marginTop: 7,
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                width: "min(520px, calc(100vw - 20px))",
+                pointerEvents: "auto",
+              }}
+            >
+              <div style={{ display: "grid", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => nudgeMapZoom(1)}
+                  aria-label="Zoom in"
+                  title="Zoom in"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                    color: "var(--sl-ui-text)",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={() => nudgeMapZoom(-1)}
+                  aria-label="Zoom out"
+                  title="Zoom out"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: "1px solid var(--sl-ui-zoom-border)",
+                    background: "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                    color: "var(--sl-ui-text)",
+                    fontSize: 20,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  –
+                </button>
+              </div>
+              <div
+                onClick={() => {
+                  if (!isAdmin) return;
+                  openOpenReports({ inViewOnly: true });
+                }}
+                role={isAdmin ? "button" : undefined}
+                tabIndex={isAdmin ? 0 : -1}
+                onKeyDown={(e) => {
+                  if (!isAdmin) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openOpenReports({ inViewOnly: true });
+                  }
+                }}
+                style={{
+                  width: "fit-content",
+                  maxWidth: "min(520px, calc(100vw - 90px))",
+                  marginTop: 1,
+                  fontSize: 11,
+                  opacity: 1,
+                  textAlign: "left",
+                  color: inViewCounterColor,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  border: `1px solid ${inViewCounterBorder}`,
+                  background: inViewCounterBg,
+                  boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                  backdropFilter: "blur(2px)",
+                  WebkitBackdropFilter: "blur(2px)",
+                  cursor: isAdmin ? "pointer" : "default",
+                }}
+              >
+                Open reports in view: <b>{openReportsInViewCount}</b>
+              </div>
+              {isStreetlightsDomain && (
+                <>
+                  <div
+                    style={{
+                      width: "fit-content",
+                      maxWidth: "min(520px, calc(100vw - 90px))",
+                      marginTop: 1,
+                      fontSize: 11,
+                      opacity: 1,
+                      textAlign: "left",
+                      color: inViewCounterColor,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${inViewCounterBorder}`,
+                      background: inViewCounterBg,
+                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                      backdropFilter: "blur(2px)",
+                      WebkitBackdropFilter: "blur(2px)",
+                      cursor: "default",
+                    }}
+                  >
+                    Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
+                  </div>
+                  <div
+                    style={{
+                      width: "fit-content",
+                      maxWidth: "min(520px, calc(100vw - 90px))",
+                      marginTop: 1,
+                      fontSize: 11,
+                      opacity: 1,
+                      textAlign: "left",
+                      color: inViewCounterColor,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${inViewCounterBorder}`,
+                      background: inViewCounterBg,
+                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                      backdropFilter: "blur(2px)",
+                      WebkitBackdropFilter: "blur(2px)",
+                      cursor: "default",
+                    }}
+                  >
+                    Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
+                  </div>
+                </>
+              )}
+              {isAdmin && openAbuseFlagSummary.total > 0 && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setModerationFlagsOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setModerationFlagsOpen(true);
+                    }
+                  }}
+                  style={{
+                    width: "fit-content",
+                    maxWidth: "min(720px, calc(100vw - 100px))",
+                    marginTop: 4,
+                    fontSize: 11.5,
+                    fontWeight: 850,
+                    textAlign: "left",
+                    color: "#fff",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(255,255,255,0.18)",
+                    background:
+                      openAbuseFlagSummary.maxSeverity >= 3
+                        ? "rgba(183, 28, 28, 0.86)"
+                        : openAbuseFlagSummary.maxSeverity >= 2
+                          ? "rgba(239, 108, 0, 0.84)"
+                          : "rgba(33, 150, 83, 0.80)",
+                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                    backdropFilter: "blur(2px)",
+                    WebkitBackdropFilter: "blur(2px)",
+                    cursor: "pointer",
+                  }}
+                  title="Open moderation flags"
+                >
+                  Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
+                </div>
+              )}
+            </div>
+            </div>
+          </div>
 
 
         {/* =========================
               Bulk Action Bar (mobile)
             ========================= */}
-          {bulkMode && (
+          {canUseStreetlightBulk && bulkMode && (
             <div
               className="sl-overlay-pass"
               style={{
@@ -11855,11 +22115,28 @@ async function insertReportWithFallback(payload) {
                   width: "min(520px, calc(100vw - 20px))",
                   margin: "0 auto",
                   display: "flex",
-                  gap: 10,
+                  flexDirection: "column",
+                  gap: 8,
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
               >
+                <div
+                  style={{
+                    alignSelf: "center",
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    fontSize: 11,
+                    fontWeight: 850,
+                    letterSpacing: 0.2,
+                    color: "#fff",
+                    background: "rgba(0,0,0,0.68)",
+                    boxShadow: "0 8px 18px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  Max {BULK_MAX_LIGHTS_PER_SUBMIT}
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
                 <button
                   onClick={(e) => {
                     e.preventDefault();
@@ -11892,8 +22169,8 @@ async function insertReportWithFallback(payload) {
                       return;
                     }
 
-                    if (Number(mapZoomRef.current || mapZoom) < 17) {
-                      openNotice("🔎", "Zoom in to report", "Zoom in closer (level 17+) before submitting bulk reports.");
+                    if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+                      openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before submitting bulk reports.`);
                       return;
                     }
 
@@ -11902,6 +22179,8 @@ async function insertReportWithFallback(payload) {
 
                     setNote("");
                     setReportType("out");
+                    setStreetlightAreaPowerOn("");
+                    setStreetlightHazardYesNo("");
                     setBulkConfirmOpen(true);
                   }}
                   disabled={bulkSelectedCount === 0 || saving}
@@ -11910,7 +22189,7 @@ async function insertReportWithFallback(payload) {
                     padding: 10,
                     borderRadius: 12,
                     border: "none",
-                    background: "#1976d2",
+                    background: "var(--sl-ui-brand-green)",
                     color: "white",
                     boxShadow: "0 10px 22px rgba(0,0,0,0.18)",
                     fontWeight: 950,
@@ -11918,8 +22197,9 @@ async function insertReportWithFallback(payload) {
                     opacity: bulkSelectedCount === 0 || saving ? 0.6 : 1,
                   }}
                 >
-                  Report {bulkSelectedCount ? `(${bulkSelectedCount})` : ""}
+                  Save light{bulkSelectedCount === 1 ? "" : "s"} {bulkSelectedCount ? `(${bulkSelectedCount})` : ""}
                 </button>
+                </div>
               </div>
             </div>
           )}
@@ -11969,12 +22249,12 @@ async function insertReportWithFallback(payload) {
                     padding: 10,
                     borderRadius: 12,
                     border: "none",
-                    background: "#2e7d32",
+                    background: "var(--sl-ui-brand-green)",
                     color: "white",
                     fontWeight: 900,
                   }}
                 >
-                  Place {mappingQueue.length} Light{mappingQueue.length !== 1 && "s"}
+                  Place {mappingQueue.length} {mappingUnitLabel}{mappingQueue.length !== 1 && "s"}
                 </button>
               </div>
             </div>
@@ -11985,9 +22265,22 @@ async function insertReportWithFallback(payload) {
           <MarkerF
             key={q.tempId}
             position={{ lat: q.lat, lng: q.lng }}
-            icon={gmapsDotIcon("#2ecc71")} // queued preview
+            icon={(q.domain || "streetlights") === "street_signs"
+              ? gmapsImageIcon(signMarkerIconSrcForType(q.sign_type), STREET_SIGN_MARKER_SIZE, {
+                  border: true,
+                  borderColor: "#39ff14",
+                  borderWidth: 3,
+                })
+              : gmapsDotIcon(
+                  "#2ecc71",
+                  "#fff",
+                  "💡",
+                  UI_ICON_SRC.streetlight
+                )} // queued preview
             onClick={() => {
-              // clicking queued light opens its popup
+              // clicking queued asset opens its popup
+              setSelectedOfficialId(null);
+              setSelectedDomainMarker(null);
               setSelectedQueuedTempId(q.tempId);
             }}
           />
@@ -12008,6 +22301,7 @@ async function insertReportWithFallback(payload) {
         >
           <div
             style={{
+              display: "none",
               width: "fit-content",
               maxWidth: "min(520px, calc(100vw - 20px))",
               margin: "0 auto 6px",
@@ -12027,19 +22321,19 @@ async function insertReportWithFallback(payload) {
             Open reports in view: <b>{openReportsInViewCount}</b>
           </div>
           <div
-	            style={{
-	              width: "min(520px, calc(100vw - 20px))",
-	              margin: "0 auto",
-	              background: "var(--sl-ui-surface-bg)",
-	              border: "1px solid var(--sl-ui-surface-border)",
-	              borderRadius: 14,
-	              boxShadow: "var(--sl-ui-surface-shadow-bottom)",
+              style={{
+                width: "min(520px, calc(100vw - 20px))",
+                margin: "0 auto",
+                background: "var(--sl-ui-surface-bg)",
+                border: "1px solid var(--sl-ui-surface-border)",
+                borderRadius: 14,
+                boxShadow: "var(--sl-ui-surface-shadow-bottom)",
               padding: 10,
               display: "grid",
               gap: 8,
               position: "relative",
                 color: "var(--sl-ui-text)",
-	            }}
+              }}
           >
             <button
               type="button"
@@ -12053,7 +22347,7 @@ async function insertReportWithFallback(payload) {
                 width: 30,
                 height: 30,
                 borderRadius: 999,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                border: "none",
                 background: "var(--sl-ui-modal-btn-secondary-bg)",
                 color: "var(--sl-ui-modal-btn-secondary-text)",
                 fontWeight: 900,
@@ -12065,13 +22359,13 @@ async function insertReportWithFallback(payload) {
                 zIndex: 2,
               }}
             >
-              ℹ
+              <AppIcon src={UI_ICON_SRC.info} size={18} />
             </button>
 
             <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30 }}>
-              <b>About:</b> Community reporting tool to help track streetlight issues.
+              <b>About:</b> Community reporting tool to help track local infrastructure issues.
               <br />
-              <b>Disclaimer:</b> This does not replace emergency services or official utility reporting.
+              <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ export default defineConfig({
     allowedHosts: [
       ".ngrok-free.dev",
       ".ngrok-free.app",
+      ".cityreport.io",
     ],
   },
 });

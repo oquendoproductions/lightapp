@@ -1,0 +1,14 @@
+[functions.email-pothole-report]
+verify_jwt = false
+
+[functions.rate-limit-gate]
+verify_jwt = false
+
+[functions.email-water-drain-report]
+verify_jwt = false
+
+[functions.cache-official-light-geo]
+verify_jwt = false
+
+[functions.lead-capture]
+verify_jwt = false
