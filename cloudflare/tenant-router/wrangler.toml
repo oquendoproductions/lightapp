@@ -1,0 +1,14 @@
+name = "cityreport-tenant-router"
+main = "src/index.js"
+compatibility_date = "2026-03-21"
+workers_dev = false
+
+routes = [
+  { pattern = "cityreport.io/*", zone_name = "cityreport.io" },
+  { pattern = "www.cityreport.io/*", zone_name = "cityreport.io" },
+  { pattern = "*.cityreport.io/*", zone_name = "cityreport.io" },
+]
+
+[vars]
+PAGES_ORIGIN = "lightapp-ak2.pages.dev"
+DEFAULT_TENANT_KEY = "ashtabulacity"

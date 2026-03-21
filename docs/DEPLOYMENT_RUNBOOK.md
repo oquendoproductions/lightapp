@@ -33,7 +33,8 @@ git push origin main
 1. Keep `cityreport.io` apex serving marketing homepage mode.
 2. Keep municipality canonical host pattern: `{slug}.cityreport.io`.
 3. Keep dev host pattern: `dev.cityreport.io/{slug}`.
-4. Do not cut over DNS for municipality canonical routes until Gate D/E checks pass.
+4. Deploy worker router from `cloudflare/tenant-router` (see `/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/docs/CLOUDFLARE_WILDCARD_ROUTER.md`).
+5. Do not cut over DNS for municipality canonical routes until Gate D/E checks pass.
 
 ## Production Smoke Checklist
 1. `https://cityreport.io` shows marketing homepage.
