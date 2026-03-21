@@ -399,6 +399,46 @@ function extractPolygonsFromGeoJson(raw) {
   return out;
 }
 
+function boundaryViewportFromPolygons(polygons) {
+  if (!Array.isArray(polygons) || polygons.length <= 0) return null;
+  let north = -Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let west = Infinity;
+  let pointCount = 0;
+
+  for (const poly of polygons) {
+    if (!Array.isArray(poly)) continue;
+    for (const ring of poly) {
+      if (!Array.isArray(ring)) continue;
+      for (const pt of ring) {
+        const lat = Number(pt?.lat);
+        const lng = Number(pt?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        pointCount += 1;
+        if (lat > north) north = lat;
+        if (lat < south) south = lat;
+        if (lng > east) east = lng;
+        if (lng < west) west = lng;
+      }
+    }
+  }
+
+  if (!(pointCount > 0)) return null;
+  if (![north, south, east, west].every(Number.isFinite)) return null;
+
+  return {
+    north,
+    south,
+    east,
+    west,
+    center: {
+      lat: (north + south) / 2,
+      lng: (east + west) / 2,
+    },
+  };
+}
+
 function isPointInRing(lat, lng, ring) {
   if (!Array.isArray(ring) || ring.length < 3) return false;
   let inside = false;
@@ -10034,6 +10074,7 @@ export default function App() {
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
+  const boundaryCameraSignatureRef = useRef("");
   const zoomDragRef = useRef({
     lastTapTs: 0,
     lastTapX: 0,
@@ -12457,7 +12498,7 @@ export default function App() {
           .select("value")
           .eq("key", boundaryKey)
           .maybeSingle();
-        if ((!cfg?.value || cfgErr) && boundaryKey !== "ashtabula_city_geojson") {
+        if ((!cfg?.value || cfgErr) && tenantKey === "ashtabulacity" && boundaryKey !== "ashtabula_city_geojson") {
           const fallback = await supabase
             .from("app_config")
             .select("value")
@@ -12469,9 +12510,10 @@ export default function App() {
           }
         }
         cityBoundaryErr = cfgErr || null;
-        if (!cfgErr) setCityBoundaryGeojson(cfg?.value || null);
+        setCityBoundaryGeojson(cfg?.value || null);
       } catch (e) {
         cityBoundaryErr = e;
+        setCityBoundaryGeojson(null);
       }
       if (cityBoundaryErr) {
         console.warn("[app_config city boundary] load warning:", cityBoundaryErr?.message || cityBoundaryErr);
@@ -13232,6 +13274,10 @@ export default function App() {
     () => extractPolygonsFromGeoJson(cityBoundaryGeojson),
     [cityBoundaryGeojson]
   );
+  const cityBoundaryViewport = useMemo(
+    () => boundaryViewportFromPolygons(cityLimitPolygons),
+    [cityLimitPolygons]
+  );
   const cityBoundaryOuterRings = useMemo(
     () => (cityLimitPolygons || []).map((poly) => poly?.[0]).filter((ring) => Array.isArray(ring) && ring.length >= 3),
     [cityLimitPolygons]
@@ -13260,6 +13306,60 @@ export default function App() {
     (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
     [cityLimitPolygons]
   );
+
+  useEffect(() => {
+    if (!cityBoundaryViewport) {
+      boundaryCameraSignatureRef.current = "";
+      return;
+    }
+
+    const map = mapRef.current;
+    const tenantKey = activeTenantKey();
+    const signature = [
+      tenantKey,
+      cityBoundaryViewport.north.toFixed(6),
+      cityBoundaryViewport.south.toFixed(6),
+      cityBoundaryViewport.east.toFixed(6),
+      cityBoundaryViewport.west.toFixed(6),
+    ].join("|");
+
+    const nextCenter = cityBoundaryViewport.center;
+    setMapCenter((prev) => {
+      if (!prev) return nextCenter;
+      if (Math.abs(Number(prev.lat) - Number(nextCenter.lat)) < 0.000001 && Math.abs(Number(prev.lng) - Number(nextCenter.lng)) < 0.000001) {
+        return prev;
+      }
+      return nextCenter;
+    });
+
+    if (!map) return;
+    if (boundaryCameraSignatureRef.current === signature) return;
+    if (!window?.google?.maps?.LatLngBounds) return;
+
+    try {
+      const bounds = new window.google.maps.LatLngBounds(
+        { lat: cityBoundaryViewport.south, lng: cityBoundaryViewport.west },
+        { lat: cityBoundaryViewport.north, lng: cityBoundaryViewport.east }
+      );
+      map.fitBounds(bounds, 42);
+      boundaryCameraSignatureRef.current = signature;
+      window.requestAnimationFrame(() => {
+        const c = map.getCenter?.();
+        const z = Number(map.getZoom?.());
+        const lat = Number(c?.lat?.());
+        const lng = Number(c?.lng?.());
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          setMapCenter({ lat, lng });
+        }
+        if (Number.isFinite(z)) {
+          mapZoomRef.current = z;
+          setMapZoom(Math.round(z));
+        }
+      });
+    } catch (err) {
+      console.warn("[boundary camera] fitBounds failed:", err?.message || err);
+    }
+  }, [cityBoundaryViewport, gmapsRef]);
 
   const selectedDomainReports = useMemo(() => {
     if (isPotholesDomain) return potholeReports;
