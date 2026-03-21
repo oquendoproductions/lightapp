@@ -136,6 +136,9 @@ const REPORT_DOMAIN_OPTIONS = [
   { key: "potholes", label: "Potholes", icon: "🕳️", iconSrc: UI_ICON_SRC.pothole, enabled: true },
   { key: "water_drain_issues", label: "Water / Drain Issues", icon: "💧", iconSrc: UI_ICON_SRC.waterMain, enabled: true },
   { key: "streetlights", label: "Streetlights (Utility-owned)", icon: "💡", iconSrc: UI_ICON_SRC.streetlight, enabled: true },
+  { key: "street_signs", label: "Street Signs", icon: "🪧", iconSrc: UI_ICON_SRC.streetSign, enabled: true },
+  { key: "power_outage", label: "Power Outage", icon: "⚡", iconSrc: UI_ICON_SRC.powerOutage, enabled: true },
+  { key: "water_main", label: "Water Main", icon: "🚰", iconSrc: UI_ICON_SRC.waterMain, enabled: true },
 ];
 const DEFAULT_PUBLIC_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
 const STREET_SIGN_TYPE_OPTIONS = [
