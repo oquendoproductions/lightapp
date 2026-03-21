@@ -304,6 +304,7 @@ export default function PlatformAdminApp() {
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "municipality_admin" });
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
+  const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   const [status, setStatus] = useState({
@@ -536,6 +537,7 @@ export default function PlatformAdminApp() {
     setActiveTab("tenants");
     setTenantForm(initialTenantForm());
     setProfileForm(initialProfileForm());
+    setIsEditingTenant(true);
     setIsEditingProfile(true);
     setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
   }, []);
@@ -549,6 +551,7 @@ export default function PlatformAdminApp() {
     setSelectedTenantKey(key);
     setEntryStep("tenant");
     setActiveTab("domains");
+    setIsEditingTenant(false);
     setIsEditingProfile(false);
     setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
   }, []);
@@ -556,6 +559,7 @@ export default function PlatformAdminApp() {
   const returnToStart = useCallback(() => {
     setEntryStep("start");
     setTenantSearch("");
+    setIsEditingTenant(false);
     setIsEditingProfile(false);
   }, []);
 
@@ -598,6 +602,7 @@ export default function PlatformAdminApp() {
 
   useEffect(() => {
     if (entryStep !== "tenant") return;
+    if (isEditingTenant) return;
     if (!selectedTenant) return;
     setTenantForm({
       tenant_key: String(selectedTenant.tenant_key || ""),
@@ -609,7 +614,7 @@ export default function PlatformAdminApp() {
       is_pilot: Boolean(selectedTenant.is_pilot),
       active: Boolean(selectedTenant.active),
     });
-  }, [entryStep, selectedTenant]);
+  }, [entryStep, isEditingTenant, selectedTenant]);
 
   useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -686,6 +691,9 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, tenant: `Saved tenant ${payload.tenant_key}.` }));
     if (entryStep === "add") {
       setTenantForm(initialTenantForm());
+      setIsEditingTenant(true);
+    } else {
+      setIsEditingTenant(false);
     }
     setSelectedTenantKey(payload.tenant_key);
     await refreshControlPlaneData();
@@ -1007,6 +1015,7 @@ export default function PlatformAdminApp() {
   const inAddTenantFlow = entryStep === "add";
   const inEntryPrompt = entryStep === "start";
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+  const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const sessionDisplayLabel = sessionEmail || (sessionUserId ? `${sessionUserId.slice(0, 8)}...${sessionUserId.slice(-4)}` : "");
 
@@ -1211,10 +1220,40 @@ export default function PlatformAdminApp() {
         {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Update Tenant Details"}</h2>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Tenant Details"}</h2>
+                {!inAddTenantFlow ? (
+                  tenantReadOnly ? (
+                    <button type="button" style={buttonAlt} onClick={() => setIsEditingTenant(true)}>
+                      Edit Tenant Details
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      style={buttonAlt}
+                      onClick={() => {
+                        if (!selectedTenant) return;
+                        setTenantForm({
+                          tenant_key: String(selectedTenant.tenant_key || ""),
+                          name: String(selectedTenant.name || ""),
+                          primary_subdomain: String(selectedTenant.primary_subdomain || ""),
+                          boundary_config_key: String(selectedTenant.boundary_config_key || ""),
+                          notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
+                          notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
+                          is_pilot: Boolean(selectedTenant.is_pilot),
+                          active: Boolean(selectedTenant.active),
+                        });
+                        setIsEditingTenant(false);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )
+                ) : null}
+              </div>
               {!inAddTenantFlow ? (
                 <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                  You are editing the active tenant workspace. New tenant creation is available from Start Here.
+                  Review tenant settings here. Use Edit to make changes.
                 </p>
               ) : null}
               <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
@@ -1235,57 +1274,74 @@ export default function PlatformAdminApp() {
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Tenant Name</span>
                   <input
+                    readOnly={tenantReadOnly}
                     value={tenantForm.name}
                     onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))}
                     placeholder="Ashtabula City"
-                    style={inputBase}
+                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Tenant URL</span>
                   <input
+                    readOnly={tenantReadOnly}
                     value={tenantForm.primary_subdomain}
                     onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))}
                     placeholder="ashtabulacity.cityreport.io"
-                    style={inputBase}
+                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Boundary Config Key</span>
                   <input
+                    readOnly={tenantReadOnly}
                     value={tenantForm.boundary_config_key}
                     onChange={(e) => setTenantForm((p) => ({ ...p, boundary_config_key: e.target.value }))}
                     placeholder="ashtabula_city_geojson"
-                    style={inputBase}
+                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Pothole Notification Email</span>
                   <input
+                    readOnly={tenantReadOnly}
                     value={tenantForm.notification_email_potholes}
                     onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))}
                     placeholder="potholes@city.gov"
-                    style={inputBase}
+                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Water / Drain Notification Email</span>
                   <input
+                    readOnly={tenantReadOnly}
                     value={tenantForm.notification_email_water_drain}
                     onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))}
                     placeholder="utilities@city.gov"
-                    style={inputBase}
+                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={tenantForm.is_pilot} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} /> Pilot Municipality
+                  <input
+                    type="checkbox"
+                    checked={tenantForm.is_pilot}
+                    disabled={tenantReadOnly}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))}
+                  /> Pilot Municipality
                 </label>
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={tenantForm.active} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Tenant
+                  <input
+                    type="checkbox"
+                    checked={tenantForm.active}
+                    disabled={tenantReadOnly}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))}
+                  /> Active Tenant
                 </label>
-                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>
-                  {inAddTenantFlow ? "Save Tenant" : "Save Updates"}
-                </button>
+                {(inAddTenantFlow || !tenantReadOnly) ? (
+                  <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>
+                    {inAddTenantFlow ? "Save Tenant" : "Save Tenant Details"}
+                  </button>
+                ) : null}
               </form>
               {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.tenant}</div> : null}
             </div>
