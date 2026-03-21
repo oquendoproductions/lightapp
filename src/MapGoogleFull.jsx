@@ -12509,6 +12509,40 @@ export default function App() {
             cfgErr = null;
           }
         }
+        if (!cfg?.value || cfgErr) {
+          const { data: boundaryFiles, error: boundaryFilesErr } = await supabase
+            .from("tenant_files")
+            .select("storage_bucket,storage_path")
+            .eq("tenant_key", tenantKey)
+            .eq("file_category", "boundary_geojson")
+            .eq("active", true)
+            .order("uploaded_at", { ascending: false })
+            .limit(1);
+          if (!boundaryFilesErr && Array.isArray(boundaryFiles) && boundaryFiles.length > 0) {
+            const newest = boundaryFiles[0] || {};
+            const bucket = String(newest?.storage_bucket || "tenant-files").trim() || "tenant-files";
+            const path = String(newest?.storage_path || "").trim();
+            if (path) {
+              const signed = await supabase.storage.from(bucket).createSignedUrl(path, 90);
+              const signedUrl = String(signed?.data?.signedUrl || "").trim();
+              if (!signed?.error && signedUrl) {
+                try {
+                  const resp = await fetch(signedUrl, { method: "GET" });
+                  if (resp.ok) {
+                    const rawText = await resp.text();
+                    const parsed = parseGeoJsonValue(rawText);
+                    if (parsed) {
+                      cfg = { value: parsed };
+                      cfgErr = null;
+                    }
+                  }
+                } catch {
+                  // ignore boundary file fetch/parse fallback failure
+                }
+              }
+            }
+          }
+        }
         cityBoundaryErr = cfgErr || null;
         setCityBoundaryGeojson(cfg?.value || null);
       } catch (e) {
