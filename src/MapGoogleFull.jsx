@@ -11542,9 +11542,11 @@ export default function App() {
         }
         return;
       }
+      const tenantKey = activeTenantKey();
       const { data, error } = await supabase
         .from("tenant_visibility_config")
-        .select("domain,visibility");
+        .select("domain,visibility")
+        .eq("tenant_key", tenantKey);
 
       if (cancelled) return;
       if (error) {
