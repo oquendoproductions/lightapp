@@ -41,6 +41,12 @@ function writeSessionRecord(cacheKey, value, ttlMs) {
   }
 }
 
+function shouldCacheValue(value) {
+  if (!value || typeof value !== "object") return false;
+  if (value.active === false) return false;
+  return true;
+}
+
 export async function loadTenantConfigCached(tenantKey, fetcher, opts = {}) {
   const ttlMs = Math.max(1000, Number(opts.ttlMs) || 300000);
   const cacheKey = keyFor(tenantKey);
@@ -55,6 +61,13 @@ export async function loadTenantConfigCached(tenantKey, fetcher, opts = {}) {
   }
 
   const value = await fetcher();
+
+  if (!shouldCacheValue(value)) {
+    // Keep missing/inactive tenant checks fresh so newly configured tenants become available on refresh.
+    clearTenantConfigCache(tenantKey);
+    return value;
+  }
+
   const record = {
     value,
     expiresAt: nowMs() + ttlMs,
