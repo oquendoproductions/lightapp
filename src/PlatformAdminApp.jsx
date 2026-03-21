@@ -104,6 +104,7 @@ function initialMapFeaturesForm() {
     show_boundary_border: true,
     shade_outside_boundary: true,
     outside_shade_opacity: "0.42",
+    boundary_border_color: "#e53935",
   };
 }
 
@@ -117,6 +118,12 @@ function sanitizeTenantKey(value) {
 function cleanOptional(value) {
   const v = String(value || "").trim();
   return v || null;
+}
+
+function sanitizeHexColor(value, fallback = "#e53935") {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  return String(fallback || "#e53935").toLowerCase();
 }
 
 function makeLiveUrl(primarySubdomain, tenantKey) {
@@ -294,7 +301,7 @@ export default function PlatformAdminApp() {
   const loadTenantMapFeatures = useCallback(async () => {
     const { data, error } = await supabase
       .from("tenant_map_features")
-      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity");
+      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color");
     if (error) throw error;
     const next = {};
     for (const row of data || []) {
@@ -306,6 +313,7 @@ export default function PlatformAdminApp() {
         outside_shade_opacity: Number.isFinite(Number(row?.outside_shade_opacity))
           ? Number(row.outside_shade_opacity)
           : 0.42,
+        boundary_border_color: sanitizeHexColor(row?.boundary_border_color, "#e53935"),
       };
     }
     setTenantMapFeaturesByTenant(next);
@@ -489,6 +497,7 @@ export default function PlatformAdminApp() {
         show_boundary_border: features.show_boundary_border !== false,
         shade_outside_boundary: features.shade_outside_boundary !== false,
         outside_shade_opacity: String(Number.isFinite(Number(features.outside_shade_opacity)) ? Number(features.outside_shade_opacity) : 0.42),
+        boundary_border_color: sanitizeHexColor(features.boundary_border_color, "#e53935"),
       });
     } else {
       setMapFeaturesForm(initialMapFeaturesForm());
@@ -647,11 +656,13 @@ export default function PlatformAdminApp() {
 
     const opacityRaw = Number(mapFeaturesForm?.outside_shade_opacity);
     const opacity = Number.isFinite(opacityRaw) ? Math.max(0, Math.min(1, opacityRaw)) : 0.42;
+    const borderColor = sanitizeHexColor(mapFeaturesForm?.boundary_border_color, "#e53935");
     const mapPayload = {
       tenant_key: key,
       show_boundary_border: Boolean(mapFeaturesForm?.show_boundary_border),
       shade_outside_boundary: Boolean(mapFeaturesForm?.shade_outside_boundary),
       outside_shade_opacity: opacity,
+      boundary_border_color: borderColor,
     };
 
     const [{ error: visError }, { error: featureError }] = await Promise.all([
@@ -1186,6 +1197,15 @@ export default function PlatformAdminApp() {
                       value={mapFeaturesForm.outside_shade_opacity}
                       onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: e.target.value }))}
                       style={inputBase}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240 }}>
+                    <span>Boundary border color</span>
+                    <input
+                      type="color"
+                      value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
+                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                      style={{ ...inputBase, padding: 4, height: 38 }}
                     />
                   </label>
                 </div>
