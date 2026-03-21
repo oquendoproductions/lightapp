@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
-import { useTenant } from "./tenant/useTenant";
+
+const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const TITLE_LOGO_ALT = "CityReport.io";
 
 const DOMAIN_OPTIONS = [
   { key: "streetlights", label: "Streetlights" },
@@ -103,6 +105,19 @@ const tableHeadCell = {
   padding: "8px 0",
   color: palette.textMuted,
   fontWeight: 800,
+};
+
+const brandLockup = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+};
+
+const brandLogo = {
+  width: 168,
+  maxWidth: "44vw",
+  height: "auto",
+  display: "block",
 };
 
 function initialTenantForm() {
@@ -223,9 +238,9 @@ function statusText(error, okText) {
 }
 
 export default function PlatformAdminApp() {
-  const tenant = useTenant();
   const [authReady, setAuthReady] = useState(false);
   const [sessionUserId, setSessionUserId] = useState("");
+  const [sessionEmail, setSessionEmail] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -433,7 +448,9 @@ export default function PlatformAdminApp() {
     const syncSession = (session) => {
       if (!mounted) return;
       const userId = String(session?.user?.id || "").trim();
+      const userEmail = String(session?.user?.email || "").trim().toLowerCase();
       setSessionUserId(userId);
+      setSessionEmail(userEmail);
       setLoginError("");
       setAuthReady(true);
     };
@@ -955,12 +972,16 @@ export default function PlatformAdminApp() {
   const inAddTenantFlow = entryStep === "add";
   const inEntryPrompt = entryStep === "start";
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+  const sessionDisplayLabel = sessionEmail || (sessionUserId ? `${sessionUserId.slice(0, 8)}...${sessionUserId.slice(-4)}` : "");
 
   if (!authReady) {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>CityReport Platform Admin</h1>
+          <div style={{ ...brandLockup, marginBottom: 10 }}>
+            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
+          </div>
+          <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>Loading session...</p>
         </section>
       </main>
@@ -971,7 +992,10 @@ export default function PlatformAdminApp() {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card, display: "grid", gap: 10 }}>
-          <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>CityReport Platform Admin</h1>
+          <div style={brandLockup}>
+            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
+          </div>
+          <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>
             Sign in with your platform admin account to manage municipalities and operational settings.
           </p>
@@ -1006,7 +1030,10 @@ export default function PlatformAdminApp() {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <h1 style={{ marginTop: 0, color: palette.navy900 }}>CityReport Platform Admin</h1>
+          <div style={{ ...brandLockup, marginBottom: 10 }}>
+            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
+          </div>
+          <h1 style={{ marginTop: 0, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ marginBottom: 0 }}>
             Access denied. This route is restricted to platform-admin users in `public.admins`.
           </p>
@@ -1029,7 +1056,10 @@ export default function PlatformAdminApp() {
         <header style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "grid", gap: 4 }}>
-              <h1 style={{ margin: 0, color: palette.navy900 }}>CityReport Platform Control Plane</h1>
+              <div style={brandLockup}>
+                <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={{ ...brandLogo, width: 176 }} />
+              </div>
+              <h1 style={{ margin: 0, color: palette.navy900 }}>Platform Control Plane</h1>
               <span style={{ fontSize: 12.5, color: palette.textMuted }}>
                 Tenant operations dashboard for implementation, governance, and support.
               </span>
@@ -1044,7 +1074,7 @@ export default function PlatformAdminApp() {
             </div>
           </div>
           <p style={{ margin: 0, color: palette.textMuted }}>
-            Mode: <b>{tenant.mode}</b>. Signed in as <b>{sessionUserId}</b>.
+            Access: <b>Platform Administrator</b>{sessionDisplayLabel ? <>. Account: <b>{sessionDisplayLabel}</b>.</> : "."}
           </p>
           {inEntryPrompt ? (
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
