@@ -84,6 +84,12 @@ const buttonAlt = {
   boxShadow: "none",
 };
 
+const signOutButton = {
+  ...buttonAlt,
+  padding: "5px 10px",
+  minHeight: 30,
+};
+
 const subPanel = {
   border: `1px solid ${palette.border}`,
   borderRadius: 12,
@@ -558,6 +564,21 @@ export default function PlatformAdminApp() {
   }, [tenantOptions, selectedTenantKey]);
 
   useEffect(() => {
+    if (entryStep !== "tenant") return;
+    if (!selectedTenant) return;
+    setTenantForm({
+      tenant_key: String(selectedTenant.tenant_key || ""),
+      name: String(selectedTenant.name || ""),
+      primary_subdomain: String(selectedTenant.primary_subdomain || ""),
+      boundary_config_key: String(selectedTenant.boundary_config_key || ""),
+      notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
+      notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
+      is_pilot: Boolean(selectedTenant.is_pilot),
+      active: Boolean(selectedTenant.active),
+    });
+  }, [entryStep, selectedTenant]);
+
+  useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) return;
 
@@ -617,8 +638,11 @@ export default function PlatformAdminApp() {
 
   const saveTenant = useCallback(async (event) => {
     event.preventDefault();
+    const resolvedTenantKey = entryStep === "tenant"
+      ? sanitizeTenantKey(selectedTenantKey)
+      : sanitizeTenantKey(tenantForm.tenant_key);
     const payload = {
-      tenant_key: sanitizeTenantKey(tenantForm.tenant_key),
+      tenant_key: resolvedTenantKey,
       name: String(tenantForm.name || "").trim(),
       primary_subdomain: String(tenantForm.primary_subdomain || "").trim().toLowerCase(),
       boundary_config_key: String(tenantForm.boundary_config_key || "").trim(),
@@ -653,10 +677,12 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, tenant: `Saved tenant ${payload.tenant_key}.` }));
-    setTenantForm(initialTenantForm());
+    if (entryStep === "add") {
+      setTenantForm(initialTenantForm());
+    }
     setSelectedTenantKey(payload.tenant_key);
     await refreshControlPlaneData();
-  }, [tenantForm, logAudit, refreshControlPlaneData]);
+  }, [entryStep, selectedTenantKey, tenantForm, logAudit, refreshControlPlaneData]);
 
   const toggleTenantActive = useCallback(async (row) => {
     const key = sanitizeTenantKey(row?.tenant_key);
@@ -799,7 +825,7 @@ export default function PlatformAdminApp() {
 
   const assignTenantAdmin = useCallback(async (event) => {
     event.preventDefault();
-    const tenant_key = sanitizeTenantKey(assignForm.tenant_key || selectedTenantKey);
+    const tenant_key = sanitizeTenantKey(selectedTenantKey);
     const user_id = String(assignForm.user_id || "").trim();
     const role = String(assignForm.role || "municipality_admin").trim() || "municipality_admin";
 
@@ -825,7 +851,7 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, users: `Assigned ${user_id} to ${tenant_key}.` }));
-    setAssignForm({ tenant_key, user_id: "", role: "municipality_admin" });
+    setAssignForm({ tenant_key: "", user_id: "", role: "municipality_admin" });
     await refreshControlPlaneData();
   }, [assignForm, selectedTenantKey, logAudit, refreshControlPlaneData]);
 
@@ -1041,7 +1067,7 @@ export default function PlatformAdminApp() {
             Signed in as <b>{sessionUserId}</b>.
           </p>
           <div>
-            <button type="button" style={buttonBase} onClick={() => void signOutPlatformAdmin()}>
+            <button type="button" style={signOutButton} onClick={() => void signOutPlatformAdmin()}>
               Sign out
             </button>
           </div>
@@ -1065,10 +1091,13 @@ export default function PlatformAdminApp() {
               </span>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" style={buttonAlt} onClick={() => void refreshControlPlaneData()}>
-                Refresh
-              </button>
-              <button type="button" style={buttonAlt} onClick={() => void signOutPlatformAdmin()}>
+              {inTenantWorkspace ? (
+                <button type="button" style={buttonAlt} onClick={returnToStart}>Switch Tenant</button>
+              ) : null}
+              {inTenantWorkspace ? (
+                <button type="button" style={buttonAlt} onClick={openAddTenantStep}>Add Tenant</button>
+              ) : null}
+              <button type="button" style={signOutButton} onClick={() => void signOutPlatformAdmin()}>
                 Sign out
               </button>
             </div>
@@ -1125,31 +1154,31 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {TAB_OPTIONS.map((tab) => {
-                  const selected = activeTab === tab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => setActiveTab(tab.key)}
-                      style={{
-                        ...buttonBase,
-                        border: selected ? `1px solid ${palette.mint700}` : buttonBase.border,
-                        background: selected ? `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)` : buttonBase.background,
-                        color: selected ? "white" : buttonBase.color,
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                  );
-                })}
-              </div>
               <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
                 <div style={{ fontSize: 12, color: palette.textMuted }}>Current Tenant Workspace</div>
                 <div style={{ fontSize: 15, fontWeight: 900, color: palette.navy900 }}>
                   {selectedTenant?.name || selectedTenantKey}
                   <span style={{ fontWeight: 600, color: palette.textMuted }}> ({selectedTenantKey})</span>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {TAB_OPTIONS.map((tab) => {
+                    const selected = activeTab === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveTab(tab.key)}
+                        style={{
+                          ...buttonBase,
+                          border: selected ? `1px solid ${palette.mint700}` : buttonBase.border,
+                          background: selected ? `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)` : buttonBase.background,
+                          color: selected ? "white" : buttonBase.color,
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
@@ -1162,8 +1191,6 @@ export default function PlatformAdminApp() {
                       Open Dev Map
                     </a>
                   ) : null}
-                  <button type="button" style={buttonAlt} onClick={returnToStart}>Switch Tenant</button>
-                  <button type="button" style={buttonAlt} onClick={openAddTenantStep}>Add Tenant</button>
                 </div>
               </div>
             </>
@@ -1174,7 +1201,12 @@ export default function PlatformAdminApp() {
         {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Create / Update Tenant"}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Update Tenant Details"}</h2>
+              {!inAddTenantFlow ? (
+                <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                  You are editing the active tenant workspace. New tenant creation is available from Start Here.
+                </p>
+              ) : null}
               <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Tenant Key (system ID)</span>
@@ -1182,7 +1214,12 @@ export default function PlatformAdminApp() {
                     value={tenantForm.tenant_key}
                     onChange={(e) => setTenantForm((p) => ({ ...p, tenant_key: e.target.value }))}
                     placeholder="ashtabulacity"
-                    style={inputBase}
+                    readOnly={!inAddTenantFlow}
+                    style={{
+                      ...inputBase,
+                      background: !inAddTenantFlow ? "#eef4fb" : inputBase.background,
+                      cursor: !inAddTenantFlow ? "not-allowed" : "text",
+                    }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -1236,13 +1273,15 @@ export default function PlatformAdminApp() {
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={tenantForm.active} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Tenant
                 </label>
-                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>Save Tenant</button>
+                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>
+                  {inAddTenantFlow ? "Save Tenant" : "Save Updates"}
+                </button>
               </form>
               {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.tenant}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "New Tenant Intake"}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "Update Intake Profile"}</h2>
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Legal organization name" style={inputBase} />
                 <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Public display name" style={inputBase} />
@@ -1337,17 +1376,35 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Municipality Admin</h2>
-              <form onSubmit={assignTenantAdmin} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1fr) 2fr 1fr auto", gap: 8, alignItems: "center" }}>
-                <input list="tenant-options" value={assignForm.tenant_key || selectedTenantKey} onChange={(e) => setAssignForm((p) => ({ ...p, tenant_key: e.target.value }))} placeholder="tenant_key" style={inputBase} />
-                <datalist id="tenant-options">
-                  {tenantOptions.map((key) => <option key={key} value={key} />)}
-                </datalist>
-                <input value={assignForm.user_id} onChange={(e) => setAssignForm((p) => ({ ...p, user_id: e.target.value }))} placeholder="auth.users UUID" style={inputBase} />
-                <select value={assignForm.role} onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))} style={inputBase}>
-                  <option value="municipality_admin">municipality_admin</option>
-                </select>
-                <button type="submit" style={buttonBase}>Assign</button>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Municipality Admin Access</h2>
+              <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                Add a user by their Supabase Auth user ID to give admin access for this municipality.
+              </p>
+              <form onSubmit={assignTenantAdmin} style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr 1fr auto", gap: 8, alignItems: "end" }}>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Municipality</span>
+                  <input
+                    value={selectedTenantKey}
+                    readOnly
+                    style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Admin User ID</span>
+                  <input
+                    value={assignForm.user_id}
+                    onChange={(e) => setAssignForm((p) => ({ ...p, user_id: e.target.value }))}
+                    placeholder="Paste auth.users UUID"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Access Role</span>
+                  <select value={assignForm.role} onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))} style={inputBase}>
+                    <option value="municipality_admin">Municipality Admin</option>
+                  </select>
+                </label>
+                <button type="submit" style={buttonBase}>Assign Admin</button>
               </form>
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.users}</div> : null}
             </div>
