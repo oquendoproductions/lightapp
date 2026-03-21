@@ -159,6 +159,7 @@ function initialProfileForm() {
     billing_email: "",
     timezone: "America/New_York",
     contact_primary_name: "",
+    contact_primary_title: "",
     contact_primary_email: "",
     contact_primary_phone: "",
     contact_technical_name: "",
@@ -197,6 +198,7 @@ function profileRowToForm(profile) {
     billing_email: String(profile.billing_email || ""),
     timezone: String(profile.timezone || "America/New_York"),
     contact_primary_name: String(profile.contact_primary_name || ""),
+    contact_primary_title: String(profile.contact_primary_title || ""),
     contact_primary_email: String(profile.contact_primary_email || ""),
     contact_primary_phone: String(profile.contact_primary_phone || ""),
     contact_technical_name: String(profile.contact_technical_name || ""),
@@ -790,6 +792,7 @@ export default function PlatformAdminApp() {
       billing_email: cleanOptional(profileForm.billing_email),
       timezone: String(profileForm.timezone || "America/New_York").trim() || "America/New_York",
       contact_primary_name: cleanOptional(profileForm.contact_primary_name),
+      contact_primary_title: cleanOptional(profileForm.contact_primary_title),
       contact_primary_email: cleanOptional(profileForm.contact_primary_email),
       contact_primary_phone: cleanOptional(profileForm.contact_primary_phone),
       contact_technical_name: cleanOptional(profileForm.contact_technical_name),
@@ -1477,6 +1480,10 @@ export default function PlatformAdminApp() {
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Name</span>
                   <input readOnly={profileReadOnly} value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Primary Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Primary Contact Title</span>
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_title} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))} placeholder="Director of Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Email</span>
