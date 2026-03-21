@@ -194,6 +194,9 @@ export default function PlatformAdminApp() {
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
 
   const [selectedTenantKey, setSelectedTenantKey] = useState("ashtabulacity");
+  const [entryStep, setEntryStep] = useState("start"); // start | choose | add | tenant
+  const [tenantSearch, setTenantSearch] = useState("");
+  const [tenantPickerKey, setTenantPickerKey] = useState("");
 
   const [tenantForm, setTenantForm] = useState(initialTenantForm);
   const [profileForm, setProfileForm] = useState(initialProfileForm);
@@ -221,6 +224,17 @@ export default function PlatformAdminApp() {
     () => (tenants || []).find((t) => String(t?.tenant_key || "") === String(selectedTenantKey || "")) || null,
     [tenants, selectedTenantKey]
   );
+
+  const filteredTenantRows = useMemo(() => {
+    const q = String(tenantSearch || "").trim().toLowerCase();
+    if (!q) return Array.isArray(tenants) ? tenants : [];
+    return (tenants || []).filter((row) => {
+      const key = String(row?.tenant_key || "").trim().toLowerCase();
+      const name = String(row?.name || "").trim().toLowerCase();
+      const sub = String(row?.primary_subdomain || "").trim().toLowerCase();
+      return key.includes(q) || name.includes(q) || sub.includes(q);
+    });
+  }, [tenants, tenantSearch]);
 
   const selectedTenantLiveUrl = useMemo(
     () => (selectedTenant ? makeLiveUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
@@ -411,6 +425,40 @@ export default function PlatformAdminApp() {
     await supabase.auth.signOut();
     setIsPlatformAdmin(false);
     setLoginPassword("");
+    setEntryStep("start");
+  }, []);
+
+  const openChooseTenantStep = useCallback(() => {
+    setEntryStep("choose");
+    setStatus((prev) => ({ ...prev, hydrate: "" }));
+  }, []);
+
+  const openAddTenantStep = useCallback(() => {
+    setEntryStep("add");
+    setActiveTab("tenants");
+    setTenantForm(initialTenantForm());
+    setProfileForm(initialProfileForm());
+    setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
+  }, []);
+
+  const confirmTenantSelection = useCallback((event) => {
+    event?.preventDefault?.();
+    const fallback = String(tenantOptions?.[0] || "").trim();
+    const key = sanitizeTenantKey(tenantPickerKey || fallback);
+    if (!key) {
+      setStatus((prev) => ({ ...prev, hydrate: "No tenants found yet. Use Add Tenant to create one." }));
+      return;
+    }
+    setSelectedTenantKey(key);
+    setEntryStep("tenant");
+    setActiveTab("domains");
+    setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
+  }, [tenantOptions, tenantPickerKey]);
+
+  const returnToStart = useCallback(() => {
+    setEntryStep("start");
+    setTenantSearch("");
+    setTenantPickerKey("");
   }, []);
 
   useEffect(() => {
@@ -449,6 +497,18 @@ export default function PlatformAdminApp() {
       setSelectedTenantKey(tenantOptions[0]);
     }
   }, [tenantOptions, selectedTenantKey]);
+
+  useEffect(() => {
+    const rows = Array.isArray(filteredTenantRows) ? filteredTenantRows : [];
+    if (!rows.length) {
+      if (tenantPickerKey) setTenantPickerKey("");
+      return;
+    }
+    const hasCurrent = rows.some((row) => String(row?.tenant_key || "").trim() === String(tenantPickerKey || "").trim());
+    if (!hasCurrent) {
+      setTenantPickerKey(String(rows[0]?.tenant_key || "").trim());
+    }
+  }, [filteredTenantRows, tenantPickerKey]);
 
   useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -861,6 +921,11 @@ export default function PlatformAdminApp() {
     await loadAudit();
   }, [logAudit, loadTenantFiles, loadAudit]);
 
+  const inTenantWorkspace = entryStep === "tenant";
+  const inAddTenantFlow = entryStep === "add";
+  const inEntryPrompt = entryStep === "start" || entryStep === "choose";
+  const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+
   if (!authReady) {
     return (
       <main style={shell}>
@@ -944,56 +1009,120 @@ export default function PlatformAdminApp() {
           <p style={{ margin: 0, opacity: 0.8 }}>
             Mode: <b>{tenant.mode}</b>. Signed in as <b>{sessionUserId}</b>.
           </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {TAB_OPTIONS.map((tab) => {
-              const selected = activeTab === tab.key;
-              return (
+          {inEntryPrompt ? (
+            <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Start Here</h2>
+              <p style={{ margin: 0, fontSize: 13.5, opacity: 0.85 }}>
+                Choose an existing tenant to manage, or start the new tenant onboarding flow.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
-                  key={tab.key}
                   type="button"
-                  onClick={() => setActiveTab(tab.key)}
-                  style={{
-                    ...buttonBase,
-                    border: selected ? "1px solid #0f766e" : buttonBase.border,
-                    background: selected ? "#0f766e" : buttonBase.background,
-                    color: selected ? "white" : buttonBase.color,
-                  }}
+                  style={{ ...buttonBase, background: entryStep === "choose" ? "#0f766e" : buttonBase.background, color: entryStep === "choose" ? "white" : buttonBase.color }}
+                  onClick={openChooseTenantStep}
                 >
-                  {tab.label}
+                  Choose Tenant
                 </button>
-              );
-            })}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) 1fr", gap: 8, alignItems: "center" }}>
-            <select
-              value={selectedTenantKey}
-              onChange={(e) => setSelectedTenantKey(sanitizeTenantKey(e.target.value))}
-              style={inputBase}
-            >
-              {tenantOptions.map((key) => (
-                <option key={key} value={key}>{key}</option>
-              ))}
-            </select>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {selectedTenantLiveUrl ? (
-                <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                  Open Live Map
-                </a>
-              ) : null}
-              {selectedTenantDevUrl ? (
-                <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                  Open Dev Map
-                </a>
+                <button type="button" style={buttonBase} onClick={openAddTenantStep}>
+                  Add Tenant
+                </button>
+              </div>
+              {entryStep === "choose" ? (
+                <form onSubmit={confirmTenantSelection} style={{ display: "grid", gap: 8, maxWidth: 620 }}>
+                  <input
+                    value={tenantSearch}
+                    onChange={(e) => setTenantSearch(e.target.value)}
+                    placeholder="Search by tenant key, name, or subdomain"
+                    style={inputBase}
+                  />
+                  <select
+                    value={tenantPickerKey}
+                    onChange={(e) => setTenantPickerKey(sanitizeTenantKey(e.target.value))}
+                    style={inputBase}
+                  >
+                    {filteredTenantRows.map((row) => {
+                      const key = String(row?.tenant_key || "").trim();
+                      if (!key) return null;
+                      const labelName = String(row?.name || "").trim();
+                      return <option key={key} value={key}>{labelName ? `${labelName} (${key})` : key}</option>;
+                    })}
+                  </select>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="submit" style={buttonBase}>Open Tenant Workspace</button>
+                    <button type="button" style={buttonBase} onClick={returnToStart}>Back</button>
+                  </div>
+                  {!filteredTenantRows.length ? (
+                    <div style={{ fontSize: 12.5, color: "#7f1d1d" }}>No tenants match your search. Try Add Tenant.</div>
+                  ) : null}
+                </form>
               ) : null}
             </div>
-          </div>
+          ) : null}
+          {inAddTenantFlow ? (
+            <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13.5 }}>New tenant flow active. Complete the onboarding forms below.</span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={buttonBase} onClick={openChooseTenantStep}>Choose Existing Tenant</button>
+                <button type="button" style={buttonBase} onClick={returnToStart}>Back</button>
+              </div>
+            </div>
+          ) : null}
+          {inTenantWorkspace ? (
+            <>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {TAB_OPTIONS.map((tab) => {
+                  const selected = activeTab === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setActiveTab(tab.key)}
+                      style={{
+                        ...buttonBase,
+                        border: selected ? "1px solid #0f766e" : buttonBase.border,
+                        background: selected ? "#0f766e" : buttonBase.background,
+                        color: selected ? "white" : buttonBase.color,
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) 1fr", gap: 8, alignItems: "center" }}>
+                <select
+                  value={selectedTenantKey}
+                  onChange={(e) => setSelectedTenantKey(sanitizeTenantKey(e.target.value))}
+                  style={inputBase}
+                >
+                  {tenantOptions.map((key) => (
+                    <option key={key} value={key}>{key}</option>
+                  ))}
+                </select>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {selectedTenantLiveUrl ? (
+                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                      Open Live Map
+                    </a>
+                  ) : null}
+                  {selectedTenantDevUrl ? (
+                    <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                      Open Dev Map
+                    </a>
+                  ) : null}
+                  <button type="button" style={buttonBase} onClick={openChooseTenantStep}>Switch Tenant</button>
+                  <button type="button" style={buttonBase} onClick={openAddTenantStep}>Add Tenant</button>
+                </div>
+              </div>
+            </>
+          ) : null}
           {status.hydrate ? <div style={{ fontSize: 12.5, opacity: 0.82 }}>{status.hydrate}</div> : null}
         </header>
 
-        {activeTab === "tenants" ? (
+        {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Create / Update Tenant</h2>
+              <h2 style={{ margin: 0 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Create / Update Tenant"}</h2>
               <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Tenant Key (system ID)</span>
@@ -1061,7 +1190,7 @@ export default function PlatformAdminApp() {
             </div>
 
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>New Tenant Intake</h2>
+              <h2 style={{ margin: 0 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "New Tenant Intake"}</h2>
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Legal organization name" style={inputBase} />
                 <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Public display name" style={inputBase} />
@@ -1091,62 +1220,67 @@ export default function PlatformAdminApp() {
               {status.profile ? <div style={{ fontSize: 12.5 }}>{status.profile}</div> : null}
             </div>
 
-            <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0 }}>Tenants</h2>
-              {loading ? <div style={{ fontSize: 12.5 }}>Loading...</div> : null}
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Tenant</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Subdomain</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Boundary</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>State</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Shortcuts</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tenants.map((row) => {
-                      const liveUrl = makeLiveUrl(row?.primary_subdomain, row?.tenant_key);
-                      const devUrl = makeDevUrl(row?.tenant_key);
-                      return (
-                        <tr key={row.tenant_key}>
-                          <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
-                          <td style={{ padding: "8px 0" }}>{row.primary_subdomain}</td>
-                          <td style={{ padding: "8px 0" }}>{row.boundary_config_key}</td>
-                          <td style={{ padding: "8px 0" }}>{row.active ? "active" : "inactive"}</td>
-                          <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Live</a>
-                            <a href={devUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Dev</a>
-                          </td>
-                          <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <button type="button" style={buttonBase} onClick={() => setSelectedTenantKey(row.tenant_key)}>Select</button>
-                            <button type="button" style={buttonBase} onClick={() => setTenantForm({
-                              tenant_key: row.tenant_key,
-                              name: row.name,
-                              primary_subdomain: row.primary_subdomain,
-                              boundary_config_key: row.boundary_config_key,
-                              notification_email_potholes: row.notification_email_potholes || "",
-                              notification_email_water_drain: row.notification_email_water_drain || "",
-                              is_pilot: Boolean(row.is_pilot),
-                              active: Boolean(row.active),
-                            })}>Edit</button>
-                            <button type="button" style={buttonBase} onClick={() => void toggleTenantActive(row)}>
-                              {row.active ? "Deactivate" : "Activate"}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            {inTenantWorkspace ? (
+              <div style={{ ...card, display: "grid", gap: 8 }}>
+                <h2 style={{ margin: 0 }}>Tenants</h2>
+                {loading ? <div style={{ fontSize: 12.5 }}>Loading...</div> : null}
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Tenant</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Subdomain</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Boundary</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>State</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Shortcuts</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tenants.map((row) => {
+                        const liveUrl = makeLiveUrl(row?.primary_subdomain, row?.tenant_key);
+                        const devUrl = makeDevUrl(row?.tenant_key);
+                        return (
+                          <tr key={row.tenant_key}>
+                            <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
+                            <td style={{ padding: "8px 0" }}>{row.primary_subdomain}</td>
+                            <td style={{ padding: "8px 0" }}>{row.boundary_config_key}</td>
+                            <td style={{ padding: "8px 0" }}>{row.active ? "active" : "inactive"}</td>
+                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Live</a>
+                              <a href={devUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Dev</a>
+                            </td>
+                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <button type="button" style={buttonBase} onClick={() => {
+                                setSelectedTenantKey(row.tenant_key);
+                                setEntryStep("tenant");
+                              }}>Select</button>
+                              <button type="button" style={buttonBase} onClick={() => setTenantForm({
+                                tenant_key: row.tenant_key,
+                                name: row.name,
+                                primary_subdomain: row.primary_subdomain,
+                                boundary_config_key: row.boundary_config_key,
+                                notification_email_potholes: row.notification_email_potholes || "",
+                                notification_email_water_drain: row.notification_email_water_drain || "",
+                                is_pilot: Boolean(row.is_pilot),
+                                active: Boolean(row.active),
+                              })}>Edit</button>
+                              <button type="button" style={buttonBase} onClick={() => void toggleTenantActive(row)}>
+                                {row.active ? "Deactivate" : "Activate"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
+            ) : null}
           </section>
         ) : null}
 
-        {activeTab === "users" ? (
+        {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0 }}>Assign Municipality Admin</h2>
@@ -1196,7 +1330,7 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
-        {activeTab === "domains" ? (
+        {inTenantWorkspace && activeTab === "domains" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0 }}>Domain Visibility + Map Features</h2>
@@ -1265,7 +1399,7 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
-        {activeTab === "files" ? (
+        {inTenantWorkspace && activeTab === "files" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0 }}>Tenant Files</h2>
@@ -1320,7 +1454,7 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
-        {activeTab === "audit" ? (
+        {inTenantWorkspace && activeTab === "audit" ? (
           <section style={{ ...card, display: "grid", gap: 8 }}>
             <h2 style={{ margin: 0 }}>Recent Platform Audit</h2>
             <div style={{ overflowX: "auto" }}>
