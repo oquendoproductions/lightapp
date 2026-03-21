@@ -52,12 +52,24 @@ export async function loadTenantConfigCached(tenantKey, fetcher, opts = {}) {
   const cacheKey = keyFor(tenantKey);
 
   const memRecord = memoryCache.get(cacheKey);
-  if (isFresh(memRecord)) return memRecord.value;
+  if (isFresh(memRecord) && shouldCacheValue(memRecord.value)) {
+    return memRecord.value;
+  }
+  if (memRecord && !shouldCacheValue(memRecord.value)) {
+    memoryCache.delete(cacheKey);
+  }
 
   const sessionRecord = readSessionRecord(cacheKey);
-  if (isFresh(sessionRecord)) {
+  if (isFresh(sessionRecord) && shouldCacheValue(sessionRecord.value)) {
     memoryCache.set(cacheKey, sessionRecord);
     return sessionRecord.value;
+  }
+  if (sessionRecord && !shouldCacheValue(sessionRecord.value)) {
+    try {
+      globalThis?.sessionStorage?.removeItem(cacheKey);
+    } catch {
+      // ignore
+    }
   }
 
   const value = await fetcher();
