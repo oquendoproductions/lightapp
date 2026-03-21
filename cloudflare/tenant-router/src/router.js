@@ -1,5 +1,6 @@
 const PROD_APEX_HOSTS = new Set(["cityreport.io", "www.cityreport.io"]);
 const RESERVED_SLUGS = new Set(["www", "dev", "api", "auth", "platform"]);
+const PASSTHROUGH_HOSTS = new Set(["assets.cityreport.io"]);
 const LOCAL_DEV_HOST_SUFFIXES = [
   ".ngrok-free.app",
   ".ngrok-free.dev",
@@ -15,10 +16,14 @@ function sanitizeSlug(raw) {
   return slug || "";
 }
 
-function leadingPathSegment(pathname) {
+function leadingRawPathSegment(pathname) {
   const path = String(pathname || "/");
   const parts = path.split("/").filter(Boolean);
-  return sanitizeSlug(parts[0] || "");
+  return String(parts[0] || "").trim();
+}
+
+function leadingPathSegment(pathname) {
+  return sanitizeSlug(leadingRawPathSegment(pathname));
 }
 
 function stripLeadingSegment(pathname) {
@@ -26,6 +31,14 @@ function stripLeadingSegment(pathname) {
   const parts = path.split("/").filter(Boolean);
   const remainder = parts.slice(1).join("/");
   return remainder ? `/${remainder}` : "/";
+}
+
+function isApexStaticPath(pathname) {
+  const raw = leadingRawPathSegment(pathname).toLowerCase();
+  if (!raw) return false;
+  if (raw === "assets") return true;
+  if (raw.includes(".")) return true;
+  return false;
 }
 
 function makeResult(partial = {}) {
@@ -59,6 +72,10 @@ export function resolveTenantRequest(input = {}, options = {}) {
       tenantKey: defaultTenant,
       reason: "missing_hostname_default_tenant",
     });
+  }
+
+  if (PASSTHROUGH_HOSTS.has(hostname)) {
+    return makeResult({ mode: "marketing_home", reason: "passthrough_host" });
   }
 
   if (hostname === "dev.cityreport.io") {
@@ -153,6 +170,9 @@ export function resolveTenantRequest(input = {}, options = {}) {
         reason: "apex_legacy_gmaps_redirect",
         redirectTo: `https://${defaultTenant}.cityreport.io/`,
       });
+    }
+    if (isApexStaticPath(pathname)) {
+      return makeResult({ mode: "marketing_home", reason: "apex_static_passthrough" });
     }
     if (segment && !RESERVED_SLUGS.has(segment)) {
       const suffix = pathname.split("/").slice(2).join("/");

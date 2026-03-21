@@ -14,6 +14,23 @@ test("apex /platform resolves platform admin", () => {
   assert.equal(res.mode, "platform_admin");
 });
 
+test("assets host is passthrough and not tenant-resolved", () => {
+  const res = resolveTenantRequest({ hostname: "assets.cityreport.io", pathname: "/index.js", search: "" });
+  assert.equal(res.mode, "marketing_home");
+  assert.equal(res.tenantKey, null);
+  assert.equal(res.reason, "passthrough_host");
+});
+
+test("apex static assets are passthrough and not tenant redirects", () => {
+  const js = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/assets/index-abc123.js", search: "" });
+  assert.equal(js.mode, "marketing_home");
+  assert.equal(js.redirectTo, null);
+
+  const icon = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/favicon.ico", search: "" });
+  assert.equal(icon.mode, "marketing_home");
+  assert.equal(icon.redirectTo, null);
+});
+
 test("apex slug redirects to canonical subdomain", () => {
   const res = resolveTenantRequest({
     hostname: "cityreport.io",
