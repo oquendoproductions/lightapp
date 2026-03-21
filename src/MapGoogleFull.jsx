@@ -11019,6 +11019,7 @@ export default function App() {
     shade_outside_boundary: true,
     outside_shade_opacity: 0.42,
     boundary_border_color: "#e53935",
+    boundary_border_width: 4,
   });
   const [openAbuseFlagSummary, setOpenAbuseFlagSummary] = useState({ total: 0, maxSeverity: 0 });
   const [moderationFlagsOpen, setModerationFlagsOpen] = useState(false);
@@ -11591,12 +11592,13 @@ export default function App() {
         shade_outside_boundary: true,
         outside_shade_opacity: 0.42,
         boundary_border_color: "#e53935",
+        boundary_border_width: 4,
       };
       if (!authReady) return;
       const tenantKey = activeTenantKey();
       const { data, error } = await supabase
         .from("tenant_map_features")
-        .select("show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color")
+        .select("show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
         .eq("tenant_key", tenantKey)
         .maybeSingle();
 
@@ -11621,11 +11623,16 @@ export default function App() {
       const nextBorderColor = /^#[0-9a-fA-F]{6}$/.test(nextBorderColorRaw)
         ? nextBorderColorRaw.toLowerCase()
         : "#e53935";
+      const nextBorderWidthRaw = Number(data?.boundary_border_width);
+      const nextBorderWidth = Number.isFinite(nextBorderWidthRaw)
+        ? Math.max(0.5, Math.min(8, nextBorderWidthRaw))
+        : 4;
       setTenantMapFeatures({
         show_boundary_border: data?.show_boundary_border !== false,
         shade_outside_boundary: data?.shade_outside_boundary !== false,
         outside_shade_opacity: nextOpacity,
         boundary_border_color: nextBorderColor,
+        boundary_border_width: nextBorderWidth,
       });
     }
 
@@ -13235,6 +13242,9 @@ export default function App() {
   const cityBoundaryBorderColor = /^#[0-9a-fA-F]{6}$/.test(String(tenantMapFeatures?.boundary_border_color || "").trim())
     ? String(tenantMapFeatures?.boundary_border_color || "").trim().toLowerCase()
     : "#e53935";
+  const cityBoundaryBorderWidth = Number.isFinite(Number(tenantMapFeatures?.boundary_border_width))
+    ? Math.max(0.5, Math.min(8, Number(tenantMapFeatures?.boundary_border_width)))
+    : 4;
   const restrictPublicMarkersToCity = !isAdmin && cityLimitPolygons.length > 0;
   const isWithinAshtabulaCityLimits = useCallback(
     (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
@@ -19968,7 +19978,7 @@ async function insertReportWithFallback(payload) {
               clickable: false,
               strokeColor: cityBoundaryBorderColor,
               strokeOpacity: 1,
-              strokeWeight: 4,
+              strokeWeight: cityBoundaryBorderWidth,
               fillOpacity: 0,
               zIndex: 2200,
             }}

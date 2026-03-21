@@ -40,8 +40,7 @@ const shell = {
   minHeight: "100vh",
   padding: "28px 18px 42px",
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  background:
-    "radial-gradient(1200px 550px at -10% -10%, rgba(18,128,106,0.14), transparent 55%), radial-gradient(1200px 600px at 110% -10%, rgba(46,98,143,0.16), transparent 58%), linear-gradient(180deg, #eef3f9 0%, #e5edf6 100%)",
+  background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
 };
 
@@ -86,8 +85,14 @@ const buttonAlt = {
 
 const signOutButton = {
   ...buttonAlt,
-  padding: "5px 10px",
-  minHeight: 30,
+  padding: "4px 10px",
+  minHeight: 28,
+};
+
+const headerActionButton = {
+  ...buttonAlt,
+  padding: "4px 10px",
+  minHeight: 28,
 };
 
 const subPanel = {
@@ -206,6 +211,7 @@ function initialMapFeaturesForm() {
     shade_outside_boundary: true,
     outside_shade_opacity: "0.42",
     boundary_border_color: "#e53935",
+    boundary_border_width: "4",
   };
 }
 
@@ -417,12 +423,16 @@ export default function PlatformAdminApp() {
   const loadTenantMapFeatures = useCallback(async () => {
     const { data, error } = await supabase
       .from("tenant_map_features")
-      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color");
+      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width");
     if (error) throw error;
     const next = {};
     for (const row of data || []) {
       const key = sanitizeTenantKey(row?.tenant_key);
       if (!key) continue;
+      const nextBorderWidthRaw = Number(row?.boundary_border_width);
+      const nextBorderWidth = Number.isFinite(nextBorderWidthRaw)
+        ? Math.max(0.5, Math.min(8, nextBorderWidthRaw))
+        : 4;
       next[key] = {
         show_boundary_border: row?.show_boundary_border !== false,
         shade_outside_boundary: row?.shade_outside_boundary !== false,
@@ -430,6 +440,7 @@ export default function PlatformAdminApp() {
           ? Number(row.outside_shade_opacity)
           : 0.42,
         boundary_border_color: sanitizeHexColor(row?.boundary_border_color, "#e53935"),
+        boundary_border_width: nextBorderWidth,
       };
     }
     setTenantMapFeaturesByTenant(next);
@@ -638,6 +649,7 @@ export default function PlatformAdminApp() {
         shade_outside_boundary: features.shade_outside_boundary !== false,
         outside_shade_opacity: String(Number.isFinite(Number(features.outside_shade_opacity)) ? Number(features.outside_shade_opacity) : 0.42),
         boundary_border_color: sanitizeHexColor(features.boundary_border_color, "#e53935"),
+        boundary_border_width: String(Number.isFinite(Number(features.boundary_border_width)) ? Math.max(0.5, Math.min(8, Number(features.boundary_border_width))) : 4),
       });
     } else {
       setMapFeaturesForm(initialMapFeaturesForm());
@@ -807,12 +819,15 @@ export default function PlatformAdminApp() {
     const opacityRaw = Number(mapFeaturesForm?.outside_shade_opacity);
     const opacity = Number.isFinite(opacityRaw) ? Math.max(0, Math.min(1, opacityRaw)) : 0.42;
     const borderColor = sanitizeHexColor(mapFeaturesForm?.boundary_border_color, "#e53935");
+    const borderWidthRaw = Number(mapFeaturesForm?.boundary_border_width);
+    const borderWidth = Number.isFinite(borderWidthRaw) ? Math.max(0.5, Math.min(8, borderWidthRaw)) : 4;
     const mapPayload = {
       tenant_key: key,
       show_boundary_border: Boolean(mapFeaturesForm?.show_boundary_border),
       shade_outside_boundary: Boolean(mapFeaturesForm?.shade_outside_boundary),
       outside_shade_opacity: opacity,
       boundary_border_color: borderColor,
+      boundary_border_width: borderWidth,
     };
 
     const [{ error: visError }, { error: featureError }] = await Promise.all([
@@ -1111,10 +1126,10 @@ export default function PlatformAdminApp() {
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {inTenantWorkspace ? (
-                <button type="button" style={buttonAlt} onClick={returnToStart}>Switch Tenant</button>
+                <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
               ) : null}
               {inTenantWorkspace ? (
-                <button type="button" style={buttonAlt} onClick={openAddTenantStep}>Add Tenant</button>
+                <button type="button" style={headerActionButton} onClick={openAddTenantStep}>Add Tenant</button>
               ) : null}
               <button type="button" style={signOutButton} onClick={() => void signOutPlatformAdmin()}>
                 Sign out
@@ -1570,6 +1585,17 @@ export default function PlatformAdminApp() {
 
                 <div style={{ border: `1px solid ${palette.border}`, borderRadius: 10, padding: 10, display: "grid", gap: 8, background: "#f8fbff" }}>
                   <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Feature Toggles ({selectedTenantKey})</div>
+                  {(() => {
+                    const borderEnabled = Boolean(mapFeaturesForm.show_boundary_border);
+                    const shadeEnabled = Boolean(mapFeaturesForm.shade_outside_boundary);
+                    const disabledFieldStyle = {
+                      ...inputBase,
+                      opacity: 0.55,
+                      cursor: "not-allowed",
+                      background: "#edf2f7",
+                    };
+                    return (
+                      <>
                   <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
                     <input
                       type="checkbox"
@@ -1577,6 +1603,29 @@ export default function PlatformAdminApp() {
                       onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
                     />
                     Show boundary border
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
+                    <span>Boundary border color</span>
+                    <input
+                      type="color"
+                      value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
+                      disabled={!borderEnabled}
+                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                      style={borderEnabled ? { ...inputBase, padding: 4, height: 38 } : { ...disabledFieldStyle, padding: 4, height: 38 }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
+                    <span>Boundary thickness (0.5 - 8)</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="8"
+                      value={mapFeaturesForm.boundary_border_width}
+                      disabled={!borderEnabled}
+                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_width: e.target.value }))}
+                      style={borderEnabled ? inputBase : disabledFieldStyle}
+                    />
                   </label>
                   <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
                     <input
@@ -1586,7 +1635,7 @@ export default function PlatformAdminApp() {
                     />
                     Shade outside boundary
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240 }}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
                     <span>Outside shade opacity (0.0 - 1.0)</span>
                     <input
                       type="number"
@@ -1594,19 +1643,14 @@ export default function PlatformAdminApp() {
                       min="0"
                       max="1"
                       value={mapFeaturesForm.outside_shade_opacity}
+                      disabled={!shadeEnabled}
                       onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: e.target.value }))}
-                      style={inputBase}
+                      style={shadeEnabled ? inputBase : disabledFieldStyle}
                     />
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240 }}>
-                    <span>Boundary border color</span>
-                    <input
-                      type="color"
-                      value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
-                      style={{ ...inputBase, padding: 4, height: 38 }}
-                    />
-                  </label>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <button type="submit" style={{ ...buttonBase, width: "fit-content" }}>Save Domains + Features</button>
