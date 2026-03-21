@@ -12441,7 +12441,17 @@ export default function App() {
         }
       }
       try {
-        const boundaryKey = tenantBoundaryConfigKey();
+        let boundaryKey = tenantBoundaryConfigKey();
+        const tenantKey = activeTenantKey();
+        const tenantBoundary = await supabase
+          .from("tenants")
+          .select("boundary_config_key")
+          .eq("tenant_key", tenantKey)
+          .maybeSingle();
+        if (!tenantBoundary.error && tenantBoundary.data?.boundary_config_key) {
+          const configuredBoundaryKey = String(tenantBoundary.data.boundary_config_key || "").trim();
+          if (configuredBoundaryKey) boundaryKey = configuredBoundaryKey;
+        }
         let { data: cfg, error: cfgErr } = await supabase
           .from("app_config")
           .select("value")

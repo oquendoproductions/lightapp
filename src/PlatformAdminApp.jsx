@@ -253,6 +253,34 @@ function composeMailingAddress(parts) {
   return [address1, address2, locality].filter(Boolean).join(", ");
 }
 
+function buildDefaultBoundaryKey(tenantKey) {
+  const key = sanitizeTenantKey(tenantKey);
+  return key ? `${key}_city_geojson` : "";
+}
+
+function extractBoundaryGeoJsonPayload(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  let candidate = raw;
+  if (candidate.geojson && typeof candidate.geojson === "object") candidate = candidate.geojson;
+  else if (candidate.value && typeof candidate.value === "object") candidate = candidate.value;
+  else if (candidate.boundary && typeof candidate.boundary === "object") candidate = candidate.boundary;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const allowedTypes = new Set([
+    "FeatureCollection",
+    "Feature",
+    "GeometryCollection",
+    "Polygon",
+    "MultiPolygon",
+    "LineString",
+    "MultiLineString",
+    "Point",
+    "MultiPoint",
+  ]);
+  const t = String(candidate?.type || "").trim();
+  if (!allowedTypes.has(t)) return null;
+  return candidate;
+}
+
 function sanitizeHexColor(value, fallback = "#e53935") {
   const raw = String(value || "").trim();
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
@@ -691,19 +719,20 @@ export default function PlatformAdminApp() {
     const resolvedTenantKey = entryStep === "tenant"
       ? sanitizeTenantKey(selectedTenantKey)
       : sanitizeTenantKey(tenantForm.tenant_key);
+    const defaultBoundaryKey = buildDefaultBoundaryKey(resolvedTenantKey);
     const payload = {
       tenant_key: resolvedTenantKey,
       name: String(tenantForm.name || "").trim(),
       primary_subdomain: String(tenantForm.primary_subdomain || "").trim().toLowerCase(),
-      boundary_config_key: String(tenantForm.boundary_config_key || "").trim(),
+      boundary_config_key: String(tenantForm.boundary_config_key || defaultBoundaryKey).trim() || defaultBoundaryKey,
       notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
       notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
       is_pilot: Boolean(tenantForm.is_pilot),
       active: Boolean(tenantForm.active),
     };
 
-    if (!payload.tenant_key || !payload.name || !payload.primary_subdomain || !payload.boundary_config_key) {
-      setStatus((prev) => ({ ...prev, tenant: "Tenant key, name, primary subdomain, and boundary key are required." }));
+    if (!payload.tenant_key || !payload.name || !payload.primary_subdomain) {
+      setStatus((prev) => ({ ...prev, tenant: "Tenant key, name, and primary subdomain are required." }));
       return;
     }
 
@@ -946,6 +975,43 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [logAudit, refreshControlPlaneData]);
 
+  const applyBoundaryPayloadToTenant = useCallback(async ({ tenantKey, boundaryGeoJson, sourceLabel }) => {
+    const key = sanitizeTenantKey(tenantKey);
+    if (!key) return { ok: false, error: "Tenant key is required." };
+    if (!boundaryGeoJson || typeof boundaryGeoJson !== "object") {
+      return { ok: false, error: "Boundary GeoJSON payload is missing or invalid." };
+    }
+
+    const boundaryConfigKey = buildDefaultBoundaryKey(key);
+    const { error: appConfigError } = await supabase
+      .from("app_config")
+      .upsert([{ key: boundaryConfigKey, value: boundaryGeoJson }], { onConflict: "key" });
+
+    if (appConfigError) {
+      return { ok: false, error: appConfigError };
+    }
+
+    const { error: tenantError } = await supabase
+      .from("tenants")
+      .update({ boundary_config_key: boundaryConfigKey })
+      .eq("tenant_key", key);
+    if (tenantError) {
+      return { ok: false, error: tenantError };
+    }
+
+    await logAudit({
+      tenant_key: key,
+      action: "tenant_boundary_from_file_applied",
+      entity_type: "tenant_boundary",
+      entity_id: boundaryConfigKey,
+      details: {
+        source: String(sourceLabel || "").trim() || "boundary file",
+      },
+    });
+
+    return { ok: true, boundaryConfigKey };
+  }, [logAudit]);
+
   const uploadTenantFile = useCallback(async (event) => {
     event.preventDefault();
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
@@ -960,6 +1026,21 @@ export default function PlatformAdminApp() {
     }
 
     const category = String(fileForm.category || "other").trim().toLowerCase();
+    let boundaryGeoJson = null;
+    if (category === "boundary_geojson") {
+      try {
+        const rawText = await file.text();
+        const parsed = JSON.parse(rawText);
+        boundaryGeoJson = extractBoundaryGeoJsonPayload(parsed);
+      } catch {
+        boundaryGeoJson = null;
+      }
+      if (!boundaryGeoJson) {
+        setStatus((prev) => ({ ...prev, files: "Boundary file must be valid GeoJSON (or wrapper containing GeoJSON)." }));
+        return;
+      }
+    }
+
     const now = Date.now();
     const fileName = sanitizeFileNameSegment(file.name);
     const path = `${tenantKey}/${category}/${toDatePath(new Date())}/${now}_${fileName}`;
@@ -1006,11 +1087,36 @@ export default function PlatformAdminApp() {
       },
     });
 
+    if (category === "boundary_geojson" && boundaryGeoJson) {
+      const applied = await applyBoundaryPayloadToTenant({
+        tenantKey,
+        boundaryGeoJson,
+        sourceLabel: file.name,
+      });
+      if (!applied.ok) {
+        setStatus((prev) => ({
+          ...prev,
+          files: `Uploaded ${file.name}, but failed to apply boundary: ${statusText(applied.error, "")}`,
+        }));
+        await loadTenantFiles(tenantKey);
+        await loadAudit();
+        return;
+      }
+      setTenantForm((prev) => ({ ...prev, boundary_config_key: applied.boundaryConfigKey || prev.boundary_config_key }));
+      setStatus((prev) => ({
+        ...prev,
+        files: `Uploaded ${file.name} and applied as active boundary.`,
+      }));
+      setFileForm({ category: "contract", notes: "", file: null });
+      await refreshControlPlaneData();
+      return;
+    }
+
     setFileForm({ category: "contract", notes: "", file: null });
     setStatus((prev) => ({ ...prev, files: `Uploaded ${file.name}.` }));
     await loadTenantFiles(tenantKey);
     await loadAudit();
-  }, [selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit]);
+  }, [selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -1025,6 +1131,53 @@ export default function PlatformAdminApp() {
       window.open(data.signedUrl, "_blank", "noopener,noreferrer");
     }
   }, []);
+
+  const setBoundaryFromFile = useCallback(async (row) => {
+    const tenantKey = sanitizeTenantKey(row?.tenant_key || selectedTenantKey);
+    const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
+    const path = String(row?.storage_path || "").trim();
+    const fileName = String(row?.file_name || path || "boundary file");
+    if (!tenantKey || !path) {
+      setStatus((prev) => ({ ...prev, files: "Boundary file is missing tenant key or path." }));
+      return;
+    }
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 90);
+    if (error || !data?.signedUrl) {
+      setStatus((prev) => ({ ...prev, files: statusText(error || "Unable to read boundary file", "") }));
+      return;
+    }
+
+    let boundaryGeoJson = null;
+    try {
+      const response = await fetch(data.signedUrl);
+      if (!response.ok) {
+        throw new Error(`boundary fetch failed (${response.status})`);
+      }
+      const parsed = await response.json();
+      boundaryGeoJson = extractBoundaryGeoJsonPayload(parsed);
+    } catch (fetchError) {
+      setStatus((prev) => ({ ...prev, files: statusText(fetchError, "") }));
+      return;
+    }
+    if (!boundaryGeoJson) {
+      setStatus((prev) => ({ ...prev, files: "Selected file is not valid GeoJSON boundary data." }));
+      return;
+    }
+
+    const applied = await applyBoundaryPayloadToTenant({
+      tenantKey,
+      boundaryGeoJson,
+      sourceLabel: fileName,
+    });
+    if (!applied.ok) {
+      setStatus((prev) => ({ ...prev, files: statusText(applied.error, "") }));
+      return;
+    }
+
+    setTenantForm((prev) => ({ ...prev, boundary_config_key: applied.boundaryConfigKey || prev.boundary_config_key }));
+    setStatus((prev) => ({ ...prev, files: `Boundary set from ${fileName}.` }));
+    await refreshControlPlaneData();
+  }, [selectedTenantKey, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const removeTenantFile = useCallback(async (row) => {
     const tenantKey = sanitizeTenantKey(row?.tenant_key);
@@ -1308,7 +1461,15 @@ export default function PlatformAdminApp() {
                   <span>Tenant Key (system ID)</span>
                   <input
                     value={tenantForm.tenant_key}
-                    onChange={(e) => setTenantForm((p) => ({ ...p, tenant_key: e.target.value }))}
+                    onChange={(e) => {
+                      const nextTenantKeyRaw = e.target.value;
+                      const nextBoundaryKey = buildDefaultBoundaryKey(nextTenantKeyRaw);
+                      setTenantForm((p) => ({
+                        ...p,
+                        tenant_key: nextTenantKeyRaw,
+                        boundary_config_key: nextBoundaryKey || p.boundary_config_key,
+                      }));
+                    }}
                     placeholder="examplemunicipality"
                     readOnly={!inAddTenantFlow}
                     style={{
@@ -1339,14 +1500,16 @@ export default function PlatformAdminApp() {
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                  <span>Boundary Config Key</span>
+                  <span>Boundary Dataset Key (auto-managed)</span>
                   <input
-                    readOnly={tenantReadOnly}
+                    readOnly
                     value={tenantForm.boundary_config_key}
-                    onChange={(e) => setTenantForm((p) => ({ ...p, boundary_config_key: e.target.value }))}
-                    placeholder="example_municipality_geojson"
-                    style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
+                    placeholder="examplemunicipality_city_geojson"
+                    style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }}
                   />
+                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                    Upload a `Boundary GeoJSON` file in Files, then set it as boundary.
+                  </span>
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Pothole Notification Email</span>
@@ -1756,6 +1919,7 @@ export default function PlatformAdminApp() {
                 <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
                   <option value="contract">Contract</option>
                   <option value="asset_coordinates">Asset Coordinates</option>
+                  <option value="boundary_geojson">Boundary GeoJSON</option>
                   <option value="other">Other</option>
                 </select>
                 <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
@@ -1787,6 +1951,9 @@ export default function PlatformAdminApp() {
                         <td style={{ padding: "8px 0" }}>{row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
                           <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open (signed)</button>
+                          {String(row?.file_category || "").trim().toLowerCase() === "boundary_geojson" ? (
+                            <button type="button" style={buttonAlt} onClick={() => void setBoundaryFromFile(row)}>Set as Boundary</button>
+                          ) : null}
                           <button type="button" style={buttonAlt} onClick={() => void removeTenantFile(row)}>Remove</button>
                         </td>
                       </tr>
