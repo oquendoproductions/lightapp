@@ -1283,93 +1283,84 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "Update Intake Profile"}</h2>
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
-                <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Legal organization name" style={inputBase} />
-                <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Public display name" style={inputBase} />
-                <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Primary contact name" style={inputBase} />
-                <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="Primary contact email" style={inputBase} />
-                <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="Primary contact phone" style={inputBase} />
-                <input value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="Website URL" style={inputBase} />
-                <input value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="URL extension / slug" style={inputBase} />
-                <input value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="Billing email" style={inputBase} />
-                <input value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="Technical contact name" style={inputBase} />
-                <input value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="Technical contact email" style={inputBase} />
-                <input value={profileForm.contact_legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_name: e.target.value }))} placeholder="Legal contact name" style={inputBase} />
-                <input value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="Legal contact email" style={inputBase} />
-                <select value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={inputBase}>
-                  <option value="pending">Contract: Pending</option>
-                  <option value="active">Contract: Active</option>
-                  <option value="paused">Contract: Paused</option>
-                  <option value="expired">Contract: Expired</option>
-                  <option value="terminated">Contract: Terminated</option>
-                </select>
-                <input type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={inputBase} />
-                <input type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={inputBase} />
-                <input type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={inputBase} />
-                <textarea value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Operational notes / onboarding notes" style={{ ...inputBase, minHeight: 90, gridColumn: "1 / -1" }} />
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Legal Organization Name</span>
+                  <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="City of Ashtabula" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Public Display Name</span>
+                  <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Ashtabula City" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Primary Contact Name</span>
+                  <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Jane Doe" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Primary Contact Email</span>
+                  <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="jane.doe@city.gov" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Primary Contact Phone</span>
+                  <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="(555) 123-4567" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Municipality Website URL</span>
+                  <input value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.cityofashtabula.com" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>URL Extension (Alias)</span>
+                  <input value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="ashtabulacity" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Billing Email</span>
+                  <input value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@city.gov" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Technical Contact Name</span>
+                  <input value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="IT Contact" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Technical Contact Email</span>
+                  <input value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="it@city.gov" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Legal Contact Name</span>
+                  <input value={profileForm.contact_legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_name: e.target.value }))} placeholder="Legal Contact" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Legal Contact Email</span>
+                  <input value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="legal@city.gov" style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Contract Status</span>
+                  <select value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={inputBase}>
+                    <option value="pending">Pending</option>
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="expired">Expired</option>
+                    <option value="terminated">Terminated</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Contract Start Date</span>
+                  <input type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Contract End Date</span>
+                  <input type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Renewal Date</span>
+                  <input type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={inputBase} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+                  <span>Operational / Onboarding Notes</span>
+                  <textarea value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 90 }} />
+                </label>
                 <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>Save Intake Profile</button>
               </form>
               {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.profile}</div> : null}
             </div>
-
-            {inTenantWorkspace ? (
-              <div style={{ ...card, display: "grid", gap: 8 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Tenants</h2>
-                {loading ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>Loading...</div> : null}
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={tableHeadCell}>Tenant</th>
-                        <th style={tableHeadCell}>Subdomain</th>
-                        <th style={tableHeadCell}>Boundary</th>
-                        <th style={tableHeadCell}>State</th>
-                        <th style={tableHeadCell}>Shortcuts</th>
-                        <th style={tableHeadCell}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tenants.map((row) => {
-                        const liveUrl = makeLiveUrl(row?.primary_subdomain, row?.tenant_key);
-                        const devUrl = makeDevUrl(row?.tenant_key);
-                        return (
-                          <tr key={row.tenant_key}>
-                            <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
-                            <td style={{ padding: "8px 0" }}>{row.primary_subdomain}</td>
-                            <td style={{ padding: "8px 0" }}>{row.boundary_config_key}</td>
-                            <td style={{ padding: "8px 0", color: row.active ? palette.mint700 : palette.red600, fontWeight: 700 }}>
-                              {row.active ? "active" : "inactive"}
-                            </td>
-                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonAlt, textDecoration: "none" }}>Live</a>
-                              <a href={devUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonAlt, textDecoration: "none" }}>Dev</a>
-                            </td>
-                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <button type="button" style={buttonAlt} onClick={() => {
-                                setSelectedTenantKey(row.tenant_key);
-                                setEntryStep("tenant");
-                              }}>Select</button>
-                              <button type="button" style={buttonAlt} onClick={() => setTenantForm({
-                                tenant_key: row.tenant_key,
-                                name: row.name,
-                                primary_subdomain: row.primary_subdomain,
-                                boundary_config_key: row.boundary_config_key,
-                                notification_email_potholes: row.notification_email_potholes || "",
-                                notification_email_water_drain: row.notification_email_water_drain || "",
-                                is_pilot: Boolean(row.is_pilot),
-                                active: Boolean(row.active),
-                              })}>Edit</button>
-                              <button type="button" style={buttonAlt} onClick={() => void toggleTenantActive(row)}>
-                                {row.active ? "Deactivate" : "Activate"}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : null}
           </section>
         ) : null}
 
