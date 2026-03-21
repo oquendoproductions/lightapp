@@ -4882,6 +4882,7 @@ function OpenReportsModal({
   initialSearchQuery = "",
   onInitialFocusApplied = null,
   mapBounds = null,
+  inViewOnly = false,
 }) {
   const canMutateIncidents = isAdmin && typeof onMarkFixedIncident === "function";
   const [sortMode, setSortMode] = useState("count"); // count | recent
@@ -5135,9 +5136,20 @@ function OpenReportsModal({
   const isStreetlightMyReports = activeDomain === "streetlights" && !canMutateIncidents;
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
+  const [inViewOnlyActive, setInViewOnlyActive] = useState(Boolean(inViewOnly));
+  useEffect(() => {
+    if (!open) return;
+    setInViewOnlyActive(Boolean(inViewOnly));
+  }, [open, inViewOnly]);
+  const hasSearchText = Boolean(String(searchDraft || "").trim() || String(searchQuery || "").trim());
+  const showSearchClearButton = hasSearchText || inViewOnlyActive;
+  const reportSearchPlaceholder = inViewOnlyActive
+    ? "Reports in view"
+    : "Search by report #, name, phone, or email";
   const clearSearchField = useCallback(() => {
     setSearchDraft("");
     setSearchQuery("");
+    setInViewOnlyActive(false);
   }, []);
   const copyStreetlightField = useCallback(async (label, value, anchorEl = null) => {
     const text = String(value || "").trim();
@@ -5449,8 +5461,43 @@ function OpenReportsModal({
     arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
     return arr;
   }, [groups, sortMode]);
-
-  const visibleGroups = useMemo(() => sortedGroups, [sortedGroups]);
+  const groupCoordsForViewFilter = useCallback((g) => {
+    if (!g) return null;
+    if (activeDomain === "streetlights") {
+      return getCoordsForLightId(g.lightId, reports, officialLights);
+    }
+    const centerLat = Number(g?.center?.lat);
+    const centerLng = Number(g?.center?.lng);
+    if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
+      return { lat: centerLat, lng: centerLng, isOfficial: false };
+    }
+    const lat = Number(g?.lat ?? g?.rows?.[0]?.lat);
+    const lng = Number(g?.lng ?? g?.rows?.[0]?.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng, isOfficial: false };
+    }
+    return null;
+  }, [activeDomain, reports, officialLights]);
+  const visibleGroups = useMemo(() => {
+    const base = Array.isArray(sortedGroups) ? sortedGroups : [];
+    if (!(inViewOnlyActive && mapBounds)) return base;
+    return base.filter((g) => {
+      const coords = groupCoordsForViewFilter(g);
+      const lat = Number(coords?.lat);
+      const lng = Number(coords?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      return isPointInBounds(lat, lng, mapBounds);
+    });
+  }, [sortedGroups, inViewOnlyActive, mapBounds, groupCoordsForViewFilter]);
+  const inViewIncidentIdSet = useMemo(() => {
+    if (!(inViewOnlyActive && mapBounds)) return null;
+    const ids = new Set();
+    for (const g of visibleGroups || []) {
+      const incidentId = String(g?.incidentId || g?.lightId || "").trim();
+      if (incidentId) ids.add(incidentId);
+    }
+    return ids;
+  }, [inViewOnlyActive, mapBounds, visibleGroups]);
   const exactIncidentSearch = useMemo(() => {
     const raw = String(searchQuery || "").trim();
     if (!raw) return "";
@@ -5491,15 +5538,11 @@ function OpenReportsModal({
     };
     const digitsQ = normalizePhone(q);
     const out = [];
-    for (const g of sortedGroups || []) {
+    for (const g of visibleGroups || []) {
       const isStreetlights = activeDomain === "streetlights";
       const coords = isStreetlights
         ? getCoordsForLightId(g.lightId, reports, officialLights)
-        : {
-            lat: Number(g.lat ?? g.rows?.[0]?.lat),
-            lng: Number(g.lng ?? g.rows?.[0]?.lng),
-            isOfficial: false,
-          };
+        : groupCoordsForViewFilter(g);
       const locationLabel =
         String(g.location_label || "").trim() ||
         readLocationFromNote(g.rows?.[0]?.note) ||
@@ -5566,6 +5609,7 @@ function OpenReportsModal({
   }, [
     searchQuery,
     sortedGroups,
+    visibleGroups,
     activeDomain,
     reports,
     officialLights,
@@ -5574,6 +5618,7 @@ function OpenReportsModal({
     exportToDate,
     parseIsoDate,
     bypassDateRangeForExactIncidentSearch,
+    groupCoordsForViewFilter,
   ]);
 
   const parseLocalDateStart = useCallback((v) => {
@@ -5824,6 +5869,7 @@ function OpenReportsModal({
       }
 
       for (const [incidentId, rows] of byIncident.entries()) {
+        if (inViewIncidentIdSet && !inViewIncidentIdSet.has(String(incidentId || "").trim())) continue;
         const sortedRows = [...rows].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
         const timelineState = deriveIncidentStateFromTimeline(incidentId, sortedRows);
         for (const r of sortedRows) {
@@ -5884,6 +5930,7 @@ function OpenReportsModal({
     searchQuery,
     matchedSearchRows,
     visibleGroups,
+    inViewIncidentIdSet,
     activeDomain,
     incidentStateByKey,
     bypassDateRangeForExactIncidentSearch,
@@ -6219,10 +6266,13 @@ function OpenReportsModal({
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
       return Boolean(isWithinCityLimits(lat, lng));
     });
+    const inViewRows = inViewIncidentIdSet
+      ? cityFilteredRows.filter((row) => inViewIncidentIdSet.has(String(row?.incident_id || "").trim()))
+      : cityFilteredRows;
 
     const dir = tableSort?.dir === "asc" ? 1 : -1;
     const key = String(tableSort?.key || "submitted_at");
-    cityFilteredRows.sort((a, b) => {
+    inViewRows.sort((a, b) => {
       if (key === "report_count") return (Number(a.report_count || 0) - Number(b.report_count || 0)) * dir;
       if (key === "utility_reported") {
         const aa = Boolean(utilityReportedByIncident?.[a?.incident_id]) ? 1 : 0;
@@ -6247,10 +6297,11 @@ function OpenReportsModal({
       if (sa > sb) return 1 * dir;
       return 0;
     });
-    return cityFilteredRows;
+    return inViewRows;
   }, [
     filteredExportDetailRows,
     groupByIncidentId,
+    inViewIncidentIdSet,
     activeDomain,
     reports,
     potholes,
@@ -6832,7 +6883,7 @@ function OpenReportsModal({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
                     }}
-                    placeholder="Search by report #, name, phone, or email"
+                    placeholder={reportSearchPlaceholder}
                     style={{
                       width: "100%",
                       padding: "9px 30px 9px 10px",
@@ -6843,7 +6894,7 @@ function OpenReportsModal({
                       fontSize: 12.5,
                     }}
                   />
-                  {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+                  {showSearchClearButton ? (
                     <button
                       type="button"
                       onClick={clearSearchField}
@@ -6864,8 +6915,8 @@ function OpenReportsModal({
                         cursor: "pointer",
                         padding: 0,
                       }}
-                      aria-label="Clear search"
-                      title="Clear search"
+                      aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+                      title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
                     >
                       ×
                     </button>
@@ -6984,7 +7035,7 @@ function OpenReportsModal({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
                   }}
-                  placeholder="Search by report #, name, phone, or email"
+                  placeholder={reportSearchPlaceholder}
                   style={{
                     width: "100%",
                     padding: "9px 30px 9px 10px",
@@ -6995,7 +7046,7 @@ function OpenReportsModal({
                     fontSize: 12.5,
                   }}
                 />
-                {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+                {showSearchClearButton ? (
                   <button
                     type="button"
                     onClick={clearSearchField}
@@ -7016,8 +7067,8 @@ function OpenReportsModal({
                       cursor: "pointer",
                       padding: 0,
                     }}
-                    aria-label="Clear search"
-                    title="Clear search"
+                    aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+                    title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
                   >
                     ×
                   </button>
@@ -7105,7 +7156,7 @@ function OpenReportsModal({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
                 }}
-                placeholder="Search by report #, name, phone, or email"
+                placeholder={reportSearchPlaceholder}
                 style={{
                   width: "100%",
                   padding: "9px 30px 9px 10px",
@@ -7116,7 +7167,7 @@ function OpenReportsModal({
                   fontSize: 12.5,
                 }}
               />
-              {(String(searchDraft || "").trim() || String(searchQuery || "").trim()) ? (
+              {showSearchClearButton ? (
                 <button
                   type="button"
                   onClick={clearSearchField}
@@ -7137,8 +7188,8 @@ function OpenReportsModal({
                     cursor: "pointer",
                     padding: 0,
                   }}
-                  aria-label="Clear search"
-                  title="Clear search"
+                  aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+                  title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
                 >
                   ×
                 </button>
@@ -10450,11 +10501,13 @@ export default function App() {
   const [myReportsDomain, setMyReportsDomain] = useState("potholes");
   const [myReportsFocusIncidentId, setMyReportsFocusIncidentId] = useState("");
   const [myReportsFocusQuery, setMyReportsFocusQuery] = useState("");
+  const [myReportsInViewOnly, setMyReportsInViewOnly] = useState(false);
 
   const [openReportsOpen, setOpenReportsOpen] = useState(false);
   const [openReportsExpanded, setOpenReportsExpanded] = useState(() => new Set()); // lightIds expanded
   const [openReportsInViewOnly, setOpenReportsInViewOnly] = useState(false);
   const [openReportMapFilterOn, setOpenReportMapFilterOn] = useState(false);
+  const [streetlightInViewFilterMode, setStreetlightInViewFilterMode] = useState("");
   const [adminReportDomain, setAdminReportDomain] = useState("potholes");
   const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
   const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
@@ -10476,17 +10529,20 @@ export default function App() {
     setMyReportsExpanded(new Set());
     setMyReportsFocusIncidentId("");
     setMyReportsFocusQuery("");
+    setMyReportsInViewOnly(false);
   }
 
   function openMyReports(opts = {}) {
     const domainKey = String(opts?.domainKey || adminReportDomain || "potholes").trim() || "potholes";
     const focusIncidentId = String(opts?.focusIncidentId || "").trim();
     const focusQuery = String(opts?.focusQuery || "").trim();
+    const inViewOnly = Boolean(opts?.inViewOnly);
     setAdminReportDomain(domainKey);
     setMyReportsDomain(domainKey);
     setMyReportsExpanded(focusIncidentId ? new Set([focusIncidentId]) : new Set());
     setMyReportsFocusIncidentId(focusIncidentId);
     setMyReportsFocusQuery(focusQuery);
+    setMyReportsInViewOnly(inViewOnly);
     setMyReportsOpen(true);
   }
 
@@ -10520,6 +10576,15 @@ export default function App() {
       else next.delete(id);
       return next;
     });
+  }, []);
+
+  const toggleStreetlightInViewFilter = useCallback((mode) => {
+    const normalized = String(mode || "").trim().toLowerCase();
+    if (normalized !== "saved" && normalized !== "utility") {
+      setStreetlightInViewFilterMode("");
+      return;
+    }
+    setStreetlightInViewFilterMode((prev) => (prev === normalized ? "" : normalized));
   }, []);
 
 
@@ -13069,6 +13134,8 @@ export default function App() {
   const isStreetSignsDomain = adminReportDomain === "street_signs";
   const isPotholesDomain = adminReportDomain === "potholes";
   const isWaterDrainDomain = adminReportDomain === "water_drain_issues";
+  const isAssetReportingDomain = isStreetlightsDomain || isStreetSignsDomain;
+  const isAggregatedReportingDomain = !isAssetReportingDomain;
   const canUseStreetlightBulk = isStreetlightsDomain;
   const mappingUnitLabel = isStreetSignsDomain ? "Sign" : "Light";
   const cityLimitPolygons = useMemo(
@@ -14158,6 +14225,32 @@ export default function App() {
     return "Reported";
   }
 
+  const streetlightFilterMatchesLight = useCallback((lightIdRaw) => {
+    const mode = String(streetlightInViewFilterMode || "").trim().toLowerCase();
+    if (mode !== "saved" && mode !== "utility") return true;
+    const lid = String(lightIdRaw || "").trim();
+    if (!lid) return false;
+
+    if (isAdmin) {
+      const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
+      if (sinceFixCount < 1) return false;
+      if (mode === "saved") return true;
+      return utilityReportedAnyLightIdSet.has(lid);
+    }
+
+    if (!viewerStreetlightRingOpenIdSet.has(lid)) return false;
+    if (mode === "saved") return viewerSavedStreetlightLightIdSet.has(lid);
+    return viewerUtilityReportedLightIdSet.has(lid);
+  }, [
+    streetlightInViewFilterMode,
+    isAdmin,
+    reportsByOfficialId,
+    utilityReportedAnyLightIdSet,
+    viewerStreetlightRingOpenIdSet,
+    viewerSavedStreetlightLightIdSet,
+    viewerUtilityReportedLightIdSet,
+  ]);
+
   const handleOfficialMarkerClick = useCallback((lightId) => {
     if (mappingMode) {
       setSelectedQueuedTempId(null);
@@ -14558,6 +14651,22 @@ export default function App() {
     viewerSavedStreetlightLightIdSet,
     viewerUtilityReportedLightIdSet,
   ]);
+
+  const visibleOfficialLights = useMemo(() => {
+    if (!isStreetlightsDomain) return renderedOfficialLights;
+    return (renderedOfficialLights || []).filter((l) => {
+      const lid = String(l?.id || "").trim();
+      return streetlightFilterMatchesLight(lid);
+    });
+  }, [isStreetlightsDomain, renderedOfficialLights, streetlightFilterMatchesLight]);
+
+  useEffect(() => {
+    if (!isStreetlightsDomain) return;
+    const selectedId = String(selectedOfficialId || "").trim();
+    if (!selectedId) return;
+    const stillVisible = (visibleOfficialLights || []).some((l) => String(l?.id || "").trim() === selectedId);
+    if (!stillVisible) setSelectedOfficialId(null);
+  }, [isStreetlightsDomain, selectedOfficialId, visibleOfficialLights]);
 
   const openReportsModalGroupsBase = useMemo(() => {
     return (openIncidentGroupsNormalized || [])
@@ -18157,6 +18266,8 @@ async function insertReportWithFallback(payload) {
       : adminReportDomain === "water_main"
         ? "#1e88e5"
         : "#111";
+  const isSavedStreetlightFilterOn = isStreetlightsDomain && streetlightInViewFilterMode === "saved";
+  const isUtilityStreetlightFilterOn = isStreetlightsDomain && streetlightInViewFilterMode === "utility";
   const inViewCounterColor = "var(--sl-ui-text)";
   const inViewCounterBg = "var(--sl-ui-surface-bg)";
   const inViewCounterBorder = "var(--sl-ui-surface-border)";
@@ -18191,6 +18302,7 @@ async function insertReportWithFallback(payload) {
       setMappingQueue([]);
     }
     if (openReportMapFilterOn) setOpenReportMapFilterOn(false);
+    if (streetlightInViewFilterMode) setStreetlightInViewFilterMode("");
     if (selectedOfficialId) setSelectedOfficialId(null);
   }, [
     isStreetlightsDomain,
@@ -18198,6 +18310,7 @@ async function insertReportWithFallback(payload) {
     bulkMode,
     mappingMode,
     openReportMapFilterOn,
+    streetlightInViewFilterMode,
     selectedOfficialId,
     clearBulkSelection,
   ]);
@@ -19383,6 +19496,7 @@ async function insertReportWithFallback(payload) {
           setMyReportsFocusIncidentId("");
           setMyReportsFocusQuery("");
         }}
+        inViewOnly={myReportsInViewOnly}
       />
 
       <OpenReportsModal
@@ -19787,7 +19901,7 @@ async function insertReportWithFallback(payload) {
           ref={officialCanvasOverlayRef}
           map={gmapsRef}
           show={showOfficialLights && !mapInteracting}
-          lights={renderedOfficialLights}
+          lights={visibleOfficialLights}
           bulkMode={bulkMode}
           bulkSelectedSet={bulkSelectedSet}
           getMarkerColor={officialMarkerColorForViewer}
@@ -21384,43 +21498,50 @@ async function insertReportWithFallback(payload) {
                   –
                 </button>
               </div>
-              <div
-                onClick={() => {
-                  if (!isAdmin) return;
-                  openOpenReports({ inViewOnly: true });
-                }}
-                role={isAdmin ? "button" : undefined}
-                tabIndex={isAdmin ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (!isAdmin) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openOpenReports({ inViewOnly: true });
-                  }
-                }}
-                style={{
-                  width: "fit-content",
-                  maxWidth: "min(720px, calc(100vw - 100px))",
-                  marginTop: 2,
-                  fontSize: 11.5,
-                  opacity: 1,
-                  textAlign: "left",
-                  color: inViewCounterColor,
-                  padding: "4px 8px",
-                  borderRadius: 999,
-                  border: `1px solid ${inViewCounterBorder}`,
-                  background: inViewCounterBg,
-                  boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                  backdropFilter: "blur(2px)",
-                  WebkitBackdropFilter: "blur(2px)",
-                  cursor: isAdmin ? "pointer" : "default",
-                }}
-              >
-                Open reports in view: <b>{openReportsInViewCount}</b>
-              </div>
+              {isAggregatedReportingDomain && (
+                <div
+                  onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                    }
+                  }}
+                  style={{
+                    width: "fit-content",
+                    maxWidth: "min(720px, calc(100vw - 100px))",
+                    marginTop: 2,
+                    fontSize: 11.5,
+                    opacity: 1,
+                    textAlign: "left",
+                    color: inViewCounterColor,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: `1px solid ${inViewCounterBorder}`,
+                    background: inViewCounterBg,
+                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                    backdropFilter: "blur(2px)",
+                    WebkitBackdropFilter: "blur(2px)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Reports in view: <b>{openReportsInViewCount}</b>
+                </div>
+              )}
               {isStreetlightsDomain && (
                 <>
                   <div
+                    onClick={() => toggleStreetlightInViewFilter("saved")}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleStreetlightInViewFilter("saved");
+                      }
+                    }}
                     style={{
                       width: "fit-content",
                       maxWidth: "min(720px, calc(100vw - 100px))",
@@ -21431,17 +21552,30 @@ async function insertReportWithFallback(payload) {
                       color: inViewCounterColor,
                       padding: "4px 8px",
                       borderRadius: 999,
-                      border: `1px solid ${inViewCounterBorder}`,
-                      background: inViewCounterBg,
+                      border: isSavedStreetlightFilterOn
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : `1px solid ${inViewCounterBorder}`,
+                      background: isSavedStreetlightFilterOn
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : inViewCounterBg,
                       boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                       backdropFilter: "blur(2px)",
                       WebkitBackdropFilter: "blur(2px)",
-                      cursor: "default",
+                      cursor: "pointer",
                     }}
                   >
                     Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
                   </div>
                   <div
+                    onClick={() => toggleStreetlightInViewFilter("utility")}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleStreetlightInViewFilter("utility");
+                      }
+                    }}
                     style={{
                       width: "fit-content",
                       maxWidth: "min(720px, calc(100vw - 100px))",
@@ -21452,12 +21586,16 @@ async function insertReportWithFallback(payload) {
                       color: inViewCounterColor,
                       padding: "4px 8px",
                       borderRadius: 999,
-                      border: `1px solid ${inViewCounterBorder}`,
-                      background: inViewCounterBg,
+                      border: isUtilityStreetlightFilterOn
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : `1px solid ${inViewCounterBorder}`,
+                      background: isUtilityStreetlightFilterOn
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : inViewCounterBg,
                       boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                       backdropFilter: "blur(2px)",
                       WebkitBackdropFilter: "blur(2px)",
-                      cursor: "default",
+                      cursor: "pointer",
                     }}
                   >
                     Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
@@ -21725,7 +21863,7 @@ async function insertReportWithFallback(payload) {
               WebkitBackdropFilter: "blur(2px)",
             }}
           >
-            Open reports in view: <b>{openReportsInViewCount}</b>
+            Reports in view: <b>{openReportsInViewCount}</b>
           </div>
           <div
               style={{
@@ -21972,43 +22110,50 @@ async function insertReportWithFallback(payload) {
                   –
                 </button>
               </div>
-              <div
-                onClick={() => {
-                  if (!isAdmin) return;
-                  openOpenReports({ inViewOnly: true });
-                }}
-                role={isAdmin ? "button" : undefined}
-                tabIndex={isAdmin ? 0 : -1}
-                onKeyDown={(e) => {
-                  if (!isAdmin) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openOpenReports({ inViewOnly: true });
-                  }
-                }}
-                style={{
-                  width: "fit-content",
-                  maxWidth: "min(520px, calc(100vw - 90px))",
-                  marginTop: 1,
-                  fontSize: 11,
-                  opacity: 1,
-                  textAlign: "left",
-                  color: inViewCounterColor,
-                  padding: "4px 8px",
-                  borderRadius: 999,
-                  border: `1px solid ${inViewCounterBorder}`,
-                  background: inViewCounterBg,
-                  boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                  backdropFilter: "blur(2px)",
-                  WebkitBackdropFilter: "blur(2px)",
-                  cursor: isAdmin ? "pointer" : "default",
-                }}
-              >
-                Open reports in view: <b>{openReportsInViewCount}</b>
-              </div>
+              {isAggregatedReportingDomain && (
+                <div
+                  onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                    }
+                  }}
+                  style={{
+                    width: "fit-content",
+                    maxWidth: "min(520px, calc(100vw - 90px))",
+                    marginTop: 1,
+                    fontSize: 11,
+                    opacity: 1,
+                    textAlign: "left",
+                    color: inViewCounterColor,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: `1px solid ${inViewCounterBorder}`,
+                    background: inViewCounterBg,
+                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                    backdropFilter: "blur(2px)",
+                    WebkitBackdropFilter: "blur(2px)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Reports in view: <b>{openReportsInViewCount}</b>
+                </div>
+              )}
               {isStreetlightsDomain && (
                 <>
                   <div
+                    onClick={() => toggleStreetlightInViewFilter("saved")}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleStreetlightInViewFilter("saved");
+                      }
+                    }}
                     style={{
                       width: "fit-content",
                       maxWidth: "min(520px, calc(100vw - 90px))",
@@ -22019,17 +22164,30 @@ async function insertReportWithFallback(payload) {
                       color: inViewCounterColor,
                       padding: "4px 8px",
                       borderRadius: 999,
-                      border: `1px solid ${inViewCounterBorder}`,
-                      background: inViewCounterBg,
+                      border: isSavedStreetlightFilterOn
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : `1px solid ${inViewCounterBorder}`,
+                      background: isSavedStreetlightFilterOn
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : inViewCounterBg,
                       boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                       backdropFilter: "blur(2px)",
                       WebkitBackdropFilter: "blur(2px)",
-                      cursor: "default",
+                      cursor: "pointer",
                     }}
                   >
                     Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
                   </div>
                   <div
+                    onClick={() => toggleStreetlightInViewFilter("utility")}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        toggleStreetlightInViewFilter("utility");
+                      }
+                    }}
                     style={{
                       width: "fit-content",
                       maxWidth: "min(520px, calc(100vw - 90px))",
@@ -22040,12 +22198,16 @@ async function insertReportWithFallback(payload) {
                       color: inViewCounterColor,
                       padding: "4px 8px",
                       borderRadius: 999,
-                      border: `1px solid ${inViewCounterBorder}`,
-                      background: inViewCounterBg,
+                      border: isUtilityStreetlightFilterOn
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : `1px solid ${inViewCounterBorder}`,
+                      background: isUtilityStreetlightFilterOn
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : inViewCounterBg,
                       boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                       backdropFilter: "blur(2px)",
                       WebkitBackdropFilter: "blur(2px)",
-                      cursor: "default",
+                      cursor: "pointer",
                     }}
                   >
                     Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
@@ -22318,7 +22480,7 @@ async function insertReportWithFallback(payload) {
               WebkitBackdropFilter: "blur(2px)",
             }}
           >
-            Open reports in view: <b>{openReportsInViewCount}</b>
+            Reports in view: <b>{openReportsInViewCount}</b>
           </div>
           <div
               style={{
