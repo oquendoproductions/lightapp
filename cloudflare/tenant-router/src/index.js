@@ -28,12 +28,22 @@ function rewriteLocationHeader(location, originalHost, originHost) {
   return location;
 }
 
+function rewriteAssetsPathIfNeeded(incomingUrl, upstreamUrl) {
+  if (incomingUrl.hostname !== "assets.cityreport.io") return;
+  if (upstreamUrl.pathname.startsWith("/assets/")) return;
+  const normalized = upstreamUrl.pathname.startsWith("/")
+    ? upstreamUrl.pathname
+    : `/${upstreamUrl.pathname}`;
+  upstreamUrl.pathname = `/assets${normalized}`;
+}
+
 async function proxyToPages(request, resolution, env) {
   const incomingUrl = new URL(request.url);
   const originHost = String(env.PAGES_ORIGIN || DEFAULT_ORIGIN).trim();
   const upstreamUrl = new URL(incomingUrl.toString());
   upstreamUrl.protocol = "https:";
   upstreamUrl.hostname = originHost;
+  rewriteAssetsPathIfNeeded(incomingUrl, upstreamUrl);
 
   const upstreamRequest = new Request(upstreamUrl.toString(), {
     method: request.method,
