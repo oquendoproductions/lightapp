@@ -1306,7 +1306,7 @@ export default function PlatformAdminApp() {
                   <input
                     value={tenantForm.tenant_key}
                     onChange={(e) => setTenantForm((p) => ({ ...p, tenant_key: e.target.value }))}
-                    placeholder="ashtabulacity"
+                    placeholder="examplemunicipality"
                     readOnly={!inAddTenantFlow}
                     style={{
                       ...inputBase,
@@ -1321,7 +1321,7 @@ export default function PlatformAdminApp() {
                     readOnly={tenantReadOnly}
                     value={tenantForm.name}
                     onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))}
-                    placeholder="Ashtabula City"
+                    placeholder="Example Municipality"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1331,7 +1331,7 @@ export default function PlatformAdminApp() {
                     readOnly={tenantReadOnly}
                     value={tenantForm.primary_subdomain}
                     onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))}
-                    placeholder="ashtabulacity.cityreport.io"
+                    placeholder="examplemunicipality.cityreport.io"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1341,7 +1341,7 @@ export default function PlatformAdminApp() {
                     readOnly={tenantReadOnly}
                     value={tenantForm.boundary_config_key}
                     onChange={(e) => setTenantForm((p) => ({ ...p, boundary_config_key: e.target.value }))}
-                    placeholder="ashtabula_city_geojson"
+                    placeholder="example_municipality_geojson"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1351,7 +1351,7 @@ export default function PlatformAdminApp() {
                     readOnly={tenantReadOnly}
                     value={tenantForm.notification_email_potholes}
                     onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))}
-                    placeholder="potholes@city.gov"
+                    placeholder="roads@examplemunicipality.gov"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1361,7 +1361,7 @@ export default function PlatformAdminApp() {
                     readOnly={tenantReadOnly}
                     value={tenantForm.notification_email_water_drain}
                     onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))}
-                    placeholder="utilities@city.gov"
+                    placeholder="utilities@examplemunicipality.gov"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1418,11 +1418,11 @@ export default function PlatformAdminApp() {
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Organization Name</span>
-                  <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="City of Ashtabula" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Public Display Name</span>
-                  <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Ashtabula City" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Address 1</span>
@@ -1430,7 +1430,7 @@ export default function PlatformAdminApp() {
                     readOnly={profileReadOnly}
                     value={profileForm.mailing_address_1}
                     onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_1: e.target.value }))}
-                    placeholder="123 Main St"
+                    placeholder="100 Civic Center Dr"
                     style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1440,7 +1440,7 @@ export default function PlatformAdminApp() {
                     readOnly={profileReadOnly}
                     value={profileForm.mailing_address_2}
                     onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_2: e.target.value }))}
-                    placeholder="Suite / Unit (optional)"
+                    placeholder="Building A, Suite 200 (optional)"
                     style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1450,7 +1450,7 @@ export default function PlatformAdminApp() {
                     readOnly={profileReadOnly}
                     value={profileForm.mailing_city}
                     onChange={(e) => setProfileForm((p) => ({ ...p, mailing_city: e.target.value }))}
-                    placeholder="Ashtabula"
+                    placeholder="Example City"
                     style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1460,7 +1460,7 @@ export default function PlatformAdminApp() {
                     readOnly={profileReadOnly}
                     value={profileForm.mailing_state}
                     onChange={(e) => setProfileForm((p) => ({ ...p, mailing_state: e.target.value }))}
-                    placeholder="OH"
+                    placeholder="ST"
                     style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
@@ -1470,45 +1470,45 @@ export default function PlatformAdminApp() {
                     readOnly={profileReadOnly}
                     value={profileForm.mailing_zip}
                     onChange={(e) => setProfileForm((p) => ({ ...p, mailing_zip: e.target.value }))}
-                    placeholder="44004"
+                    placeholder="12345"
                     style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Name</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Jane Doe" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Primary Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Email</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="jane.doe@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="primary.contact@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Phone</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="(555) 123-4567" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="(000) 000-0000" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Municipality Website URL</span>
-                  <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.cityofashtabula.com" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>URL Extension (Alias)</span>
-                  <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="ashtabulacity" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Billing Email</span>
-                  <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Technical Contact Name</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="IT Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="Technical Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Technical Contact Email</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="it@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="it@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Technical Contact Phone</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_phone: e.target.value }))} placeholder="(555) 555-0101" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_phone: e.target.value }))} placeholder="(000) 000-0000" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Contact Name</span>
@@ -1516,11 +1516,11 @@ export default function PlatformAdminApp() {
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Contact Email</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="legal@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="legal@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Contact Phone</span>
-                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_phone: e.target.value }))} placeholder="(555) 555-0102" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_phone: e.target.value }))} placeholder="(000) 000-0000" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Timezone</span>
