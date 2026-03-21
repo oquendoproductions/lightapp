@@ -95,7 +95,7 @@ function initialProfileForm() {
 
 function initialDomainVisibilityForm() {
   const out = {};
-  for (const d of DOMAIN_OPTIONS) out[d.key] = "public";
+  for (const d of DOMAIN_OPTIONS) out[d.key] = "enabled";
   return out;
 }
 
@@ -526,7 +526,7 @@ export default function PlatformAdminApp() {
     const nextVisibility = initialDomainVisibilityForm();
     for (const d of DOMAIN_OPTIONS) {
       const configured = String(visibility?.[d.key] || "").trim().toLowerCase();
-      nextVisibility[d.key] = configured === "internal_only" ? "internal_only" : "public";
+      nextVisibility[d.key] = configured === "internal_only" ? "disabled" : "enabled";
     }
     setDomainVisibilityForm(nextVisibility);
 
@@ -688,7 +688,7 @@ export default function PlatformAdminApp() {
     const visibilityRows = DOMAIN_OPTIONS.map((d) => ({
       tenant_key: key,
       domain: d.key,
-      visibility: String(domainVisibilityForm?.[d.key] || "public").trim().toLowerCase() === "internal_only"
+      visibility: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled"
         ? "internal_only"
         : "public",
     }));
@@ -1297,19 +1297,19 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "domains" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Domain Visibility + Map Features</h2>
+              <h2 style={{ margin: 0 }}>Domain Enablement + Map Features</h2>
               <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(200px, 1fr))", gap: 8 }}>
                   {DOMAIN_OPTIONS.map((d) => (
                     <label key={d.key} style={{ display: "grid", gap: 5, border: "1px solid #d7e3f1", borderRadius: 10, padding: 8 }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
                       <select
-                        value={domainVisibilityForm[d.key] || "public"}
+                        value={domainVisibilityForm[d.key] || "enabled"}
                         onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
                         style={inputBase}
                       >
-                        <option value="public">Public</option>
-                        <option value="internal_only">Internal Only</option>
+                        <option value="enabled">Enabled</option>
+                        <option value="disabled">Disabled</option>
                       </select>
                     </label>
                   ))}

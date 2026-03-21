@@ -55,8 +55,7 @@ const APP_VERSION = "v1.1.0";
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
-const ENABLE_TENANT_VISIBILITY_CONFIG =
-  String(import.meta.env.VITE_ENABLE_TENANT_VISIBILITY_CONFIG ?? "true").trim().toLowerCase() === "true";
+const ENABLE_TENANT_VISIBILITY_CONFIG = true;
 const ENABLE_STREETLIGHT_IN_APP_REPORTING =
   String(import.meta.env.VITE_ENABLE_STREETLIGHT_IN_APP_REPORTING || "").trim().toLowerCase() === "true";
 const ENABLE_LEGACY_PLACES_SERVICE =
