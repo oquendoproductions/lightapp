@@ -194,9 +194,8 @@ export default function PlatformAdminApp() {
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
 
   const [selectedTenantKey, setSelectedTenantKey] = useState("ashtabulacity");
-  const [entryStep, setEntryStep] = useState("start"); // start | choose | add | tenant
+  const [entryStep, setEntryStep] = useState("start"); // start | add | tenant
   const [tenantSearch, setTenantSearch] = useState("");
-  const [tenantPickerKey, setTenantPickerKey] = useState("");
 
   const [tenantForm, setTenantForm] = useState(initialTenantForm);
   const [profileForm, setProfileForm] = useState(initialProfileForm);
@@ -428,11 +427,6 @@ export default function PlatformAdminApp() {
     setEntryStep("start");
   }, []);
 
-  const openChooseTenantStep = useCallback(() => {
-    setEntryStep("choose");
-    setStatus((prev) => ({ ...prev, hydrate: "" }));
-  }, []);
-
   const openAddTenantStep = useCallback(() => {
     setEntryStep("add");
     setActiveTab("tenants");
@@ -441,10 +435,8 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
   }, []);
 
-  const confirmTenantSelection = useCallback((event) => {
-    event?.preventDefault?.();
-    const fallback = String(tenantOptions?.[0] || "").trim();
-    const key = sanitizeTenantKey(tenantPickerKey || fallback);
+  const openTenantWorkspace = useCallback((tenantKey) => {
+    const key = sanitizeTenantKey(tenantKey);
     if (!key) {
       setStatus((prev) => ({ ...prev, hydrate: "No tenants found yet. Use Add Tenant to create one." }));
       return;
@@ -453,12 +445,11 @@ export default function PlatformAdminApp() {
     setEntryStep("tenant");
     setActiveTab("domains");
     setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
-  }, [tenantOptions, tenantPickerKey]);
+  }, []);
 
   const returnToStart = useCallback(() => {
     setEntryStep("start");
     setTenantSearch("");
-    setTenantPickerKey("");
   }, []);
 
   useEffect(() => {
@@ -497,18 +488,6 @@ export default function PlatformAdminApp() {
       setSelectedTenantKey(tenantOptions[0]);
     }
   }, [tenantOptions, selectedTenantKey]);
-
-  useEffect(() => {
-    const rows = Array.isArray(filteredTenantRows) ? filteredTenantRows : [];
-    if (!rows.length) {
-      if (tenantPickerKey) setTenantPickerKey("");
-      return;
-    }
-    const hasCurrent = rows.some((row) => String(row?.tenant_key || "").trim() === String(tenantPickerKey || "").trim());
-    if (!hasCurrent) {
-      setTenantPickerKey(String(rows[0]?.tenant_key || "").trim());
-    }
-  }, [filteredTenantRows, tenantPickerKey]);
 
   useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -923,7 +902,7 @@ export default function PlatformAdminApp() {
 
   const inTenantWorkspace = entryStep === "tenant";
   const inAddTenantFlow = entryStep === "add";
-  const inEntryPrompt = entryStep === "start" || entryStep === "choose";
+  const inEntryPrompt = entryStep === "start";
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
 
   if (!authReady) {
@@ -1013,56 +992,45 @@ export default function PlatformAdminApp() {
             <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, fontSize: 20 }}>Start Here</h2>
               <p style={{ margin: 0, fontSize: 13.5, opacity: 0.85 }}>
-                Choose an existing tenant to manage, or start the new tenant onboarding flow.
+                Add a new tenant, or search and open an existing tenant workspace.
               </p>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={{ ...buttonBase, background: entryStep === "choose" ? "#0f766e" : buttonBase.background, color: entryStep === "choose" ? "white" : buttonBase.color }}
-                  onClick={openChooseTenantStep}
-                >
-                  Choose Tenant
-                </button>
-                <button type="button" style={buttonBase} onClick={openAddTenantStep}>
-                  Add Tenant
-                </button>
+              <button type="button" style={{ ...buttonBase, width: "fit-content" }} onClick={openAddTenantStep}>
+                Add Tenant
+              </button>
+              <input
+                value={tenantSearch}
+                onChange={(e) => setTenantSearch(e.target.value)}
+                placeholder="Search tenants by name, key, or subdomain"
+                style={{ ...inputBase, maxWidth: 620 }}
+              />
+              <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
+                {filteredTenantRows.map((row) => {
+                  const key = String(row?.tenant_key || "").trim();
+                  if (!key) return null;
+                  const name = String(row?.name || "").trim() || key;
+                  const subdomain = String(row?.primary_subdomain || "").trim();
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => openTenantWorkspace(key)}
+                      style={{ ...buttonBase, textAlign: "left", display: "grid", gap: 2, fontWeight: 700 }}
+                    >
+                      <span>{name}</span>
+                      <span style={{ fontSize: 11.5, opacity: 0.8 }}>{key}{subdomain ? ` • ${subdomain}` : ""}</span>
+                    </button>
+                  );
+                })}
+                {!filteredTenantRows.length ? (
+                  <div style={{ fontSize: 12.5, color: "#7f1d1d" }}>No tenants match this search.</div>
+                ) : null}
               </div>
-              {entryStep === "choose" ? (
-                <form onSubmit={confirmTenantSelection} style={{ display: "grid", gap: 8, maxWidth: 620 }}>
-                  <input
-                    value={tenantSearch}
-                    onChange={(e) => setTenantSearch(e.target.value)}
-                    placeholder="Search by tenant key, name, or subdomain"
-                    style={inputBase}
-                  />
-                  <select
-                    value={tenantPickerKey}
-                    onChange={(e) => setTenantPickerKey(sanitizeTenantKey(e.target.value))}
-                    style={inputBase}
-                  >
-                    {filteredTenantRows.map((row) => {
-                      const key = String(row?.tenant_key || "").trim();
-                      if (!key) return null;
-                      const labelName = String(row?.name || "").trim();
-                      return <option key={key} value={key}>{labelName ? `${labelName} (${key})` : key}</option>;
-                    })}
-                  </select>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={buttonBase}>Open Tenant Workspace</button>
-                    <button type="button" style={buttonBase} onClick={returnToStart}>Back</button>
-                  </div>
-                  {!filteredTenantRows.length ? (
-                    <div style={{ fontSize: 12.5, color: "#7f1d1d" }}>No tenants match your search. Try Add Tenant.</div>
-                  ) : null}
-                </form>
-              ) : null}
             </div>
           ) : null}
           {inAddTenantFlow ? (
             <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
               <span style={{ fontSize: 13.5 }}>New tenant flow active. Complete the onboarding forms below.</span>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" style={buttonBase} onClick={openChooseTenantStep}>Choose Existing Tenant</button>
                 <button type="button" style={buttonBase} onClick={returnToStart}>Back</button>
               </div>
             </div>
@@ -1089,16 +1057,12 @@ export default function PlatformAdminApp() {
                   );
                 })}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 260px) 1fr", gap: 8, alignItems: "center" }}>
-                <select
-                  value={selectedTenantKey}
-                  onChange={(e) => setSelectedTenantKey(sanitizeTenantKey(e.target.value))}
-                  style={inputBase}
-                >
-                  {tenantOptions.map((key) => (
-                    <option key={key} value={key}>{key}</option>
-                  ))}
-                </select>
+              <div style={{ border: "1px solid #d7e3f1", borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>Current Tenant Workspace</div>
+                <div style={{ fontSize: 15, fontWeight: 900 }}>
+                  {selectedTenant?.name || selectedTenantKey}
+                  <span style={{ fontWeight: 600, opacity: 0.75 }}> ({selectedTenantKey})</span>
+                </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
                     <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
@@ -1110,7 +1074,7 @@ export default function PlatformAdminApp() {
                       Open Dev Map
                     </a>
                   ) : null}
-                  <button type="button" style={buttonBase} onClick={openChooseTenantStep}>Switch Tenant</button>
+                  <button type="button" style={buttonBase} onClick={returnToStart}>Switch Tenant</button>
                   <button type="button" style={buttonBase} onClick={openAddTenantStep}>Add Tenant</button>
                 </div>
               </div>
