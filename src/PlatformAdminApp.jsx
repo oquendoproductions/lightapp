@@ -144,6 +144,7 @@ function initialProfileForm() {
     organization_type: "municipality",
     legal_name: "",
     display_name: "",
+    mailing_address: "",
     website_url: "",
     url_extension: "",
     billing_email: "",
@@ -162,6 +163,34 @@ function initialProfileForm() {
     contract_end_date: "",
     renewal_date: "",
     notes: "",
+  };
+}
+
+function profileRowToForm(profile) {
+  if (!profile) return initialProfileForm();
+  return {
+    organization_type: String(profile.organization_type || "municipality"),
+    legal_name: String(profile.legal_name || ""),
+    display_name: String(profile.display_name || ""),
+    mailing_address: String(profile.mailing_address || ""),
+    website_url: String(profile.website_url || ""),
+    url_extension: String(profile.url_extension || ""),
+    billing_email: String(profile.billing_email || ""),
+    timezone: String(profile.timezone || "America/New_York"),
+    contact_primary_name: String(profile.contact_primary_name || ""),
+    contact_primary_email: String(profile.contact_primary_email || ""),
+    contact_primary_phone: String(profile.contact_primary_phone || ""),
+    contact_technical_name: String(profile.contact_technical_name || ""),
+    contact_technical_email: String(profile.contact_technical_email || ""),
+    contact_technical_phone: String(profile.contact_technical_phone || ""),
+    contact_legal_name: String(profile.contact_legal_name || ""),
+    contact_legal_email: String(profile.contact_legal_email || ""),
+    contact_legal_phone: String(profile.contact_legal_phone || ""),
+    contract_status: String(profile.contract_status || "pending"),
+    contract_start_date: String(profile.contract_start_date || ""),
+    contract_end_date: String(profile.contract_end_date || ""),
+    renewal_date: String(profile.renewal_date || ""),
+    notes: String(profile.notes || ""),
   };
 }
 
@@ -275,6 +304,7 @@ export default function PlatformAdminApp() {
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "municipality_admin" });
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   const [status, setStatus] = useState({
     tenant: "",
@@ -506,6 +536,7 @@ export default function PlatformAdminApp() {
     setActiveTab("tenants");
     setTenantForm(initialTenantForm());
     setProfileForm(initialProfileForm());
+    setIsEditingProfile(true);
     setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
   }, []);
 
@@ -518,12 +549,14 @@ export default function PlatformAdminApp() {
     setSelectedTenantKey(key);
     setEntryStep("tenant");
     setActiveTab("domains");
+    setIsEditingProfile(false);
     setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
   }, []);
 
   const returnToStart = useCallback(() => {
     setEntryStep("start");
     setTenantSearch("");
+    setIsEditingProfile(false);
   }, []);
 
   useEffect(() => {
@@ -583,33 +616,7 @@ export default function PlatformAdminApp() {
     if (!key) return;
 
     const profile = tenantProfilesByTenant?.[key] || null;
-    if (profile) {
-      setProfileForm({
-        organization_type: String(profile.organization_type || "municipality"),
-        legal_name: String(profile.legal_name || ""),
-        display_name: String(profile.display_name || ""),
-        website_url: String(profile.website_url || ""),
-        url_extension: String(profile.url_extension || ""),
-        billing_email: String(profile.billing_email || ""),
-        timezone: String(profile.timezone || "America/New_York"),
-        contact_primary_name: String(profile.contact_primary_name || ""),
-        contact_primary_email: String(profile.contact_primary_email || ""),
-        contact_primary_phone: String(profile.contact_primary_phone || ""),
-        contact_technical_name: String(profile.contact_technical_name || ""),
-        contact_technical_email: String(profile.contact_technical_email || ""),
-        contact_technical_phone: String(profile.contact_technical_phone || ""),
-        contact_legal_name: String(profile.contact_legal_name || ""),
-        contact_legal_email: String(profile.contact_legal_email || ""),
-        contact_legal_phone: String(profile.contact_legal_phone || ""),
-        contract_status: String(profile.contract_status || "pending"),
-        contract_start_date: String(profile.contract_start_date || ""),
-        contract_end_date: String(profile.contract_end_date || ""),
-        renewal_date: String(profile.renewal_date || ""),
-        notes: String(profile.notes || ""),
-      });
-    } else {
-      setProfileForm(initialProfileForm());
-    }
+    setProfileForm(profileRowToForm(profile));
 
     const visibility = tenantVisibilityByTenant?.[key] || {};
     const nextVisibility = initialDomainVisibilityForm();
@@ -728,6 +735,7 @@ export default function PlatformAdminApp() {
       organization_type: String(profileForm.organization_type || "municipality").trim() || "municipality",
       legal_name: cleanOptional(profileForm.legal_name),
       display_name: cleanOptional(profileForm.display_name),
+      mailing_address: cleanOptional(profileForm.mailing_address),
       website_url: cleanOptional(profileForm.website_url),
       url_extension: cleanOptional(profileForm.url_extension),
       billing_email: cleanOptional(profileForm.billing_email),
@@ -768,6 +776,7 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, profile: `Saved intake profile for ${key}.` }));
+    setIsEditingProfile(false);
     await refreshControlPlaneData();
   }, [selectedTenantKey, profileForm, logAudit, refreshControlPlaneData]);
 
@@ -998,6 +1007,7 @@ export default function PlatformAdminApp() {
   const inAddTenantFlow = entryStep === "add";
   const inEntryPrompt = entryStep === "start";
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+  const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const sessionDisplayLabel = sessionEmail || (sessionUserId ? `${sessionUserId.slice(0, 8)}...${sessionUserId.slice(-4)}` : "");
 
   if (!authReady) {
@@ -1281,59 +1291,104 @@ export default function PlatformAdminApp() {
             </div>
 
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "Update Intake Profile"}</h2>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>
+                  {inAddTenantFlow ? "Add Tenant: Contact Information" : "Tenant Contact Information"}
+                </h2>
+                {!inAddTenantFlow ? (
+                  profileReadOnly ? (
+                    <button type="button" style={buttonAlt} onClick={() => setIsEditingProfile(true)}>
+                      Edit Contact Information
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      style={buttonAlt}
+                      onClick={() => {
+                        const key = sanitizeTenantKey(selectedTenantKey);
+                        setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
+                        setIsEditingProfile(false);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )
+                ) : null}
+              </div>
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Organization Name</span>
-                  <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="City of Ashtabula" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="City of Ashtabula" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Public Display Name</span>
-                  <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Ashtabula City" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Ashtabula City" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+                  <span>Mailing Address</span>
+                  <textarea
+                    readOnly={profileReadOnly}
+                    value={profileForm.mailing_address}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address: e.target.value }))}
+                    placeholder="123 Main St, Ashtabula, OH 44004"
+                    style={{ ...inputBase, minHeight: 72, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                  />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Name</span>
-                  <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Jane Doe" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Jane Doe" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Email</span>
-                  <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="jane.doe@city.gov" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} placeholder="jane.doe@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Primary Contact Phone</span>
-                  <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="(555) 123-4567" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} placeholder="(555) 123-4567" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Municipality Website URL</span>
-                  <input value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.cityofashtabula.com" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.cityofashtabula.com" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>URL Extension (Alias)</span>
-                  <input value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="ashtabulacity" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="ashtabulacity" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Billing Email</span>
-                  <input value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@city.gov" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Technical Contact Name</span>
-                  <input value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="IT Contact" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_name: e.target.value }))} placeholder="IT Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Technical Contact Email</span>
-                  <input value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="it@city.gov" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_email: e.target.value }))} placeholder="it@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Technical Contact Phone</span>
+                  <input readOnly={profileReadOnly} value={profileForm.contact_technical_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_technical_phone: e.target.value }))} placeholder="(555) 555-0101" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Contact Name</span>
-                  <input value={profileForm.contact_legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_name: e.target.value }))} placeholder="Legal Contact" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_name: e.target.value }))} placeholder="Legal Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Legal Contact Email</span>
-                  <input value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="legal@city.gov" style={inputBase} />
+                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_email: e.target.value }))} placeholder="legal@city.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Legal Contact Phone</span>
+                  <input readOnly={profileReadOnly} value={profileForm.contact_legal_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_legal_phone: e.target.value }))} placeholder="(555) 555-0102" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Timezone</span>
+                  <input readOnly={profileReadOnly} value={profileForm.timezone} onChange={(e) => setProfileForm((p) => ({ ...p, timezone: e.target.value }))} placeholder="America/New_York" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Contract Status</span>
-                  <select value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={inputBase}>
+                  <select disabled={profileReadOnly} value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}>
                     <option value="pending">Pending</option>
                     <option value="active">Active</option>
                     <option value="paused">Paused</option>
@@ -1343,21 +1398,25 @@ export default function PlatformAdminApp() {
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Contract Start Date</span>
-                  <input type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={inputBase} />
+                  <input readOnly={profileReadOnly} type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Contract End Date</span>
-                  <input type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={inputBase} />
+                  <input readOnly={profileReadOnly} type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Renewal Date</span>
-                  <input type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={inputBase} />
+                  <input readOnly={profileReadOnly} type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
                   <span>Operational / Onboarding Notes</span>
-                  <textarea value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 90 }} />
+                  <textarea readOnly={profileReadOnly} value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 90, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
-                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>Save Intake Profile</button>
+                {(inAddTenantFlow || !profileReadOnly) ? (
+                  <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>
+                    Save Contact Information
+                  </button>
+                ) : null}
               </form>
               {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.profile}</div> : null}
             </div>
