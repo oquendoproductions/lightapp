@@ -149,7 +149,11 @@ function initialProfileForm() {
     organization_type: "municipality",
     legal_name: "",
     display_name: "",
-    mailing_address: "",
+    mailing_address_1: "",
+    mailing_address_2: "",
+    mailing_city: "",
+    mailing_state: "",
+    mailing_zip: "",
     website_url: "",
     url_extension: "",
     billing_email: "",
@@ -173,11 +177,21 @@ function initialProfileForm() {
 
 function profileRowToForm(profile) {
   if (!profile) return initialProfileForm();
+  const legacyAddress = String(profile.mailing_address || "").trim();
+  const address1 = String(profile.mailing_address_1 || "").trim();
+  const address2 = String(profile.mailing_address_2 || "").trim();
+  const city = String(profile.mailing_city || "").trim();
+  const state = String(profile.mailing_state || "").trim();
+  const zip = String(profile.mailing_zip || "").trim();
   return {
     organization_type: String(profile.organization_type || "municipality"),
     legal_name: String(profile.legal_name || ""),
     display_name: String(profile.display_name || ""),
-    mailing_address: String(profile.mailing_address || ""),
+    mailing_address_1: address1 || legacyAddress,
+    mailing_address_2: address2,
+    mailing_city: city,
+    mailing_state: state,
+    mailing_zip: zip,
     website_url: String(profile.website_url || ""),
     url_extension: String(profile.url_extension || ""),
     billing_email: String(profile.billing_email || ""),
@@ -225,6 +239,16 @@ function sanitizeTenantKey(value) {
 function cleanOptional(value) {
   const v = String(value || "").trim();
   return v || null;
+}
+
+function composeMailingAddress(parts) {
+  const address1 = cleanOptional(parts?.mailing_address_1);
+  const address2 = cleanOptional(parts?.mailing_address_2);
+  const city = cleanOptional(parts?.mailing_city);
+  const state = cleanOptional(parts?.mailing_state);
+  const zip = cleanOptional(parts?.mailing_zip);
+  const locality = [city, state, zip].filter(Boolean).join(" ");
+  return [address1, address2, locality].filter(Boolean).join(", ");
 }
 
 function sanitizeHexColor(value, fallback = "#e53935") {
@@ -755,7 +779,12 @@ export default function PlatformAdminApp() {
       organization_type: String(profileForm.organization_type || "municipality").trim() || "municipality",
       legal_name: cleanOptional(profileForm.legal_name),
       display_name: cleanOptional(profileForm.display_name),
-      mailing_address: cleanOptional(profileForm.mailing_address),
+      mailing_address: cleanOptional(composeMailingAddress(profileForm)),
+      mailing_address_1: cleanOptional(profileForm.mailing_address_1),
+      mailing_address_2: cleanOptional(profileForm.mailing_address_2),
+      mailing_city: cleanOptional(profileForm.mailing_city),
+      mailing_state: cleanOptional(profileForm.mailing_state),
+      mailing_zip: cleanOptional(profileForm.mailing_zip),
       website_url: cleanOptional(profileForm.website_url),
       url_extension: cleanOptional(profileForm.url_extension),
       billing_email: cleanOptional(profileForm.billing_email),
@@ -1395,14 +1424,54 @@ export default function PlatformAdminApp() {
                   <span>Public Display Name</span>
                   <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Ashtabula City" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
-                  <span>Mailing Address</span>
-                  <textarea
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Address 1</span>
+                  <input
                     readOnly={profileReadOnly}
-                    value={profileForm.mailing_address}
-                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address: e.target.value }))}
-                    placeholder="123 Main St, Ashtabula, OH 44004"
-                    style={{ ...inputBase, minHeight: 72, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                    value={profileForm.mailing_address_1}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_1: e.target.value }))}
+                    placeholder="123 Main St"
+                    style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Address 2</span>
+                  <input
+                    readOnly={profileReadOnly}
+                    value={profileForm.mailing_address_2}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_2: e.target.value }))}
+                    placeholder="Suite / Unit (optional)"
+                    style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>City</span>
+                  <input
+                    readOnly={profileReadOnly}
+                    value={profileForm.mailing_city}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_city: e.target.value }))}
+                    placeholder="Ashtabula"
+                    style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>State</span>
+                  <input
+                    readOnly={profileReadOnly}
+                    value={profileForm.mailing_state}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_state: e.target.value }))}
+                    placeholder="OH"
+                    style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>ZIP</span>
+                  <input
+                    readOnly={profileReadOnly}
+                    value={profileForm.mailing_zip}
+                    onChange={(e) => setProfileForm((p) => ({ ...p, mailing_zip: e.target.value }))}
+                    placeholder="44004"
+                    style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
