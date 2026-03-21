@@ -14,7 +14,7 @@ const DOMAIN_OPTIONS = [
 ];
 
 const TAB_OPTIONS = [
-  { key: "tenants", label: "Tenants" },
+  { key: "tenants", label: "Tenant Info" },
   { key: "users", label: "Users/Admins" },
   { key: "domains", label: "Domains + Features" },
   { key: "files", label: "Files" },
@@ -585,7 +585,7 @@ export default function PlatformAdminApp() {
     }
     setSelectedTenantKey(key);
     setEntryStep("tenant");
-    setActiveTab("domains");
+    setActiveTab("tenants");
     setIsEditingTenant(false);
     setIsEditingProfile(false);
     setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
