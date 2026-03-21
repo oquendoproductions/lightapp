@@ -995,17 +995,65 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0 }}>Create / Update Tenant</h2>
               <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
-                <input value={tenantForm.tenant_key} onChange={(e) => setTenantForm((p) => ({ ...p, tenant_key: e.target.value }))} placeholder="tenant_key" style={inputBase} />
-                <input value={tenantForm.name} onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))} placeholder="Organization display name" style={inputBase} />
-                <input value={tenantForm.primary_subdomain} onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))} placeholder="primary_subdomain" style={inputBase} />
-                <input value={tenantForm.boundary_config_key} onChange={(e) => setTenantForm((p) => ({ ...p, boundary_config_key: e.target.value }))} placeholder="boundary_config_key" style={inputBase} />
-                <input value={tenantForm.notification_email_potholes} onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))} placeholder="notification_email_potholes" style={inputBase} />
-                <input value={tenantForm.notification_email_water_drain} onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))} placeholder="notification_email_water_drain" style={inputBase} />
-                <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={tenantForm.is_pilot} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} /> Pilot
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Tenant Key (system ID)</span>
+                  <input
+                    value={tenantForm.tenant_key}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, tenant_key: e.target.value }))}
+                    placeholder="ashtabulacity"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Tenant Name</span>
+                  <input
+                    value={tenantForm.name}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="Ashtabula City"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Primary Tenant URL</span>
+                  <input
+                    value={tenantForm.primary_subdomain}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))}
+                    placeholder="ashtabulacity.cityreport.io"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Boundary Config Key</span>
+                  <input
+                    value={tenantForm.boundary_config_key}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, boundary_config_key: e.target.value }))}
+                    placeholder="ashtabula_city_geojson"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Pothole Notification Email</span>
+                  <input
+                    value={tenantForm.notification_email_potholes}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))}
+                    placeholder="potholes@city.gov"
+                    style={inputBase}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Water / Drain Notification Email</span>
+                  <input
+                    value={tenantForm.notification_email_water_drain}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))}
+                    placeholder="utilities@city.gov"
+                    style={inputBase}
+                  />
                 </label>
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={tenantForm.active} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active
+                  <input type="checkbox" checked={tenantForm.is_pilot} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} /> Pilot Municipality
+                </label>
+                <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={tenantForm.active} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Tenant
                 </label>
                 <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1" }}>Save Tenant</button>
               </form>
