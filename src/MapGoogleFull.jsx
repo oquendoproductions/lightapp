@@ -11011,6 +11011,12 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
+  const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
+  const [tenantMapFeatures, setTenantMapFeatures] = useState({
+    show_boundary_border: true,
+    shade_outside_boundary: true,
+    outside_shade_opacity: 0.42,
+  });
   const [openAbuseFlagSummary, setOpenAbuseFlagSummary] = useState({ total: 0, maxSeverity: 0 });
   const [moderationFlagsOpen, setModerationFlagsOpen] = useState(false);
   const [moderationFlagRows, setModerationFlagRows] = useState([]);
@@ -11020,11 +11026,14 @@ export default function App() {
   const isDomainPublic = useCallback((domainKey) => {
     const key = String(domainKey || "").trim();
     if (!key) return false;
+    if (!ENABLE_TENANT_VISIBILITY_CONFIG || !tenantVisibilityLoaded) {
+      return DEFAULT_PUBLIC_DOMAINS.has(key);
+    }
     const configured = String(tenantVisibilityByDomain?.[key] || "").trim().toLowerCase();
     if (configured === "public") return true;
     if (configured === "internal_only") return false;
-    return DEFAULT_PUBLIC_DOMAINS.has(key);
-  }, [tenantVisibilityByDomain]);
+    return false;
+  }, [tenantVisibilityByDomain, tenantVisibilityLoaded]);
   const visibleDomainOptions = useMemo(() => {
     return REPORT_DOMAIN_OPTIONS.filter((d) => isAdmin || isDomainPublic(d.key)).map((d) => ({
       ...d,
@@ -11526,8 +11535,11 @@ export default function App() {
     async function loadTenantVisibilityConfig() {
       // Week 3 noise hardening: keep default visibility unless this feature is explicitly enabled.
       if (!authReady) return;
-      if (!ENABLE_TENANT_VISIBILITY_CONFIG || !isAdmin) {
-        if (!cancelled) setTenantVisibilityByDomain({});
+      if (!ENABLE_TENANT_VISIBILITY_CONFIG) {
+        if (!cancelled) {
+          setTenantVisibilityByDomain({});
+          setTenantVisibilityLoaded(false);
+        }
         return;
       }
       const { data, error } = await supabase
@@ -11542,9 +11554,12 @@ export default function App() {
         if (isDenied) {
           // Graceful fallback: keep default visibility and avoid noisy warnings/notices on auth refresh.
           setTenantVisibilityByDomain({});
+          setTenantVisibilityLoaded(false);
           return;
         }
         console.warn("[tenant_visibility_config]", errMsg || error);
+        setTenantVisibilityByDomain({});
+        setTenantVisibilityLoaded(false);
         return;
       }
 
@@ -11555,12 +11570,59 @@ export default function App() {
         next[key] = String(row?.visibility || "").trim().toLowerCase();
       }
       setTenantVisibilityByDomain(next);
+      setTenantVisibilityLoaded(true);
     }
     loadTenantVisibilityConfig();
     return () => {
       cancelled = true;
     };
-  }, [authReady, isAdmin]);
+  }, [authReady]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTenantMapFeatures() {
+      const fallback = {
+        show_boundary_border: true,
+        shade_outside_boundary: true,
+        outside_shade_opacity: 0.42,
+      };
+      if (!authReady) return;
+      const tenantKey = activeTenantKey();
+      const { data, error } = await supabase
+        .from("tenant_map_features")
+        .select("show_boundary_border,shade_outside_boundary,outside_shade_opacity")
+        .eq("tenant_key", tenantKey)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) {
+        const errCode = String(error?.code || "").trim();
+        const errMsg = String(error?.message || "").trim();
+        const isExpected = errCode === "42501" || /permission denied|forbidden/i.test(errMsg);
+        const isMissing = errCode === "42P01" || /does not exist|relation|schema cache/i.test(errMsg);
+        if (!isExpected && !isMissing) {
+          console.warn("[tenant_map_features]", errMsg || error);
+        }
+        setTenantMapFeatures(fallback);
+        return;
+      }
+
+      const nextOpacityRaw = Number(data?.outside_shade_opacity);
+      const nextOpacity = Number.isFinite(nextOpacityRaw)
+        ? Math.max(0, Math.min(1, nextOpacityRaw))
+        : 0.42;
+      setTenantMapFeatures({
+        show_boundary_border: data?.show_boundary_border !== false,
+        shade_outside_boundary: data?.shade_outside_boundary !== false,
+        outside_shade_opacity: nextOpacity,
+      });
+    }
+
+    loadTenantMapFeatures();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
@@ -13154,6 +13216,11 @@ export default function App() {
       .filter((ring) => ring.length >= 3);
     return [outerRing, ...holeRings];
   }, [cityBoundaryOuterRings]);
+  const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
+  const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
+  const cityOutsideShadeOpacity = Number.isFinite(Number(tenantMapFeatures?.outside_shade_opacity))
+    ? Math.max(0, Math.min(1, Number(tenantMapFeatures.outside_shade_opacity)))
+    : 0.42;
   const restrictPublicMarkersToCity = !isAdmin && cityLimitPolygons.length > 0;
   const isWithinAshtabulaCityLimits = useCallback(
     (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
@@ -19867,19 +19934,19 @@ async function insertReportWithFallback(payload) {
           queueOfficialLight(lat, lng);
         }}
       >
-        {cityOutsideMaskPaths.length > 0 && (
+        {showCityOutsideShade && cityOutsideMaskPaths.length > 0 && (
           <PolygonF
             paths={cityOutsideMaskPaths}
             options={{
               clickable: false,
               strokeOpacity: 0,
               fillColor: "#0b0f17",
-              fillOpacity: 0.42,
+              fillOpacity: cityOutsideShadeOpacity,
               zIndex: 1,
             }}
           />
         )}
-        {cityBoundaryOuterRings.map((ring, idx) => (
+        {showCityBoundaryBorder && cityBoundaryOuterRings.map((ring, idx) => (
           <PolygonF
             key={`city-boundary-${idx}`}
             paths={ring}
