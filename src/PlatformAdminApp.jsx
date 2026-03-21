@@ -19,39 +19,90 @@ const TAB_OPTIONS = [
   { key: "audit", label: "Audit" },
 ];
 
+const palette = {
+  navy900: "#102b46",
+  navy700: "#1d466d",
+  navy500: "#2e628f",
+  mint600: "#12806a",
+  mint700: "#0f6e5c",
+  red600: "#d14343",
+  canvas: "#e8eef5",
+  card: "#ffffff",
+  border: "#c7d6e6",
+  borderStrong: "#afc4d9",
+  text: "#17314f",
+  textMuted: "#4a617a",
+};
+
 const shell = {
   minHeight: "100vh",
   padding: "28px 18px 42px",
-  fontFamily: "Manrope, sans-serif",
-  background: "#f4f8fd",
-  color: "#17314f",
+  fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  background:
+    "radial-gradient(1200px 550px at -10% -10%, rgba(18,128,106,0.14), transparent 55%), radial-gradient(1200px 600px at 110% -10%, rgba(46,98,143,0.16), transparent 58%), linear-gradient(180deg, #eef3f9 0%, #e5edf6 100%)",
+  color: palette.text,
 };
 
 const card = {
-  background: "white",
-  borderRadius: 14,
-  border: "1px solid #d7e3f1",
+  background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.98) 100%)",
+  borderRadius: 16,
+  border: `1px solid ${palette.border}`,
+  boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
   padding: 16,
 };
 
 const inputBase = {
   width: "100%",
-  border: "1px solid #cfe0f1",
+  border: `1px solid ${palette.borderStrong}`,
   borderRadius: 10,
   padding: "9px 10px",
   fontSize: 13,
   boxSizing: "border-box",
+  color: palette.navy900,
+  background: "#fbfdff",
 };
 
 const buttonBase = {
-  border: "1px solid #c5d9ee",
-  background: "#f6fbff",
-  color: "#17314f",
+  border: `1px solid ${palette.navy700}`,
+  background: `linear-gradient(180deg, ${palette.navy700} 0%, ${palette.navy900} 100%)`,
+  color: "#f8fbff",
   borderRadius: 10,
   padding: "8px 10px",
   fontSize: 12.5,
   fontWeight: 800,
   cursor: "pointer",
+  boxShadow: "0 8px 16px rgba(16,43,70,0.2)",
+};
+
+const buttonAlt = {
+  ...buttonBase,
+  border: `1px solid ${palette.borderStrong}`,
+  background: "#f4f8fd",
+  color: palette.navy900,
+  boxShadow: "none",
+};
+
+const subPanel = {
+  border: `1px solid ${palette.border}`,
+  borderRadius: 12,
+  background: "rgba(255,255,255,0.78)",
+  padding: 12,
+};
+
+const listActionButton = {
+  ...buttonAlt,
+  textAlign: "left",
+  display: "grid",
+  gap: 2,
+  fontWeight: 700,
+};
+
+const tableHeadCell = {
+  textAlign: "left",
+  borderBottom: `1px solid ${palette.border}`,
+  padding: "8px 0",
+  color: palette.textMuted,
+  fontWeight: 800,
 };
 
 function initialTenantForm() {
@@ -909,8 +960,8 @@ export default function PlatformAdminApp() {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <h1 style={{ marginTop: 0 }}>CityReport Platform Admin</h1>
-          <p>Loading session...</p>
+          <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>CityReport Platform Admin</h1>
+          <p style={{ margin: 0, color: palette.textMuted }}>Loading session...</p>
         </section>
       </main>
     );
@@ -920,8 +971,10 @@ export default function PlatformAdminApp() {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card, display: "grid", gap: 10 }}>
-          <h1 style={{ marginTop: 0 }}>CityReport Platform Admin</h1>
-          <p style={{ margin: 0 }}>Sign in with a platform-admin account to access tenant controls.</p>
+          <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>CityReport Platform Admin</h1>
+          <p style={{ margin: 0, color: palette.textMuted }}>
+            Sign in with your platform admin account to manage municipalities and operational settings.
+          </p>
           <form onSubmit={signInPlatformAdmin} style={{ display: "grid", gap: 8, maxWidth: 420 }}>
             <input
               type="email"
@@ -939,11 +992,11 @@ export default function PlatformAdminApp() {
               placeholder="Password"
               style={inputBase}
             />
-            <button type="submit" style={buttonBase} disabled={loginLoading}>
+            <button type="submit" style={{ ...buttonBase, width: "fit-content", minWidth: 140 }} disabled={loginLoading}>
               {loginLoading ? "Signing in..." : "Sign in"}
             </button>
           </form>
-          {loginError ? <p style={{ margin: 0, color: "#b91c1c", fontSize: 12.5 }}>{loginError}</p> : null}
+          {loginError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{loginError}</p> : null}
         </section>
       </main>
     );
@@ -953,7 +1006,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shell}>
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <h1 style={{ marginTop: 0 }}>CityReport Platform Admin</h1>
+          <h1 style={{ marginTop: 0, color: palette.navy900 }}>CityReport Platform Admin</h1>
           <p style={{ marginBottom: 0 }}>
             Access denied. This route is restricted to platform-admin users in `public.admins`.
           </p>
@@ -975,23 +1028,28 @@ export default function PlatformAdminApp() {
       <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         <header style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <h1 style={{ margin: 0 }}>CityReport Platform Control Plane</h1>
+            <div style={{ display: "grid", gap: 4 }}>
+              <h1 style={{ margin: 0, color: palette.navy900 }}>CityReport Platform Control Plane</h1>
+              <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                Tenant operations dashboard for implementation, governance, and support.
+              </span>
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" style={buttonBase} onClick={() => void refreshControlPlaneData()}>
+              <button type="button" style={buttonAlt} onClick={() => void refreshControlPlaneData()}>
                 Refresh
               </button>
-              <button type="button" style={buttonBase} onClick={() => void signOutPlatformAdmin()}>
+              <button type="button" style={buttonAlt} onClick={() => void signOutPlatformAdmin()}>
                 Sign out
               </button>
             </div>
           </div>
-          <p style={{ margin: 0, opacity: 0.8 }}>
+          <p style={{ margin: 0, color: palette.textMuted }}>
             Mode: <b>{tenant.mode}</b>. Signed in as <b>{sessionUserId}</b>.
           </p>
           {inEntryPrompt ? (
-            <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, fontSize: 20 }}>Start Here</h2>
-              <p style={{ margin: 0, fontSize: 13.5, opacity: 0.85 }}>
+            <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, fontSize: 20, color: palette.navy900 }}>Start Here</h2>
+              <p style={{ margin: 0, fontSize: 13.5, color: palette.textMuted }}>
                 Add a new tenant, or search and open an existing tenant workspace.
               </p>
               <button type="button" style={{ ...buttonBase, width: "fit-content" }} onClick={openAddTenantStep}>
@@ -1014,7 +1072,7 @@ export default function PlatformAdminApp() {
                       key={key}
                       type="button"
                       onClick={() => openTenantWorkspace(key)}
-                      style={{ ...buttonBase, textAlign: "left", display: "grid", gap: 2, fontWeight: 700 }}
+                      style={listActionButton}
                     >
                       <span>{name}</span>
                       <span style={{ fontSize: 11.5, opacity: 0.8 }}>{key}{subdomain ? ` • ${subdomain}` : ""}</span>
@@ -1022,16 +1080,16 @@ export default function PlatformAdminApp() {
                   );
                 })}
                 {!filteredTenantRows.length ? (
-                  <div style={{ fontSize: 12.5, color: "#7f1d1d" }}>No tenants match this search.</div>
+                  <div style={{ fontSize: 12.5, color: palette.red600 }}>No tenants match this search.</div>
                 ) : null}
               </div>
             </div>
           ) : null}
           {inAddTenantFlow ? (
-            <div style={{ border: "1px solid #d7e3f1", borderRadius: 12, padding: 12, display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13.5 }}>New tenant flow active. Complete the onboarding forms below.</span>
+            <div style={{ ...subPanel, display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13.5, color: palette.textMuted }}>New tenant flow active. Complete the onboarding forms below.</span>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" style={buttonBase} onClick={returnToStart}>Back</button>
+                <button type="button" style={buttonAlt} onClick={returnToStart}>Back</button>
               </div>
             </div>
           ) : null}
@@ -1047,8 +1105,8 @@ export default function PlatformAdminApp() {
                       onClick={() => setActiveTab(tab.key)}
                       style={{
                         ...buttonBase,
-                        border: selected ? "1px solid #0f766e" : buttonBase.border,
-                        background: selected ? "#0f766e" : buttonBase.background,
+                        border: selected ? `1px solid ${palette.mint700}` : buttonBase.border,
+                        background: selected ? `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)` : buttonBase.background,
                         color: selected ? "white" : buttonBase.color,
                       }}
                     >
@@ -1057,11 +1115,11 @@ export default function PlatformAdminApp() {
                   );
                 })}
               </div>
-              <div style={{ border: "1px solid #d7e3f1", borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
-                <div style={{ fontSize: 12, opacity: 0.8 }}>Current Tenant Workspace</div>
-                <div style={{ fontSize: 15, fontWeight: 900 }}>
+              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, color: palette.textMuted }}>Current Tenant Workspace</div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: palette.navy900 }}>
                   {selectedTenant?.name || selectedTenantKey}
-                  <span style={{ fontWeight: 600, opacity: 0.75 }}> ({selectedTenantKey})</span>
+                  <span style={{ fontWeight: 600, color: palette.textMuted }}> ({selectedTenantKey})</span>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
@@ -1074,19 +1132,19 @@ export default function PlatformAdminApp() {
                       Open Dev Map
                     </a>
                   ) : null}
-                  <button type="button" style={buttonBase} onClick={returnToStart}>Switch Tenant</button>
-                  <button type="button" style={buttonBase} onClick={openAddTenantStep}>Add Tenant</button>
+                  <button type="button" style={buttonAlt} onClick={returnToStart}>Switch Tenant</button>
+                  <button type="button" style={buttonAlt} onClick={openAddTenantStep}>Add Tenant</button>
                 </div>
               </div>
             </>
           ) : null}
-          {status.hydrate ? <div style={{ fontSize: 12.5, opacity: 0.82 }}>{status.hydrate}</div> : null}
+          {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.hydrate}</div> : null}
         </header>
 
         {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Create / Update Tenant"}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Basic Setup" : "Create / Update Tenant"}</h2>
               <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Tenant Key (system ID)</span>
@@ -1148,13 +1206,13 @@ export default function PlatformAdminApp() {
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={tenantForm.active} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Tenant
                 </label>
-                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1" }}>Save Tenant</button>
+                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>Save Tenant</button>
               </form>
-              {status.tenant ? <div style={{ fontSize: 12.5 }}>{status.tenant}</div> : null}
+              {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.tenant}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "New Tenant Intake"}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>{inAddTenantFlow ? "Add Tenant: Intake Profile" : "New Tenant Intake"}</h2>
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
                 <input value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Legal organization name" style={inputBase} />
                 <input value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Public display name" style={inputBase} />
@@ -1179,25 +1237,25 @@ export default function PlatformAdminApp() {
                 <input type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={inputBase} />
                 <input type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={inputBase} />
                 <textarea value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Operational notes / onboarding notes" style={{ ...inputBase, minHeight: 90, gridColumn: "1 / -1" }} />
-                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1" }}>Save Intake Profile</button>
+                <button type="submit" style={{ ...buttonBase, gridColumn: "1 / -1", width: "fit-content" }}>Save Intake Profile</button>
               </form>
-              {status.profile ? <div style={{ fontSize: 12.5 }}>{status.profile}</div> : null}
+              {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.profile}</div> : null}
             </div>
 
             {inTenantWorkspace ? (
               <div style={{ ...card, display: "grid", gap: 8 }}>
-                <h2 style={{ margin: 0 }}>Tenants</h2>
-                {loading ? <div style={{ fontSize: 12.5 }}>Loading...</div> : null}
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Tenants</h2>
+                {loading ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>Loading...</div> : null}
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                     <thead>
                       <tr>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Tenant</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Subdomain</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Boundary</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>State</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Shortcuts</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actions</th>
+                        <th style={tableHeadCell}>Tenant</th>
+                        <th style={tableHeadCell}>Subdomain</th>
+                        <th style={tableHeadCell}>Boundary</th>
+                        <th style={tableHeadCell}>State</th>
+                        <th style={tableHeadCell}>Shortcuts</th>
+                        <th style={tableHeadCell}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1209,17 +1267,19 @@ export default function PlatformAdminApp() {
                             <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
                             <td style={{ padding: "8px 0" }}>{row.primary_subdomain}</td>
                             <td style={{ padding: "8px 0" }}>{row.boundary_config_key}</td>
-                            <td style={{ padding: "8px 0" }}>{row.active ? "active" : "inactive"}</td>
-                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Live</a>
-                              <a href={devUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>Dev</a>
+                            <td style={{ padding: "8px 0", color: row.active ? palette.mint700 : palette.red600, fontWeight: 700 }}>
+                              {row.active ? "active" : "inactive"}
                             </td>
                             <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <button type="button" style={buttonBase} onClick={() => {
+                              <a href={liveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonAlt, textDecoration: "none" }}>Live</a>
+                              <a href={devUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonAlt, textDecoration: "none" }}>Dev</a>
+                            </td>
+                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <button type="button" style={buttonAlt} onClick={() => {
                                 setSelectedTenantKey(row.tenant_key);
                                 setEntryStep("tenant");
                               }}>Select</button>
-                              <button type="button" style={buttonBase} onClick={() => setTenantForm({
+                              <button type="button" style={buttonAlt} onClick={() => setTenantForm({
                                 tenant_key: row.tenant_key,
                                 name: row.name,
                                 primary_subdomain: row.primary_subdomain,
@@ -1229,7 +1289,7 @@ export default function PlatformAdminApp() {
                                 is_pilot: Boolean(row.is_pilot),
                                 active: Boolean(row.active),
                               })}>Edit</button>
-                              <button type="button" style={buttonBase} onClick={() => void toggleTenantActive(row)}>
+                              <button type="button" style={buttonAlt} onClick={() => void toggleTenantActive(row)}>
                                 {row.active ? "Deactivate" : "Activate"}
                               </button>
                             </td>
@@ -1247,7 +1307,7 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Assign Municipality Admin</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Municipality Admin</h2>
               <form onSubmit={assignTenantAdmin} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1fr) 2fr 1fr auto", gap: 8, alignItems: "center" }}>
                 <input list="tenant-options" value={assignForm.tenant_key || selectedTenantKey} onChange={(e) => setAssignForm((p) => ({ ...p, tenant_key: e.target.value }))} placeholder="tenant_key" style={inputBase} />
                 <datalist id="tenant-options">
@@ -1259,20 +1319,20 @@ export default function PlatformAdminApp() {
                 </select>
                 <button type="submit" style={buttonBase}>Assign</button>
               </form>
-              {status.users ? <div style={{ fontSize: 12.5 }}>{status.users}</div> : null}
+              {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.users}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0 }}>Tenant Admin Assignments</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Admin Assignments</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Tenant</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>User</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Role</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Created</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actions</th>
+                      <th style={tableHeadCell}>Tenant</th>
+                      <th style={tableHeadCell}>User</th>
+                      <th style={tableHeadCell}>Role</th>
+                      <th style={tableHeadCell}>Created</th>
+                      <th style={tableHeadCell}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1283,7 +1343,7 @@ export default function PlatformAdminApp() {
                         <td style={{ padding: "8px 0" }}>{row.role}</td>
                         <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0" }}>
-                          <button type="button" style={buttonBase} onClick={() => void removeTenantAdmin(row)}>Remove</button>
+                          <button type="button" style={buttonAlt} onClick={() => void removeTenantAdmin(row)}>Remove</button>
                         </td>
                       </tr>
                     ))}
@@ -1297,11 +1357,11 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "domains" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Domain Enablement + Map Features</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Domain Enablement + Map Features</h2>
               <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(200px, 1fr))", gap: 8 }}>
                   {DOMAIN_OPTIONS.map((d) => (
-                    <label key={d.key} style={{ display: "grid", gap: 5, border: "1px solid #d7e3f1", borderRadius: 10, padding: 8 }}>
+                    <label key={d.key} style={{ display: "grid", gap: 5, border: `1px solid ${palette.border}`, borderRadius: 10, padding: 8, background: "#f8fbff" }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
                       <select
                         value={domainVisibilityForm[d.key] || "enabled"}
@@ -1315,8 +1375,8 @@ export default function PlatformAdminApp() {
                   ))}
                 </div>
 
-                <div style={{ border: "1px solid #d7e3f1", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
-                  <div style={{ fontWeight: 900 }}>Map Feature Toggles ({selectedTenantKey})</div>
+                <div style={{ border: `1px solid ${palette.border}`, borderRadius: 10, padding: 10, display: "grid", gap: 8, background: "#f8fbff" }}>
+                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Feature Toggles ({selectedTenantKey})</div>
                   <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
                     <input
                       type="checkbox"
@@ -1358,7 +1418,7 @@ export default function PlatformAdminApp() {
 
                 <button type="submit" style={{ ...buttonBase, width: "fit-content" }}>Save Domains + Features</button>
               </form>
-              {status.domains ? <div style={{ fontSize: 12.5 }}>{status.domains}</div> : null}
+              {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.domains}</div> : null}
             </div>
           </section>
         ) : null}
@@ -1366,7 +1426,7 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "files" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Tenant Files</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Files</h2>
               <form onSubmit={uploadTenantFile} style={{ display: "grid", gridTemplateColumns: "220px 1fr 1fr auto", gap: 8, alignItems: "center" }}>
                 <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
                   <option value="contract">Contract</option>
@@ -1377,20 +1437,20 @@ export default function PlatformAdminApp() {
                 <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
                 <button type="submit" style={buttonBase}>Upload</button>
               </form>
-              {status.files ? <div style={{ fontSize: 12.5 }}>{status.files}</div> : null}
+              {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.files}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0 }}>Files for {selectedTenantKey}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Files for {selectedTenantKey}</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Category</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Name</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Size</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Uploaded</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actions</th>
+                      <th style={tableHeadCell}>Category</th>
+                      <th style={tableHeadCell}>Name</th>
+                      <th style={tableHeadCell}>Size</th>
+                      <th style={tableHeadCell}>Uploaded</th>
+                      <th style={tableHeadCell}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1401,8 +1461,8 @@ export default function PlatformAdminApp() {
                         <td style={{ padding: "8px 0" }}>{formatBytes(row.size_bytes)}</td>
                         <td style={{ padding: "8px 0" }}>{row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button type="button" style={buttonBase} onClick={() => void openTenantFile(row)}>Open (signed)</button>
-                          <button type="button" style={buttonBase} onClick={() => void removeTenantFile(row)}>Remove</button>
+                          <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open (signed)</button>
+                          <button type="button" style={buttonAlt} onClick={() => void removeTenantFile(row)}>Remove</button>
                         </td>
                       </tr>
                     ))}
@@ -1420,16 +1480,16 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "audit" ? (
           <section style={{ ...card, display: "grid", gap: 8 }}>
-            <h2 style={{ margin: 0 }}>Recent Platform Audit</h2>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Platform Audit</h2>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>When</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Tenant</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Action</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Entity</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #d7e3f1", padding: "8px 0" }}>Actor</th>
+                    <th style={tableHeadCell}>When</th>
+                    <th style={tableHeadCell}>Tenant</th>
+                    <th style={tableHeadCell}>Action</th>
+                    <th style={tableHeadCell}>Entity</th>
+                    <th style={tableHeadCell}>Actor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1450,7 +1510,7 @@ export default function PlatformAdminApp() {
                 </tbody>
               </table>
             </div>
-            {status.audit ? <div style={{ fontSize: 12.5 }}>{status.audit}</div> : null}
+            {status.audit ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.audit}</div> : null}
           </section>
         ) : null}
       </section>
