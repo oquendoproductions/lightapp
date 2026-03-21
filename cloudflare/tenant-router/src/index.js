@@ -28,13 +28,12 @@ function rewriteLocationHeader(location, originalHost, originHost) {
   return location;
 }
 
-function rewriteAssetsPathIfNeeded(incomingUrl, upstreamUrl) {
-  if (incomingUrl.hostname !== "assets.cityreport.io") return;
-  if (upstreamUrl.pathname.startsWith("/assets/")) return;
-  const normalized = upstreamUrl.pathname.startsWith("/")
-    ? upstreamUrl.pathname
-    : `/${upstreamUrl.pathname}`;
-  upstreamUrl.pathname = `/assets${normalized}`;
+function toAssetsCanonicalRedirect(url) {
+  if (url.hostname !== "assets.cityreport.io") return null;
+  const normalized = url.pathname.startsWith("/assets/")
+    ? url.pathname
+    : `/assets${url.pathname.startsWith("/") ? url.pathname : `/${url.pathname}`}`;
+  return `https://cityreport.io${normalized}${url.search || ""}`;
 }
 
 async function proxyToPages(request, resolution, env) {
@@ -43,7 +42,6 @@ async function proxyToPages(request, resolution, env) {
   const upstreamUrl = new URL(incomingUrl.toString());
   upstreamUrl.protocol = "https:";
   upstreamUrl.hostname = originHost;
-  rewriteAssetsPathIfNeeded(incomingUrl, upstreamUrl);
 
   const upstreamRequest = new Request(upstreamUrl.toString(), {
     method: request.method,
@@ -89,6 +87,18 @@ function logUnknownSlug(requestUrl, resolution) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    const assetsRedirect = toAssetsCanonicalRedirect(url);
+    if (assetsRedirect) {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: assetsRedirect,
+          "cache-control": "no-store",
+        },
+      });
+    }
+
     const defaultTenant = String(env.DEFAULT_TENANT_KEY || "ashtabulacity")
       .trim()
       .toLowerCase();
