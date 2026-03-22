@@ -14,29 +14,6 @@ const GMAPS_KEY =
 const GMAPS_KEY_DEV = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_DEV || "";
 const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
 const GMAPS_LIBRARIES = ["places"];
-const GOOGLE_ROADMAP_DARK_STYLES = [
-  { elementType: "geometry", stylers: [{ color: "#1f1f1f" }] },
-  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#9aa0a6" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#1f1f1f" }] },
-  { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#3a3a3a" }] },
-  { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: "#d2d2d2" }] },
-  { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
-  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#c4c4c4" }] },
-  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#232323" }] },
-  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#8f8f8f" }] },
-  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#1e2a1e" }] },
-  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#7ea784" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#303030" }] },
-  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1f1f1f" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#bbbbbb" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3c3c3c" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#2d2d2d" }] },
-  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#f0f0f0" }] },
-  { featureType: "transit", elementType: "labels.text.fill", stylers: [{ color: "#9a9a9a" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f1a2a" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#6f90b3" }] },
-];
 
 const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
 
@@ -19968,8 +19945,7 @@ async function insertReportWithFallback(payload) {
         }}
         options={{
           mapTypeId: mapType,
-          mapId: prefersDarkMode && mapType === "roadmap" ? undefined : (GMAPS_MAP_ID || undefined),
-          styles: prefersDarkMode && mapType === "roadmap" ? GOOGLE_ROADMAP_DARK_STYLES : undefined,
+          mapId: GMAPS_MAP_ID || undefined,
           gestureHandling: "greedy",
           disableDoubleClickZoom: isTouchDevice,
           isFractionalZoomEnabled: false,
