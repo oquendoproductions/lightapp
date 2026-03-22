@@ -266,6 +266,103 @@ function logUnknownSlug(requestUrl, resolution) {
   console.warn("[tenant-router][unknown-slug]", JSON.stringify(event));
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderUnknownTenantPage(unknownSlug) {
+  const slug = escapeHtml(unknownSlug || "unknown");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>Municipality Not Found | CityReport.io</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(1100px 540px at 10% -20%, #2f907f22 0%, #f5fbff 60%);
+      color: #143252;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(720px, 100%);
+      background: #ffffff;
+      border: 1px solid #d6e4f3;
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 12px 40px rgba(13, 40, 76, 0.08);
+    }
+    .brand {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      color: #183a63;
+      margin: 0 0 12px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(1.8rem, 4vw, 2.4rem);
+      line-height: 1.15;
+    }
+    p {
+      margin: 0 0 14px;
+      color: #335273;
+      line-height: 1.55;
+    }
+    .slug {
+      display: inline-block;
+      margin: 6px 0 16px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #eef5fc;
+      border: 1px solid #d5e4f4;
+      color: #22476e;
+      font-size: 0.95rem;
+      font-weight: 700;
+    }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .btn {
+      text-decoration: none;
+      border-radius: 11px;
+      padding: 10px 14px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      transition: transform 120ms ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: #183a63; color: #fff; }
+    .btn-secondary { background: #fff; color: #183a63; border-color: #c9dbee; }
+  </style>
+</head>
+<body>
+  <main class="card" aria-labelledby="title">
+    <p class="brand">CityReport.io</p>
+    <h1 id="title">Municipality Not Found</h1>
+    <p>This municipality URL is not configured in CityReport.</p>
+    <p class="slug">Unknown slug: ${slug}</p>
+    <p>Please verify the subdomain or go back to the main CityReport site.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://cityreport.io/">Go to CityReport.io</a>
+      <a class="btn btn-secondary" href="mailto:cityreport.io@gmail.com">Contact Support</a>
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -331,11 +428,12 @@ export default {
 
     if (resolution.mode === "not_found") {
       logUnknownSlug(url, resolution);
-      return new Response("Not Found", {
+      return new Response(renderUnknownTenantPage(resolution.unknownSlug), {
         status: 404,
         headers: {
-          "content-type": "text/plain; charset=utf-8",
+          "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
+          "x-robots-tag": "noindex, nofollow",
         },
       });
     }

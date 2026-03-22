@@ -54,6 +54,10 @@ test("unknown tenant does not proxy upstream and returns 404", async () => {
     });
 
     assert.equal(response.status, 404);
+    assert.match(String(response.headers.get("content-type") || ""), /text\/html/i);
+    const body = await response.text();
+    assert.match(body, /Municipality Not Found/);
+    assert.match(body, /CityReport\.io/);
     assert.equal(called, false);
   } finally {
     globalThis.fetch = originalFetch;
