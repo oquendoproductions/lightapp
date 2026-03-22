@@ -41,7 +41,8 @@ const GMAPS_ACTIVE_KEY =
 // SECTION 2 — App Settings
 // ==================================================
 const containerStyle = { height: "100%", width: "100%" };
-const ASHTABULA = [41.8651, -80.7898];
+const USA_OVERVIEW = [39.8283, -98.5795];
+const INITIAL_OVERVIEW_ZOOM = 4;
 const GROUP_RADIUS_METERS = 25;
 const POTHOLE_MERGE_RADIUS_METERS = 22;
 const POTHOLE_ROAD_HIT_METERS = 12;
@@ -10256,8 +10257,8 @@ export default function App() {
   const [mappingMode, setMappingMode] = useState(false);
   // Map type (Google Maps)
   const [mapType, setMapType] = useState("roadmap"); // "roadmap" | "satellite"
-  const [mapZoom, setMapZoom] = useState(OFFICIAL_LIGHTS_MIN_ZOOM);
-  const mapZoomRef = useRef(OFFICIAL_LIGHTS_MIN_ZOOM);
+  const [mapZoom, setMapZoom] = useState(INITIAL_OVERVIEW_ZOOM);
+  const mapZoomRef = useRef(INITIAL_OVERVIEW_ZOOM);
   const lastZoomGestureAtRef = useRef(0);
   const dragFollowOffTimerRef = useRef(null);
   const [mapInteracting, setMapInteracting] = useState(false);
@@ -10265,7 +10266,7 @@ export default function App() {
   const userDragPanRef = useRef(false);
 
   // Google Maps center (actual camera center)
-  const [mapCenter, setMapCenter] = useState({ lat: ASHTABULA[0], lng: ASHTABULA[1] });
+  const [mapCenter, setMapCenter] = useState({ lat: USA_OVERVIEW[0], lng: USA_OVERVIEW[1] });
   const [mapBounds, setMapBounds] = useState(null);
 
   const [reports, setReports] = useState([]);
