@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
@@ -120,6 +120,25 @@ const subPanel = {
   borderRadius: 12,
   background: "rgba(255,255,255,0.78)",
   padding: 12,
+};
+
+const responsiveTwoColGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+  gap: 8,
+};
+
+const responsiveActionGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
+  gap: 8,
+  alignItems: "end",
+};
+
+const responsiveDomainGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
+  gap: 8,
 };
 
 const listActionButton = {
@@ -375,6 +394,23 @@ function isMissingRelationError(error) {
   return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
 }
 
+function normalizeBoundedDecimalInput(value, { min = 0, max = 1 } = {}) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (!/^-?\d*\.?\d*$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return String(Math.max(min, Math.min(max, parsed)));
+}
+
+function normalizeHexDraft(value, fallback = "#e53935") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.startsWith("#") && raw.length <= 7 && /^#[0-9a-f]*$/i.test(raw)) return raw;
+  if (!raw.startsWith("#") && raw.length <= 6 && /^[0-9a-f]*$/i.test(raw)) return `#${raw}`;
+  return sanitizeHexColor(fallback, "#e53935");
+}
+
 export default function PlatformAdminApp() {
   const [authReady, setAuthReady] = useState(false);
   const [sessionUserId, setSessionUserId] = useState("");
@@ -428,6 +464,7 @@ export default function PlatformAdminApp() {
     audit: "",
     hydrate: "",
   });
+  const tenantAdminsRef = useRef([]);
 
   const tenantOptions = useMemo(
     () => (Array.isArray(tenants) ? tenants.map((t) => String(t?.tenant_key || "").trim()).filter(Boolean) : []),
@@ -591,7 +628,7 @@ export default function PlatformAdminApp() {
       const firstError = rolesResult.error || permsResult.error;
       if (isMissingRelationError(firstError)) {
         const fallbackRoleSet = new Set(["tenant_admin", "tenant_employee"]);
-        for (const row of tenantAdmins || []) {
+        for (const row of tenantAdminsRef.current || []) {
           if (String(row?.tenant_key || "") !== key) continue;
           const role = String(row?.role || "").trim().toLowerCase();
           if (role) fallbackRoleSet.add(role);
@@ -617,7 +654,7 @@ export default function PlatformAdminApp() {
     setTenantRoleDefinitions(Array.isArray(rolesResult.data) ? rolesResult.data : []);
     setTenantRolePermissions(Array.isArray(permsResult.data) ? permsResult.data : []);
     setStatus((prev) => ({ ...prev, roles: "" }));
-  }, [selectedTenantKey, tenantAdmins]);
+  }, [selectedTenantKey]);
 
   const loadTenantProfiles = useCallback(async () => {
     const { data, error } = await supabase
@@ -741,6 +778,10 @@ export default function PlatformAdminApp() {
       setLoading(false);
     }
   }, [loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+
+  useEffect(() => {
+    tenantAdminsRef.current = tenantAdmins;
+  }, [tenantAdmins]);
 
   useEffect(() => {
     let mounted = true;
@@ -1946,7 +1987,7 @@ export default function PlatformAdminApp() {
                   Review tenant settings here. Use Edit to make changes.
                 </p>
               ) : null}
-              <form onSubmit={saveTenant} style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+              <form onSubmit={saveTenant} style={responsiveTwoColGrid}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Tenant Key (system ID)</span>
                   <input
@@ -2074,7 +2115,7 @@ export default function PlatformAdminApp() {
               <form onSubmit={saveTenantProfile} style={{ display: "grid", gap: 10 }}>
                 <section style={{ ...subPanel, display: "grid", gap: 8 }}>
                   <h3 style={{ margin: 0, color: palette.navy900 }}>Organization Information</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+                  <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Legal Organization Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
@@ -2180,7 +2221,7 @@ export default function PlatformAdminApp() {
 
                 <section style={{ ...subPanel, display: "grid", gap: 8 }}>
                   <h3 style={{ margin: 0, color: palette.navy900 }}>Contact Info</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+                  <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Primary Contact Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} placeholder="Primary Contact" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
@@ -2242,7 +2283,7 @@ export default function PlatformAdminApp() {
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                 Add a user by Supabase Auth user ID and assign one configured role for this municipality.
               </p>
-              <form onSubmit={assignTenantAdmin} style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr 1fr auto", gap: 8, alignItems: "end" }}>
+              <form onSubmit={assignTenantAdmin} style={responsiveActionGrid}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Municipality</span>
                   <input
@@ -2347,7 +2388,7 @@ export default function PlatformAdminApp() {
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                 Create custom roles for {selectedTenantKey}, then enable or disable module permissions.
               </p>
-              <form onSubmit={createTenantRole} style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr auto", gap: 8, alignItems: "end" }}>
+              <form onSubmit={createTenantRole} style={responsiveActionGrid}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Role Key</span>
                   <input
@@ -2525,7 +2566,7 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Domain Enablement + Map Features</h2>
               <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(200px, 1fr))", gap: 8 }}>
+                <div style={responsiveDomainGrid}>
                   {DOMAIN_OPTIONS.map((d) => (
                     <label key={d.key} style={{ display: "grid", gap: 5, border: `1px solid ${palette.border}`, borderRadius: 10, padding: 8, background: "#f8fbff" }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
@@ -2564,24 +2605,53 @@ export default function PlatformAdminApp() {
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
                     <span>Boundary border color</span>
-                    <input
-                      type="color"
-                      value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
-                      disabled={!borderEnabled}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
-                      style={borderEnabled ? { ...inputBase, padding: 4, height: 38 } : { ...disabledFieldStyle, padding: 4, height: 38 }}
-                    />
+                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                      <input
+                        type="color"
+                        value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
+                        disabled={!borderEnabled}
+                        onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                        style={borderEnabled ? { ...inputBase, padding: 4, height: 42 } : { ...disabledFieldStyle, padding: 4, height: 42 }}
+                      />
+                      <input
+                        type="text"
+                        inputMode="text"
+                        value={mapFeaturesForm.boundary_border_color}
+                        disabled={!borderEnabled}
+                        onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                        onBlur={(e) => setMapFeaturesForm((prev) => ({
+                          ...prev,
+                          boundary_border_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev.boundary_border_color), "#e53935"),
+                        }))}
+                        placeholder="#e53935"
+                        style={borderEnabled ? inputBase : disabledFieldStyle}
+                      />
+                    </div>
+                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                      Enter a hex color if the mobile picker does not confirm cleanly.
+                    </span>
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
                     <span>Boundary thickness (0.5 - 8)</span>
                     <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      max="8"
+                      type="text"
+                      inputMode="decimal"
                       value={mapFeaturesForm.boundary_border_width}
                       disabled={!borderEnabled}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_width: e.target.value }))}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                          setMapFeaturesForm((prev) => ({ ...prev, boundary_border_width: nextValue }));
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0.5, max: 8 });
+                        setMapFeaturesForm((prev) => ({
+                          ...prev,
+                          boundary_border_width: normalized || "4",
+                        }));
+                      }}
+                      placeholder="4"
                       style={borderEnabled ? inputBase : disabledFieldStyle}
                     />
                   </label>
@@ -2596,13 +2666,24 @@ export default function PlatformAdminApp() {
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
                     <span>Outside shade opacity (0.0 - 1.0)</span>
                     <input
-                      type="number"
-                      step="0.05"
-                      min="0"
-                      max="1"
+                      type="text"
+                      inputMode="decimal"
                       value={mapFeaturesForm.outside_shade_opacity}
                       disabled={!shadeEnabled}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: e.target.value }))}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                          setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: nextValue }));
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0, max: 1 });
+                        setMapFeaturesForm((prev) => ({
+                          ...prev,
+                          outside_shade_opacity: normalized || "0.42",
+                        }));
+                      }}
+                      placeholder="0.42"
                       style={shadeEnabled ? inputBase : disabledFieldStyle}
                     />
                   </label>
@@ -2622,7 +2703,7 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Files</h2>
-              <form onSubmit={uploadTenantFile} style={{ display: "grid", gridTemplateColumns: "220px 1fr 1fr auto", gap: 8, alignItems: "center" }}>
+              <form onSubmit={uploadTenantFile} style={responsiveActionGrid}>
                 <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
                   <option value="contract">Contract</option>
                   <option value="asset_coordinates">Asset Coordinates</option>
