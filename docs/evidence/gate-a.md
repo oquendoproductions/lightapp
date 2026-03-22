@@ -1,6 +1,6 @@
 # Gate A Evidence - Staging Gate Before DNS Cutover
 
-Last updated: 2026-03-21 23:30 ET
+Last updated: 2026-03-22 00:03 ET
 Owner: Engineering Lead
 Reviewer: Security/Compliance Lead
 
@@ -43,6 +43,6 @@ Reviewer: Security/Compliance Lead
 1. Execute interactive staging smoke and capture screenshots/timestamps.
 2. Obtain Security/Compliance reviewer sign-off.
 
-## Reviewer Sign-Off Entry (Ready)
-- Reviewer sign-off: Security/Compliance Lead (name) - APPROVED
-- Date/time (ET): __________
+## Reviewer Sign-Off Entry
+- Reviewer sign-off: Anthony Oquendo - APPROVED
+- Date/time (ET): 2026-03-22 00:03 ET

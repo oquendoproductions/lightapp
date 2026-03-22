@@ -1,6 +1,6 @@
 # Gate C Evidence - Production Functional Smoke
 
-Last updated: 2026-03-21 23:48 ET
+Last updated: 2026-03-22 00:03 ET
 Owner: Engineering Lead
 Reviewer: Support Lead
 
@@ -58,8 +58,8 @@ Using production app bundle Supabase URL/key + tenant header (`ashtabulacity`), 
 - Unknown-slug 404 behavior retained after fix.
 
 ## Remaining Work
-1. Capture support-reviewer sign-off with timestamp.
+1. None for Gate C technical scope.
 
-## Reviewer Sign-Off Entry (Ready)
-- Reviewer sign-off: Support Lead (name) - APPROVED
-- Date/time (ET): __________
+## Reviewer Sign-Off Entry
+- Reviewer sign-off: Anthony Oquendo - APPROVED
+- Date/time (ET): 2026-03-22 00:03 ET

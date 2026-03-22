@@ -13,7 +13,7 @@ Program goal: Close Gates A-E and reach pilot-ready Go/No-Go posture.
 |---|---|---|---|---|---|---|
 | A | Staging Gate Before DNS Cutover | Engineering Lead | Security/Compliance Lead | PARTIAL | March 24, 2026 | `docs/evidence/gate-a.md` |
 | B | Resolver + Tenant Isolation Validation | Engineering Lead | Security/Compliance Lead | CLOSED | March 25, 2026 | `docs/evidence/gate-b.md` |
-| C | Production Functional Smoke | Engineering Lead | Support Lead | PARTIAL | March 26, 2026 | `docs/evidence/gate-c.md` |
+| C | Production Functional Smoke | Engineering Lead | Support Lead | CLOSED | March 26, 2026 | `docs/evidence/gate-c.md` |
 | D | Release Readiness Go/No-Go | Engineering Lead + Operations Lead | Legal Lead + Security/Compliance Lead | AT RISK | March 28, 2026 | `docs/evidence/gate-d.md` |
 | E | Backlog-Linked Hardening Smoke | Engineering Lead | Support Lead | AT RISK | March 27, 2026 | `docs/evidence/gate-e.md` |
 
@@ -27,8 +27,8 @@ Checklist:
 
 Evidence:
 - Run output / logs: `docs/evidence/gate-a.md`
-- Reviewer sign-off: Pending (use sign-off line in `docs/evidence/gate-a.md`)
-- Date/time: Pending
+- Reviewer sign-off: Anthony Oquendo - APPROVED
+- Date/time: 2026-03-22 00:03 ET
 
 ## Gate B - Resolver + Tenant Isolation Validation
 Source: `docs/MULTI_TENANT_SMOKE_CHECKLIST.md`
@@ -69,8 +69,8 @@ Checklist:
 
 Evidence:
 - Smoke run notes: `docs/evidence/gate-c.md`
-- Reviewer sign-off: Pending (use sign-off line in `docs/evidence/gate-c.md`)
-- Date/time: Pending
+- Reviewer sign-off: Anthony Oquendo - APPROVED
+- Date/time: 2026-03-22 00:03 ET
 
 ## Gate D - Release Readiness Go/No-Go
 Source: `docs/RELEASE_READINESS_CHECKLIST.md`
@@ -130,11 +130,11 @@ End-of-day update:
 - Gate status snapshot:
   - Gate A: PARTIAL
   - Gate B: CLOSED
-  - Gate C: PARTIAL
+  - Gate C: CLOSED
   - Gate D: AT RISK
   - Gate E: AT RISK
-- Highest risk item: Reviewer sign-offs and Gate D/E readiness closure remain open.
-- Next-day priority: Capture Gate C support sign-off and complete Gate D + Gate E evidence pack.
+- Highest risk item: Gate D/E readiness closure remains open.
+- Next-day priority: Complete Gate A staging interactive smoke proof, then close Gate D + Gate E evidence pack.
 
 ## Final Closeout Criteria
 All of the following must be true:
@@ -294,3 +294,15 @@ Completed evidence this session:
 Risks/blockers identified this session:
 - Gate C technical checks are complete; reviewer sign-off still pending.
 - Domain visibility behavior is reported inconsistent with tenant profile expectations (admin view currently bypasses tenant visibility filters).
+
+## Execution Log - 2026-03-22 00:03 ET
+Completed evidence this session:
+- Production domain-visibility fix confirmed live by operator hard refresh (`#1 confirmed`).
+- Reviewer sign-off captured per operator directive (`#2 Anthony Oquendo (now)`) for:
+  - Gate A evidence entry
+  - Gate C evidence entry
+- Gate C status moved to `CLOSED` in dashboard based on completed checklist + recorded reviewer sign-off.
+
+Risks/blockers identified this session:
+- Gate A remains `PARTIAL` until interactive staging smoke suite is explicitly recorded as passed end-to-end.
+- Gate D and Gate E readiness evidence is still open.
