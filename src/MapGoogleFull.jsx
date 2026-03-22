@@ -11081,11 +11081,11 @@ export default function App() {
     return false;
   }, [tenantVisibilityByDomain, tenantVisibilityLoaded]);
   const visibleDomainOptions = useMemo(() => {
-    return REPORT_DOMAIN_OPTIONS.filter((d) => isAdmin || isDomainPublic(d.key)).map((d) => ({
+    return REPORT_DOMAIN_OPTIONS.filter((d) => isDomainPublic(d.key)).map((d) => ({
       ...d,
       enabled: true,
     }));
-  }, [isAdmin, isDomainPublic]);
+  }, [isDomainPublic]);
   const openReportsDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
