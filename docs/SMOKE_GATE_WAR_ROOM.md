@@ -11,7 +11,7 @@ Program goal: Close Gates A-E and reach pilot-ready Go/No-Go posture.
 ## Gate Dashboard
 | Gate | Scope | Owner | Reviewer | Status | Target Date | Evidence Link |
 |---|---|---|---|---|---|---|
-| A | Staging Gate Before DNS Cutover | Engineering Lead | Security/Compliance Lead | PARTIAL | March 24, 2026 | `docs/evidence/gate-a.md` |
+| A | Staging Gate Before DNS Cutover | Engineering Lead | Security/Compliance Lead | CLOSED | March 24, 2026 | `docs/evidence/gate-a.md` |
 | B | Resolver + Tenant Isolation Validation | Engineering Lead | Security/Compliance Lead | CLOSED | March 25, 2026 | `docs/evidence/gate-b.md` |
 | C | Production Functional Smoke | Engineering Lead | Support Lead | CLOSED | March 26, 2026 | `docs/evidence/gate-c.md` |
 | D | Release Readiness Go/No-Go | Engineering Lead + Operations Lead | Legal Lead + Security/Compliance Lead | AT RISK | March 28, 2026 | `docs/evidence/gate-d.md` |
@@ -23,7 +23,7 @@ Source: `docs/MULTI_TENANT_SMOKE_CHECKLIST.md`
 Checklist:
 - [x] Migrations apply cleanly in staging.
 - [x] RLS tenant scope verifies for anon/authenticated.
-- [ ] Ashtabula smoke suite passes end-to-end.
+- [x] Ashtabula smoke suite passes end-to-end.
 
 Evidence:
 - Run output / logs: `docs/evidence/gate-a.md`
@@ -128,13 +128,13 @@ Standup (15 min) format:
 
 End-of-day update:
 - Gate status snapshot:
-  - Gate A: PARTIAL
+  - Gate A: CLOSED
   - Gate B: CLOSED
   - Gate C: CLOSED
   - Gate D: AT RISK
   - Gate E: AT RISK
 - Highest risk item: Gate D/E readiness closure remains open.
-- Next-day priority: Complete Gate A staging interactive smoke proof, then close Gate D + Gate E evidence pack.
+- Next-day priority: close Gate D + Gate E evidence pack.
 
 ## Final Closeout Criteria
 All of the following must be true:
@@ -306,3 +306,21 @@ Completed evidence this session:
 Risks/blockers identified this session:
 - Gate A remains `PARTIAL` until interactive staging smoke suite is explicitly recorded as passed end-to-end.
 - Gate D and Gate E readiness evidence is still open.
+
+## Execution Log - 2026-03-22 00:20 ET
+Completed evidence this session:
+- Ran consolidated staging full-smoke and captured:
+  - Pothole submit => HTTP 201
+  - Water/drain submit => HTTP 201
+  - Streetlight submit => HTTP 201
+  - Export detail path => HTTP 200
+  - Artifact: `docs/evidence/automation/gate-a-staging-full-smoke-20260322T041859Z.md`
+- Ran staging authenticated admin backend smoke (rollback) and captured:
+  - `light_actions` fix/reopen lifecycle writes succeed
+  - `export_incident_detail_v1` + `export_incident_summary_v1` both return rows
+  - Artifact: `docs/evidence/automation/gate-a-staging-admin-backend-smoke-20260322T042003Z.md`
+- Gate A evidence updated with passed end-to-end staging smoke suite and reviewer sign-off.
+- Gate A status moved to `CLOSED` in dashboard.
+
+Risks/blockers identified this session:
+- Gates D and E remain open and are now the primary release blockers.

@@ -1,13 +1,13 @@
 # Gate A Evidence - Staging Gate Before DNS Cutover
 
-Last updated: 2026-03-22 00:03 ET
+Last updated: 2026-03-22 00:20 ET
 Owner: Engineering Lead
 Reviewer: Security/Compliance Lead
 
 ## Checklist Status
 - [x] Migrations apply cleanly in staging.
 - [x] RLS tenant scope verifies for anon/authenticated.
-- [ ] Ashtabula smoke suite passes end-to-end.
+- [x] Ashtabula smoke suite passes end-to-end.
 
 ## Evidence Collected
 - Staging reuse/bootstrap automation completed against `madjklbsdwbtrqhpxmfs`:
@@ -27,6 +27,16 @@ Reviewer: Security/Compliance Lead
   - `pothole_reports` => HTTP 201 (`return=representation`)
   - `reports` => HTTP 201 (`return=minimal`)
   - Artifact: `docs/evidence/automation/gate-a-staging-api-smoke-20260322T033310Z.md`
+- Staging full smoke (post-fix) confirms pilot regression intake paths through REST:
+  - Pothole submit => HTTP 201
+  - Water/drain submit => HTTP 201
+  - Streetlight submit => HTTP 201
+  - Export detail view => HTTP 200
+  - Artifact: `docs/evidence/automation/gate-a-staging-full-smoke-20260322T041859Z.md`
+- Staging admin backend smoke validates lifecycle + export contract:
+  - `light_actions` fix/reopen writes succeed in authenticated admin context (rollback test).
+  - `export_incident_detail_v1` and `export_incident_summary_v1` both return non-zero rows.
+  - Artifact: `docs/evidence/automation/gate-a-staging-admin-backend-smoke-20260322T042003Z.md`
 - Prior failed probe retained for audit trail:
   - Artifact: `docs/evidence/automation/gate-a-staging-anon-submission-20260322T030511Z.md`
 - Production root-cause confirmation + remediation completed:
@@ -37,11 +47,10 @@ Reviewer: Security/Compliance Lead
     - `docs/evidence/automation/gate-c-api-smoke-20260322T032310Z.md`
 
 ## Remaining Work / Blockers
-- Operator-driven UI evidence for submit/lifecycle/export is still pending.
+- None for Gate A technical scope.
 
 ## Next Actions
-1. Execute interactive staging smoke and capture screenshots/timestamps.
-2. Obtain Security/Compliance reviewer sign-off.
+1. No further Gate A action required.
 
 ## Reviewer Sign-Off Entry
 - Reviewer sign-off: Anthony Oquendo - APPROVED
