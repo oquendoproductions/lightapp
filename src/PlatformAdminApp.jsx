@@ -16,10 +16,30 @@ const DOMAIN_OPTIONS = [
 const TAB_OPTIONS = [
   { key: "tenants", label: "Tenant Info" },
   { key: "users", label: "Users/Admins" },
+  { key: "roles", label: "Roles + Permissions" },
   { key: "domains", label: "Domains + Features" },
   { key: "files", label: "Files" },
   { key: "audit", label: "Audit" },
 ];
+
+const ROLE_PERMISSION_ACTIONS = [
+  { key: "access", label: "Access" },
+  { key: "edit", label: "Edit" },
+  { key: "delete", label: "Delete" },
+];
+
+const ROLE_PERMISSION_MODULES = [
+  { key: "reports", label: "Reports" },
+  { key: "users", label: "Users" },
+  { key: "domains", label: "Domains + Features" },
+  { key: "files", label: "Files" },
+  { key: "audit", label: "Audit" },
+  { key: "roles", label: "Roles" },
+];
+
+const DEFAULT_TENANT_PERMISSION_KEYS = ROLE_PERMISSION_MODULES.flatMap((module) =>
+  ROLE_PERMISSION_ACTIONS.map((action) => `${module.key}.${action.key}`)
+);
 
 const palette = {
   navy900: "#102b46",
@@ -238,6 +258,23 @@ function sanitizeTenantKey(value) {
     .replace(/[^a-z0-9-]/g, "");
 }
 
+function sanitizeRoleKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+function roleKeyToLabel(roleKey) {
+  return String(roleKey || "")
+    .trim()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 function cleanOptional(value) {
   const v = String(value || "").trim();
   return v || null;
@@ -332,12 +369,19 @@ function statusText(error, okText) {
   return `Error: ${String(error?.message || error || "unknown error")}`;
 }
 
+function isMissingRelationError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
+}
+
 export default function PlatformAdminApp() {
   const [authReady, setAuthReady] = useState(false);
   const [sessionUserId, setSessionUserId] = useState("");
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [platformAccessRole, setPlatformAccessRole] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -348,6 +392,12 @@ export default function PlatformAdminApp() {
 
   const [tenants, setTenants] = useState([]);
   const [tenantAdmins, setTenantAdmins] = useState([]);
+  const [tenantRoleDefinitions, setTenantRoleDefinitions] = useState([]);
+  const [tenantRolePermissions, setTenantRolePermissions] = useState([]);
+  const [selectedRoleKey, setSelectedRoleKey] = useState("");
+  const [roleForm, setRoleForm] = useState({ role: "", role_label: "" });
+  const [rolePermissionDraft, setRolePermissionDraft] = useState({});
+  const [rolePermissionDirty, setRolePermissionDirty] = useState(false);
   const [tenantFiles, setTenantFiles] = useState([]);
   const [auditRows, setAuditRows] = useState([]);
 
@@ -363,7 +413,7 @@ export default function PlatformAdminApp() {
   const [profileForm, setProfileForm] = useState(initialProfileForm);
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
-  const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "municipality_admin" });
+  const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -372,6 +422,7 @@ export default function PlatformAdminApp() {
     tenant: "",
     profile: "",
     users: "",
+    roles: "",
     domains: "",
     files: "",
     audit: "",
@@ -409,6 +460,68 @@ export default function PlatformAdminApp() {
     [selectedTenant]
   );
 
+  const sortedTenantRoleDefinitions = useMemo(() => {
+    const rows = Array.isArray(tenantRoleDefinitions) ? [...tenantRoleDefinitions] : [];
+    rows.sort((a, b) => {
+      const aSystem = a?.is_system === true ? 1 : 0;
+      const bSystem = b?.is_system === true ? 1 : 0;
+      if (aSystem !== bSystem) return bSystem - aSystem;
+      return String(a?.role || "").localeCompare(String(b?.role || ""));
+    });
+    return rows;
+  }, [tenantRoleDefinitions]);
+
+  const roleLabelByKey = useMemo(() => {
+    const out = {};
+    for (const row of tenantRoleDefinitions || []) {
+      const key = String(row?.role || "").trim();
+      if (!key) continue;
+      out[key] = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+    }
+    return out;
+  }, [tenantRoleDefinitions]);
+
+  const assignableTenantRoles = useMemo(
+    () => sortedTenantRoleDefinitions.filter((row) => row?.active !== false),
+    [sortedTenantRoleDefinitions]
+  );
+
+  const selectedTenantRoleAssignments = useMemo(
+    () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
+    [tenantAdmins, selectedTenantKey]
+  );
+
+  const tenantRoleAssignmentCounts = useMemo(() => {
+    const counts = {};
+    for (const row of selectedTenantRoleAssignments) {
+      const role = String(row?.role || "").trim();
+      if (!role) continue;
+      counts[role] = (counts[role] || 0) + 1;
+    }
+    return counts;
+  }, [selectedTenantRoleAssignments]);
+
+  const rolePermissionMap = useMemo(() => {
+    const out = {};
+    for (const row of tenantRolePermissions || []) {
+      const role = String(row?.role || "").trim();
+      const permission = String(row?.permission_key || "").trim();
+      if (!role || !permission) continue;
+      out[`${role}:${permission}`] = Boolean(row?.allowed);
+    }
+    return out;
+  }, [tenantRolePermissions]);
+
+  const selectedRoleDefinition = useMemo(
+    () => sortedTenantRoleDefinitions.find((row) => String(row?.role || "") === String(selectedRoleKey || "")) || null,
+    [sortedTenantRoleDefinitions, selectedRoleKey]
+  );
+
+  const isPlatformOwner = platformAccessRole === "platform_owner" || platformAccessRole === "legacy_admin";
+  const isPlatformStaff = platformAccessRole === "platform_staff";
+  const canEditTenantCore = isPlatformOwner;
+  const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
+
   const logAudit = useCallback(async (payload) => {
     const actorName = cleanOptional(sessionActorName) || cleanOptional(sessionEmail?.split("@")?.[0]);
     const actorEmail = cleanOptional(sessionEmail);
@@ -444,13 +557,67 @@ export default function PlatformAdminApp() {
 
   const loadTenantAdmins = useCallback(async () => {
     const { data, error } = await supabase
-      .from("tenant_admins")
-      .select("tenant_key,user_id,role,created_at")
+      .from("tenant_user_roles")
+      .select("tenant_key,user_id,role,status,created_at")
+      .eq("status", "active")
       .order("tenant_key", { ascending: true })
       .order("created_at", { ascending: false });
     if (error) throw error;
     setTenantAdmins(Array.isArray(data) ? data : []);
   }, []);
+
+  const loadTenantRoleConfig = useCallback(async (tenantKeyInput = selectedTenantKey) => {
+    const key = sanitizeTenantKey(tenantKeyInput);
+    if (!key) {
+      setTenantRoleDefinitions([]);
+      setTenantRolePermissions([]);
+      return;
+    }
+
+    const [rolesResult, permsResult] = await Promise.all([
+      supabase
+        .from("tenant_role_definitions")
+        .select("tenant_key,role,role_label,is_system,active,created_at,updated_at")
+        .eq("tenant_key", key)
+        .order("is_system", { ascending: false })
+        .order("role", { ascending: true }),
+      supabase
+        .from("tenant_role_permissions")
+        .select("tenant_key,role,permission_key,allowed")
+        .eq("tenant_key", key),
+    ]);
+
+    if (rolesResult.error || permsResult.error) {
+      const firstError = rolesResult.error || permsResult.error;
+      if (isMissingRelationError(firstError)) {
+        const fallbackRoleSet = new Set(["tenant_admin", "tenant_employee"]);
+        for (const row of tenantAdmins || []) {
+          if (String(row?.tenant_key || "") !== key) continue;
+          const role = String(row?.role || "").trim().toLowerCase();
+          if (role) fallbackRoleSet.add(role);
+        }
+        const fallbackRoles = [...fallbackRoleSet].sort().map((role) => ({
+          tenant_key: key,
+          role,
+          role_label: roleKeyToLabel(role),
+          is_system: role === "tenant_admin" || role === "tenant_employee",
+          active: true,
+        }));
+        setTenantRoleDefinitions(fallbackRoles);
+        setTenantRolePermissions([]);
+        setStatus((prev) => ({
+          ...prev,
+          roles: "Role catalog tables are not available yet. Run latest migrations to enable role and permission editing.",
+        }));
+        return;
+      }
+      throw firstError;
+    }
+
+    setTenantRoleDefinitions(Array.isArray(rolesResult.data) ? rolesResult.data : []);
+    setTenantRolePermissions(Array.isArray(permsResult.data) ? permsResult.data : []);
+    setStatus((prev) => ({ ...prev, roles: "" }));
+  }, [selectedTenantKey, tenantAdmins]);
 
   const loadTenantProfiles = useCallback(async () => {
     const { data, error } = await supabase
@@ -561,6 +728,7 @@ export default function PlatformAdminApp() {
       await Promise.all([
         loadTenants(),
         loadTenantAdmins(),
+        loadTenantRoleConfig(),
         loadTenantProfiles(),
         loadTenantVisibility(),
         loadTenantMapFeatures(),
@@ -572,7 +740,7 @@ export default function PlatformAdminApp() {
     } finally {
       setLoading(false);
     }
-  }, [loadTenants, loadTenantAdmins, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+  }, [loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
 
   useEffect(() => {
     let mounted = true;
@@ -627,11 +795,16 @@ export default function PlatformAdminApp() {
   const signOutPlatformAdmin = useCallback(async () => {
     await supabase.auth.signOut();
     setIsPlatformAdmin(false);
+    setPlatformAccessRole("");
     setLoginPassword("");
     setEntryStep("start");
   }, []);
 
   const openAddTenantStep = useCallback(() => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can create a tenant." }));
+      return;
+    }
     setEntryStep("add");
     setActiveTab("tenants");
     setTenantForm(initialTenantForm());
@@ -639,7 +812,7 @@ export default function PlatformAdminApp() {
     setIsEditingTenant(true);
     setIsEditingProfile(true);
     setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
-  }, []);
+  }, [canEditTenantCore]);
 
   const openTenantWorkspace = useCallback((tenantKey) => {
     const key = sanitizeTenantKey(tenantKey);
@@ -667,19 +840,62 @@ export default function PlatformAdminApp() {
     async function checkPlatformAdmin() {
       if (!authReady || !sessionUserId) {
         setIsPlatformAdmin(false);
+        setPlatformAccessRole("");
         return;
       }
-      const { data, error } = await supabase
-        .from("admins")
-        .select("user_id")
-        .eq("user_id", sessionUserId)
-        .maybeSingle();
+
+      const isMissingRoleTableError = (error) => {
+        const code = String(error?.code || "").trim().toUpperCase();
+        const msg = String(error?.message || "").toLowerCase();
+        return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+      };
+
+      const [platformRoleResult, legacyAdminResult] = await Promise.all([
+        supabase
+          .from("platform_user_roles")
+          .select("role,status")
+          .eq("user_id", sessionUserId)
+          .eq("status", "active"),
+        supabase
+          .from("admins")
+          .select("user_id")
+          .eq("user_id", sessionUserId)
+          .maybeSingle(),
+      ]);
+
       if (cancelled) return;
-      if (error) {
+
+      const platformRoleError = platformRoleResult?.error;
+      const legacyAdminError = legacyAdminResult?.error;
+      if (platformRoleError && !isMissingRoleTableError(platformRoleError)) {
         setIsPlatformAdmin(false);
+        setPlatformAccessRole("");
         return;
       }
-      setIsPlatformAdmin(Boolean(data?.user_id));
+      if (legacyAdminError && !isMissingRoleTableError(legacyAdminError)) {
+        setIsPlatformAdmin(false);
+        setPlatformAccessRole("");
+        return;
+      }
+
+      const roles = Array.isArray(platformRoleResult?.data) ? platformRoleResult.data : [];
+      const hasOwner = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_owner");
+      const hasStaff = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_staff");
+      const hasLegacyAdmin = Boolean(legacyAdminResult?.data?.user_id);
+
+      if (hasOwner || hasLegacyAdmin) {
+        setIsPlatformAdmin(true);
+        setPlatformAccessRole(hasOwner ? "platform_owner" : "legacy_admin");
+        return;
+      }
+      if (hasStaff) {
+        setIsPlatformAdmin(true);
+        setPlatformAccessRole("platform_staff");
+        return;
+      }
+
+      setIsPlatformAdmin(false);
+      setPlatformAccessRole("");
     }
     checkPlatformAdmin();
     return () => {
@@ -746,13 +962,51 @@ export default function PlatformAdminApp() {
     void loadTenantFiles(key).catch((error) => {
       setStatus((prev) => ({ ...prev, files: statusText(error, "") }));
     });
+    void loadTenantRoleConfig(key).catch((error) => {
+      setStatus((prev) => ({ ...prev, roles: statusText(error, "") }));
+    });
     void loadAudit(key).catch((error) => {
       setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
     });
-  }, [selectedTenantKey, tenantProfilesByTenant, tenantVisibilityByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadAudit]);
+  }, [selectedTenantKey, tenantProfilesByTenant, tenantVisibilityByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
+
+  useEffect(() => {
+    if (!sortedTenantRoleDefinitions.length) {
+      setSelectedRoleKey("");
+      return;
+    }
+    if (!sortedTenantRoleDefinitions.some((row) => String(row?.role || "") === String(selectedRoleKey || ""))) {
+      setSelectedRoleKey(String(sortedTenantRoleDefinitions[0]?.role || ""));
+    }
+  }, [sortedTenantRoleDefinitions, selectedRoleKey]);
+
+  useEffect(() => {
+    if (!assignableTenantRoles.length) return;
+    if (!assignableTenantRoles.some((row) => String(row?.role || "") === String(assignForm.role || ""))) {
+      setAssignForm((prev) => ({ ...prev, role: String(assignableTenantRoles[0]?.role || "tenant_employee") }));
+    }
+  }, [assignableTenantRoles, assignForm.role]);
+
+  useEffect(() => {
+    if (!selectedRoleKey) {
+      setRolePermissionDraft({});
+      setRolePermissionDirty(false);
+      return;
+    }
+    const nextDraft = {};
+    for (const permissionKey of DEFAULT_TENANT_PERMISSION_KEYS) {
+      nextDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedRoleKey}:${permissionKey}`]);
+    }
+    setRolePermissionDraft(nextDraft);
+    setRolePermissionDirty(false);
+  }, [selectedRoleKey, rolePermissionMap]);
 
   const saveTenant = useCallback(async (event) => {
     event.preventDefault();
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can create or modify core tenant records." }));
+      return;
+    }
     const resolvedTenantKey = entryStep === "tenant"
       ? sanitizeTenantKey(selectedTenantKey)
       : sanitizeTenantKey(tenantForm.tenant_key);
@@ -801,9 +1055,13 @@ export default function PlatformAdminApp() {
     }
     setSelectedTenantKey(payload.tenant_key);
     await refreshControlPlaneData();
-  }, [entryStep, selectedTenantKey, tenantForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, entryStep, selectedTenantKey, tenantForm, logAudit, refreshControlPlaneData]);
 
   const toggleTenantActive = useCallback(async (row) => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can activate/deactivate tenants." }));
+      return;
+    }
     const key = sanitizeTenantKey(row?.tenant_key);
     if (!key) return;
     const nextActive = !Boolean(row?.active);
@@ -824,10 +1082,14 @@ export default function PlatformAdminApp() {
     });
     setStatus((prev) => ({ ...prev, tenant: `${nextActive ? "Activated" : "Deactivated"} ${key}.` }));
     await refreshControlPlaneData();
-  }, [logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, logAudit, refreshControlPlaneData]);
 
   const saveTenantProfile = useCallback(async (event) => {
     event.preventDefault();
+    if (!canEditTenantOperational) {
+      setStatus((prev) => ({ ...prev, profile: "Your platform role does not permit tenant profile changes." }));
+      return;
+    }
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) {
       setStatus((prev) => ({ ...prev, profile: "Select a tenant first." }));
@@ -896,10 +1158,14 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, profile: `Saved intake profile for ${key}.` }));
     setIsEditingProfile(false);
     await refreshControlPlaneData();
-  }, [selectedTenantKey, profileForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantOperational, selectedTenantKey, profileForm, logAudit, refreshControlPlaneData]);
 
   const saveDomainAndFeatureSettings = useCallback(async (event) => {
     event.preventDefault();
+    if (!canEditTenantOperational) {
+      setStatus((prev) => ({ ...prev, domains: "Your platform role does not permit domain/feature updates." }));
+      return;
+    }
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) {
       setStatus((prev) => ({ ...prev, domains: "Select a tenant first." }));
@@ -951,22 +1217,30 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, domains: `Saved domain + map settings for ${key}.` }));
     await refreshControlPlaneData();
-  }, [selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantOperational, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event.preventDefault();
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can assign tenant roles from this control plane." }));
+      return;
+    }
     const tenant_key = sanitizeTenantKey(selectedTenantKey);
     const user_id = String(assignForm.user_id || "").trim();
-    const role = String(assignForm.role || "municipality_admin").trim() || "municipality_admin";
+    const role = String(assignForm.role || "").trim().toLowerCase() || String(assignableTenantRoles?.[0]?.role || "tenant_employee");
 
     if (!tenant_key || !user_id) {
       setStatus((prev) => ({ ...prev, users: "Tenant key and user UUID are required." }));
       return;
     }
+    if (!role) {
+      setStatus((prev) => ({ ...prev, users: "Select a valid tenant role." }));
+      return;
+    }
 
     const { error } = await supabase
-      .from("tenant_admins")
-      .upsert([{ tenant_key, user_id, role }], { onConflict: "tenant_key,user_id" });
+      .from("tenant_user_roles")
+      .upsert([{ tenant_key, user_id, role, status: "active" }], { onConflict: "tenant_key,user_id,role" });
     if (error) {
       setStatus((prev) => ({ ...prev, users: statusText(error, "") }));
       return;
@@ -974,27 +1248,33 @@ export default function PlatformAdminApp() {
 
     await logAudit({
       tenant_key,
-      action: "tenant_admin_assigned",
-      entity_type: "tenant_admin",
+      action: "tenant_user_role_assigned",
+      entity_type: "tenant_user_role",
       entity_id: user_id,
       details: { role },
     });
 
-    setStatus((prev) => ({ ...prev, users: `Assigned ${user_id} to ${tenant_key}.` }));
-    setAssignForm({ tenant_key: "", user_id: "", role: "municipality_admin" });
+    setStatus((prev) => ({ ...prev, users: `Assigned ${role} role to ${user_id} in ${tenant_key}.` }));
+    setAssignForm((prev) => ({ ...prev, tenant_key: "", user_id: "", role }));
     await refreshControlPlaneData();
-  }, [assignForm, selectedTenantKey, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData]);
 
   const removeTenantAdmin = useCallback(async (row) => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can remove tenant roles from this control plane." }));
+      return;
+    }
     const tenant_key = sanitizeTenantKey(row?.tenant_key);
     const user_id = String(row?.user_id || "").trim();
-    if (!tenant_key || !user_id) return;
+    const role = String(row?.role || "").trim().toLowerCase();
+    if (!tenant_key || !user_id || !role) return;
 
     const { error } = await supabase
-      .from("tenant_admins")
+      .from("tenant_user_roles")
       .delete()
       .eq("tenant_key", tenant_key)
-      .eq("user_id", user_id);
+      .eq("user_id", user_id)
+      .eq("role", role);
     if (error) {
       setStatus((prev) => ({ ...prev, users: statusText(error, "") }));
       return;
@@ -1002,17 +1282,169 @@ export default function PlatformAdminApp() {
 
     await logAudit({
       tenant_key,
-      action: "tenant_admin_removed",
-      entity_type: "tenant_admin",
+      action: "tenant_user_role_removed",
+      entity_type: "tenant_user_role",
       entity_id: user_id,
       details: {},
     });
 
-    setStatus((prev) => ({ ...prev, users: `Removed ${user_id} from ${tenant_key}.` }));
+    setStatus((prev) => ({ ...prev, users: `Removed ${role} role for ${user_id} from ${tenant_key}.` }));
     await refreshControlPlaneData();
-  }, [logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, logAudit, refreshControlPlaneData]);
+
+  const createTenantRole = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can create roles." }));
+      return;
+    }
+
+    const tenant_key = sanitizeTenantKey(selectedTenantKey);
+    const role = sanitizeRoleKey(roleForm.role);
+    const role_label = String(roleForm.role_label || "").trim() || roleKeyToLabel(role);
+    if (!tenant_key) {
+      setStatus((prev) => ({ ...prev, roles: "Select a tenant first." }));
+      return;
+    }
+    if (!role) {
+      setStatus((prev) => ({ ...prev, roles: "Role key is required (example: field_supervisor)." }));
+      return;
+    }
+    if (sortedTenantRoleDefinitions.some((row) => String(row?.role || "") === role)) {
+      setStatus((prev) => ({ ...prev, roles: `Role ${role} already exists for ${tenant_key}.` }));
+      return;
+    }
+
+    const { error: roleInsertError } = await supabase
+      .from("tenant_role_definitions")
+      .insert([{
+        tenant_key,
+        role,
+        role_label,
+        is_system: false,
+        active: true,
+        created_by: cleanOptional(sessionUserId),
+      }]);
+    if (roleInsertError) {
+      setStatus((prev) => ({ ...prev, roles: statusText(roleInsertError, "") }));
+      return;
+    }
+
+    const permissionRows = DEFAULT_TENANT_PERMISSION_KEYS.map((permission_key) => ({
+      tenant_key,
+      role,
+      permission_key,
+      allowed: false,
+      updated_by: cleanOptional(sessionUserId),
+    }));
+
+    const { error: permissionSeedError } = await supabase
+      .from("tenant_role_permissions")
+      .upsert(permissionRows, { onConflict: "tenant_key,role,permission_key" });
+    if (permissionSeedError) {
+      setStatus((prev) => ({ ...prev, roles: statusText(permissionSeedError, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key,
+      action: "tenant_role_created",
+      entity_type: "tenant_role",
+      entity_id: role,
+      details: { role_label },
+    });
+
+    setRoleForm({ role: "", role_label: "" });
+    setSelectedRoleKey(role);
+    setStatus((prev) => ({ ...prev, roles: `Created role ${role} for ${tenant_key}.` }));
+    await loadTenantRoleConfig(tenant_key);
+  }, [canEditTenantCore, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig]);
+
+  const removeTenantRole = useCallback(async (row) => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can remove roles." }));
+      return;
+    }
+    const tenant_key = sanitizeTenantKey(row?.tenant_key || selectedTenantKey);
+    const role = String(row?.role || "").trim().toLowerCase();
+    if (!tenant_key || !role) return;
+    if (row?.is_system === true) {
+      setStatus((prev) => ({ ...prev, roles: "System roles cannot be removed." }));
+      return;
+    }
+    const assignmentCount = Number(tenantRoleAssignmentCounts?.[role] || 0);
+    if (assignmentCount > 0) {
+      setStatus((prev) => ({ ...prev, roles: `Remove or reassign ${assignmentCount} user assignment(s) for ${role} before deleting it.` }));
+      return;
+    }
+
+    const { error } = await supabase
+      .from("tenant_role_definitions")
+      .delete()
+      .eq("tenant_key", tenant_key)
+      .eq("role", role);
+    if (error) {
+      setStatus((prev) => ({ ...prev, roles: statusText(error, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key,
+      action: "tenant_role_removed",
+      entity_type: "tenant_role",
+      entity_id: role,
+      details: {},
+    });
+
+    setStatus((prev) => ({ ...prev, roles: `Removed role ${role} from ${tenant_key}.` }));
+    await loadTenantRoleConfig(tenant_key);
+    await loadTenantAdmins();
+  }, [canEditTenantCore, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
+
+  const saveRolePermissions = useCallback(async () => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can update role permissions." }));
+      return;
+    }
+    const tenant_key = sanitizeTenantKey(selectedTenantKey);
+    const role = String(selectedRoleKey || "").trim().toLowerCase();
+    if (!tenant_key || !role) {
+      setStatus((prev) => ({ ...prev, roles: "Select a tenant role first." }));
+      return;
+    }
+
+    const rows = DEFAULT_TENANT_PERMISSION_KEYS.map((permission_key) => ({
+      tenant_key,
+      role,
+      permission_key,
+      allowed: Boolean(rolePermissionDraft?.[permission_key]),
+      updated_by: cleanOptional(sessionUserId),
+    }));
+    const { error } = await supabase
+      .from("tenant_role_permissions")
+      .upsert(rows, { onConflict: "tenant_key,role,permission_key" });
+    if (error) {
+      setStatus((prev) => ({ ...prev, roles: statusText(error, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key,
+      action: "tenant_role_permissions_saved",
+      entity_type: "tenant_role",
+      entity_id: role,
+      details: {
+        permission_count: rows.length,
+      },
+    });
+
+    setRolePermissionDirty(false);
+    setStatus((prev) => ({ ...prev, roles: `Saved permissions for ${role}.` }));
+    await loadTenantRoleConfig(tenant_key);
+  }, [canEditTenantCore, selectedTenantKey, selectedRoleKey, rolePermissionDraft, sessionUserId, logAudit, loadTenantRoleConfig]);
 
   const applyBoundaryPayloadToTenant = useCallback(async ({ tenantKey, boundaryGeoJson, sourceLabel }) => {
+    if (!canEditTenantOperational) return { ok: false, error: "Your platform role does not permit boundary updates." };
     const key = sanitizeTenantKey(tenantKey);
     if (!key) return { ok: false, error: "Tenant key is required." };
     if (!boundaryGeoJson || typeof boundaryGeoJson !== "object") {
@@ -1047,10 +1479,14 @@ export default function PlatformAdminApp() {
     });
 
     return { ok: true, boundaryConfigKey };
-  }, [logAudit]);
+  }, [canEditTenantOperational, logAudit]);
 
   const uploadTenantFile = useCallback(async (event) => {
     event.preventDefault();
+    if (!canEditTenantOperational) {
+      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit file uploads." }));
+      return;
+    }
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
     const file = fileForm.file;
     if (!tenantKey) {
@@ -1153,7 +1589,7 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, files: `Uploaded ${file.name}.` }));
     await loadTenantFiles(tenantKey);
     await loadAudit();
-  }, [selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
+  }, [canEditTenantOperational, selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -1170,6 +1606,10 @@ export default function PlatformAdminApp() {
   }, []);
 
   const setBoundaryFromFile = useCallback(async (row) => {
+    if (!canEditTenantOperational) {
+      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit boundary updates." }));
+      return;
+    }
     const tenantKey = sanitizeTenantKey(row?.tenant_key || selectedTenantKey);
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
     const path = String(row?.storage_path || "").trim();
@@ -1214,9 +1654,13 @@ export default function PlatformAdminApp() {
     setTenantForm((prev) => ({ ...prev, boundary_config_key: applied.boundaryConfigKey || prev.boundary_config_key }));
     setStatus((prev) => ({ ...prev, files: `Boundary set from ${fileName}.` }));
     await refreshControlPlaneData();
-  }, [selectedTenantKey, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
+  }, [canEditTenantOperational, selectedTenantKey, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const removeTenantFile = useCallback(async (row) => {
+    if (!canEditTenantOperational) {
+      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit file removal." }));
+      return;
+    }
     const tenantKey = sanitizeTenantKey(row?.tenant_key);
     const fileId = Number(row?.id || 0);
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -1246,7 +1690,7 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, files: `Removed ${row?.file_name || path}.` }));
     await loadTenantFiles(tenantKey);
     await loadAudit();
-  }, [logAudit, loadTenantFiles, loadAudit]);
+  }, [canEditTenantOperational, logAudit, loadTenantFiles, loadAudit]);
 
   const inTenantWorkspace = entryStep === "tenant";
   const inAddTenantFlow = entryStep === "add";
@@ -1317,7 +1761,7 @@ export default function PlatformAdminApp() {
           </div>
           <h1 style={{ marginTop: 0, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ marginBottom: 0 }}>
-            Access denied. This route is restricted to platform-admin users in `public.admins`.
+            Access denied. This route is restricted to platform users with `platform_owner` or `platform_staff` role.
           </p>
           <p style={{ marginBottom: 0, fontSize: 12.5 }}>
             Signed in as <b>{sessionUserId}</b>.
@@ -1351,7 +1795,15 @@ export default function PlatformAdminApp() {
                 <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
               ) : null}
               {inTenantWorkspace ? (
-                <button type="button" style={headerActionButton} onClick={openAddTenantStep}>Add Tenant</button>
+                <button
+                  type="button"
+                  style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                  onClick={openAddTenantStep}
+                  disabled={!canEditTenantCore}
+                  title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
+                >
+                  Add Tenant
+                </button>
               ) : null}
               <button type="button" style={signOutButton} onClick={() => void signOutPlatformAdmin()}>
                 Sign out
@@ -1359,7 +1811,8 @@ export default function PlatformAdminApp() {
             </div>
           </div>
           <p style={{ margin: 0, color: palette.textMuted }}>
-            Access: <b>Platform Administrator</b>{sessionDisplayLabel ? <>. Account: <b>{sessionDisplayLabel}</b>.</> : "."}
+            Access: <b>{isPlatformOwner ? "Platform Owner" : isPlatformStaff ? "Platform Staff" : "Platform Administrator"}</b>
+            {sessionDisplayLabel ? <>. Account: <b>{sessionDisplayLabel}</b>.</> : "."}
           </p>
           {inEntryPrompt ? (
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
@@ -1785,9 +2238,9 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Municipality Admin Access</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Tenant User Role</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                Add a user by their Supabase Auth user ID to give admin access for this municipality.
+                Add a user by Supabase Auth user ID and assign one configured role for this municipality.
               </p>
               <form onSubmit={assignTenantAdmin} style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr 1fr auto", gap: 8, alignItems: "end" }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -1799,27 +2252,53 @@ export default function PlatformAdminApp() {
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                  <span>Admin User ID</span>
+                  <span>User ID</span>
                   <input
                     value={assignForm.user_id}
                     onChange={(e) => setAssignForm((p) => ({ ...p, user_id: e.target.value }))}
                     placeholder="Paste auth.users UUID"
                     style={inputBase}
+                    disabled={!canEditTenantCore}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Access Role</span>
-                  <select value={assignForm.role} onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))} style={inputBase}>
-                    <option value="municipality_admin">Municipality Admin</option>
+                  <select
+                    value={assignForm.role}
+                    onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                    style={inputBase}
+                    disabled={!canEditTenantCore}
+                  >
+                    {assignableTenantRoles.map((row) => {
+                      const key = String(row?.role || "");
+                      if (!key) return null;
+                      const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                      return (
+                        <option key={key} value={key}>{label}</option>
+                      );
+                    })}
+                    {!assignableTenantRoles.length ? (
+                      <>
+                        <option value="tenant_employee">Tenant Employee</option>
+                        <option value="tenant_admin">Tenant Admin</option>
+                      </>
+                    ) : null}
                   </select>
                 </label>
-                <button type="submit" style={buttonBase}>Assign Admin</button>
+                <button
+                  type="submit"
+                  style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                  disabled={!canEditTenantCore}
+                  title={canEditTenantCore ? "Assign tenant role" : "Only Platform Owner can assign tenant roles here"}
+                >
+                  Assign Role
+                </button>
               </form>
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.users}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Admin Assignments</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Role Assignments</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
@@ -1833,19 +2312,210 @@ export default function PlatformAdminApp() {
                   </thead>
                   <tbody>
                     {tenantAdmins.map((row) => (
-                      <tr key={`${row.tenant_key}:${row.user_id}`}>
+                      <tr key={`${row.tenant_key}:${row.user_id}:${row.role}`}>
                         <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
                         <td style={{ padding: "8px 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{row.user_id}</td>
-                        <td style={{ padding: "8px 0" }}>{row.role}</td>
+                        <td style={{ padding: "8px 0" }}>
+                          {roleLabelByKey?.[row.role] || roleKeyToLabel(row.role)}
+                          <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({row.role})</span>
+                        </td>
                         <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0" }}>
-                          <button type="button" style={buttonAlt} onClick={() => void removeTenantAdmin(row)}>Remove</button>
+                          <button
+                            type="button"
+                            style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                            onClick={() => void removeTenantAdmin(row)}
+                            disabled={!canEditTenantCore}
+                            title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove tenant roles here"}
+                          >
+                            Remove
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            </div>
+          </section>
+        ) : null}
+
+        {inTenantWorkspace && activeTab === "roles" ? (
+          <section style={{ display: "grid", gap: 14 }}>
+            <div style={{ ...card, display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Create Tenant Role</h2>
+              <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                Create custom roles for {selectedTenantKey}, then enable or disable module permissions.
+              </p>
+              <form onSubmit={createTenantRole} style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr auto", gap: 8, alignItems: "end" }}>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Role Key</span>
+                  <input
+                    value={roleForm.role}
+                    onChange={(e) => setRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
+                    placeholder="field_supervisor"
+                    style={inputBase}
+                    disabled={!canEditTenantCore}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Role Label</span>
+                  <input
+                    value={roleForm.role_label}
+                    onChange={(e) => setRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
+                    placeholder="Field Supervisor"
+                    style={inputBase}
+                    disabled={!canEditTenantCore}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                  disabled={!canEditTenantCore}
+                  title={canEditTenantCore ? "Create role" : "Only Platform Owner can create roles"}
+                >
+                  Create Role
+                </button>
+              </form>
+              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.roles}</div> : null}
+            </div>
+
+            <div style={{ ...card, display: "grid", gap: 8 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Roles for {selectedTenantKey}</h2>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeadCell}>Role</th>
+                      <th style={tableHeadCell}>Assignments</th>
+                      <th style={tableHeadCell}>Type</th>
+                      <th style={tableHeadCell}>State</th>
+                      <th style={tableHeadCell}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedTenantRoleDefinitions.map((row) => {
+                      const role = String(row?.role || "").trim();
+                      if (!role) return null;
+                      const roleLabel = String(row?.role_label || "").trim() || roleKeyToLabel(role);
+                      const assignments = Number(tenantRoleAssignmentCounts?.[role] || 0);
+                      const isSelected = role === selectedRoleKey;
+                      const canRemove = canEditTenantCore && row?.is_system !== true && assignments === 0;
+                      return (
+                        <tr key={role} style={{ background: isSelected ? "rgba(18,128,106,0.08)" : "transparent" }}>
+                          <td style={{ padding: "8px 0" }}>
+                            {roleLabel}
+                            <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({role})</span>
+                          </td>
+                          <td style={{ padding: "8px 0" }}>{assignments}</td>
+                          <td style={{ padding: "8px 0" }}>{row?.is_system ? "System" : "Custom"}</td>
+                          <td style={{ padding: "8px 0" }}>{row?.active === false ? "Disabled" : "Active"}</td>
+                          <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <button type="button" style={buttonAlt} onClick={() => setSelectedRoleKey(role)}>
+                              Manage Permissions
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, opacity: canRemove ? 1 : 0.55 }}
+                              disabled={!canRemove}
+                              title={
+                                row?.is_system
+                                  ? "System roles cannot be removed."
+                                  : assignments > 0
+                                    ? "Remove assignments before deleting this role."
+                                    : "Remove role"
+                              }
+                              onClick={() => void removeTenantRole(row)}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!sortedTenantRoleDefinitions.length ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: "10px 0", opacity: 0.75 }}>No roles found for this tenant.</td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ ...card, display: "grid", gap: 8 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>
+                Manage Role Permission {selectedRoleDefinition ? `(${String(selectedRoleDefinition.role_label || selectedRoleDefinition.role)})` : ""}
+              </h2>
+              {selectedRoleDefinition ? (
+                <>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr>
+                          <th style={tableHeadCell}>Module</th>
+                          {ROLE_PERMISSION_ACTIONS.map((action) => (
+                            <th key={action.key} style={tableHeadCell}>{action.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ROLE_PERMISSION_MODULES.map((module) => (
+                          <tr key={module.key}>
+                            <td style={{ padding: "8px 0", fontWeight: 700 }}>{module.label}</td>
+                            {ROLE_PERMISSION_ACTIONS.map((action) => {
+                              const permissionKey = `${module.key}.${action.key}`;
+                              return (
+                                <td key={permissionKey} style={{ padding: "8px 0" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(rolePermissionDraft?.[permissionKey])}
+                                    disabled={!canEditTenantCore}
+                                    onChange={(e) => {
+                                      const nextAllowed = e.target.checked;
+                                      setRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
+                                      setRolePermissionDirty(true);
+                                    }}
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                      disabled={!canEditTenantCore || !rolePermissionDirty}
+                      onClick={() => void saveRolePermissions()}
+                    >
+                      Save Permission Changes
+                    </button>
+                    <button
+                      type="button"
+                      style={buttonAlt}
+                      onClick={() => {
+                        const resetDraft = {};
+                        for (const permissionKey of DEFAULT_TENANT_PERMISSION_KEYS) {
+                          resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedRoleKey}:${permissionKey}`]);
+                        }
+                        setRolePermissionDraft(resetDraft);
+                        setRolePermissionDirty(false);
+                      }}
+                      disabled={!rolePermissionDirty}
+                    >
+                      Reset Changes
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                  Select a role above to edit permissions.
+                </p>
+              )}
             </div>
           </section>
         ) : null}
