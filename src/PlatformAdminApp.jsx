@@ -336,6 +336,7 @@ export default function PlatformAdminApp() {
   const [authReady, setAuthReady] = useState(false);
   const [sessionUserId, setSessionUserId] = useState("");
   const [sessionEmail, setSessionEmail] = useState("");
+  const [sessionActorName, setSessionActorName] = useState("");
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -409,6 +410,13 @@ export default function PlatformAdminApp() {
   );
 
   const logAudit = useCallback(async (payload) => {
+    const actorName = cleanOptional(sessionActorName) || cleanOptional(sessionEmail?.split("@")?.[0]);
+    const actorEmail = cleanOptional(sessionEmail);
+    const detailPayload = {
+      ...(payload?.details || {}),
+      actor_name: actorName,
+      actor_email: actorEmail,
+    };
     try {
       await supabase.from("tenant_audit_log").insert([
         {
@@ -417,13 +425,13 @@ export default function PlatformAdminApp() {
           action: String(payload?.action || "").trim() || "unknown",
           entity_type: String(payload?.entity_type || "").trim() || "unknown",
           entity_id: cleanOptional(payload?.entity_id),
-          details: payload?.details || {},
+          details: detailPayload,
         },
       ]);
     } catch {
       // non-blocking
     }
-  }, [sessionUserId]);
+  }, [sessionActorName, sessionEmail, sessionUserId]);
 
   const loadTenants = useCallback(async () => {
     const { data, error } = await supabase
@@ -515,15 +523,36 @@ export default function PlatformAdminApp() {
     setTenantFiles(Array.isArray(data) ? data : []);
   }, []);
 
-  const loadAudit = useCallback(async () => {
+  const loadAudit = useCallback(async (tenantKeyInput = selectedTenantKey) => {
+    const key = sanitizeTenantKey(tenantKeyInput);
+    if (!key) {
+      setAuditRows([]);
+      return;
+    }
+
+    const limit = 120;
+    const rpcResult = await supabase.rpc("platform_admin_audit_feed", {
+      p_tenant_key: key,
+      p_limit: limit,
+    });
+    if (!rpcResult.error && Array.isArray(rpcResult.data)) {
+      setAuditRows(rpcResult.data);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("tenant_audit_log")
       .select("id,tenant_key,actor_user_id,action,entity_type,entity_id,details,created_at")
+      .eq("tenant_key", key)
       .order("created_at", { ascending: false })
-      .limit(120);
+      .limit(limit);
     if (error) throw error;
-    setAuditRows(Array.isArray(data) ? data : []);
-  }, []);
+    const fallbackRows = (Array.isArray(data) ? data : []).map((row) => ({
+      ...row,
+      actor_name: String(row?.details?.actor_name || "").trim() || null,
+    }));
+    setAuditRows(fallbackRows);
+  }, [selectedTenantKey]);
 
   const refreshControlPlaneData = useCallback(async () => {
     setLoading(true);
@@ -551,8 +580,13 @@ export default function PlatformAdminApp() {
       if (!mounted) return;
       const userId = String(session?.user?.id || "").trim();
       const userEmail = String(session?.user?.email || "").trim().toLowerCase();
+      const metadataName =
+        String(session?.user?.user_metadata?.full_name || "").trim() ||
+        String(session?.user?.user_metadata?.name || "").trim();
+      const emailName = userEmail ? String(userEmail.split("@")[0] || "").trim() : "";
       setSessionUserId(userId);
       setSessionEmail(userEmail);
+      setSessionActorName(metadataName || emailName);
       setLoginError("");
       setAuthReady(true);
     };
@@ -712,7 +746,10 @@ export default function PlatformAdminApp() {
     void loadTenantFiles(key).catch((error) => {
       setStatus((prev) => ({ ...prev, files: statusText(error, "") }));
     });
-  }, [selectedTenantKey, tenantProfilesByTenant, tenantVisibilityByTenant, tenantMapFeaturesByTenant, loadTenantFiles]);
+    void loadAudit(key).catch((error) => {
+      setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
+    });
+  }, [selectedTenantKey, tenantProfilesByTenant, tenantVisibilityByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadAudit]);
 
   const saveTenant = useCallback(async (event) => {
     event.preventDefault();
@@ -1972,7 +2009,7 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "audit" ? (
           <section style={{ ...card, display: "grid", gap: 8 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Platform Audit</h2>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Tenant Audit ({selectedTenantKey})</h2>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
@@ -1991,7 +2028,7 @@ export default function PlatformAdminApp() {
                       <td style={{ padding: "8px 0" }}>{row.tenant_key || "-"}</td>
                       <td style={{ padding: "8px 0" }}>{row.action}</td>
                       <td style={{ padding: "8px 0" }}>{row.entity_type}:{row.entity_id || "-"}</td>
-                      <td style={{ padding: "8px 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{row.actor_user_id || "-"}</td>
+                      <td style={{ padding: "8px 0" }}>{String(row?.actor_name || "").trim() || row.actor_user_id || "-"}</td>
                     </tr>
                   ))}
                   {!auditRows.length ? (
