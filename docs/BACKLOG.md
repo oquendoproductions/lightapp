@@ -2,7 +2,6 @@
 
 ## Now (highest priority)
 1. Drive-test tracking behavior on live roads.
-2. Validate iOS tap/hold/drag zoom reliability.
 3. Confirm bulk selection persistence under movement/reload pressure.
 4. Monitor email deliverability trend (suspicious/spam drift).
    - Instrumentation status:
@@ -27,6 +26,11 @@
 10. Streetlights My Reports completeness:
    - Some/a lot of saved lights are not appearing in My Reports.
    - Must align My Reports identity and incident grouping with saved/ring logic.
+
+## Deferred (native scope)
+1. iOS tap/hold/drag zoom reliability:
+   - Removed from web smoke-gate scope.
+   - Revisit only under native iOS integration.
 
 ## Next
 1. Report domains implementation (admin first):

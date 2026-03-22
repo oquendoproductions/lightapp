@@ -12,3 +12,6 @@ routes = [
 [vars]
 PAGES_ORIGIN = "lightapp-ak2.pages.dev"
 DEFAULT_TENANT_KEY = "ashtabulacity"
+KNOWN_TENANT_KEYS = "ashtabulacity"
+SUPABASE_URL = "https://gjainmoiudfjsmhhvtiz.supabase.co"
+TENANT_KEYS_SYNC_TTL_SEC = "30"

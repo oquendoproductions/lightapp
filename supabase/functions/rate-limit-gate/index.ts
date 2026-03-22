@@ -321,7 +321,12 @@ serve(async (req) => {
     }
 
     if (Math.random() < 0.05) {
-      await admin.rpc("prune_abuse_rate_events", { p_retention: "7 days" }).catch(() => {});
+      // Best-effort retention prune; never block allow/deny decisions.
+      try {
+        await admin.rpc("prune_abuse_rate_events", { p_retention: "7 days" });
+      } catch {
+        // non-blocking on purpose
+      }
     }
 
     await logAbuseEvent(admin, {

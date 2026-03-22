@@ -2,3 +2,12 @@ node_modules
 dist
 .env
 .env.*
+.DS_Store
+*.swp
+output
+tmp
+.wrangler
+.venv_pdf
+*parse_error*
+Access
+Create

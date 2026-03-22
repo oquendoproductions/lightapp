@@ -61,7 +61,6 @@ const ENABLE_STREETLIGHT_IN_APP_REPORTING =
   String(import.meta.env.VITE_ENABLE_STREETLIGHT_IN_APP_REPORTING || "").trim().toLowerCase() === "true";
 const ENABLE_LEGACY_PLACES_SERVICE =
   String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
-const ENABLE_TOUCH_DRAG_ZOOM = false;
 const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim() ||
   "https://www.firstenergycorp.com/outages_help/Report_Power_Outages.html?_gl=1*te1hi8*_up*MQ..*_ga*MTEyODI2NTQ5OS4xNzcyMjU3MDQ4*_ga_TVQJK7Z44E*czE3NzI0Mzc3NzEkbzIkZzEkdDE3NzI0Mzc3ODQkajQ3JGwwJGgw";
@@ -10076,20 +10075,6 @@ export default function App() {
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
   const boundaryCameraSignatureRef = useRef("");
-  const zoomDragRef = useRef({
-    lastTapTs: 0,
-    lastTapX: 0,
-    lastTapY: 0,
-    armUntil: 0,
-    pendingTap: false,
-    tapStartX: 0,
-    tapStartY: 0,
-    tapStartTs: 0,
-    active: false,
-    startY: 0,
-    startZoom: OFFICIAL_LIGHTS_MIN_ZOOM,
-    lastAppliedZoom: OFFICIAL_LIGHTS_MIN_ZOOM,
-  });
   const isMobile = useIsMobile(640);
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -11036,14 +11021,6 @@ export default function App() {
   const [authGateStep, setAuthGateStep] = useState("welcome"); // welcome | login | signup | guest
 
   const [showLocationPrompt, setShowLocationPrompt] = useState(false);
-  const isIOSSafari = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    const ua = navigator.userAgent || "";
-    const isIOS = /iPad|iPhone|iPod/.test(ua);
-    const isWebKit = /WebKit/.test(ua);
-    const isNonSafariIOS = /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
-    return isIOS && isWebKit && !isNonSafariIOS;
-  }, []);
   const isTouchDevice = useMemo(() => {
     if (typeof window === "undefined" || typeof navigator === "undefined") return false;
     return ("ontouchstart" in window) || Number(navigator.maxTouchPoints || 0) > 0;
@@ -18225,202 +18202,6 @@ async function insertReportWithFallback(payload) {
     libraries: GMAPS_LIBRARIES,
   });
 
-  // Touch fallback: tap once, then quickly tap+hold and drag up/down to zoom.
-  useEffect(() => {
-    if (!ENABLE_TOUCH_DRAG_ZOOM) return;
-    if (!isTouchDevice) return;
-    if (!isLoaded) return;
-    const map = mapRef.current;
-    const div = map?.getDiv?.();
-    if (!div) return;
-
-    const state = zoomDragRef.current;
-    const TAP_MOVE_MAX = 24;
-    const TAP_DURATION_MAX = 320;
-    const SECOND_TAP_WINDOW_MS = 560;
-
-    const lockMapForDragZoom = () => {
-      try {
-        map.setOptions?.({ draggable: false, gestureHandling: "none" });
-      } catch {}
-    };
-
-    const unlockMapForDragZoom = () => {
-      try {
-        map.setOptions?.({ draggable: true, gestureHandling: "greedy" });
-      } catch {}
-    };
-
-    // Transparent overlay catches second-tap-hold drag so map cannot pan.
-    const overlay = document.createElement("div");
-    overlay.style.position = "absolute";
-    overlay.style.inset = "0";
-    overlay.style.background = "transparent";
-    overlay.style.pointerEvents = "none";
-    overlay.style.touchAction = "none";
-    overlay.style.zIndex = "3";
-    div.appendChild(overlay);
-
-    let armTimer = null;
-    const clearArmTimer = () => {
-      if (armTimer) {
-        clearTimeout(armTimer);
-        armTimer = null;
-      }
-    };
-
-    const disarmSecondTap = () => {
-      state.armUntil = 0;
-      overlay.style.pointerEvents = state.active ? "auto" : "none";
-      clearArmTimer();
-    };
-
-    const armSecondTap = (x, y) => {
-      const now = Date.now();
-      state.lastTapTs = now;
-      state.lastTapX = x;
-      state.lastTapY = y;
-      state.armUntil = now + SECOND_TAP_WINDOW_MS;
-      overlay.style.pointerEvents = "auto";
-      clearArmTimer();
-      armTimer = setTimeout(() => {
-        if (!state.active) disarmSecondTap();
-      }, SECOND_TAP_WINDOW_MS + 80);
-    };
-
-    const beginActiveDragZoom = (touch, e) => {
-      state.pendingTap = false;
-      state.active = true;
-      state.startY = touch.clientY;
-      state.startZoom = Number(map.getZoom?.() ?? mapZoomRef.current);
-      state.lastAppliedZoom = state.startZoom;
-      div.style.touchAction = "none";
-      overlay.style.pointerEvents = "auto";
-      lockMapForDragZoom();
-      suppressMapClickRef.current.until = Date.now() + 450;
-      e.stopPropagation?.();
-      e.stopImmediatePropagation?.();
-      e.preventDefault();
-    };
-
-    const endActiveDragZoom = () => {
-      state.active = false;
-      div.style.touchAction = "";
-      unlockMapForDragZoom();
-      disarmSecondTap();
-    };
-
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 1) {
-        state.pendingTap = false;
-        state.active = false;
-        disarmSecondTap();
-        return;
-      }
-      const t = e.touches[0];
-      state.pendingTap = true;
-      state.tapStartTs = Date.now();
-      state.tapStartX = t.clientX;
-      state.tapStartY = t.clientY;
-    };
-
-    const onTouchMove = (e) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      if (state.pendingTap) {
-        const dx = t.clientX - state.tapStartX;
-        const dy = t.clientY - state.tapStartY;
-        if (Math.hypot(dx, dy) > TAP_MOVE_MAX) {
-          state.pendingTap = false;
-        }
-      }
-    };
-
-    const onTouchEnd = (e) => {
-      if (!state.pendingTap) return;
-      const now = Date.now();
-      const touch = e.changedTouches?.[0];
-      const endX = Number(touch?.clientX);
-      const endY = Number(touch?.clientY);
-      const dx = Number.isFinite(endX) ? endX - state.tapStartX : 0;
-      const dy = Number.isFinite(endY) ? endY - state.tapStartY : 0;
-      const dist = Math.hypot(dx, dy);
-      const dur = now - state.tapStartTs;
-
-      if (dur <= TAP_DURATION_MAX && dist <= TAP_MOVE_MAX) {
-        armSecondTap(
-          Number.isFinite(endX) ? endX : state.tapStartX,
-          Number.isFinite(endY) ? endY : state.tapStartY
-        );
-      }
-      state.pendingTap = false;
-    };
-
-    const onOverlayTouchStart = (e) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      const now = Date.now();
-      const canActivate = now <= state.armUntil;
-      const dx = t.clientX - state.lastTapX;
-      const dy = t.clientY - state.lastTapY;
-      if (!canActivate || Math.hypot(dx, dy) > 80) {
-        disarmSecondTap();
-        return;
-      }
-      beginActiveDragZoom(t, e);
-    };
-
-    const onOverlayTouchMove = (e) => {
-      if (!state.active || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      const deltaY = state.startY - t.clientY; // up -> zoom in
-      const nextZoom = clamp(state.startZoom + (deltaY / 60), 3, 22);
-      e.stopPropagation?.();
-      e.stopImmediatePropagation?.();
-      e.preventDefault();
-      if (Number.isFinite(nextZoom) && Math.abs(nextZoom - state.lastAppliedZoom) >= 0.05) {
-        if (map.moveCamera) map.moveCamera({ zoom: nextZoom });
-        else map.setZoom?.(nextZoom);
-        state.lastAppliedZoom = nextZoom;
-      }
-    };
-
-    const onOverlayTouchEnd = (e) => {
-      if (state.active) {
-        e.stopPropagation?.();
-        e.stopImmediatePropagation?.();
-        e.preventDefault();
-        endActiveDragZoom();
-        return;
-      }
-      disarmSecondTap();
-    };
-
-    div.addEventListener("touchstart", onTouchStart, { passive: false, capture: true });
-    div.addEventListener("touchmove", onTouchMove, { passive: true, capture: true });
-    div.addEventListener("touchend", onTouchEnd, { passive: true, capture: true });
-    div.addEventListener("touchcancel", onTouchEnd, { passive: true, capture: true });
-    overlay.addEventListener("touchstart", onOverlayTouchStart, { passive: false, capture: true });
-    overlay.addEventListener("touchmove", onOverlayTouchMove, { passive: false, capture: true });
-    overlay.addEventListener("touchend", onOverlayTouchEnd, { passive: false, capture: true });
-    overlay.addEventListener("touchcancel", onOverlayTouchEnd, { passive: false, capture: true });
-
-    return () => {
-      clearArmTimer();
-      div.style.touchAction = "";
-      unlockMapForDragZoom();
-      try { overlay.remove(); } catch {}
-      div.removeEventListener("touchstart", onTouchStart, true);
-      div.removeEventListener("touchmove", onTouchMove, true);
-      div.removeEventListener("touchend", onTouchEnd, true);
-      div.removeEventListener("touchcancel", onTouchEnd, true);
-      overlay.removeEventListener("touchstart", onOverlayTouchStart, true);
-      overlay.removeEventListener("touchmove", onOverlayTouchMove, true);
-      overlay.removeEventListener("touchend", onOverlayTouchEnd, true);
-      overlay.removeEventListener("touchcancel", onOverlayTouchEnd, true);
-    };
-  }, [isLoaded, isTouchDevice]);
-  
   // -------------------------
   // Popup button styles (Google InfoWindow)
   // -------------------------

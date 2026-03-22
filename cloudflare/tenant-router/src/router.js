@@ -16,6 +16,35 @@ function sanitizeSlug(raw) {
   return slug || "";
 }
 
+function normalizeKnownTenantKeys(input) {
+  const keys = new Set();
+
+  if (input instanceof Set) {
+    for (const value of input.values()) {
+      const slug = sanitizeSlug(value);
+      if (slug) keys.add(slug);
+    }
+    return keys;
+  }
+
+  if (Array.isArray(input)) {
+    for (const value of input) {
+      const slug = sanitizeSlug(value);
+      if (slug) keys.add(slug);
+    }
+    return keys;
+  }
+
+  const raw = String(input || "");
+  if (!raw) return keys;
+
+  for (const value of raw.split(",")) {
+    const slug = sanitizeSlug(value);
+    if (slug) keys.add(slug);
+  }
+  return keys;
+}
+
 function leadingRawPathSegment(pathname) {
   const path = String(pathname || "/");
   const parts = path.split("/").filter(Boolean);
@@ -65,6 +94,14 @@ export function resolveTenantRequest(input = {}, options = {}) {
   const search = String(input.search || "");
   const defaultTenant = String(options.defaultTenant || "ashtabulacity").trim().toLowerCase();
   const segment = leadingPathSegment(pathname);
+  const knownTenantKeys = normalizeKnownTenantKeys(options.knownTenantKeys);
+
+  const isKnownTenant = (slug) => {
+    const key = sanitizeSlug(slug);
+    if (!key) return false;
+    if (!knownTenantKeys.size) return true;
+    return knownTenantKeys.has(key);
+  };
 
   if (!hostname) {
     return makeResult({
@@ -93,6 +130,14 @@ export function resolveTenantRequest(input = {}, options = {}) {
         mode: "not_found",
         env: "staging",
         reason: "invalid_or_missing_dev_slug",
+        unknownSlug: segment,
+      });
+    }
+    if (!isKnownTenant(segment)) {
+      return makeResult({
+        mode: "not_found",
+        env: "staging",
+        reason: "unknown_dev_slug",
         unknownSlug: segment,
       });
     }
@@ -134,6 +179,14 @@ export function resolveTenantRequest(input = {}, options = {}) {
         unknownSlug: slug,
       });
     }
+    if (!isKnownTenant(slug)) {
+      return makeResult({
+        mode: "not_found",
+        tenantKey: null,
+        reason: "unknown_subdomain_slug",
+        unknownSlug: slug,
+      });
+    }
     if (pathname.startsWith("/gmaps")) {
       return makeResult({
         mode: "redirect",
@@ -171,10 +224,20 @@ export function resolveTenantRequest(input = {}, options = {}) {
         redirectTo: `https://${defaultTenant}.cityreport.io/`,
       });
     }
+    if (pathname.startsWith("/legal/")) {
+      return makeResult({ mode: "marketing_home", reason: "apex_legal_passthrough" });
+    }
     if (isApexStaticPath(pathname)) {
       return makeResult({ mode: "marketing_home", reason: "apex_static_passthrough" });
     }
     if (segment && !RESERVED_SLUGS.has(segment)) {
+      if (!isKnownTenant(segment)) {
+        return makeResult({
+          mode: "not_found",
+          reason: "apex_unknown_slug",
+          unknownSlug: segment,
+        });
+      }
       const suffix = pathname.split("/").slice(2).join("/");
       const suffixPath = suffix ? `/${suffix}` : "/";
       const qs = search || "";
@@ -209,6 +272,14 @@ export function resolveTenantRequest(input = {}, options = {}) {
       });
     }
     if (segment && !RESERVED_SLUGS.has(segment)) {
+      if (!isKnownTenant(segment)) {
+        return makeResult({
+          mode: "not_found",
+          env: "staging",
+          reason: "local_unknown_slug",
+          unknownSlug: segment,
+        });
+      }
       return makeResult({
         mode: "municipality_app",
         tenantKey: segment,

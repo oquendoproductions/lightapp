@@ -31,25 +31,74 @@ test("apex static assets are passthrough and not tenant redirects", () => {
   assert.equal(icon.redirectTo, null);
 });
 
+test("apex legal path stays on apex for static legal page serving", () => {
+  const res = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/legal/terms.html", search: "" });
+  assert.equal(res.mode, "marketing_home");
+  assert.equal(res.redirectTo, null);
+  assert.equal(res.reason, "apex_legal_passthrough");
+});
+
 test("apex slug redirects to canonical subdomain", () => {
-  const res = resolveTenantRequest({
-    hostname: "cityreport.io",
-    pathname: "/ashtabulacity/reports",
-    search: "?tab=open",
-  });
+  const res = resolveTenantRequest(
+    {
+      hostname: "cityreport.io",
+      pathname: "/ashtabulacity/reports",
+      search: "?tab=open",
+    },
+    {
+      knownTenantKeys: new Set(["ashtabulacity"]),
+    },
+  );
   assert.equal(res.mode, "redirect");
   assert.equal(res.tenantKey, "ashtabulacity");
   assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/reports?tab=open");
 });
 
+test("apex unknown tenant slug returns not found when known tenant set is provided", () => {
+  const res = resolveTenantRequest(
+    {
+      hostname: "cityreport.io",
+      pathname: "/unknowncity/reports",
+      search: "",
+    },
+    {
+      knownTenantKeys: new Set(["ashtabulacity"]),
+    },
+  );
+  assert.equal(res.mode, "not_found");
+  assert.equal(res.reason, "apex_unknown_slug");
+  assert.equal(res.unknownSlug, "unknowncity");
+});
+
 test("subdomain serves municipality app", () => {
-  const res = resolveTenantRequest({
-    hostname: "testcity1.cityreport.io",
-    pathname: "/",
-    search: "",
-  });
+  const res = resolveTenantRequest(
+    {
+      hostname: "testcity1.cityreport.io",
+      pathname: "/",
+      search: "",
+    },
+    {
+      knownTenantKeys: new Set(["testcity1"]),
+    },
+  );
   assert.equal(res.mode, "municipality_app");
   assert.equal(res.tenantKey, "testcity1");
+});
+
+test("unknown subdomain returns not found when known tenant set is provided", () => {
+  const res = resolveTenantRequest(
+    {
+      hostname: "unknowncity.cityreport.io",
+      pathname: "/",
+      search: "",
+    },
+    {
+      knownTenantKeys: new Set(["ashtabulacity"]),
+    },
+  );
+  assert.equal(res.mode, "not_found");
+  assert.equal(res.reason, "unknown_subdomain_slug");
+  assert.equal(res.unknownSlug, "unknowncity");
 });
 
 test("legacy /gmaps redirects to tenant root", () => {
@@ -63,11 +112,16 @@ test("legacy /gmaps redirects to tenant root", () => {
 });
 
 test("dev host path mode resolves municipality app in staging", () => {
-  const res = resolveTenantRequest({
-    hostname: "dev.cityreport.io",
-    pathname: "/testcity1/reports",
-    search: "",
-  });
+  const res = resolveTenantRequest(
+    {
+      hostname: "dev.cityreport.io",
+      pathname: "/testcity1/reports",
+      search: "",
+    },
+    {
+      knownTenantKeys: new Set(["testcity1"]),
+    },
+  );
   assert.equal(res.mode, "municipality_app");
   assert.equal(res.env, "staging");
   assert.equal(res.tenantKey, "testcity1");

@@ -1,5 +1,8 @@
 # Drive Test Checklist (v1.1.0)
 
+Scope note (2026-03-22):
+- iOS-specific tap/hold/drag zoom behavior is out of web scope and deferred to future native iOS integration.
+
 ## Tracking and Camera
 - [ ] Drag pan disables follow.
 - [ ] Pinch zoom does NOT disable follow.
