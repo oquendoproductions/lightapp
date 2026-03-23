@@ -2141,7 +2141,7 @@ export default function PlatformAdminApp() {
                 value={tenantSearch}
                 onChange={(e) => setTenantSearch(e.target.value)}
                 placeholder="Search tenants by name, key, or subdomain"
-                style={{ ...inputBase, maxWidth: 620 }}
+                style={{ ...inputBase, maxWidth: 620, fontSize: isCompactViewport ? 16 : inputBase.fontSize }}
               />
               <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
                 {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
