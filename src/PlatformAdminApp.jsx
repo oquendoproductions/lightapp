@@ -2613,7 +2613,7 @@ export default function PlatformAdminApp() {
                         value={userSearchQuery}
                         onChange={(e) => setUserSearchQuery(e.target.value)}
                         placeholder="Exact email, exact phone, or full name"
-                        style={inputBase}
+                        style={{ ...inputBase, fontSize: isCompactViewport ? 16 : inputBase.fontSize }}
                         disabled={!canEditTenantCore}
                       />
                     </label>
