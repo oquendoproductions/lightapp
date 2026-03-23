@@ -2159,7 +2159,7 @@ export default function PlatformAdminApp() {
                 value={tenantSearch}
                 onChange={(e) => setTenantSearch(e.target.value)}
                 placeholder="Search tenants by name, key, or subdomain"
-                style={{ ...inputBase, maxWidth: 620, fontSize: isCompactViewport ? 16 : inputBase.fontSize }}
+                style={{ ...inputBase, maxWidth: 620, fontSize: 16 }}
               />
               <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
                 {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
@@ -2613,7 +2613,7 @@ export default function PlatformAdminApp() {
                         value={userSearchQuery}
                         onChange={(e) => setUserSearchQuery(e.target.value)}
                         placeholder="Exact email, exact phone, or full name"
-                        style={{ ...inputBase, fontSize: isCompactViewport ? 16 : inputBase.fontSize }}
+                        style={{ ...inputBase, fontSize: 16 }}
                         disabled={!canEditTenantCore}
                       />
                     </label>
