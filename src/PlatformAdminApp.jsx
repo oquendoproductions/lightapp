@@ -542,6 +542,7 @@ export default function PlatformAdminApp() {
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -912,6 +913,14 @@ export default function PlatformAdminApp() {
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
   }, [tenantAdmins]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const syncViewportWidth = () => setViewportWidth(window.innerWidth);
+    syncViewportWidth();
+    window.addEventListener("resize", syncViewportWidth);
+    return () => window.removeEventListener("resize", syncViewportWidth);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1965,13 +1974,35 @@ export default function PlatformAdminApp() {
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
+  const isCompactViewport = viewportWidth <= 760;
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
+  const shellStyle = isCompactViewport
+    ? { ...shell, padding: "72px 8px 42px" }
+    : shell;
+  const bannerStyle = isCompactViewport
+    ? {
+        ...stickyBanner,
+        top: 7,
+        width: "calc(100vw - 1rem)",
+        minHeight: "auto",
+        padding: "0.48rem 0.7rem",
+        borderRadius: 18,
+      }
+    : stickyBanner;
+  const bannerLogoStyle = isCompactViewport
+    ? { ...brandLogo, height: 44, maxWidth: "min(330px, calc(100vw - 108px))" }
+    : brandLogo;
+  const bannerMenuButtonStyle = isCompactViewport
+    ? { ...menuToggleButton, width: 44, height: 44 }
+    : menuToggleButton;
+  const menuLineWidth = isCompactViewport ? 16 : 18;
+  const menuLineGap = isCompactViewport ? 3 : 4;
 
   const fixedBanner = (
-    <div style={stickyBanner}>
+    <div style={bannerStyle}>
       <div style={brandLockup}>
-        <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
+        <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
       </div>
       {showBannerMenu ? (
         <div style={{ position: "relative" }}>
@@ -1980,12 +2011,12 @@ export default function PlatformAdminApp() {
             aria-label={bannerMenuLabel}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((prev) => !prev)}
-            style={menuToggleButton}
+            style={bannerMenuButtonStyle}
           >
-            <span style={{ display: "grid", gap: 4 }}>
-              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+            <span style={{ display: "grid", gap: menuLineGap }}>
+              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
             </span>
           </button>
           {menuOpen ? (
@@ -2018,7 +2049,7 @@ export default function PlatformAdminApp() {
 
   if (!authReady) {
     return (
-      <main style={shell}>
+      <main style={shellStyle}>
         {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
           <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>Platform Admin</h1>
@@ -2030,7 +2061,7 @@ export default function PlatformAdminApp() {
 
   if (!sessionUserId) {
     return (
-      <main style={shell}>
+      <main style={shellStyle}>
         {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card, display: "grid", gap: 10 }}>
           <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>Platform Admin</h1>
@@ -2066,7 +2097,7 @@ export default function PlatformAdminApp() {
 
   if (!isPlatformAdmin) {
     return (
-      <main style={shell}>
+      <main style={shellStyle}>
         {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
           <h1 style={{ marginTop: 0, color: palette.navy900 }}>Platform Admin</h1>
@@ -2087,7 +2118,7 @@ export default function PlatformAdminApp() {
   }
 
   return (
-    <main style={shell}>
+    <main style={shellStyle}>
       {fixedBanner}
       <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         <header style={{ ...card, display: "grid", gap: 12 }}>
