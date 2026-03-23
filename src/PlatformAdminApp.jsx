@@ -362,6 +362,10 @@ function roleKeyToLabel(roleKey) {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
+function buildAssignmentRowKey(row) {
+  return `${String(row?.tenant_key || "").trim()}:${String(row?.user_id || "").trim()}:${String(row?.role || "").trim()}`;
+}
+
 function titleCaseWords(value) {
   return String(value || "")
     .trim()
@@ -398,6 +402,9 @@ function buildAuditActionLabel(row) {
   }
   if (action === "tenant_user_role_removed") {
     return roleLabel ? `Removed ${roleLabel} role` : "Removed tenant role";
+  }
+  if (action === "tenant_user_role_changed") {
+    return roleLabel ? `Changed role to ${roleLabel}` : "Changed tenant role";
   }
   if (action === "tenant_role_created") return "Created tenant role";
   if (action === "tenant_role_removed") return "Removed tenant role definition";
@@ -589,8 +596,11 @@ export default function PlatformAdminApp() {
   const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [userSearchResults, setUserSearchResults] = useState([]);
+  const [assignmentUserSummariesById, setAssignmentUserSummariesById] = useState({});
   const [userSearchLoading, setUserSearchLoading] = useState(false);
   const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
+  const [editingAssignmentKey, setEditingAssignmentKey] = useState("");
+  const [editingAssignmentRole, setEditingAssignmentRole] = useState("");
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -664,6 +674,16 @@ export default function PlatformAdminApp() {
     [sortedTenantRoleDefinitions]
   );
 
+  const userSearchResultById = useMemo(() => {
+    const out = {};
+    for (const row of userSearchResults || []) {
+      const key = String(row?.id || "").trim();
+      if (!key) continue;
+      out[key] = row;
+    }
+    return out;
+  }, [userSearchResults]);
+
   const selectedTenantRoleAssignments = useMemo(
     () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
     [tenantAdmins, selectedTenantKey]
@@ -703,6 +723,7 @@ export default function PlatformAdminApp() {
   const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
   const platformRoleLabel = platformRoleToLabel(platformAccessRole);
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
+  const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
 
   const logAudit = useCallback(async (payload) => {
     const actorName = cleanOptional(sessionActorName) || cleanOptional(sessionEmail?.split("@")?.[0]);
@@ -919,6 +940,38 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
   }, [loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+
+  const loadAssignmentUserSummaries = useCallback(async () => {
+    if (!canEditTenantCore) {
+      setAssignmentUserSummariesById({});
+      return;
+    }
+
+    const userIds = [...new Set(selectedTenantRoleAssignments.map((row) => String(row?.user_id || "").trim()).filter(Boolean))];
+    if (!userIds.length) {
+      setAssignmentUserSummariesById({});
+      return;
+    }
+
+    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
+      body: {
+        action: "lookup_users",
+        user_ids: userIds,
+      },
+    });
+
+    if (error) {
+      return;
+    }
+
+    const next = {};
+    for (const row of Array.isArray(data?.results) ? data.results : []) {
+      const key = String(row?.id || "").trim();
+      if (!key) continue;
+      next[key] = row;
+    }
+    setAssignmentUserSummariesById(next);
+  }, [canEditTenantCore, selectedTenantRoleAssignments]);
 
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
@@ -1294,6 +1347,10 @@ export default function PlatformAdminApp() {
   }, [sortedTenantRoleDefinitions, selectedRoleKey]);
 
   useEffect(() => {
+    void loadAssignmentUserSummaries();
+  }, [loadAssignmentUserSummaries]);
+
+  useEffect(() => {
     if (!assignableTenantRoles.length) return;
     if (!assignableTenantRoles.some((row) => String(row?.role || "") === String(assignForm.role || ""))) {
       setAssignForm((prev) => ({ ...prev, role: String(assignableTenantRoles[0]?.role || "tenant_employee") }));
@@ -1577,6 +1634,65 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, users: `Removed ${role} role for ${user_id} from ${tenant_key}.` }));
     await refreshControlPlaneData();
   }, [canEditTenantCore, logAudit, refreshControlPlaneData]);
+
+  const saveTenantAdminRoleEdit = useCallback(async (row) => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can edit tenant roles from this control plane." }));
+      return;
+    }
+
+    const tenant_key = sanitizeTenantKey(row?.tenant_key);
+    const user_id = String(row?.user_id || "").trim();
+    const previousRole = String(row?.role || "").trim().toLowerCase();
+    const nextRole = String(editingAssignmentRole || "").trim().toLowerCase();
+    if (!tenant_key || !user_id || !previousRole || !nextRole) {
+      setStatus((prev) => ({ ...prev, users: "Select a valid tenant role." }));
+      return;
+    }
+
+    if (previousRole === nextRole) {
+      setEditingAssignmentKey("");
+      setEditingAssignmentRole("");
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("tenant_user_roles")
+      .delete()
+      .eq("tenant_key", tenant_key)
+      .eq("user_id", user_id)
+      .eq("role", previousRole);
+    if (deleteError) {
+      setStatus((prev) => ({ ...prev, users: statusText(deleteError, "") }));
+      return;
+    }
+
+    const { error: insertError } = await supabase
+      .from("tenant_user_roles")
+      .upsert([{ tenant_key, user_id, role: nextRole, status: "active" }], { onConflict: "tenant_key,user_id,role" });
+    if (insertError) {
+      setStatus((prev) => ({ ...prev, users: statusText(insertError, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key,
+      action: "tenant_user_role_changed",
+      entity_type: "tenant_user_role",
+      entity_id: user_id,
+      details: {
+        previous_role: previousRole,
+        role: nextRole,
+      },
+    });
+
+    const summary = assignmentUserSummariesById?.[user_id] || userSearchResultById?.[user_id] || null;
+    const personLabel = String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "user";
+    setEditingAssignmentKey("");
+    setEditingAssignmentRole("");
+    setStatus((prev) => ({ ...prev, users: `Updated ${personLabel} to ${roleKeyToLabel(nextRole)}.` }));
+    await refreshControlPlaneData();
+  }, [assignmentUserSummariesById, canEditTenantCore, editingAssignmentRole, logAudit, refreshControlPlaneData, userSearchResultById]);
 
   const createTenantRole = useCallback(async (event) => {
     event.preventDefault();
@@ -2630,7 +2746,7 @@ export default function PlatformAdminApp() {
                     <div style={{ display: "grid", gap: 8 }}>
                       {userSearchResults.map((row) => {
                         const userId = String(row?.id || "").trim();
-                        const displayName = String(row?.display_name || "").trim() || row?.email || userId;
+                        const displayName = String(row?.display_name || "").trim() || row?.email || "Unnamed account";
                         const isSelected = userId === assignForm.user_id;
                         return (
                           <button
@@ -2645,10 +2761,7 @@ export default function PlatformAdminApp() {
                           >
                             <span>{displayName}</span>
                             <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              {[row?.email, row?.phone].filter(Boolean).join(" • ") || userId}
-                            </span>
-                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              {userId}
+                              {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
                             </span>
                           </button>
                         );
@@ -2695,7 +2808,7 @@ export default function PlatformAdminApp() {
                     </button>
                     {assignForm.user_id ? (
                       <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Selected account ID: <b>{assignForm.user_id}</b>
+                        Selected account: <b>{String(selectedSearchAccount?.display_name || "").trim() || selectedSearchAccount?.email || "Account selected"}</b>
                       </span>
                     ) : (
                       <span style={{ fontSize: 12.5, color: palette.textMuted }}>
@@ -2797,27 +2910,93 @@ export default function PlatformAdminApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedTenantRoleAssignments.map((row) => (
-                      <tr key={`${row.tenant_key}:${row.user_id}:${row.role}`}>
-                        <td style={{ padding: "8px 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{row.user_id}</td>
+                    {selectedTenantRoleAssignments.map((row) => {
+                      const rowKey = buildAssignmentRowKey(row);
+                      const isEditingRole = editingAssignmentKey === rowKey;
+                      const userSummary = assignmentUserSummariesById?.[row.user_id] || null;
+                      const userLabel = String(userSummary?.display_name || "").trim() || String(userSummary?.email || "").trim() || "Unknown user";
+                      return (
+                      <tr key={rowKey}>
+                        <td style={{ padding: "8px 0" }}>{userLabel}</td>
                         <td style={{ padding: "8px 0" }}>
-                          {roleLabelByKey?.[row.role] || roleKeyToLabel(row.role)}
-                          <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({row.role})</span>
+                          {isEditingRole ? (
+                            <select
+                              value={editingAssignmentRole}
+                              onChange={(e) => setEditingAssignmentRole(e.target.value)}
+                              style={{ ...inputBase, minWidth: 180 }}
+                              disabled={!canEditTenantCore}
+                            >
+                              {assignableTenantRoles.map((roleRow) => {
+                                const key = String(roleRow?.role || "").trim();
+                                if (!key) return null;
+                                const label = String(roleRow?.role_label || "").trim() || roleKeyToLabel(key);
+                                return (
+                                  <option key={key} value={key}>{label}</option>
+                                );
+                              })}
+                              {!assignableTenantRoles.length ? (
+                                <>
+                                  <option value="tenant_employee">Tenant Employee</option>
+                                  <option value="tenant_admin">Tenant Admin</option>
+                                </>
+                              ) : null}
+                            </select>
+                          ) : (
+                            roleLabelByKey?.[row.role] || roleKeyToLabel(row.role)
+                          )}
                         </td>
                         <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
-                        <td style={{ padding: "8px 0" }}>
-                          <button
-                            type="button"
-                            style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
-                            onClick={() => void removeTenantAdmin(row)}
-                            disabled={!canEditTenantCore}
-                            title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove tenant roles here"}
-                          >
-                            Remove
-                          </button>
+                        <td style={{ padding: "8px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {isEditingRole ? (
+                            <>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                onClick={() => void saveTenantAdminRoleEdit(row)}
+                                disabled={!canEditTenantCore}
+                                title={canEditTenantCore ? "Save role change" : "Only Platform Owner can edit tenant roles here"}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                style={buttonAlt}
+                                onClick={() => {
+                                  setEditingAssignmentKey("");
+                                  setEditingAssignmentRole("");
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                onClick={() => {
+                                  setEditingAssignmentKey(rowKey);
+                                  setEditingAssignmentRole(String(row?.role || "").trim());
+                                }}
+                                disabled={!canEditTenantCore}
+                                title={canEditTenantCore ? "Edit role" : "Only Platform Owner can edit tenant roles here"}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                onClick={() => void removeTenantAdmin(row)}
+                                disabled={!canEditTenantCore}
+                                title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove tenant roles here"}
+                              >
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
-                    ))}
+                    )})}
                     {!selectedTenantRoleAssignments.length ? (
                       <tr>
                         <td colSpan={4} style={{ padding: "10px 0", opacity: 0.75 }}>No tenant users have been assigned yet.</td>

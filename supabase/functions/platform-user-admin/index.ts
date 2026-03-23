@@ -244,6 +244,30 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  if (action === "lookup_users") {
+    const requestedUserIds = Array.isArray(body?.user_ids)
+      ? body.user_ids.map((value: unknown) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const uniqueUserIds = [...new Set(requestedUserIds)].slice(0, 100);
+
+    if (!uniqueUserIds.length) {
+      return json({ ok: true, results: [] });
+    }
+
+    const requestedIdSet = new Set(uniqueUserIds);
+
+    try {
+      const results = await collectUsers(
+        admin,
+        (user) => requestedIdSet.has(String(user?.id || "").trim()),
+        uniqueUserIds.length,
+      );
+      return json({ ok: true, results });
+    } catch (error) {
+      return json({ ok: false, error: String((error as Error)?.message || error || "Lookup failed.") }, 500);
+    }
+  }
+
   if (action === "invite_and_assign") {
     const tenantKey = normalizeTenantKey(body?.tenant_key);
     const role = normalizeRoleKey(body?.role);
