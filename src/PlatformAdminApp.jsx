@@ -63,7 +63,11 @@ const shell = {
   minHeight: "100vh",
   padding: `${FIXED_BANNER_HEIGHT + FIXED_BANNER_TOP + 24}px 18px 42px`,
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
+  background: [
+    "radial-gradient(1120px 620px at -8% -20%, rgba(111, 165, 228, 0.28), transparent 58%)",
+    "radial-gradient(1120px 640px at 108% -18%, rgba(42, 114, 98, 0.24), transparent 60%)",
+    "linear-gradient(180deg, #2c5485 0%, #1f3f68 42%, #1a3153 100%)",
+  ].join(", "),
   color: palette.text,
 };
 
@@ -76,10 +80,10 @@ const stickyBanner = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  gap: 12,
-  width: "min(1180px, calc(100vw - 36px))",
+  gap: "1rem",
+  width: "min(1200px, calc(100vw - 2.4rem))",
   minHeight: FIXED_BANNER_HEIGHT,
-  padding: "10px 18px",
+  padding: "0.7rem 1rem",
   border: "1px solid rgba(23,56,92,0.34)",
   borderRadius: 999,
   background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
@@ -88,10 +92,10 @@ const stickyBanner = {
 };
 
 const card = {
-  background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.98) 100%)",
-  borderRadius: 16,
-  border: `1px solid ${palette.border}`,
-  boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
+  background: "linear-gradient(150deg, rgba(255,255,255,0.96), rgba(244,250,255,0.95))",
+  borderRadius: 30,
+  border: "1px solid rgba(26, 49, 83, 0.14)",
+  boxShadow: "0 12px 30px rgba(8, 24, 42, 0.12)",
   padding: 16,
 };
 
@@ -194,17 +198,17 @@ const brandLogo = {
 };
 
 const menuToggleButton = {
-  border: `1px solid ${palette.borderStrong}`,
-  background: "rgba(255,255,255,0.88)",
+  border: "1px solid rgba(26, 49, 83, 0.22)",
+  background: "rgba(255,255,255,0.92)",
   color: palette.navy900,
-  width: 46,
-  height: 46,
+  width: 58,
+  height: 58,
   borderRadius: 999,
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
   cursor: "pointer",
-  boxShadow: "0 8px 18px rgba(16,43,70,0.12)",
+  boxShadow: "none",
 };
 
 const menuSheet = {
