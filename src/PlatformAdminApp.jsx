@@ -724,6 +724,15 @@ export default function PlatformAdminApp() {
   const platformRoleLabel = platformRoleToLabel(platformAccessRole);
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
+  const resolveKnownUserSummary = useCallback((userId) => {
+    const key = String(userId || "").trim();
+    if (!key) return null;
+    return assignmentUserSummariesById?.[key] || userSearchResultById?.[key] || null;
+  }, [assignmentUserSummariesById, userSearchResultById]);
+  const formatKnownUserLabel = useCallback((userId) => {
+    const summary = resolveKnownUserSummary(userId);
+    return String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "Selected account";
+  }, [resolveKnownUserSummary]);
 
   const logAudit = useCallback(async (payload) => {
     const actorName = cleanOptional(sessionActorName) || cleanOptional(sessionEmail?.split("@")?.[0]);
@@ -1573,7 +1582,7 @@ export default function PlatformAdminApp() {
     const role = String(assignForm.role || "").trim().toLowerCase() || String(assignableTenantRoles?.[0]?.role || "tenant_employee");
 
     if (!tenant_key || !user_id) {
-      setStatus((prev) => ({ ...prev, users: "Tenant key and user UUID are required." }));
+      setStatus((prev) => ({ ...prev, users: "Select an account before assigning a tenant role." }));
       return;
     }
     if (!role) {
@@ -1597,10 +1606,11 @@ export default function PlatformAdminApp() {
       details: { role },
     });
 
-    setStatus((prev) => ({ ...prev, users: `Assigned ${role} role to ${user_id} in ${tenant_key}.` }));
+    const personLabel = formatKnownUserLabel(user_id);
+    setStatus((prev) => ({ ...prev, users: `Assigned ${roleKeyToLabel(role)} to ${personLabel}.` }));
     setAssignForm((prev) => ({ ...prev, tenant_key: "", user_id: "", role }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const removeTenantAdmin = useCallback(async (row) => {
     if (!canEditTenantCore) {
@@ -1631,9 +1641,10 @@ export default function PlatformAdminApp() {
       details: {},
     });
 
-    setStatus((prev) => ({ ...prev, users: `Removed ${role} role for ${user_id} from ${tenant_key}.` }));
+    const personLabel = formatKnownUserLabel(user_id);
+    setStatus((prev) => ({ ...prev, users: `Removed ${roleKeyToLabel(role)} from ${personLabel}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const saveTenantAdminRoleEdit = useCallback(async (row) => {
     if (!canEditTenantCore) {
@@ -1686,13 +1697,12 @@ export default function PlatformAdminApp() {
       },
     });
 
-    const summary = assignmentUserSummariesById?.[user_id] || userSearchResultById?.[user_id] || null;
-    const personLabel = String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "user";
+    const personLabel = formatKnownUserLabel(user_id);
     setEditingAssignmentKey("");
     setEditingAssignmentRole("");
     setStatus((prev) => ({ ...prev, users: `Updated ${personLabel} to ${roleKeyToLabel(nextRole)}.` }));
     await refreshControlPlaneData();
-  }, [assignmentUserSummariesById, canEditTenantCore, editingAssignmentRole, logAudit, refreshControlPlaneData, userSearchResultById]);
+  }, [canEditTenantCore, editingAssignmentRole, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const createTenantRole = useCallback(async (event) => {
     event.preventDefault();
@@ -2913,8 +2923,7 @@ export default function PlatformAdminApp() {
                     {selectedTenantRoleAssignments.map((row) => {
                       const rowKey = buildAssignmentRowKey(row);
                       const isEditingRole = editingAssignmentKey === rowKey;
-                      const userSummary = assignmentUserSummariesById?.[row.user_id] || null;
-                      const userLabel = String(userSummary?.display_name || "").trim() || String(userSummary?.email || "").trim() || "Unknown user";
+                      const userLabel = formatKnownUserLabel(row.user_id);
                       return (
                       <tr key={rowKey}>
                         <td style={{ padding: "8px 0" }}>{userLabel}</td>
