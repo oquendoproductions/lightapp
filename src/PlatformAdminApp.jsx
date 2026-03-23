@@ -56,23 +56,30 @@ const palette = {
   textMuted: "#4a617a",
 };
 
+const FIXED_BANNER_TOP = 12;
+const FIXED_BANNER_HEIGHT = 88;
+
 const shell = {
   minHeight: "100vh",
-  padding: "28px 18px 42px",
+  padding: `${FIXED_BANNER_HEIGHT + FIXED_BANNER_TOP + 24}px 18px 42px`,
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
 };
 
 const stickyBanner = {
-  position: "sticky",
-  top: 12,
-  zIndex: 80,
+  position: "fixed",
+  top: FIXED_BANNER_TOP,
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 90,
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   gap: 12,
-  padding: "10px 14px",
+  width: "min(1180px, calc(100vw - 36px))",
+  minHeight: FIXED_BANNER_HEIGHT,
+  padding: "10px 18px",
   border: "1px solid rgba(23,56,92,0.34)",
   borderRadius: 999,
   background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
@@ -180,9 +187,9 @@ const brandLockup = {
 };
 
 const brandLogo = {
-  width: 168,
-  maxWidth: "44vw",
-  height: "auto",
+  height: 68,
+  width: "auto",
+  maxWidth: "min(330px, calc(100vw - 136px))",
   display: "block",
 };
 
@@ -1958,14 +1965,62 @@ export default function PlatformAdminApp() {
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
+  const showBannerMenu = Boolean(sessionUserId);
+  const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
+
+  const fixedBanner = (
+    <div style={stickyBanner}>
+      <div style={brandLockup}>
+        <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
+      </div>
+      {showBannerMenu ? (
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            aria-label={bannerMenuLabel}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((prev) => !prev)}
+            style={menuToggleButton}
+          >
+            <span style={{ display: "grid", gap: 4 }}>
+              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+            </span>
+          </button>
+          {menuOpen ? (
+            <div style={menuSheet}>
+              <div style={{ display: "grid", gap: 2 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                  Signed In
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>
+                  {sessionDisplayName || "Platform User"}
+                </div>
+                <div style={{ fontSize: 13, color: palette.textMuted }}>
+                  {platformRoleLabel}
+                </div>
+                {sessionEmail ? (
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    {sessionEmail}
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" style={{ ...signOutButton, width: "fit-content" }} onClick={() => void signOutPlatformAdmin()}>
+                Sign out
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 
   if (!authReady) {
     return (
       <main style={shell}>
+        {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <div style={{ ...brandLockup, marginBottom: 10 }}>
-            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
-          </div>
           <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>Loading session...</p>
         </section>
@@ -1976,10 +2031,8 @@ export default function PlatformAdminApp() {
   if (!sessionUserId) {
     return (
       <main style={shell}>
+        {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card, display: "grid", gap: 10 }}>
-          <div style={brandLockup}>
-            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
-          </div>
           <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>
             Sign in with your platform admin account to manage municipalities and operational settings.
@@ -2014,10 +2067,8 @@ export default function PlatformAdminApp() {
   if (!isPlatformAdmin) {
     return (
       <main style={shell}>
+        {fixedBanner}
         <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
-          <div style={{ ...brandLockup, marginBottom: 10 }}>
-            <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={brandLogo} />
-          </div>
           <h1 style={{ marginTop: 0, color: palette.navy900 }}>Platform Admin</h1>
           <p style={{ marginBottom: 0 }}>
             Access denied. This route is restricted to platform users with `platform_owner` or `platform_staff` role.
@@ -2037,53 +2088,8 @@ export default function PlatformAdminApp() {
 
   return (
     <main style={shell}>
+      {fixedBanner}
       <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
-        <div style={{ position: "relative" }}>
-          <div style={stickyBanner}>
-            <div style={brandLockup}>
-              <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={{ ...brandLogo, width: 176 }} />
-            </div>
-            <div style={{ position: "relative" }}>
-              <button
-                type="button"
-                aria-label={menuOpen ? "Close menu" : "Open menu"}
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((prev) => !prev)}
-                style={menuToggleButton}
-              >
-                <span style={{ display: "grid", gap: 4 }}>
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-                </span>
-              </button>
-              {menuOpen ? (
-                <div style={menuSheet}>
-                  <div style={{ display: "grid", gap: 2 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                      Signed In
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>
-                      {sessionDisplayName || "Platform User"}
-                    </div>
-                    <div style={{ fontSize: 13, color: palette.textMuted }}>
-                      {platformRoleLabel}
-                    </div>
-                    {sessionEmail ? (
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        {sessionEmail}
-                      </div>
-                    ) : null}
-                  </div>
-                  <button type="button" style={{ ...signOutButton, width: "fit-content" }} onClick={() => void signOutPlatformAdmin()}>
-                    Sign out
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
         <header style={{ ...card, display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gap: 4 }}>
             <h1 style={{ margin: 0, color: palette.navy900 }}>Platform Control Plane</h1>
