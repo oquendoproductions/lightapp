@@ -186,6 +186,16 @@ const brandLockup = {
   gap: 12,
 };
 
+const brandResetButton = {
+  border: 0,
+  background: "transparent",
+  padding: 0,
+  margin: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  cursor: "pointer",
+};
+
 const brandLogo = {
   height: 68,
   width: "auto",
@@ -2001,9 +2011,17 @@ export default function PlatformAdminApp() {
 
   const fixedBanner = (
     <div style={bannerStyle}>
-      <div style={brandLockup}>
+      <button
+        type="button"
+        onClick={() => {
+          setMenuOpen(false);
+          returnToStart();
+        }}
+        style={{ ...brandResetButton, ...brandLockup }}
+        aria-label="Return to Start Here"
+      >
         <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
-      </div>
+      </button>
       {showBannerMenu ? (
         <div style={{ position: "relative" }}>
           <button
@@ -2599,30 +2617,6 @@ export default function PlatformAdminApp() {
                         disabled={!canEditTenantCore}
                       />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Tenant Role</span>
-                      <select
-                        value={assignForm.role}
-                        onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                        style={inputBase}
-                        disabled={!canEditTenantCore}
-                      >
-                        {assignableTenantRoles.map((row) => {
-                          const key = String(row?.role || "");
-                          if (!key) return null;
-                          const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
-                          return (
-                            <option key={key} value={key}>{label}</option>
-                          );
-                        })}
-                        {!assignableTenantRoles.length ? (
-                          <>
-                            <option value="tenant_employee">Tenant Employee</option>
-                            <option value="tenant_admin">Tenant Admin</option>
-                          </>
-                        ) : null}
-                      </select>
-                    </label>
                     <button
                       type="submit"
                       style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
@@ -2661,6 +2655,33 @@ export default function PlatformAdminApp() {
                       })}
                     </div>
                   ) : null}
+
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 320 }}>
+                      <span>Tenant Role</span>
+                      <select
+                        value={assignForm.role}
+                        onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                        style={inputBase}
+                        disabled={!canEditTenantCore}
+                      >
+                        {assignableTenantRoles.map((row) => {
+                          const key = String(row?.role || "");
+                          if (!key) return null;
+                          const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                          return (
+                            <option key={key} value={key}>{label}</option>
+                          );
+                        })}
+                        {!assignableTenantRoles.length ? (
+                          <>
+                            <option value="tenant_employee">Tenant Employee</option>
+                            <option value="tenant_admin">Tenant Admin</option>
+                          </>
+                        ) : null}
+                      </select>
+                    </label>
+                  </div>
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <button
