@@ -63,11 +63,7 @@ const shell = {
   minHeight: "100vh",
   padding: `${FIXED_BANNER_HEIGHT + FIXED_BANNER_TOP + 24}px 18px 42px`,
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-  background: [
-    "radial-gradient(1120px 620px at -8% -20%, rgba(111, 165, 228, 0.28), transparent 58%)",
-    "radial-gradient(1120px 640px at 108% -18%, rgba(42, 114, 98, 0.24), transparent 60%)",
-    "linear-gradient(180deg, #2c5485 0%, #1f3f68 42%, #1a3153 100%)",
-  ].join(", "),
+  background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
 };
 
@@ -92,10 +88,10 @@ const stickyBanner = {
 };
 
 const card = {
-  background: "linear-gradient(150deg, rgba(255,255,255,0.96), rgba(244,250,255,0.95))",
-  borderRadius: 30,
-  border: "1px solid rgba(26, 49, 83, 0.14)",
-  boxShadow: "0 12px 30px rgba(8, 24, 42, 0.12)",
+  background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.98) 100%)",
+  borderRadius: 16,
+  border: `1px solid ${palette.border}`,
+  boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
   padding: 16,
 };
 
