@@ -100,7 +100,7 @@ const inputBase = {
   border: `1px solid ${palette.borderStrong}`,
   borderRadius: 10,
   padding: "9px 10px",
-  fontSize: 13,
+  fontSize: 16,
   boxSizing: "border-box",
   color: palette.navy900,
   background: "#fbfdff",
