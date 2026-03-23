@@ -1880,7 +1880,6 @@ function MapFlyTo({ target }) {
     if (!target?.pos) return;
     const z = Number.isFinite(target.zoom) ? target.zoom : map.getZoom();
     map.flyTo(target.pos, z, { duration: 0.8 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, target?.nonce]);
 
   return null;

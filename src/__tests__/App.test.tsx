@@ -19,6 +19,7 @@ describe("App", () => {
       "hero",
       "problem-outcome",
       "capabilities",
+      "pilot-proof",
       "workflow",
       "domains",
       "trust",

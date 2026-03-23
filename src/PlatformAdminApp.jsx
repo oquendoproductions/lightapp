@@ -64,6 +64,22 @@ const shell = {
   color: palette.text,
 };
 
+const stickyBanner = {
+  position: "sticky",
+  top: 12,
+  zIndex: 80,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "10px 14px",
+  border: "1px solid rgba(23,56,92,0.34)",
+  borderRadius: 999,
+  background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
+  backdropFilter: "blur(12px)",
+  boxShadow: "0 12px 28px rgba(7,25,45,0.18)",
+};
+
 const card = {
   background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.98) 100%)",
   borderRadius: 16,
@@ -168,6 +184,41 @@ const brandLogo = {
   maxWidth: "44vw",
   height: "auto",
   display: "block",
+};
+
+const menuToggleButton = {
+  border: `1px solid ${palette.borderStrong}`,
+  background: "rgba(255,255,255,0.88)",
+  color: palette.navy900,
+  width: 46,
+  height: 46,
+  borderRadius: 999,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+  boxShadow: "0 8px 18px rgba(16,43,70,0.12)",
+};
+
+const menuSheet = {
+  position: "absolute",
+  top: "calc(100% + 10px)",
+  right: 0,
+  width: "min(320px, calc(100vw - 36px))",
+  background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(244,249,255,0.98) 100%)",
+  border: `1px solid ${palette.border}`,
+  borderRadius: 18,
+  boxShadow: "0 20px 36px rgba(8,24,42,0.18)",
+  padding: 14,
+  display: "grid",
+  gap: 12,
+};
+
+const tabSelectBase = {
+  ...inputBase,
+  minWidth: 220,
+  fontWeight: 700,
+  background: "#ffffff",
 };
 
 function initialTenantForm() {
@@ -294,6 +345,73 @@ function roleKeyToLabel(roleKey) {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
+function titleCaseWords(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatSessionDisplayName(name, email) {
+  const rawName = String(name || "").trim();
+  if (rawName) return titleCaseWords(rawName);
+
+  const emailPrefix = String(email || "").trim().split("@")[0] || "";
+  if (!emailPrefix) return "";
+  return titleCaseWords(emailPrefix.replace(/[._-]+/g, " "));
+}
+
+function platformRoleToLabel(role) {
+  if (role === "platform_owner" || role === "legacy_admin") return "Platform Owner";
+  if (role === "platform_staff") return "Platform Staff";
+  return "Platform Administrator";
+}
+
+function buildAuditActionLabel(row) {
+  const action = String(row?.action || "").trim().toLowerCase();
+  const roleLabel = roleKeyToLabel(String(row?.details?.role || "").trim());
+
+  if (action === "tenant_upsert") return "Saved tenant details";
+  if (action === "tenant_profile_upsert") return "Saved contact profile";
+  if (action === "tenant_domains_features_upsert") return "Saved domains and map features";
+  if (action === "tenant_user_role_assigned") {
+    return roleLabel ? `Assigned ${roleLabel} role` : "Assigned tenant role";
+  }
+  if (action === "tenant_user_role_removed") {
+    return roleLabel ? `Removed ${roleLabel} role` : "Removed tenant role";
+  }
+  if (action === "tenant_role_created") return "Created tenant role";
+  if (action === "tenant_role_removed") return "Removed tenant role definition";
+  if (action === "tenant_role_permissions_saved") return "Saved role permissions";
+  if (action === "tenant_boundary_from_file_applied") return "Applied boundary from file";
+  if (action === "tenant_file_uploaded") return "Uploaded tenant file";
+  if (action === "tenant_file_removed") return "Removed tenant file";
+
+  return titleCaseWords(action.replace(/_/g, " "));
+}
+
+function buildAuditEntityLabel(row) {
+  const entityType = String(row?.entity_type || "").trim().toLowerCase();
+  const entityId = String(row?.entity_id || "").trim();
+  const roleLabel = roleKeyToLabel(String(row?.details?.role || "").trim());
+  const fileName = String(row?.details?.file_name || "").trim();
+
+  if (entityType === "tenant") return entityId ? `Tenant: ${entityId}` : "Tenant";
+  if (entityType === "tenant_profile") return "Tenant contact profile";
+  if (entityType === "tenant_config") return "Tenant domains and map settings";
+  if (entityType === "tenant_user_role") {
+    return roleLabel ? `${roleLabel} assignment` : (entityId ? `User ${entityId}` : "Tenant user role");
+  }
+  if (entityType === "tenant_role") return roleLabel || (entityId ? `Role: ${entityId}` : "Tenant role");
+  if (entityType === "tenant_permissions") return roleLabel ? `${roleLabel} permissions` : "Tenant role permissions";
+  if (entityType === "tenant_boundary") return entityId ? `Boundary: ${entityId}` : "Tenant boundary";
+  if (entityType === "tenant_file") return fileName || entityId || "Tenant file";
+
+  return entityId ? `${titleCaseWords(entityType.replace(/_/g, " "))}: ${entityId}` : titleCaseWords(entityType.replace(/_/g, " "));
+}
+
 function cleanOptional(value) {
   const v = String(value || "").trim();
   return v || null;
@@ -416,6 +534,7 @@ export default function PlatformAdminApp() {
   const [sessionUserId, setSessionUserId] = useState("");
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -424,7 +543,6 @@ export default function PlatformAdminApp() {
   const [loginError, setLoginError] = useState("");
 
   const [activeTab, setActiveTab] = useState("tenants");
-  const [loading, setLoading] = useState(false);
 
   const [tenants, setTenants] = useState([]);
   const [tenantAdmins, setTenantAdmins] = useState([]);
@@ -450,6 +568,11 @@ export default function PlatformAdminApp() {
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
+  const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [userSearchResults, setUserSearchResults] = useState([]);
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -478,7 +601,7 @@ export default function PlatformAdminApp() {
 
   const filteredTenantRows = useMemo(() => {
     const q = String(tenantSearch || "").trim().toLowerCase();
-    if (!q) return Array.isArray(tenants) ? tenants : [];
+    if (!q) return [];
     return (tenants || []).filter((row) => {
       const key = String(row?.tenant_key || "").trim().toLowerCase();
       const name = String(row?.name || "").trim().toLowerCase();
@@ -554,10 +677,14 @@ export default function PlatformAdminApp() {
     [sortedTenantRoleDefinitions, selectedRoleKey]
   );
 
+  const tenantSearchQuery = String(tenantSearch || "").trim();
+  const hasTenantSearchQuery = tenantSearchQuery.length > 0;
   const isPlatformOwner = platformAccessRole === "platform_owner" || platformAccessRole === "legacy_admin";
   const isPlatformStaff = platformAccessRole === "platform_staff";
   const canEditTenantCore = isPlatformOwner;
   const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
+  const platformRoleLabel = platformRoleToLabel(platformAccessRole);
+  const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
 
   const logAudit = useCallback(async (payload) => {
     const actorName = cleanOptional(sessionActorName) || cleanOptional(sessionEmail?.split("@")?.[0]);
@@ -759,8 +886,6 @@ export default function PlatformAdminApp() {
   }, [selectedTenantKey]);
 
   const refreshControlPlaneData = useCallback(async () => {
-    setLoading(true);
-    setStatus((prev) => ({ ...prev, hydrate: "Refreshing platform data..." }));
     try {
       await Promise.all([
         loadTenants(),
@@ -771,11 +896,9 @@ export default function PlatformAdminApp() {
         loadTenantMapFeatures(),
         loadAudit(),
       ]);
-      setStatus((prev) => ({ ...prev, hydrate: "Platform data loaded." }));
+      setStatus((prev) => ({ ...prev, hydrate: "" }));
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
-    } finally {
-      setLoading(false);
     }
   }, [loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
 
@@ -835,6 +958,7 @@ export default function PlatformAdminApp() {
 
   const signOutPlatformAdmin = useCallback(async () => {
     await supabase.auth.signOut();
+    setMenuOpen(false);
     setIsPlatformAdmin(false);
     setPlatformAccessRole("");
     setLoginPassword("");
@@ -850,9 +974,14 @@ export default function PlatformAdminApp() {
     setActiveTab("tenants");
     setTenantForm(initialTenantForm());
     setProfileForm(initialProfileForm());
+    setUserAssignmentMode("existing");
+    setUserSearchQuery("");
+    setUserSearchResults([]);
+    setInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setAssignForm({ tenant_key: "", user_id: "", role: "tenant_employee" });
     setIsEditingTenant(true);
     setIsEditingProfile(true);
-    setStatus((prev) => ({ ...prev, tenant: "", profile: "" }));
+    setStatus((prev) => ({ ...prev, tenant: "", profile: "", users: "", hydrate: "" }));
   }, [canEditTenantCore]);
 
   const openTenantWorkspace = useCallback((tenantKey) => {
@@ -864,17 +993,134 @@ export default function PlatformAdminApp() {
     setSelectedTenantKey(key);
     setEntryStep("tenant");
     setActiveTab("tenants");
+    setUserAssignmentMode("existing");
+    setUserSearchQuery("");
+    setUserSearchResults([]);
+    setInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setAssignForm((prev) => ({ ...prev, user_id: "", role: prev.role || "tenant_employee" }));
     setIsEditingTenant(false);
     setIsEditingProfile(false);
-    setStatus((prev) => ({ ...prev, hydrate: `Loaded tenant ${key}.` }));
+    setStatus((prev) => ({ ...prev, users: "", hydrate: "" }));
   }, []);
 
   const returnToStart = useCallback(() => {
     setEntryStep("start");
     setTenantSearch("");
+    setUserAssignmentMode("existing");
+    setUserSearchQuery("");
+    setUserSearchResults([]);
+    setInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
     setIsEditingTenant(false);
     setIsEditingProfile(false);
+    setStatus((prev) => ({ ...prev, users: "", hydrate: "" }));
   }, []);
+
+  const searchPlatformUsers = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can search tenant users from this control plane." }));
+      return;
+    }
+
+    const query = String(userSearchQuery || "").trim();
+    if (query.length < 2) {
+      setUserSearchResults([]);
+      setAssignForm((prev) => ({ ...prev, user_id: "" }));
+      setStatus((prev) => ({ ...prev, users: "Enter an exact email, exact phone number, or the full name for the account you want to find." }));
+      return;
+    }
+
+    setUserSearchLoading(true);
+    setStatus((prev) => ({ ...prev, users: "" }));
+    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
+      body: {
+        action: "search",
+        query,
+      },
+    });
+    setUserSearchLoading(false);
+
+    if (error) {
+      setUserSearchResults([]);
+      setStatus((prev) => ({ ...prev, users: statusText(error, "") }));
+      return;
+    }
+
+    const rows = Array.isArray(data?.results) ? data.results : [];
+    setUserSearchResults(rows);
+    if (!rows.length) {
+      setAssignForm((prev) => ({ ...prev, user_id: "" }));
+      setStatus((prev) => ({ ...prev, users: "No matching account was found. Use Create Account if this person is new." }));
+      return;
+    }
+
+    setStatus((prev) => ({ ...prev, users: `Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.` }));
+  }, [canEditTenantCore, userSearchQuery]);
+
+  const createAndAssignTenantUser = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can create tenant users from this control plane." }));
+      return;
+    }
+
+    const tenant_key = sanitizeTenantKey(selectedTenantKey);
+    const role = String(assignForm.role || "").trim().toLowerCase() || String(assignableTenantRoles?.[0]?.role || "tenant_employee");
+    const first_name = String(inviteForm.first_name || "").trim();
+    const last_name = String(inviteForm.last_name || "").trim();
+    const email = String(inviteForm.email || "").trim().toLowerCase();
+    const phone = String(inviteForm.phone || "").trim();
+
+    if (!tenant_key || !role || !first_name || !last_name || !email) {
+      setStatus((prev) => ({ ...prev, users: "First name, last name, email, and role are required." }));
+      return;
+    }
+
+    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
+      body: {
+        action: "invite_and_assign",
+        tenant_key,
+        role,
+        first_name,
+        last_name,
+        email,
+        phone,
+      },
+    });
+
+    if (error) {
+      setStatus((prev) => ({ ...prev, users: statusText(error, "") }));
+      return;
+    }
+
+    const createdUserId = String(data?.user?.id || "").trim();
+    const inviteSent = data?.inviteSent === true;
+    await logAudit({
+      tenant_key,
+      action: "tenant_user_role_assigned",
+      entity_type: "tenant_user_role",
+      entity_id: createdUserId || email,
+      details: {
+        role,
+        email,
+        phone: phone || null,
+        invited: inviteSent,
+      },
+    });
+
+    setInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setAssignForm((prev) => ({ ...prev, user_id: "", role }));
+    setUserAssignmentMode("existing");
+    setUserSearchQuery(email);
+    setUserSearchResults([]);
+    setStatus((prev) => ({
+      ...prev,
+      users: inviteSent
+        ? `Created account invitation for ${email} and assigned ${roleKeyToLabel(role)}.`
+        : `Assigned ${roleKeyToLabel(role)} to existing account ${email}.`,
+    }));
+    await refreshControlPlaneData();
+  }, [canEditTenantCore, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, logAudit, refreshControlPlaneData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1098,33 +1344,6 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [canEditTenantCore, entryStep, selectedTenantKey, tenantForm, logAudit, refreshControlPlaneData]);
 
-  const toggleTenantActive = useCallback(async (row) => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can activate/deactivate tenants." }));
-      return;
-    }
-    const key = sanitizeTenantKey(row?.tenant_key);
-    if (!key) return;
-    const nextActive = !Boolean(row?.active);
-    const { error } = await supabase
-      .from("tenants")
-      .update({ active: nextActive })
-      .eq("tenant_key", key);
-    if (error) {
-      setStatus((prev) => ({ ...prev, tenant: statusText(error, "") }));
-      return;
-    }
-    await logAudit({
-      tenant_key: key,
-      action: nextActive ? "tenant_activated" : "tenant_deactivated",
-      entity_type: "tenant",
-      entity_id: key,
-      details: { active: nextActive },
-    });
-    setStatus((prev) => ({ ...prev, tenant: `${nextActive ? "Activated" : "Deactivated"} ${key}.` }));
-    await refreshControlPlaneData();
-  }, [canEditTenantCore, logAudit, refreshControlPlaneData]);
-
   const saveTenantProfile = useCallback(async (event) => {
     event.preventDefault();
     if (!canEditTenantOperational) {
@@ -1261,7 +1480,7 @@ export default function PlatformAdminApp() {
   }, [canEditTenantOperational, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
 
   const assignTenantAdmin = useCallback(async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (!canEditTenantCore) {
       setStatus((prev) => ({ ...prev, users: "Only Platform Owner can assign tenant roles from this control plane." }));
       return;
@@ -1739,7 +1958,6 @@ export default function PlatformAdminApp() {
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
-  const sessionDisplayLabel = sessionEmail || (sessionUserId ? `${sessionUserId.slice(0, 8)}...${sessionUserId.slice(-4)}` : "");
 
   if (!authReady) {
     return (
@@ -1820,41 +2038,59 @@ export default function PlatformAdminApp() {
   return (
     <main style={shell}>
       <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
-        <header style={{ ...card, display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ display: "grid", gap: 4 }}>
-              <div style={brandLockup}>
-                <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={{ ...brandLogo, width: 176 }} />
-              </div>
-              <h1 style={{ margin: 0, color: palette.navy900 }}>Platform Control Plane</h1>
-              <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                Tenant operations dashboard for implementation, governance, and support.
-              </span>
+        <div style={{ position: "relative" }}>
+          <div style={stickyBanner}>
+            <div style={brandLockup}>
+              <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={{ ...brandLogo, width: 176 }} />
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {inTenantWorkspace ? (
-                <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
-              ) : null}
-              {inTenantWorkspace ? (
-                <button
-                  type="button"
-                  style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                  onClick={openAddTenantStep}
-                  disabled={!canEditTenantCore}
-                  title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
-                >
-                  Add Tenant
-                </button>
-              ) : null}
-              <button type="button" style={signOutButton} onClick={() => void signOutPlatformAdmin()}>
-                Sign out
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                aria-label={menuOpen ? "Close menu" : "Open menu"}
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((prev) => !prev)}
+                style={menuToggleButton}
+              >
+                <span style={{ display: "grid", gap: 4 }}>
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+                </span>
               </button>
+              {menuOpen ? (
+                <div style={menuSheet}>
+                  <div style={{ display: "grid", gap: 2 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                      Signed In
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>
+                      {sessionDisplayName || "Platform User"}
+                    </div>
+                    <div style={{ fontSize: 13, color: palette.textMuted }}>
+                      {platformRoleLabel}
+                    </div>
+                    {sessionEmail ? (
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        {sessionEmail}
+                      </div>
+                    ) : null}
+                  </div>
+                  <button type="button" style={{ ...signOutButton, width: "fit-content" }} onClick={() => void signOutPlatformAdmin()}>
+                    Sign out
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
-          <p style={{ margin: 0, color: palette.textMuted }}>
-            Access: <b>{isPlatformOwner ? "Platform Owner" : isPlatformStaff ? "Platform Staff" : "Platform Administrator"}</b>
-            {sessionDisplayLabel ? <>. Account: <b>{sessionDisplayLabel}</b>.</> : "."}
-          </p>
+        </div>
+
+        <header style={{ ...card, display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <h1 style={{ margin: 0, color: palette.navy900 }}>Platform Control Plane</h1>
+            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+              Tenant operations dashboard for implementation, governance, and support.
+            </span>
+          </div>
           {inEntryPrompt ? (
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, fontSize: 20, color: palette.navy900 }}>Start Here</h2>
@@ -1871,7 +2107,7 @@ export default function PlatformAdminApp() {
                 style={{ ...inputBase, maxWidth: 620 }}
               />
               <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
-                {filteredTenantRows.map((row) => {
+                {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
                   const key = String(row?.tenant_key || "").trim();
                   if (!key) return null;
                   const name = String(row?.name || "").trim() || key;
@@ -1887,8 +2123,12 @@ export default function PlatformAdminApp() {
                       <span style={{ fontSize: 11.5, opacity: 0.8 }}>{key}{subdomain ? ` • ${subdomain}` : ""}</span>
                     </button>
                   );
-                })}
-                {!filteredTenantRows.length ? (
+                }) : (
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Search results will appear after you enter a tenant name, key, or subdomain.
+                  </div>
+                )}
+                {hasTenantSearchQuery && !filteredTenantRows.length ? (
                   <div style={{ fontSize: 12.5, color: palette.red600 }}>No tenants match this search.</div>
                 ) : null}
               </div>
@@ -1904,32 +2144,41 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <>
-              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
-                <div style={{ fontSize: 12, color: palette.textMuted }}>Current Tenant Workspace</div>
-                <div style={{ fontSize: 15, fontWeight: 900, color: palette.navy900 }}>
-                  {selectedTenant?.name || selectedTenantKey}
-                  <span style={{ fontWeight: 600, color: palette.textMuted }}> ({selectedTenantKey})</span>
+              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gap: 2 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                    Tenant Workspace
+                  </div>
+                  <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
+                    {selectedTenant?.name || selectedTenantKey}
+                  </div>
+                  <div style={{ fontSize: 13, color: palette.textMuted }}>
+                    {selectedTenantKey}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {TAB_OPTIONS.map((tab) => {
-                    const selected = activeTab === tab.key;
-                    return (
-                      <button
-                        key={tab.key}
-                        type="button"
-                        onClick={() => setActiveTab(tab.key)}
-                        style={{
-                          ...buttonBase,
-                          border: selected ? `1px solid ${palette.mint700}` : buttonBase.border,
-                          background: selected ? `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)` : buttonBase.background,
-                          color: selected ? "white" : buttonBase.color,
-                        }}
-                      >
-                        {tab.label}
-                      </button>
-                    );
-                  })}
+                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
+                  <button
+                    type="button"
+                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                    onClick={openAddTenantStep}
+                    disabled={!canEditTenantCore}
+                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
+                  >
+                    Add Tenant
+                  </button>
                 </div>
+              </div>
+              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, color: palette.textMuted }}>Current Tenant Workspace</div>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 360 }}>
+                  <span>Workspace Section</span>
+                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
+                    {TAB_OPTIONS.map((tab) => (
+                      <option key={tab.key} value={tab.key}>{tab.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
                     <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
@@ -1945,7 +2194,7 @@ export default function PlatformAdminApp() {
               </div>
             </>
           ) : null}
-          {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.hydrate}</div> : null}
+          {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{status.hydrate}</div> : null}
         </header>
 
         {showTenantsSection ? (
@@ -2279,72 +2528,210 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Assign Tenant User Role</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Users and Admins</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                Add a user by Supabase Auth user ID and assign one configured role for this municipality.
+                Add a person to this tenant by finding an existing account or creating a new invited account, then assign one tenant role.
               </p>
-              <form onSubmit={assignTenantAdmin} style={responsiveActionGrid}>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                  <span>Municipality</span>
-                  <input
-                    value={selectedTenantKey}
-                    readOnly
-                    style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }}
-                  />
-                </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                  <span>User ID</span>
-                  <input
-                    value={assignForm.user_id}
-                    onChange={(e) => setAssignForm((p) => ({ ...p, user_id: e.target.value }))}
-                    placeholder="Paste auth.users UUID"
-                    style={inputBase}
-                    disabled={!canEditTenantCore}
-                  />
-                </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                  <span>Access Role</span>
-                  <select
-                    value={assignForm.role}
-                    onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                    style={inputBase}
-                    disabled={!canEditTenantCore}
-                  >
-                    {assignableTenantRoles.map((row) => {
-                      const key = String(row?.role || "");
-                      if (!key) return null;
-                      const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
-                      return (
-                        <option key={key} value={key}>{label}</option>
-                      );
-                    })}
-                    {!assignableTenantRoles.length ? (
-                      <>
-                        <option value="tenant_employee">Tenant Employee</option>
-                        <option value="tenant_admin">Tenant Admin</option>
-                      </>
-                    ) : null}
-                  </select>
-                </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
-                  type="submit"
-                  style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
-                  disabled={!canEditTenantCore}
-                  title={canEditTenantCore ? "Assign tenant role" : "Only Platform Owner can assign tenant roles here"}
+                  type="button"
+                  style={userAssignmentMode === "existing" ? buttonBase : buttonAlt}
+                  onClick={() => setUserAssignmentMode("existing")}
                 >
-                  Assign Role
+                  Find Existing Account
                 </button>
-              </form>
+                <button
+                  type="button"
+                  style={userAssignmentMode === "invite" ? buttonBase : buttonAlt}
+                  onClick={() => setUserAssignmentMode("invite")}
+                >
+                  Create Account
+                </button>
+              </div>
+
+              {userAssignmentMode === "existing" ? (
+                <>
+                  <form onSubmit={searchPlatformUsers} style={responsiveActionGrid}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Find Person</span>
+                      <input
+                        value={userSearchQuery}
+                        onChange={(e) => setUserSearchQuery(e.target.value)}
+                        placeholder="Exact email, exact phone, or full name"
+                        style={inputBase}
+                        disabled={!canEditTenantCore}
+                      />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Tenant Role</span>
+                      <select
+                        value={assignForm.role}
+                        onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                        style={inputBase}
+                        disabled={!canEditTenantCore}
+                      >
+                        {assignableTenantRoles.map((row) => {
+                          const key = String(row?.role || "");
+                          if (!key) return null;
+                          const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                          return (
+                            <option key={key} value={key}>{label}</option>
+                          );
+                        })}
+                        {!assignableTenantRoles.length ? (
+                          <>
+                            <option value="tenant_employee">Tenant Employee</option>
+                            <option value="tenant_admin">Tenant Admin</option>
+                          </>
+                        ) : null}
+                      </select>
+                    </label>
+                    <button
+                      type="submit"
+                      style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                      disabled={!canEditTenantCore || userSearchLoading}
+                    >
+                      {userSearchLoading ? "Searching..." : "Search Accounts"}
+                    </button>
+                  </form>
+
+                  {userSearchResults.length ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {userSearchResults.map((row) => {
+                        const userId = String(row?.id || "").trim();
+                        const displayName = String(row?.display_name || "").trim() || row?.email || userId;
+                        const isSelected = userId === assignForm.user_id;
+                        return (
+                          <button
+                            key={userId}
+                            type="button"
+                            onClick={() => setAssignForm((prev) => ({ ...prev, user_id: userId }))}
+                            style={{
+                              ...listActionButton,
+                              border: isSelected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                              background: isSelected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                            }}
+                          >
+                            <span>{displayName}</span>
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              {[row?.email, row?.phone].filter(Boolean).join(" • ") || userId}
+                            </span>
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              {userId}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => void assignTenantAdmin({ preventDefault() {} })}
+                      style={{ ...buttonBase, opacity: canEditTenantCore && assignForm.user_id ? 1 : 0.55 }}
+                      disabled={!canEditTenantCore || !assignForm.user_id}
+                      title={assignForm.user_id ? "Assign tenant role" : "Select an account first"}
+                    >
+                      Assign Role
+                    </button>
+                    {assignForm.user_id ? (
+                      <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Selected account ID: <b>{assignForm.user_id}</b>
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.
+                      </span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>First Name</span>
+                    <input
+                      value={inviteForm.first_name}
+                      onChange={(e) => setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                      placeholder="Jordan"
+                      style={inputBase}
+                      disabled={!canEditTenantCore}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Last Name</span>
+                    <input
+                      value={inviteForm.last_name}
+                      onChange={(e) => setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                      placeholder="Rivera"
+                      style={inputBase}
+                      disabled={!canEditTenantCore}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      value={inviteForm.email}
+                      onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
+                      placeholder="jordan.rivera@example.gov"
+                      style={inputBase}
+                      disabled={!canEditTenantCore}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Phone Number</span>
+                    <input
+                      value={inviteForm.phone}
+                      onChange={(e) => setInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
+                      placeholder="(555) 555-0101"
+                      style={inputBase}
+                      disabled={!canEditTenantCore}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Tenant Role</span>
+                    <select
+                      value={assignForm.role}
+                      onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                      style={inputBase}
+                      disabled={!canEditTenantCore}
+                    >
+                      {assignableTenantRoles.map((row) => {
+                        const key = String(row?.role || "");
+                        if (!key) return null;
+                        const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                        return (
+                          <option key={key} value={key}>{label}</option>
+                        );
+                      })}
+                      {!assignableTenantRoles.length ? (
+                        <>
+                          <option value="tenant_employee">Tenant Employee</option>
+                          <option value="tenant_admin">Tenant Admin</option>
+                        </>
+                      ) : null}
+                    </select>
+                  </label>
+                  <button
+                    type="submit"
+                    style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                    disabled={!canEditTenantCore}
+                    title={canEditTenantCore ? "Create account and assign tenant role" : "Only Platform Owner can create tenant users here"}
+                  >
+                    Create Account + Assign Role
+                  </button>
+                </form>
+              )}
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.users}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Role Assignments</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Current Tenant Role Assignments</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr>
-                      <th style={tableHeadCell}>Tenant</th>
                       <th style={tableHeadCell}>User</th>
                       <th style={tableHeadCell}>Role</th>
                       <th style={tableHeadCell}>Created</th>
@@ -2352,9 +2739,8 @@ export default function PlatformAdminApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {tenantAdmins.map((row) => (
+                    {selectedTenantRoleAssignments.map((row) => (
                       <tr key={`${row.tenant_key}:${row.user_id}:${row.role}`}>
-                        <td style={{ padding: "8px 0" }}>{row.tenant_key}</td>
                         <td style={{ padding: "8px 0", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{row.user_id}</td>
                         <td style={{ padding: "8px 0" }}>
                           {roleLabelByKey?.[row.role] || roleKeyToLabel(row.role)}
@@ -2374,6 +2760,11 @@ export default function PlatformAdminApp() {
                         </td>
                       </tr>
                     ))}
+                    {!selectedTenantRoleAssignments.length ? (
+                      <tr>
+                        <td colSpan={4} style={{ padding: "10px 0", opacity: 0.75 }}>No tenant users have been assigned yet.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
@@ -2767,8 +3158,8 @@ export default function PlatformAdminApp() {
                   <tr>
                     <th style={tableHeadCell}>When</th>
                     <th style={tableHeadCell}>Tenant</th>
-                    <th style={tableHeadCell}>Action</th>
-                    <th style={tableHeadCell}>Entity</th>
+                    <th style={tableHeadCell}>What Happened</th>
+                    <th style={tableHeadCell}>Changed Item</th>
                     <th style={tableHeadCell}>Actor</th>
                   </tr>
                 </thead>
@@ -2777,8 +3168,8 @@ export default function PlatformAdminApp() {
                     <tr key={row.id}>
                       <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
                       <td style={{ padding: "8px 0" }}>{row.tenant_key || "-"}</td>
-                      <td style={{ padding: "8px 0" }}>{row.action}</td>
-                      <td style={{ padding: "8px 0" }}>{row.entity_type}:{row.entity_id || "-"}</td>
+                      <td style={{ padding: "8px 0" }}>{buildAuditActionLabel(row)}</td>
+                      <td style={{ padding: "8px 0" }}>{buildAuditEntityLabel(row)}</td>
                       <td style={{ padding: "8px 0" }}>{String(row?.actor_name || "").trim() || row.actor_user_id || "-"}</td>
                     </tr>
                   ))}

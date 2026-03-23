@@ -33,6 +33,7 @@ describe("LeadForm", () => {
 
     expect(submitter).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/request received/i)).toBeInTheDocument();
-    expect(screen.getByText(/one business day/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /thanks\. pilot demo coordination has started\./i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /submit another request/i })).toBeInTheDocument();
   });
 });
