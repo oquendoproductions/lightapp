@@ -29,6 +29,7 @@ export function computeStreetlightConfidenceSnapshot({
   viewerIdentityKey = "",
   viewerHasSaved = false,
   viewerUtilityReported = false,
+  rolloutStartMs = 0,
   now = Date.now(),
 } = {}) {
   const outage = normalizeSignalList(outageSignals);
@@ -58,6 +59,8 @@ export function computeStreetlightConfidenceSnapshot({
   const referencedCount = Math.max(0, Number(utilityReferenceCount || 0));
   const outageScore = outageReporterSet.size + reportedCount + referencedCount;
   const lastSignalTs = Math.max(latestOutageTs, latestWorkingTs, toFiniteMs(utilityLastTs));
+  const rolloutBaselineMs = toFiniteMs(rolloutStartMs);
+  const effectiveStalenessStartMs = Math.max(lastSignalTs, rolloutBaselineMs);
   const nowMs = toFiniteMs(now) || Date.now();
 
   let state = "operational";
@@ -75,16 +78,16 @@ export function computeStreetlightConfidenceSnapshot({
 
   if (
     state === "unconfirmed" &&
-    lastSignalTs > 0 &&
-    nowMs - lastSignalTs >= STREETLIGHT_CONFIDENCE.staleUnconfirmedMs
+    effectiveStalenessStartMs > 0 &&
+    nowMs - effectiveStalenessStartMs >= STREETLIGHT_CONFIDENCE.staleUnconfirmedMs
   ) {
     state = "archived";
   }
 
   if (
     state === "likely_resolved" &&
-    latestWorkingTs > 0 &&
-    nowMs - latestWorkingTs >= STREETLIGHT_CONFIDENCE.archivedResolvedMs
+    Math.max(latestWorkingTs, rolloutBaselineMs) > 0 &&
+    nowMs - Math.max(latestWorkingTs, rolloutBaselineMs) >= STREETLIGHT_CONFIDENCE.archivedResolvedMs
   ) {
     state = "archived";
   }
@@ -103,6 +106,7 @@ export function computeStreetlightConfidenceSnapshot({
     latestOutageTs,
     latestWorkingTs,
     lastSignalTs,
+    effectiveStalenessStartMs,
     viewerHasWorkingAck,
     viewerHasOpenInterest,
     publicVisibleOutage,

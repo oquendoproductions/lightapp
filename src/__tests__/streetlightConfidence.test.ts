@@ -87,4 +87,31 @@ describe("computeStreetlightConfidenceSnapshot", () => {
     expect(snapshot.state).toBe("archived");
     expect(snapshot.closed).toBe(true);
   });
+
+  it("does not count pre-rollout activity toward staleness before March 24, 2026", () => {
+    const rolloutStartMs = new Date(2026, 2, 24, 0, 0, 0, 0).getTime();
+    const legacySignalTs = new Date(2026, 1, 15, 12, 0, 0, 0).getTime();
+    const thirteenDaysAfterRollout = rolloutStartMs + 13 * 24 * 60 * 60 * 1000;
+    const fifteenDaysAfterRollout = rolloutStartMs + 15 * 24 * 60 * 60 * 1000;
+
+    const beforeThreshold = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: legacySignalTs }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      rolloutStartMs,
+      now: thirteenDaysAfterRollout,
+    });
+
+    expect(beforeThreshold.state).toBe("unconfirmed");
+
+    const afterThreshold = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: legacySignalTs }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      rolloutStartMs,
+      now: fifteenDaysAfterRollout,
+    });
+
+    expect(afterThreshold.state).toBe("archived");
+  });
 });

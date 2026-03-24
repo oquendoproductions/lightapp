@@ -54,6 +54,7 @@ const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
 const REPORTING_MIN_ZOOM = 17;
 const APP_VERSION = "v1.1.0";
+const STREETLIGHT_STALENESS_ROLLOUT_START = new Date(2026, 2, 24, 0, 0, 0, 0).getTime();
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
@@ -13759,6 +13760,7 @@ export default function App() {
         viewerIdentityKey,
         viewerHasSaved: viewerSavedStreetlightLightIdSet.has(lid),
         viewerUtilityReported: viewerUtilityReportedLightIdSet.has(lid),
+        rolloutStartMs: STREETLIGHT_STALENESS_ROLLOUT_START,
       });
     }
 
