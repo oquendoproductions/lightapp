@@ -30,6 +30,19 @@ describe("computeStreetlightConfidenceSnapshot", () => {
     expect(snapshot.publicVisibleOutage).toBe(true);
   });
 
+  it("counts referenced utility reports as stronger outage evidence", () => {
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: 1000 }],
+      utilityReportedCount: 1,
+      utilityReferenceCount: 1,
+      now: 2000,
+    });
+
+    expect(snapshot.outageScore).toBe(3);
+    expect(snapshot.utilityReferenceCount).toBe(1);
+    expect(snapshot.state).toBe("unconfirmed");
+  });
+
   it("moves to likely resolved after two unique working confirmations", () => {
     const snapshot = computeStreetlightConfidenceSnapshot({
       outageSignals: [

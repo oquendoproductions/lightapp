@@ -6,6 +6,7 @@ import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-go
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
+import { APP_VERSION } from "./appMeta";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
@@ -53,14 +54,11 @@ const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
 const REPORTING_MIN_ZOOM = 17;
-const APP_VERSION = "v1.1.0";
 const STREETLIGHT_STALENESS_ROLLOUT_START = new Date(2026, 2, 24, 0, 0, 0, 0).getTime();
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
 const ENABLE_TENANT_VISIBILITY_CONFIG = true;
-const ENABLE_STREETLIGHT_IN_APP_REPORTING =
-  String(import.meta.env.VITE_ENABLE_STREETLIGHT_IN_APP_REPORTING || "").trim().toLowerCase() === "true";
 const ENABLE_LEGACY_PLACES_SERVICE =
   String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
 const STREETLIGHT_UTILITY_REPORT_URL =
@@ -879,6 +877,16 @@ function parseWorkingContactFromNote(note) {
   } catch {
     return { name: null, email: null, phone: null };
   }
+}
+
+function normalizeUtilityReportReference(value) {
+  const raw = String(value || "").trim();
+  return raw ? raw.slice(0, 120) : "";
+}
+
+function isMissingUtilityReportReferenceColumnError(error) {
+  const text = `${String(error?.message || "")} ${String(error?.details || "")} ${String(error?.hint || "")}`.toLowerCase();
+  return text.includes("report_reference") && text.includes("does not exist");
 }
 
 function reporterIdentityKey({ session, profile, guestInfo }) {
@@ -3035,26 +3043,29 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
     </span>
   );
 
-  // Legend maintenance rule (internal): whenever markers/helpers change on the map,
-  // update Info modal legend entries in this same pass.
+  // Legend maintenance rule (internal): whenever marker colors, rings, glyphs, helper icons,
+  // or visibility rules change on the map, update this Info modal legend in the same pass and
+  // bump the app version for the release. See docs/governance/map-legend-and-versioning-rules.md.
   const legendSections = [
     {
       title: "Streetlights (Utility-owned)",
       rows: [
-        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Streetlight asset marker" },
-        { swatch: markerSwatch("#f1c40f", { showGlyph: false }), label: "Reported outage (lower likelihood)" },
-        { swatch: markerSwatch("#f57c00", { showGlyph: false }), label: "Likely outage (moderate likelihood)" },
-        { swatch: markerSwatch("#e74c3c", { showGlyph: false }), label: "Confirmed outage (high likelihood)" },
-        { swatch: markerSwatch("#111", { ring: "#2ecc71", showGlyph: false }), label: "Saved to My Reports (green outline)" },
-        { swatch: markerSwatch("#111", { ring: "#1976d2", showGlyph: false }), label: "Reported to utility (blue outline)" },
-        { swatch: markerSwatch("#1976d2", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Selected light in bulk reporting" },
+        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Operational streetlight or issue below public threshold" },
+        { swatch: markerSwatch("#fbc02d", { ring: "#2ecc71", showGlyph: false }), label: "Your saved light with a private outage signal" },
+        { swatch: markerSwatch("#fbc02d", { ring: "#1976d2", showGlyph: false }), label: "Your utility-reported light with a private outage signal" },
+        { swatch: markerSwatch("#fbc02d", { showGlyph: false }), label: "Public likely outage" },
+        { swatch: markerSwatch("#f57c00", { showGlyph: false }), label: "Public high-confidence outage" },
+        { swatch: markerSwatch("#111", { ring: "#2ecc71", showGlyph: false }), label: "Green ring means saved in My Reports" },
+        { swatch: markerSwatch("#111", { ring: "#1976d2", showGlyph: false }), label: "Blue ring means you marked it reported to utility" },
+        { swatch: markerSwatch("#1976d2", { glyphSrc: UI_ICON_SRC.streetlight }), label: "Selected light in bulk save mode" },
       ],
     },
     {
       title: "Potholes",
       rows: [
         { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.pothole }), label: "Pothole marker" },
-        { swatch: markerSwatch("#f1c40f", { glyphSrc: UI_ICON_SRC.pothole }), label: "Open pothole (yellow indicator)" },
+        { swatch: markerSwatch("#fbc02d", { glyphSrc: UI_ICON_SRC.pothole }), label: "Open pothole (yellow indicator)" },
+        { swatch: markerSwatch("#f57c00", { glyphSrc: UI_ICON_SRC.pothole }), label: "Escalated pothole (orange indicator)" },
         { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.pothole }), label: "Fixed pothole (green indicator)" },
       ],
     },
@@ -3062,7 +3073,8 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
       title: "Water / Drain Issues",
       rows: [
         { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Water / Drain marker" },
-        { swatch: markerSwatch("#f1c40f", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Open water/drain issue (yellow indicator)" },
+        { swatch: markerSwatch("#fbc02d", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Open water/drain issue (yellow indicator)" },
+        { swatch: markerSwatch("#f57c00", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Escalated water/drain issue (orange indicator)" },
         { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Fixed water/drain issue (green indicator)" },
       ],
     },
@@ -3150,6 +3162,9 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
             ))}
           </div>
         ))}
+        <div style={{ fontSize: 12, opacity: 0.82, lineHeight: 1.35 }}>
+          Streetlight note: yellow can appear either as a private tracked outage on your map or as a public likely outage once the shared confidence threshold is met.
+        </div>
 
         {isAdmin && (
           <div style={{ display: "grid", gap: 6 }}>
@@ -5189,6 +5204,10 @@ function OpenReportsModal({
   const isStreetlightMyReports = activeDomain === "streetlights" && !canMutateIncidents;
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
+  const [utilityReportReferenceByIncident, setUtilityReportReferenceByIncident] = useState({});
+  const [utilityReportDialogOpen, setUtilityReportDialogOpen] = useState(false);
+  const [utilityReportDialogIncidentId, setUtilityReportDialogIncidentId] = useState("");
+  const [utilityReportDialogReference, setUtilityReportDialogReference] = useState("");
   const [inViewOnlyActive, setInViewOnlyActive] = useState(Boolean(inViewOnly));
   useEffect(() => {
     if (!open) return;
@@ -5223,6 +5242,14 @@ function OpenReportsModal({
     } catch {
       // clipboard failures are non-fatal in modal context
     }
+  }, []);
+  const showInlineToast = useCallback((text) => {
+    setCopyToast({ text: String(text || "Saved"), x: 18, y: 48 });
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    copyToastTimerRef.current = setTimeout(() => {
+      setCopyToast(null);
+      copyToastTimerRef.current = null;
+    }, 1200);
   }, []);
   const getStreetlightUtilityRows = useCallback((util, coords) => {
     const latVal = Number(coords?.lat);
@@ -5331,65 +5358,71 @@ function OpenReportsModal({
     let cancelled = false;
     async function loadUtilityReportedState() {
       if (!open || !utilityReportUserId) {
-        if (!cancelled) setUtilityReportedByIncident({});
+        if (!cancelled) {
+          setUtilityReportedByIncident({});
+          setUtilityReportReferenceByIncident({});
+        }
         return;
       }
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("utility_report_status")
-        .select("incident_id")
+        .select("incident_id, report_reference")
         .eq("user_id", utilityReportUserId)
         .eq("tenant_key", activeTenantKey())
         .order("updated_at", { ascending: false });
+      if (error && isMissingUtilityReportReferenceColumnError(error)) {
+        const fallback = await supabase
+          .from("utility_report_status")
+          .select("incident_id")
+          .eq("user_id", utilityReportUserId)
+          .eq("tenant_key", activeTenantKey())
+          .order("updated_at", { ascending: false });
+        data = fallback.data;
+        error = fallback.error;
+      }
       if (cancelled) return;
       if (error) {
         console.warn("[utility_report_status] load warning:", error?.message || error);
         setUtilityReportedByIncident({});
+        setUtilityReportReferenceByIncident({});
         return;
       }
       const next = {};
+      const nextRefs = {};
       for (const row of data || []) {
         const id = String(row?.incident_id || "").trim();
         if (!id) continue;
         next[id] = true;
+        nextRefs[id] = normalizeUtilityReportReference(row?.report_reference);
       }
       setUtilityReportedByIncident(next);
+      setUtilityReportReferenceByIncident(nextRefs);
     }
     loadUtilityReportedState();
     return () => {
       cancelled = true;
     };
   }, [open, utilityReportUserId]);
-  const toggleUtilityReported = useCallback(async (incidentId) => {
+  const openUtilityReportDialog = useCallback((incidentId) => {
     const id = String(incidentId || "").trim();
     if (!id || !utilityReportUserId) return;
-    const nextValue = !Boolean(utilityReportedByIncident?.[id]);
+    setUtilityReportDialogIncidentId(id);
+    setUtilityReportDialogReference(String(utilityReportReferenceByIncident?.[id] || "").trim());
+    setUtilityReportDialogOpen(true);
+  }, [utilityReportUserId, utilityReportReferenceByIncident]);
+  const clearUtilityReported = useCallback(async (incidentId) => {
+    const id = String(incidentId || "").trim();
+    if (!id || !utilityReportUserId) return;
     setUtilityReportedByIncident((prev) => ({
       ...(prev || {}),
-      [id]: nextValue,
+      [id]: false,
     }));
-    onUtilityReportedChange?.(id, nextValue);
-    if (nextValue) {
-      const { error } = await supabase
-        .from("utility_report_status")
-        .upsert(
-          [{
-            tenant_key: activeTenantKey(),
-            user_id: utilityReportUserId,
-            incident_id: id,
-            reported_at: new Date().toISOString(),
-          }],
-          { onConflict: "tenant_key,user_id,incident_id" }
-        );
-      if (error) {
-        console.warn("[utility_report_status] upsert warning:", error?.message || error);
-        setUtilityReportedByIncident((prev) => ({
-          ...(prev || {}),
-          [id]: false,
-        }));
-        onUtilityReportedChange?.(id, false);
-      }
-      return;
-    }
+    setUtilityReportReferenceByIncident((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[id];
+      return next;
+    });
+    onUtilityReportedChange?.(id, false, { reportReference: "" });
     const { error } = await supabase
       .from("utility_report_status")
       .delete()
@@ -5402,9 +5435,80 @@ function OpenReportsModal({
         ...(prev || {}),
         [id]: true,
       }));
-      onUtilityReportedChange?.(id, true);
+      onUtilityReportedChange?.(id, true, {
+        reportReference: utilityReportReferenceByIncident?.[id] || "",
+      });
     }
-  }, [utilityReportUserId, utilityReportedByIncident, onUtilityReportedChange]);
+  }, [utilityReportUserId, onUtilityReportedChange, utilityReportReferenceByIncident]);
+  const saveUtilityReported = useCallback(async () => {
+    const id = String(utilityReportDialogIncidentId || "").trim();
+    if (!id || !utilityReportUserId) return;
+    const normalizedReference = normalizeUtilityReportReference(utilityReportDialogReference);
+    const hadReported = Boolean(utilityReportedByIncident?.[id]);
+    const previousReference = String(utilityReportReferenceByIncident?.[id] || "").trim();
+    setUtilityReportedByIncident((prev) => ({
+      ...(prev || {}),
+      [id]: true,
+    }));
+    setUtilityReportReferenceByIncident((prev) => ({
+      ...(prev || {}),
+      [id]: normalizedReference,
+    }));
+    onUtilityReportedChange?.(id, true, { reportReference: normalizedReference });
+    setUtilityReportDialogOpen(false);
+    setUtilityReportDialogIncidentId("");
+    setUtilityReportDialogReference("");
+    let { error } = await supabase
+      .from("utility_report_status")
+      .upsert(
+        [{
+          tenant_key: activeTenantKey(),
+          user_id: utilityReportUserId,
+          incident_id: id,
+          reported_at: new Date().toISOString(),
+          report_reference: normalizedReference || null,
+        }],
+        { onConflict: "tenant_key,user_id,incident_id" }
+      );
+    if (error && isMissingUtilityReportReferenceColumnError(error)) {
+      const fallback = await supabase
+        .from("utility_report_status")
+        .upsert(
+          [{
+            tenant_key: activeTenantKey(),
+            user_id: utilityReportUserId,
+            incident_id: id,
+            reported_at: new Date().toISOString(),
+          }],
+          { onConflict: "tenant_key,user_id,incident_id" }
+        );
+      error = fallback.error || null;
+    }
+    if (error) {
+      console.warn("[utility_report_status] upsert warning:", error?.message || error);
+      setUtilityReportedByIncident((prev) => ({
+        ...(prev || {}),
+        [id]: hadReported,
+      }));
+      setUtilityReportReferenceByIncident((prev) => {
+        const next = { ...(prev || {}) };
+        if (hadReported) next[id] = previousReference;
+        else delete next[id];
+        return next;
+      });
+      onUtilityReportedChange?.(id, hadReported, { reportReference: previousReference });
+      return;
+    }
+    showInlineToast("Utility report saved");
+  }, [
+    utilityReportDialogIncidentId,
+    utilityReportDialogReference,
+    utilityReportUserId,
+    onUtilityReportedChange,
+    utilityReportedByIncident,
+    utilityReportReferenceByIncident,
+    showInlineToast,
+  ]);
 
   const getStreetlightUtilityForIncident = useCallback((incidentId) => {
     const key = String(incidentId || "").trim();
@@ -5915,6 +6019,7 @@ function OpenReportsModal({
           reporter_name: String(item?.row?.reporter_name || ""),
           reporter_email: String(item?.row?.reporter_email || ""),
           reporter_phone: String(item?.row?.reporter_phone || ""),
+          raw_notes: String(item?.row?.note || ""),
           notes: String(stripSystemMetadataFromNote(item?.row?.note || "") || ""),
         });
       }
@@ -5962,6 +6067,7 @@ function OpenReportsModal({
             reporter_name: String(r?.reporter_name || ""),
             reporter_email: String(r?.reporter_email || ""),
             reporter_phone: String(r?.reporter_phone || ""),
+            raw_notes: String(r?.note || ""),
             notes: String(stripSystemMetadataFromNote(r?.note || "") || ""),
           });
         }
@@ -5987,6 +6093,7 @@ function OpenReportsModal({
             reporter_name: String(r?.reporter_name || ""),
             reporter_email: String(r?.reporter_email || ""),
             reporter_phone: String(r?.reporter_phone || ""),
+            raw_notes: String(r?.note || ""),
             notes: String(stripSystemMetadataFromNote(r?.note || "") || ""),
           });
         }
@@ -6077,6 +6184,7 @@ function OpenReportsModal({
           reporter_name: String(r?.reporter_name ?? ""),
           reporter_email: String(r?.reporter_email ?? ""),
           reporter_phone: String(r?.reporter_phone ?? ""),
+          raw_notes: String(r?.raw_notes ?? r?.notes ?? ""),
           notes: String(r?.notes ?? ""),
         };
       })
@@ -6205,6 +6313,7 @@ function OpenReportsModal({
         reporter_name: String(r?.reporter_name || ""),
         reporter_email: String(r?.reporter_email || ""),
         reporter_phone: String(r?.reporter_phone || ""),
+        raw_notes: String(r?.raw_notes || ""),
         notes: String(r?.notes || ""),
       });
       if (!item.latest_submitted_at || String(r?.submitted_at || "") > String(item.latest_submitted_at)) {
@@ -7888,17 +7997,42 @@ function OpenReportsModal({
                             Is working
                           </button>
                         )}
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(utilityReportedByIncident[r.incident_id])}
-                          onChange={() => toggleUtilityReported(r.incident_id)}
-                        />
-                        Utility reported
-                      </label>
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(utilityReportedByIncident[r.incident_id])}
+                            onChange={(e) => {
+                              if (e.target.checked) openUtilityReportDialog(r.incident_id);
+                              else void clearUtilityReported(r.incident_id);
+                            }}
+                          />
+                          Utility reported
+                        </label>
+                        {Boolean(utilityReportedByIncident[r.incident_id]) && (
+                          <button
+                            type="button"
+                            onClick={() => openUtilityReportDialog(r.incident_id)}
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                              background: "var(--sl-ui-modal-btn-secondary-bg)",
+                              color: "var(--sl-ui-modal-btn-secondary-text)",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {utilityReportReferenceByIncident?.[r.incident_id] ? "Edit report #" : "Add report #"}
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
+                  {isStreetlightMyReports && Boolean(utilityReportedByIncident[r.incident_id]) && (
+                    <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
+                      <b>Utility report #:</b> {utilityReportReferenceByIncident?.[r.incident_id] || "Not added yet"}
+                    </div>
+                  )}
                   {adminExpandedSet.has(r.incident_id) && (
                     <div style={{ display: "grid", gap: 6 }}>
                       {activeDomain === "streetlights" && (() => {
@@ -8057,9 +8191,10 @@ function OpenReportsModal({
                         </div>
                       )}
                       {r.rows.map((detail) => {
-                        const imageUrl = readImageUrlFromNote(detail.notes);
-                        const noteText = stripSystemMetadataFromNote(detail.notes) || detail.notes;
-                        const qa = parseStreetlightQaFromNote(detail.notes);
+                        const rawNotes = String(detail.raw_notes || detail.notes || "");
+                        const imageUrl = readImageUrlFromNote(rawNotes);
+                        const noteText = stripSystemMetadataFromNote(rawNotes) || detail.notes;
+                        const qa = parseStreetlightQaFromNote(rawNotes);
                         return (
                           <div
                             key={`mobile-detail-${r.incident_id}-${detail.report_id}`}
@@ -8101,7 +8236,7 @@ function OpenReportsModal({
                                       reporter_name: detail.reporter_name || null,
                                       reporter_email: detail.reporter_email || null,
                                       reporter_phone: detail.reporter_phone || null,
-                                      note: detail.notes,
+                                      note: rawNotes,
                                       ts: Date.parse(String(detail.submitted_at || "")) || 0,
                                       report_number: detail.report_number,
                                     })
@@ -8336,12 +8471,41 @@ function OpenReportsModal({
                                     Is working
                                   </button>
                                 )}
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(utilityReportedByIncident[r.incident_id])}
-                                  onChange={() => toggleUtilityReported(r.incident_id)}
-                                  aria-label={`Utility reported for ${r.incident_label || r.incident_id}`}
-                                />
+                                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(utilityReportedByIncident[r.incident_id])}
+                                    onChange={(e) => {
+                                      if (e.target.checked) openUtilityReportDialog(r.incident_id);
+                                      else void clearUtilityReported(r.incident_id);
+                                    }}
+                                    aria-label={`Utility reported for ${r.incident_label || r.incident_id}`}
+                                  />
+                                  Utility reported
+                                </label>
+                                {Boolean(utilityReportedByIncident[r.incident_id]) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUtilityReportDialog(r.incident_id)}
+                                    style={{
+                                      padding: "6px 8px",
+                                      borderRadius: 8,
+                                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                                      fontWeight: 900,
+                                      cursor: "pointer",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {utilityReportReferenceByIncident?.[r.incident_id] ? "Edit report #" : "Add report #"}
+                                  </button>
+                                )}
+                                {Boolean(utilityReportedByIncident[r.incident_id]) && (
+                                  <span style={{ fontSize: 12, opacity: 0.82 }}>
+                                    #{utilityReportReferenceByIncident?.[r.incident_id] || "Pending"}
+                                  </span>
+                                )}
                               </div>
                             ) : null}
                           </td>
@@ -8519,9 +8683,10 @@ function OpenReportsModal({
                                   }}
                                 >
                                   {(() => {
-                                    const imageUrl = readImageUrlFromNote(detail.notes);
-                                    const noteText = stripSystemMetadataFromNote(detail.notes) || detail.notes;
-                                    const qa = parseStreetlightQaFromNote(detail.notes);
+                                    const rawNotes = String(detail.raw_notes || detail.notes || "");
+                                    const imageUrl = readImageUrlFromNote(rawNotes);
+                                    const noteText = stripSystemMetadataFromNote(rawNotes) || detail.notes;
+                                    const qa = parseStreetlightQaFromNote(rawNotes);
                                     return (
                                       <>
                                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -8553,7 +8718,7 @@ function OpenReportsModal({
                                             reporter_name: detail.reporter_name || null,
                                             reporter_email: detail.reporter_email || null,
                                             reporter_phone: detail.reporter_phone || null,
-                                            note: detail.notes,
+                                            note: rawNotes,
                                             ts: Date.parse(String(detail.submitted_at || "")) || 0,
                                             report_number: detail.report_number,
                                           })
@@ -8997,6 +9162,69 @@ function OpenReportsModal({
           {copyToast?.text || "Copied to clipboard"}
         </div>
       )}
+      <ModalShell open={utilityReportDialogOpen} zIndex={10040}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Utility Report</div>
+          <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
+            Confirm that you reported this light to the utility. Add the utility report number or reference if you have it.
+          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Utility report number or reference</div>
+            <input
+              value={utilityReportDialogReference}
+              onChange={(e) => setUtilityReportDialogReference(e.target.value)}
+              placeholder="Optional reference number"
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                fontWeight: 700,
+              }}
+            />
+          </label>
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => {
+                void saveUtilityReported();
+              }}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "none",
+                background: "var(--sl-ui-brand-blue)",
+                color: "white",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Save Utility Report
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUtilityReportDialogOpen(false);
+                setUtilityReportDialogIncidentId("");
+                setUtilityReportDialogReference("");
+              }}
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
 
       <div
         style={{
@@ -10308,6 +10536,7 @@ export default function App() {
   const [lastFixByLightId, setLastFixByLightId] = useState({});
   const [actionsByLightId, setActionsByLightId] = useState({});
   const [utilityReportedLightIdSet, setUtilityReportedLightIdSet] = useState(() => new Set());
+  const [utilityReportReferenceByLightId, setUtilityReportReferenceByLightId] = useState({});
   const [utilityReportedAnyLightIdSet, setUtilityReportedAnyLightIdSet] = useState(() => new Set());
   const [utilitySignalCountsByLightId, setUtilitySignalCountsByLightId] = useState({});
 
@@ -10634,13 +10863,20 @@ export default function App() {
     setOpenReportsOpen(true);
   }
 
-  const handleUtilityReportedChange = useCallback((incidentId, reported) => {
+  const handleUtilityReportedChange = useCallback((incidentId, reported, opts = {}) => {
     const id = String(incidentId || "").trim();
     if (!id) return;
+    const reference = normalizeUtilityReportReference(opts?.reportReference);
     setUtilityReportedLightIdSet((prev) => {
       const next = new Set(prev || []);
       if (reported) next.add(id);
       else next.delete(id);
+      return next;
+    });
+    setUtilityReportReferenceByLightId((prev) => {
+      const next = { ...(prev || {}) };
+      if (reported) next[id] = reference;
+      else delete next[id];
       return next;
     });
   }, []);
@@ -11228,6 +11464,9 @@ export default function App() {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [isWorkingConfirmOpen, setIsWorkingConfirmOpen] = useState(false);
   const [pendingWorkingLightId, setPendingWorkingLightId] = useState(null);
+  const [utilityReportDialogOpen, setUtilityReportDialogOpen] = useState(false);
+  const [pendingUtilityReportLightId, setPendingUtilityReportLightId] = useState(null);
+  const [pendingUtilityReportReference, setPendingUtilityReportReference] = useState("");
   const [markFixedConfirmOpen, setMarkFixedConfirmOpen] = useState(false);
   const [pendingMarkFixedLightId, setPendingMarkFixedLightId] = useState(null);
   const [pendingMarkFixedClusterReports, setPendingMarkFixedClusterReports] = useState([]);
@@ -12389,7 +12628,7 @@ export default function App() {
       const utilityStatusPromise = isAuthed
         ? supabase
             .from("utility_report_status")
-            .select("incident_id")
+            .select("incident_id, report_reference")
             .eq("tenant_key", activeTenantKey())
             .eq("user_id", session.user.id)
             .order("updated_at", { ascending: false })
@@ -12410,7 +12649,7 @@ export default function App() {
       const [
         { data: reportDataRaw, error: repErrRaw },
         { data: ownReportData, error: ownRepErr },
-        { data: utilityStatusData, error: utilityStatusErr },
+        { data: utilityStatusDataRaw, error: utilityStatusErrRaw },
         { data: utilitySignalCountData, error: utilitySignalCountErr },
         { data: utilityStatusAllData, error: utilityStatusAllErr },
         { data: fixedData, error: fixErr },
@@ -12424,6 +12663,18 @@ export default function App() {
         supabase.from("fixed_lights").select("*"),
         actionsPromise,
       ]);
+      let utilityStatusData = utilityStatusDataRaw;
+      let utilityStatusErr = utilityStatusErrRaw;
+      if (utilityStatusErr && isMissingUtilityReportReferenceColumnError(utilityStatusErr) && isAuthed) {
+        const fallback = await supabase
+          .from("utility_report_status")
+          .select("incident_id")
+          .eq("tenant_key", activeTenantKey())
+          .eq("user_id", session.user.id)
+          .order("updated_at", { ascending: false });
+        utilityStatusData = fallback.data || [];
+        utilityStatusErr = fallback.error || null;
+      }
       let reportData = reportDataRaw;
       let repErr = repErrRaw;
       if (!isAdmin && (repErr || !(Array.isArray(reportData) && reportData.length))) {
@@ -12754,6 +13005,7 @@ export default function App() {
       setReports(Array.from(reportMap.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0)));
 
       const utilitySet = new Set();
+      const utilityReferenceMap = {};
       for (const row of utilityStatusData || []) {
         const rawId = String(row?.incident_id || "").trim();
         if (!rawId) continue;
@@ -12761,8 +13013,10 @@ export default function App() {
         const id = String(normalizedId || "").trim();
         if (!id || !officialIdByAlias.has(id)) continue;
         utilitySet.add(id);
+        utilityReferenceMap[id] = normalizeUtilityReportReference(row?.report_reference);
       }
       setUtilityReportedLightIdSet(utilitySet);
+      setUtilityReportReferenceByLightId(utilityReferenceMap);
 
       const utilityAnySet = new Set();
       for (const row of utilityStatusAllData || []) {
@@ -12784,6 +13038,7 @@ export default function App() {
         if (!id || !officialIdByAlias.has(id)) continue;
         utilityCountMap[id] = {
           reportedCount: Math.max(0, Number(row?.reported_count || 0)),
+          referenceCount: Math.max(0, Number(row?.reference_count || 0)),
           latestReportedTs: Date.parse(String(row?.latest_reported_at || "")) || 0,
         };
         if (Number(row?.reported_count || 0) > 0) utilityAnySet.add(id);
@@ -12875,19 +13130,33 @@ export default function App() {
       try {
         const tenantKey = activeTenantKey();
         if (viewerUserId) {
-          const { data, error } = await supabase
+          let { data, error } = await supabase
             .from("utility_report_status")
-            .select("incident_id")
+            .select("incident_id, report_reference")
             .eq("tenant_key", tenantKey)
             .eq("user_id", viewerUserId)
             .order("updated_at", { ascending: false });
+          if (error && isMissingUtilityReportReferenceColumnError(error)) {
+            const fallback = await supabase
+              .from("utility_report_status")
+              .select("incident_id")
+              .eq("tenant_key", tenantKey)
+              .eq("user_id", viewerUserId)
+              .order("updated_at", { ascending: false });
+            data = fallback.data;
+            error = fallback.error;
+          }
           if (!error) {
             const next = new Set();
+            const nextRefs = {};
             for (const row of data || []) {
               const incidentId = String(row?.incident_id || "").trim();
-              if (incidentId) next.add(incidentId);
+              if (!incidentId) continue;
+              next.add(incidentId);
+              nextRefs[incidentId] = normalizeUtilityReportReference(row?.report_reference);
             }
             setUtilityReportedLightIdSet(next);
+            setUtilityReportReferenceByLightId(nextRefs);
           }
         }
 
@@ -12901,6 +13170,7 @@ export default function App() {
             const reportedCount = Math.max(0, Number(row?.reported_count || 0));
             nextCounts[incidentId] = {
               reportedCount,
+              referenceCount: Math.max(0, Number(row?.reference_count || 0)),
               latestReportedTs: Date.parse(String(row?.latest_reported_at || "")) || 0,
             };
             if (reportedCount > 0) nextAny.add(incidentId);
@@ -14042,7 +14312,7 @@ export default function App() {
     const existingAddress = String(fromDb?.nearest_address || "").trim();
     const existingCrossStreet = String(fromDb?.nearest_cross_street || "").trim();
     const existingLandmark = String(fromDb?.nearest_landmark || "").trim();
-    const hasCachedGeo = Boolean(existingAddress || existingCrossStreet || existingLandmark);
+    const hasCachedGeo = Boolean(existingAddress && existingCrossStreet && existingLandmark);
 
     if (hasCachedGeo) {
       setStreetlightUtilityContext((prev) => ({
@@ -14063,7 +14333,9 @@ export default function App() {
     }));
 
     try {
-      const geo = await reverseGeocodeRoadLabel(lat, lng, { mode: "quick" });
+      // This is an explicit user action from the popup, so use the full lookup path.
+      // The quick mode intentionally skips landmark/intersection enrichment.
+      const geo = await reverseGeocodeRoadLabel(lat, lng, { mode: "full" });
       const nearestAddress = String(geo?.nearestAddress || "").trim();
       const nearestStreet = String(geo?.nearestStreet || "").trim();
       const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
@@ -14357,7 +14629,6 @@ export default function App() {
   const officialMarkerColorForViewer = useCallback((lightId) => {
     const lid = (lightId || "").trim();
     if (!lid) return "#111";
-    if (!ENABLE_STREETLIGHT_IN_APP_REPORTING) return "#111";
 
     const confidence = streetlightConfidenceByLightId?.[lid] || null;
     if (!confidence) return "#111";
@@ -17620,16 +17891,41 @@ async function insertReportWithFallback(payload) {
     openNotice("✅", "Re-opened", "Incident re-opened.");
   }
 
-  async function markUtilityReportedForViewer(lightId) {
+  function openUtilityReportDialogForLight(lightId) {
+    const lid = String(lightId || "").trim();
+    if (!lid) return;
+    if (!session?.user?.id) {
+      openNotice("⚠️", "Login required", "Please sign in to track utility reporting on this light.");
+      return;
+    }
+    setPendingUtilityReportLightId(lid);
+    setPendingUtilityReportReference(String(utilityReportReferenceByLightId?.[lid] || "").trim());
+    setUtilityReportDialogOpen(true);
+  }
+
+  function closeUtilityReportDialog() {
+    setUtilityReportDialogOpen(false);
+    setPendingUtilityReportLightId(null);
+    setPendingUtilityReportReference("");
+  }
+
+  async function markUtilityReportedForViewer(lightId, reportReference = "") {
     const lid = String(lightId || "").trim();
     const uid = String(session?.user?.id || "").trim();
     if (!lid || !uid) return;
+    const normalizedReference = normalizeUtilityReportReference(reportReference);
+    const hadReported = utilityReportedLightIdSet.has(lid);
+    const previousReference = String(utilityReportReferenceByLightId?.[lid] || "").trim();
     setUtilityReportedLightIdSet((prev) => {
       const next = new Set(prev || []);
       next.add(lid);
       return next;
     });
-    const { error } = await supabase
+    setUtilityReportReferenceByLightId((prev) => ({
+      ...(prev || {}),
+      [lid]: normalizedReference,
+    }));
+    let { error } = await supabase
       .from("utility_report_status")
       .upsert(
         [{
@@ -17637,17 +17933,41 @@ async function insertReportWithFallback(payload) {
           user_id: uid,
           incident_id: lid,
           reported_at: new Date().toISOString(),
+          report_reference: normalizedReference || null,
         }],
         { onConflict: "tenant_key,user_id,incident_id" }
       );
+    if (error && isMissingUtilityReportReferenceColumnError(error)) {
+      const fallback = await supabase
+        .from("utility_report_status")
+        .upsert(
+          [{
+            tenant_key: activeTenantKey(),
+            user_id: uid,
+            incident_id: lid,
+            reported_at: new Date().toISOString(),
+          }],
+          { onConflict: "tenant_key,user_id,incident_id" }
+        );
+      error = fallback.error || null;
+    }
     if (error) {
       console.warn("[utility_report_status] upsert warning:", error?.message || error);
       setUtilityReportedLightIdSet((prev) => {
         const next = new Set(prev || []);
-        next.delete(lid);
+        if (hadReported) next.add(lid);
+        else next.delete(lid);
         return next;
       });
+      setUtilityReportReferenceByLightId((prev) => {
+        const next = { ...(prev || {}) };
+        if (hadReported) next[lid] = previousReference;
+        else delete next[lid];
+        return next;
+      });
+      return false;
     }
+    return true;
   }
 
   async function clearUtilityReportedForViewer(lightId) {
@@ -17657,6 +17977,11 @@ async function insertReportWithFallback(payload) {
     setUtilityReportedLightIdSet((prev) => {
       const next = new Set(prev || []);
       next.delete(lid);
+      return next;
+    });
+    setUtilityReportReferenceByLightId((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[lid];
       return next;
     });
     const { error } = await supabase
@@ -19157,6 +19482,55 @@ async function insertReportWithFallback(payload) {
         </div>
       </ModalShell>
 
+      <ModalShell open={utilityReportDialogOpen} zIndex={10012}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Utility Report</div>
+          <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
+            Confirm that you reported this light to the utility. Add the utility report number or reference if you have it.
+          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Utility report number or reference</div>
+            <input
+              value={pendingUtilityReportReference}
+              onChange={(e) => setPendingUtilityReportReference(e.target.value)}
+              placeholder="Optional reference number"
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                fontWeight: 700,
+              }}
+            />
+          </label>
+          <div style={{ display: "grid", gap: 8 }}>
+            <button
+              onClick={async () => {
+                const lid = String(pendingUtilityReportLightId || "").trim();
+                const reference = pendingUtilityReportReference;
+                closeUtilityReportDialog();
+                if (!lid) return;
+                const saved = await markUtilityReportedForViewer(lid, reference);
+                if (saved) {
+                  openNotice("✅", "Utility report saved", "Utility reporting status was updated.");
+                }
+              }}
+              style={{ ...btnPopupPrimary, background: "var(--sl-ui-brand-blue)" }}
+            >
+              Save Utility Report
+            </button>
+            <button
+              onClick={closeUtilityReportDialog}
+              style={btnPopupSecondary}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
       <ModalShell open={markFixedConfirmOpen} zIndex={10012}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 950 }}>
@@ -20054,21 +20428,52 @@ async function insertReportWithFallback(payload) {
               const lid = String(selectedOfficialLightForPopup?.id || "").trim();
               if (!lid) return null;
               if (!session?.user?.id) return null;
-              if (!viewerSavedStreetlightLightIdSet.has(lid)) return null;
+              const canTrackUtility = viewerSavedStreetlightLightIdSet.has(lid) || viewerUtilityReportedLightIdSet.has(lid);
+              if (!canTrackUtility) return null;
               return (
-                <button
-                  type="button"
-                  onClick={() =>
-                    openMyReports({
-                      domainKey: "streetlights",
-                      focusIncidentId: lid,
-                      focusQuery: displayLightId(lid, slIdByUuid),
-                    })
-                  }
-                  style={btnPopupSecondary}
-                >
-                  View My Report
-                </button>
+                <>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
+                    <input
+                      type="checkbox"
+                      checked={viewerUtilityReportedLightIdSet.has(lid)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          openUtilityReportDialogForLight(lid);
+                        } else {
+                          void clearUtilityReportedForViewer(lid);
+                        }
+                      }}
+                    />
+                    Utility reported
+                  </label>
+                  {viewerUtilityReportedLightIdSet.has(lid) && (
+                    <button
+                      type="button"
+                      onClick={() => openUtilityReportDialogForLight(lid)}
+                      style={btnPopupSecondary}
+                    >
+                      {utilityReportReferenceByLightId?.[lid] ? "Edit report #" : "Add report #"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openMyReports({
+                        domainKey: "streetlights",
+                        focusIncidentId: lid,
+                        focusQuery: displayLightId(lid, slIdByUuid),
+                      })
+                    }
+                    style={btnPopupSecondary}
+                  >
+                    View My Report
+                  </button>
+                  {viewerUtilityReportedLightIdSet.has(lid) && (
+                    <div style={{ fontSize: 12, opacity: 0.84 }}>
+                      Utility report #: {utilityReportReferenceByLightId?.[lid] || "Not added yet"}
+                    </div>
+                  )}
+                </>
               );
             })()}
             {(() => {
@@ -20080,6 +20485,7 @@ async function insertReportWithFallback(payload) {
                 <button
                   type="button"
                   onClick={() => {
+                    closeAnyPopup();
                     setPendingWorkingLightId(lid);
                     setIsWorkingConfirmOpen(true);
                   }}
