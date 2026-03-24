@@ -1,0 +1,90 @@
+import { describe, expect, it } from "vitest";
+import { computeStreetlightConfidenceSnapshot } from "../streetlightConfidence";
+
+describe("computeStreetlightConfidenceSnapshot", () => {
+  it("keeps a single-user saved light unconfirmed and private", () => {
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: 1000 }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: 2000,
+    });
+
+    expect(snapshot.state).toBe("unconfirmed");
+    expect(snapshot.publicVisibleOutage).toBe(false);
+    expect(snapshot.canViewerMarkWorking).toBe(true);
+  });
+
+  it("promotes a light to likely outage once score reaches threshold", () => {
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [
+        { reporterKey: "uid:1", ts: 1000 },
+        { reporterKey: "uid:2", ts: 1200 },
+      ],
+      utilityReportedCount: 2,
+      now: 2000,
+    });
+
+    expect(snapshot.outageScore).toBe(4);
+    expect(snapshot.state).toBe("likely_outage");
+    expect(snapshot.publicVisibleOutage).toBe(true);
+  });
+
+  it("moves to likely resolved after two unique working confirmations", () => {
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [
+        { reporterKey: "uid:1", ts: 1000 },
+        { reporterKey: "uid:2", ts: 1200 },
+      ],
+      utilityReportedCount: 2,
+      workingSignals: [
+        { reporterKey: "uid:3", ts: 1500 },
+        { reporterKey: "uid:4", ts: 1600 },
+      ],
+      now: 2000,
+    });
+
+    expect(snapshot.state).toBe("likely_resolved");
+    expect(snapshot.closed).toBe(true);
+    expect(snapshot.publicVisibleOutage).toBe(false);
+  });
+
+  it("blocks repeat viewer working submissions until a new outage arrives", () => {
+    const firstCycle = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: 1000 }],
+      workingSignals: [{ reporterKey: "uid:1", ts: 1500 }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: 2000,
+    });
+
+    expect(firstCycle.viewerHasWorkingAck).toBe(true);
+    expect(firstCycle.canViewerMarkWorking).toBe(false);
+
+    const reopenedCycle = computeStreetlightConfidenceSnapshot({
+      outageSignals: [
+        { reporterKey: "uid:1", ts: 1000 },
+        { reporterKey: "uid:2", ts: 2500 },
+      ],
+      workingSignals: [{ reporterKey: "uid:1", ts: 1500 }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: 3000,
+    });
+
+    expect(reopenedCycle.viewerHasWorkingAck).toBe(false);
+    expect(reopenedCycle.canViewerMarkWorking).toBe(true);
+  });
+
+  it("archives stale unconfirmed lights after inactivity", () => {
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: 1000 }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: 1000 + 15 * 24 * 60 * 60 * 1000,
+    });
+
+    expect(snapshot.state).toBe("archived");
+    expect(snapshot.closed).toBe(true);
+  });
+});

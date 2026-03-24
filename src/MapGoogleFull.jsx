@@ -5,6 +5,7 @@ import React, { Fragment, forwardRef, memo, useCallback, useEffect, useImperativ
 import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
+import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
@@ -587,10 +588,15 @@ function incidentStateLabel(state) {
     reported: "Reported",
     aggregated: "Aggregated",
     confirmed: "Confirmed",
+    unconfirmed: "Unconfirmed",
+    likely_outage: "Likely outage",
+    high_confidence_outage: "High-confidence outage",
+    likely_resolved: "Likely resolved",
     in_progress: "In progress",
     fixed: "Fixed",
     reopened: "Reopened",
     archived: "Archived",
+    operational: "Operational",
   };
   return map[v] || v.replace(/_/g, " ");
 }
@@ -955,15 +961,6 @@ function canIdentityReportLight(
   // ✅ No identity yet → do NOT enforce device cooldown here.
   // The submit flow forces guest contact before cooldown is checked.
   return true;
-}
-
-function actionIdentityKey(a) {
-  if (a?.actor_user_id) return `uid:${a.actor_user_id}`;
-  const email = normalizeEmail(a?.actor_email);
-  if (email) return `email:${email}`;
-  const phone = normalizePhone(a?.actor_phone);
-  if (phone) return `phone:${phone}`;
-  return null;
 }
 
 function reportIdentityKey(r) {
@@ -4919,6 +4916,8 @@ function OpenReportsModal({
   modalTitle = "Reports",
   getStreetlightUtilityDetails = null,
   onUtilityReportedChange = null,
+  onMarkWorkingIncident = null,
+  streetlightConfidenceByLightId = {},
   focusIncidentId = "",
   initialSearchQuery = "",
   onInitialFocusApplied = null,
@@ -4926,6 +4925,7 @@ function OpenReportsModal({
   inViewOnly = false,
 }) {
   const canMutateIncidents = isAdmin && typeof onMarkFixedIncident === "function";
+  const canMarkWorkingIncidents = typeof onMarkWorkingIncident === "function";
   const [sortMode, setSortMode] = useState("count"); // count | recent
   const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
   const [searchDraft, setSearchDraft] = useState("");
@@ -5148,6 +5148,17 @@ function OpenReportsModal({
     () => new Set((officialLights || []).map((l) => String(l?.id || "").trim()).filter(Boolean)),
     [officialLights]
   );
+  const getStreetlightConfidence = useCallback((incidentId) => {
+    const id = String(incidentId || "").trim();
+    if (!id) return null;
+    return streetlightConfidenceByLightId?.[id] || null;
+  }, [streetlightConfidenceByLightId]);
+  const canShowWorkingActionForIncident = useCallback((incidentId) => {
+    if (activeDomain !== "streetlights") return false;
+    if (!canMarkWorkingIncidents) return false;
+    const confidence = getStreetlightConfidence(incidentId);
+    return Boolean(confidence?.canViewerMarkWorking);
+  }, [activeDomain, canMarkWorkingIncidents, getStreetlightConfidence]);
 
   const splitAddressParts = useCallback((rawAddress) => {
     const raw = String(rawAddress || "").trim();
@@ -5687,6 +5698,7 @@ function OpenReportsModal({
     if (!s) return true;
     if (s === "fixed") return false;
     if (s === "archived") return false;
+    if (s === "likely_resolved") return false;
     if (s === "closed") return false;
     if (s === "resolved") return false;
     if (s === "completed") return false;
@@ -5694,6 +5706,26 @@ function OpenReportsModal({
     if (s === "operational") return false;
     return true;
   }, []);
+
+  const getIncidentStateForDisplay = useCallback((incidentId, rows = []) => {
+    const id = String(incidentId || "").trim();
+    if (!id) return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
+
+    if (activeDomain === "streetlights") {
+      const confidence = getStreetlightConfidence(id);
+      if (confidence) {
+        const closedAtMs = Number(confidence?.latestWorkingTs || confidence?.lastSignalTs || 0);
+        const lastChangedMs = Number(confidence?.lastSignalTs || 0);
+        return {
+          state: String(confidence?.state || "").trim(),
+          fixedAtIso: confidence?.closed && closedAtMs ? new Date(closedAtMs).toISOString() : "",
+          lastChangedAtIso: lastChangedMs ? new Date(lastChangedMs).toISOString() : "",
+        };
+      }
+    }
+
+    return deriveIncidentStateFromTimeline(id, rows);
+  }, [activeDomain, deriveIncidentStateFromTimeline, getStreetlightConfidence]);
 
   const matchesStatusFilter = useCallback((state) => {
     if (statusFilter === "all") return true;
@@ -5912,7 +5944,7 @@ function OpenReportsModal({
       for (const [incidentId, rows] of byIncident.entries()) {
         if (inViewIncidentIdSet && !inViewIncidentIdSet.has(String(incidentId || "").trim())) continue;
         const sortedRows = [...rows].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
-        const timelineState = deriveIncidentStateFromTimeline(incidentId, sortedRows);
+        const timelineState = getIncidentStateForDisplay(incidentId, sortedRows);
         for (const r of sortedRows) {
           const ts = Number(r?.ts || 0);
           if (!inRange(ts)) continue;
@@ -5937,7 +5969,7 @@ function OpenReportsModal({
       for (const g of visibleGroups || []) {
         const incidentId = String(g?.incidentId || g?.lightId || "");
         const snapshot = incidentStateByKey?.[incidentSnapshotKey(activeDomain, incidentId)] || null;
-        const timelineState = deriveIncidentStateFromTimeline(incidentId, g?.rows || []);
+        const timelineState = getIncidentStateForDisplay(incidentId, g?.rows || []);
         for (const r of g?.rows || []) {
           const ts = Number(r?.ts || 0);
           if (!inRange(ts)) continue;
@@ -5964,6 +5996,7 @@ function OpenReportsModal({
     isAdmin,
     allDomainReports,
     deriveIncidentStateFromTimeline,
+    getIncidentStateForDisplay,
     parseLocalDateStart,
     parseLocalDateEndExclusive,
     exportFromDate,
@@ -6408,19 +6441,21 @@ function OpenReportsModal({
     if (!incidentId) return { color: "#9e9e9e", label: "Unknown incident" };
 
     if (activeDomain === "streetlights") {
-      const stateText = String(row?.current_state || "").trim().toLowerCase();
-      if (stateText && !isOpenLifecycleState(stateText)) {
+      const confidence = getStreetlightConfidence(incidentId);
+      const stateText = String(confidence?.state || row?.current_state || "").trim().toLowerCase();
+      if (stateText === "likely_resolved" || stateText === "archived") {
         return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
       }
-      const coords = getCoordsForLightId(incidentId, reports, officialLights);
-      if (!coords?.isOfficial) {
-        return { color: "#9e9e9e", label: "Asset missing from official lights" };
+      if (stateText === "high_confidence_outage") {
+        return { color: "#f57c00", label: "High-confidence outage" };
       }
-      const info = computePublicStatusForLightId(incidentId, { reports, fixedLights, lastFixByLightId });
-      if (Boolean(info?.isFixed)) {
-        return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
+      if (stateText === "likely_outage") {
+        return { color: "#f1c40f", label: "Likely outage" };
       }
-      return statusDotForLightId(incidentId, coords, info, reports);
+      if (stateText === "unconfirmed") {
+        return { color: "#f1c40f", label: "Unconfirmed outage" };
+      }
+      return { color: "#111", label: "Operational" };
     }
 
     if (activeDomain === "potholes") {
@@ -6447,7 +6482,7 @@ function OpenReportsModal({
     if (activeDomain === "power_outage") return { color: "#f39c12", label: "Power outage incident" };
     if (activeDomain === "water_main") return { color: "#3498db", label: "Water main incident" };
     return { color: "#616161", label: "Incident" };
-  }, [activeDomain, reports, officialLights, fixedLights, lastFixByLightId]);
+  }, [activeDomain, getStreetlightConfidence, isOpenLifecycleState]);
 
   const adminMetrics = useMemo(() => {
     const summary = exportSummaryRows || [];
@@ -7834,6 +7869,24 @@ function OpenReportsModal({
                       </button>
                     )}
                     {isStreetlightMyReports && isOpenLifecycleState(r.current_state || "") && (
+                      <>
+                        {canShowWorkingActionForIncident(r.incident_id) && (
+                          <button
+                            type="button"
+                            onClick={() => onMarkWorkingIncident?.(r.incident_id)}
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: "var(--sl-ui-brand-green)",
+                              color: "white",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Is working
+                          </button>
+                        )}
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
                         <input
                           type="checkbox"
@@ -7842,6 +7895,7 @@ function OpenReportsModal({
                         />
                         Utility reported
                       </label>
+                      </>
                     )}
                   </div>
                   {adminExpandedSet.has(r.incident_id) && (
@@ -8261,13 +8315,33 @@ function OpenReportsModal({
                         </td>
                         {isStreetlightMyReports && (
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
-                            {isOpenLifecycleState(r.current_state || "") ? (
-                              <input
-                                type="checkbox"
-                                checked={Boolean(utilityReportedByIncident[r.incident_id])}
-                                onChange={() => toggleUtilityReported(r.incident_id)}
-                                aria-label={`Utility reported for ${r.incident_label || r.incident_id}`}
-                              />
+                        {isOpenLifecycleState(r.current_state || "") ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                {canShowWorkingActionForIncident(r.incident_id) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onMarkWorkingIncident?.(r.incident_id)}
+                                    style={{
+                                      padding: "6px 8px",
+                                      borderRadius: 8,
+                                      border: "none",
+                                      background: "var(--sl-ui-brand-green)",
+                                      color: "white",
+                                      fontWeight: 900,
+                                      cursor: "pointer",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    Is working
+                                  </button>
+                                )}
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(utilityReportedByIncident[r.incident_id])}
+                                  onChange={() => toggleUtilityReported(r.incident_id)}
+                                  aria-label={`Utility reported for ${r.incident_label || r.incident_id}`}
+                                />
+                              </div>
                             ) : null}
                           </td>
                         )}
@@ -8667,8 +8741,12 @@ function OpenReportsModal({
                   lng: Number(g.lng ?? g.rows?.[0]?.lng),
                   isOfficial: false,
                 };
+            const confidence = isStreetlights ? getStreetlightConfidence(g.lightId) : null;
             const info = isStreetlights
-              ? computePublicStatusForLightId(g.lightId, { reports, fixedLights, lastFixByLightId })
+              ? {
+                  majorityLabel: incidentStateLabel(confidence?.state || "operational") || "Operational",
+                  isFixed: Boolean(confidence?.closed),
+                }
               : { majorityLabel: (domainOptions || []).find((d) => d.key === activeDomain)?.label || "Report" };
             const nonStreetlightDotColor =
               activeDomain === "potholes"
@@ -8685,7 +8763,13 @@ function OpenReportsModal({
                     ? "#3498db"
                     : "#616161";
             const dot = isStreetlights
-              ? statusDotForLightId(g.lightId, coords, info, reports)
+              ? (() => {
+                  if (confidence?.state === "high_confidence_outage") return { color: "#f57c00", label: "High-confidence outage" };
+                  if (confidence?.state === "likely_outage") return { color: "#f1c40f", label: "Likely outage" };
+                  if (confidence?.state === "unconfirmed") return { color: "#f1c40f", label: "Unconfirmed outage" };
+                  if (confidence?.closed) return { color: "var(--sl-ui-brand-green)", label: "Closed report" };
+                  return { color: "#111", label: "Operational" };
+                })()
               : { color: nonStreetlightDotColor, label: info.majorityLabel };
             const isOpen = expandedSet?.has(g.lightId);
             const locationLabel =
@@ -8697,14 +8781,11 @@ function OpenReportsModal({
             const groupIncidentId = String(
               g.incidentId || (isStreetlights ? g.lightId : "")
             ).trim();
-            const lifecycleSnapshot = groupIncidentId
-              ? incidentStateByKey?.[incidentSnapshotKey(activeDomain, groupIncidentId)] || null
-              : null;
-            const derivedLifecycle = groupIncidentId
-              ? deriveIncidentStateFromTimeline(groupIncidentId, g.rows || [])
+            const lifecycleInfo = groupIncidentId
+              ? getIncidentStateForDisplay(groupIncidentId, g.rows || [])
               : null;
             const lifecycleState = String(
-              lifecycleSnapshot?.state || derivedLifecycle?.state || ""
+              lifecycleInfo?.state || ""
             ).trim().toLowerCase();
             const isFixedLifecycle = Boolean(lifecycleState && !isOpenLifecycleState(lifecycleState));
             const effectiveNonStreetlightDotColor = isFixedLifecycle
@@ -8811,11 +8892,11 @@ function OpenReportsModal({
                   <b>{g.count}</b> report{g.count === 1 ? "" : "s"}
                   {isStreetlights ? <> • Status: <b>{info.majorityLabel}</b></> : <> • <b>{info.majorityLabel}</b></>}
                 </div>
-                {!!lifecycleSnapshot?.state && (
+                {!!lifecycleInfo?.state && (
                   <div style={{ fontSize: 12, opacity: 0.82 }}>
-                    Lifecycle: <b>{incidentStateLabel(lifecycleSnapshot.state)}</b>
-                    {!!lifecycleSnapshot?.last_changed_at && (
-                      <> • Updated {formatTs(lifecycleSnapshot.last_changed_at)}</>
+                    Lifecycle: <b>{incidentStateLabel(lifecycleInfo.state)}</b>
+                    {!!lifecycleInfo?.lastChangedAtIso && (
+                      <> • Updated {formatTs(lifecycleInfo.lastChangedAtIso)}</>
                     )}
                   </div>
                 )}
@@ -9883,50 +9964,6 @@ function nearestPotholeForPoint(lat, lng, potholes, radiusMeters = POTHOLE_MERGE
 }
 
 
-function computePublicStatusForLightId(lightId, { reports, fixedLights, lastFixByLightId }) {
-  const all = (reports || [])
-    .filter((r) => (r.light_id || "") === lightId)
-    .filter((r) => isOutageReportType(r));
-
-  const lastFixTs = Math.max(lastFixByLightId?.[lightId] || 0, fixedLights?.[lightId] || 0);
-
-  const sinceFix = lastFixTs ? all.filter((r) => (r.ts || 0) > lastFixTs) : all;
-  const isFixed = sinceFix.length === 0;
-
-  const majorityKey = majorityReportType(sinceFix);
-  const majorityLabel = majorityKey ? (REPORT_TYPES[majorityKey] || majorityKey) : "Operational";
-
-  // dot logic: match your official/community logic
-  // - Official: black when fixed, otherwise severity by count since fix
-  // - Community: green when fixed, otherwise likelihood by total count (your existing statusFromCount)
-  return {
-    isFixed,
-    sinceFixCount: sinceFix.length,
-    majorityKey,
-    majorityLabel: isFixed ? "Operational" : majorityLabel,
-  };
-}
-
-function statusDotForLightId(lightId, coords, statusInfo, reports) {
-  const isOfficial = Boolean(coords?.isOfficial);
-
-  if (isOfficial) {
-    if (statusInfo.isFixed) return { label: "Operational", color: "#111" };
-    return officialStatusFromSinceFixCount(statusInfo.sinceFixCount); // yellow/orange/red
-  }
-
-  // community
-  if (statusInfo.isFixed) return { label: "Fixed", color: "#2e7d32" };
-  // use your community "likelihood" logic based on total reports for that lightId
-  // (you can switch this to sinceFix if you want consistency)
-  return statusFromCount(
-    (reports || [])
-      .filter((r) => (r.light_id || "") === lightId)
-      .filter((r) => isOutageReportType(r))
-      .length
-  );
-}
-
 // Build "All Reports" timeline: reports + fix events
 function buildLightHistory({ reportRows, fixActionRows }) {
   const items = [];
@@ -10271,6 +10308,7 @@ export default function App() {
   const [actionsByLightId, setActionsByLightId] = useState({});
   const [utilityReportedLightIdSet, setUtilityReportedLightIdSet] = useState(() => new Set());
   const [utilityReportedAnyLightIdSet, setUtilityReportedAnyLightIdSet] = useState(() => new Set());
+  const [utilitySignalCountsByLightId, setUtilitySignalCountsByLightId] = useState({});
 
   // per-light cooldowns: persisted
   const [cooldowns, setCooldowns] = useState(() => pruneCooldowns(loadCooldownsFromStorage()));
@@ -12355,6 +12393,7 @@ export default function App() {
             .eq("user_id", session.user.id)
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
+      const utilitySignalCountsPromise = supabase.rpc("streetlight_utility_signal_counts");
       const utilityStatusAllPromise = isAdmin
         ? supabase
             .from("utility_report_status")
@@ -12371,6 +12410,7 @@ export default function App() {
         { data: reportDataRaw, error: repErrRaw },
         { data: ownReportData, error: ownRepErr },
         { data: utilityStatusData, error: utilityStatusErr },
+        { data: utilitySignalCountData, error: utilitySignalCountErr },
         { data: utilityStatusAllData, error: utilityStatusAllErr },
         { data: fixedData, error: fixErr },
         { data: actionData, error: actErr },
@@ -12378,6 +12418,7 @@ export default function App() {
         reportsPromise,
         ownReportsPromise,
         utilityStatusPromise,
+        utilitySignalCountsPromise,
         utilityStatusAllPromise,
         supabase.from("fixed_lights").select("*"),
         actionsPromise,
@@ -12667,6 +12708,12 @@ export default function App() {
           console.error("[utility_report_status all] load error:", utilityStatusAllErr);
         }
       }
+      if (utilitySignalCountErr) {
+        const msg = String(utilitySignalCountErr?.message || "").toLowerCase();
+        if (!(msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"))) {
+          console.error("[streetlight_utility_signal_counts] load error:", utilitySignalCountErr);
+        }
+      }
 
       const normalizedPublicReports = (reportData || []).map((r) => ({
         id: r.id,
@@ -12727,6 +12774,22 @@ export default function App() {
       }
       setUtilityReportedAnyLightIdSet(utilityAnySet);
 
+      const utilityCountMap = {};
+      for (const row of utilitySignalCountData || []) {
+        const rawId = String(row?.incident_id || "").trim();
+        if (!rawId) continue;
+        const normalizedId = canonicalOfficialLightId(rawId, null, null, officialIdByAlias, officialIdByCoordKey);
+        const id = String(normalizedId || "").trim();
+        if (!id || !officialIdByAlias.has(id)) continue;
+        utilityCountMap[id] = {
+          reportedCount: Math.max(0, Number(row?.reported_count || 0)),
+          latestReportedTs: Date.parse(String(row?.latest_reported_at || "")) || 0,
+        };
+        if (Number(row?.reported_count || 0) > 0) utilityAnySet.add(id);
+      }
+      setUtilitySignalCountsByLightId(utilityCountMap);
+      setUtilityReportedAnyLightIdSet(utilityAnySet);
+
       const fixedMap = {};
       for (const row of fixedData || []) fixedMap[row.light_id] = new Date(row.fixed_at).getTime();
       setFixedLights(fixedMap);
@@ -12775,7 +12838,7 @@ export default function App() {
         setLastFixByLightId(map);
       }
 
-      const loadHadConnectionFailure = [repErr, ownRepErr, utilityStatusErr, fixErr, actErr, offErr, signErr, potholeErr, potholeRepErr, incidentStateErr].some((e) =>
+      const loadHadConnectionFailure = [repErr, ownRepErr, utilityStatusErr, utilitySignalCountErr, fixErr, actErr, offErr, signErr, potholeErr, potholeRepErr, incidentStateErr].some((e) =>
         isConnectionLikeDbError(e)
       );
       if (loadHadConnectionFailure) notifyDbConnectionIssue({ message: "connection check failed" });
@@ -12827,20 +12890,22 @@ export default function App() {
           }
         }
 
-        if (isAdmin) {
-          const { data, error } = await supabase
-            .from("utility_report_status")
-            .select("incident_id")
-            .eq("tenant_key", tenantKey)
-            .order("updated_at", { ascending: false });
-          if (!error) {
-            const next = new Set();
-            for (const row of data || []) {
-              const incidentId = String(row?.incident_id || "").trim();
-              if (incidentId) next.add(incidentId);
-            }
-            setUtilityReportedAnyLightIdSet(next);
+        const { data: utilityCountData, error: utilityCountErr } = await supabase.rpc("streetlight_utility_signal_counts");
+        if (!utilityCountErr) {
+          const nextCounts = {};
+          const nextAny = new Set();
+          for (const row of utilityCountData || []) {
+            const incidentId = String(row?.incident_id || "").trim();
+            if (!incidentId) continue;
+            const reportedCount = Math.max(0, Number(row?.reported_count || 0));
+            nextCounts[incidentId] = {
+              reportedCount,
+              latestReportedTs: Date.parse(String(row?.latest_reported_at || "")) || 0,
+            };
+            if (reportedCount > 0) nextAny.add(incidentId);
           }
+          setUtilitySignalCountsByLightId(nextCounts);
+          setUtilityReportedAnyLightIdSet(nextAny);
         }
       } catch (e) {
         console.warn("[utility_report_status realtime refresh] warning:", e?.message || e);
@@ -13651,6 +13716,65 @@ export default function App() {
     return out;
   }, [viewerIdentityKey, utilityReportedLightIdSet, officialIdSet]);
 
+  const streetlightConfidenceByLightId = useMemo(() => {
+    const byLight = {};
+    const signalMap = new Map();
+    const lightIds = new Set();
+
+    for (const light of officialLights || []) {
+      const lid = String(light?.id || "").trim();
+      if (lid) lightIds.add(lid);
+    }
+
+    for (const row of reports || []) {
+      const lid = String(row?.light_id || "").trim();
+      if (!lid || !officialIdSet.has(lid)) continue;
+      lightIds.add(lid);
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[lid] || 0), Number(fixedLights?.[lid] || 0));
+      const ts = Number(row?.ts || 0);
+      if (lastFixTs && ts <= lastFixTs) continue;
+      const reporterKey = String(reportIdentityKey(row) || `report:${row?.id || ts}`).trim();
+      const current = signalMap.get(lid) || { outageSignals: [], workingSignals: [] };
+      if (isWorkingReportType(row)) {
+        current.workingSignals.push({ reporterKey, ts });
+      } else if (isOutageReportType(row)) {
+        current.outageSignals.push({ reporterKey, ts });
+      }
+      signalMap.set(lid, current);
+    }
+
+    for (const lid of Object.keys(utilitySignalCountsByLightId || {})) {
+      if (String(lid || "").trim()) lightIds.add(String(lid || "").trim());
+    }
+
+    for (const lid of lightIds) {
+      const signals = signalMap.get(lid) || { outageSignals: [], workingSignals: [] };
+      const utility = utilitySignalCountsByLightId?.[lid] || {};
+      byLight[lid] = computeStreetlightConfidenceSnapshot({
+        outageSignals: signals.outageSignals,
+        workingSignals: signals.workingSignals,
+        utilityReportedCount: Number(utility?.reportedCount || 0),
+        utilityReferenceCount: Number(utility?.referenceCount || 0),
+        utilityLastTs: Number(utility?.latestReportedTs || 0),
+        viewerIdentityKey,
+        viewerHasSaved: viewerSavedStreetlightLightIdSet.has(lid),
+        viewerUtilityReported: viewerUtilityReportedLightIdSet.has(lid),
+      });
+    }
+
+    return byLight;
+  }, [
+    officialLights,
+    reports,
+    officialIdSet,
+    lastFixByLightId,
+    fixedLights,
+    utilitySignalCountsByLightId,
+    viewerIdentityKey,
+    viewerSavedStreetlightLightIdSet,
+    viewerUtilityReportedLightIdSet,
+  ]);
+
   const viewerStreetlightRingOpenIdSet = useMemo(() => {
     const openSet = new Set();
     const candidateIds = new Set([
@@ -13662,46 +13786,15 @@ export default function App() {
     for (const lidRaw of candidateIds) {
       const lid = String(lidRaw || "").trim();
       if (!lid) continue;
-
-      const timeline = Array.isArray(actionsByLightId?.[lid]) ? actionsByLightId[lid] : [];
-      let lastFixTs = Math.max(
-        Number(lastFixByLightId?.[lid] || 0),
-        Number(fixedLights?.[lid] || 0)
-      );
-      let lastReopenTs = 0;
-
-      for (const a of timeline) {
-        const ts = Number(a?.ts || 0);
-        if (!Number.isFinite(ts) || ts <= 0) continue;
-        const kind = String(a?.action || "").trim().toLowerCase();
-        if (kind === "fix") lastFixTs = Math.max(lastFixTs, ts);
-        if (kind === "reopen") lastReopenTs = Math.max(lastReopenTs, ts);
-      }
-
-      let lastReportTs = 0;
-      for (const r of reports || []) {
-        if (!isOutageReportType(r)) continue;
-        if (String(r?.light_id || "").trim() !== lid) continue;
-        const ts = Number(r?.ts || 0);
-        if (Number.isFinite(ts) && ts > lastReportTs) lastReportTs = ts;
-      }
-
-      const isOpen =
-        (lastReportTs > lastFixTs) ||
-        (lastReopenTs > lastFixTs) ||
-        (lastFixTs <= 0);
-
-      if (isOpen) openSet.add(lid);
+      const confidence = streetlightConfidenceByLightId?.[lid] || null;
+      if (confidence && !confidence.closed) openSet.add(lid);
     }
 
     return openSet;
   }, [
     viewerSavedStreetlightLightIdSet,
     viewerUtilityReportedLightIdSet,
-    actionsByLightId,
-    lastFixByLightId,
-    fixedLights,
-    reports,
+    streetlightConfidenceByLightId,
   ]);
 
   const officialMarkerRingColorForViewer = useCallback((lightId) => {
@@ -14259,183 +14352,22 @@ export default function App() {
     }, [reports, officialIdSet, officialSignIdSet, fixedLights, lastFixByLightId]);
 
     // ✅ Simple status mapping based on count since last fix
-    function statusColorFromSinceFixCount(n) {
-      const x = Number(n || 0);
-
-      if (x >= 7) return { label: "Confirmed Out", color: "#e74c3c" };
-      if (x >= 5) return { label: "Likely Out", color: "#f57c00" };
-      if (x >= 2) return { label: "Reported", color: "#f1c40f" };
-      return { label: "OK", color: "#111" };
-    }
-
-  const myOnlyReportLightIdSet = useMemo(() => {
-    const out = new Set();
-    if (!viewerIdentityKey) return out;
-
-    const byLight = new Map(); // lightId -> { count, mineCount }
-    for (const r of reports || []) {
-      if (!isOutageReportType(r)) continue;
-      const lid = (r.light_id || "").trim();
-      if (!lid || !officialIdSet.has(lid)) continue;
-
-      const lastFixTs = Math.max(lastFixByLightId?.[lid] || 0, fixedLights?.[lid] || 0);
-      const ts = Number(r.ts || 0);
-      if (lastFixTs && ts <= lastFixTs) continue;
-
-      const prev = byLight.get(lid) || { count: 0, mineCount: 0 };
-      prev.count += 1;
-
-      const rKey =
-        r.reporter_user_id ? `uid:${r.reporter_user_id}` :
-        (normalizeEmail(r.reporter_email) ? `email:${normalizeEmail(r.reporter_email)}` :
-         (normalizePhone(r.reporter_phone) ? `phone:${normalizePhone(r.reporter_phone)}` : null));
-
-      if (rKey && rKey === viewerIdentityKey) prev.mineCount += 1;
-      byLight.set(lid, prev);
-    }
-
-    for (const [lid, stats] of byLight.entries()) {
-      if (stats.count === 1 && stats.mineCount === 1) out.add(lid);
-    }
-
-    return out;
-  }, [reports, officialIdSet, fixedLights, lastFixByLightId, viewerIdentityKey]);
-
-  const globallyWorkingResolvedSet = useMemo(() => {
-    const out = new Set();
-
-    for (const l of officialLights || []) {
-      const lid = (l.id || "").trim();
-      if (!lid) continue;
-
-      const lastFixTs = Math.max(lastFixByLightId?.[lid] || 0, fixedLights?.[lid] || 0);
-      const events = [];
-
-      for (const r of reports || []) {
-        if ((r.light_id || "").trim() !== lid) continue;
-        const ts = Number(r.ts || 0);
-        if (!Number.isFinite(ts) || (lastFixTs && ts <= lastFixTs)) continue;
-        events.push({ kind: isWorkingReportType(r) ? "working" : "report", ts });
-      }
-
-      for (const a of actionsByLightId?.[lid] || []) {
-        if (String(a.action || "").toLowerCase() !== "working") continue;
-        const ts = Number(a.ts || 0);
-        if (!Number.isFinite(ts) || (lastFixTs && ts <= lastFixTs)) continue;
-        events.push({ kind: "working", ts });
-      }
-
-      events.sort((a, b) => (a.ts || 0) - (b.ts || 0));
-
-      let streak = 0;
-      for (const ev of events) {
-        if (ev.kind === "report") {
-          streak = 0;
-          continue;
-        }
-        streak += 1;
-        if (streak >= 3) {
-          out.add(lid);
-          break;
-        }
-      }
-    }
-
-    return out;
-  }, [officialLights, reports, actionsByLightId, fixedLights, lastFixByLightId]);
-
-  const viewerWorkingAckLightIdSet = useMemo(() => {
-    const out = new Set();
-    if (!viewerIdentityKey) return out;
-
-    for (const l of officialLights || []) {
-      const lid = (l.id || "").trim();
-      if (!lid) continue;
-
-      const lastFixTs = Math.max(lastFixByLightId?.[lid] || 0, fixedLights?.[lid] || 0);
-      let lastReportTs = 0;
-
-      for (const r of reports || []) {
-        if (!isOutageReportType(r)) continue;
-        if ((r.light_id || "").trim() !== lid) continue;
-        const ts = Number(r.ts || 0);
-        if (!Number.isFinite(ts) || (lastFixTs && ts <= lastFixTs)) continue;
-        if (ts > lastReportTs) lastReportTs = ts;
-      }
-
-      const minTs = Math.max(lastFixTs, lastReportTs);
-
-      for (const r of reports || []) {
-        if (!isWorkingReportType(r)) continue;
-        if ((r.light_id || "").trim() !== lid) continue;
-        const ts = Number(r.ts || 0);
-        if (!Number.isFinite(ts) || ts <= minTs) continue;
-        if (reportIdentityKey(r) === viewerIdentityKey) {
-          out.add(lid);
-          break;
-        }
-      }
-
-      if (out.has(lid)) continue;
-
-      for (const a of actionsByLightId?.[lid] || []) {
-        if (String(a.action || "").toLowerCase() !== "working") continue;
-        const ts = Number(a.ts || 0);
-        if (!Number.isFinite(ts) || ts <= minTs) continue;
-
-        if (actionIdentityKey(a) === viewerIdentityKey) {
-          out.add(lid);
-          break;
-        }
-      }
-    }
-
-    return out;
-  }, [officialLights, reports, actionsByLightId, fixedLights, lastFixByLightId, viewerIdentityKey]);
-
   const officialMarkerColorForViewer = useCallback((lightId) => {
     const lid = (lightId || "").trim();
     if (!lid) return "#111";
     if (!ENABLE_STREETLIGHT_IN_APP_REPORTING) return "#111";
 
-    if (globallyWorkingResolvedSet.has(lid)) return "#111";
-    const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
-
-    // Admin view: any report since last fix should be visible as at least yellow.
-    if (isAdmin && sinceFixCount >= 1) {
-      if (sinceFixCount >= 7) return "#e74c3c";
-      if (sinceFixCount >= 5) return "#f57c00";
+    const confidence = streetlightConfidenceByLightId?.[lid] || null;
+    if (!confidence) return "#111";
+    if (confidence.state === "high_confidence_outage") return "#f57c00";
+    if (confidence.state === "likely_outage") return "#f1c40f";
+    if (confidence.state === "unconfirmed" && confidence.viewerHasOpenInterest && !confidence.viewerHasWorkingAck) {
       return "#f1c40f";
     }
-
-    if (viewerWorkingAckLightIdSet.has(lid)) return "#111";
-    if (myOnlyReportLightIdSet.has(lid)) return "#f1c40f";
-
-    const status = statusColorFromSinceFixCount(sinceFixCount);
-    return status.color;
+    return "#111";
   }, [
-    globallyWorkingResolvedSet,
-    reportsByOfficialId,
-    isAdmin,
-    viewerWorkingAckLightIdSet,
-    myOnlyReportLightIdSet,
+    streetlightConfidenceByLightId,
   ]);
-
-  function officialStatusLabelForViewer(lightId) {
-    const lid = (lightId || "").trim();
-    if (!lid) return "Operational";
-    if (!ENABLE_STREETLIGHT_IN_APP_REPORTING) return "Utility asset";
-
-    if (globallyWorkingResolvedSet.has(lid)) return "Operational";
-
-    const color = officialMarkerColorForViewer(lid);
-    if (color === "#111") return "Operational";
-
-    const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
-    if (sinceFixCount >= 7) return "Confirmed Out";
-    if (sinceFixCount >= 5) return "Likely Out";
-    return "Reported";
-  }
 
   const streetlightFilterMatchesLight = useCallback((lightIdRaw) => {
     const mode = String(streetlightInViewFilterMode || "").trim().toLowerCase();
@@ -19505,6 +19437,14 @@ async function insertReportWithFallback(payload) {
         isWithinCityLimits={isWithinAshtabulaCityLimits}
         getStreetlightUtilityDetails={reverseGeocodeRoadLabel}
         onUtilityReportedChange={handleUtilityReportedChange}
+        onMarkWorkingIncident={(incidentId) => {
+          const lid = String(incidentId || "").trim();
+          if (!lid) return;
+          closeMyReports();
+          setPendingWorkingLightId(lid);
+          setIsWorkingConfirmOpen(true);
+        }}
+        streetlightConfidenceByLightId={streetlightConfidenceByLightId}
         focusIncidentId={myReportsFocusIncidentId}
         initialSearchQuery={myReportsFocusQuery}
         mapBounds={mapBounds}
@@ -19575,6 +19515,7 @@ async function insertReportWithFallback(payload) {
         cityBoundaryLoaded={cityLimitPolygons.length > 0}
         isWithinCityLimits={isWithinAshtabulaCityLimits}
         onUtilityReportedChange={handleUtilityReportedChange}
+        streetlightConfidenceByLightId={streetlightConfidenceByLightId}
       />
 
       <ManageAccountModal
@@ -20125,6 +20066,24 @@ async function insertReportWithFallback(payload) {
                   style={btnPopupSecondary}
                 >
                   View My Report
+                </button>
+              );
+            })()}
+            {(() => {
+              const lid = String(selectedOfficialLightForPopup?.id || "").trim();
+              if (!lid) return null;
+              const confidence = streetlightConfidenceByLightId?.[lid] || null;
+              if (!confidence?.canViewerMarkWorking) return null;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingWorkingLightId(lid);
+                    setIsWorkingConfirmOpen(true);
+                  }}
+                  style={{ ...btnPopupPrimary, background: "var(--sl-ui-brand-green)" }}
+                >
+                  Is working
                 </button>
               );
             })()}
