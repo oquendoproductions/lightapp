@@ -246,6 +246,7 @@ function initialTenantForm() {
     boundary_config_key: "",
     notification_email_potholes: "",
     notification_email_water_drain: "",
+    resident_portal_enabled: false,
     is_pilot: false,
     active: true,
   };
@@ -353,6 +354,12 @@ function sanitizeRoleKey(value) {
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 40);
+}
+
+function isMissingColumnError(error) {
+  const code = String(error?.code || "").trim();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42703" || msg.includes("column") || msg.includes("schema cache");
 }
 
 function roleKeyToLabel(roleKey) {
@@ -759,12 +766,27 @@ export default function PlatformAdminApp() {
   }, [sessionActorName, sessionEmail, sessionUserId]);
 
   const loadTenants = useCallback(async () => {
-    const { data, error } = await supabase
+    const baseSelect = "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active,updated_at";
+    let result = await supabase
       .from("tenants")
-      .select("tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active,updated_at")
+      .select(`${baseSelect},resident_portal_enabled`)
       .order("tenant_key", { ascending: true });
-    if (error) throw error;
-    setTenants(Array.isArray(data) ? data : []);
+
+    if (result.error && isMissingColumnError(result.error)) {
+      result = await supabase
+        .from("tenants")
+        .select(baseSelect)
+        .order("tenant_key", { ascending: true });
+      if (result.error) throw result.error;
+      const fallbackRows = Array.isArray(result.data)
+        ? result.data.map((row) => ({ ...row, resident_portal_enabled: false }))
+        : [];
+      setTenants(fallbackRows);
+      return;
+    }
+
+    if (result.error) throw result.error;
+    setTenants(Array.isArray(result.data) ? result.data : []);
   }, []);
 
   const loadTenantAdmins = useCallback(async () => {
@@ -1301,6 +1323,7 @@ export default function PlatformAdminApp() {
       boundary_config_key: String(selectedTenant.boundary_config_key || ""),
       notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
       notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
+      resident_portal_enabled: Boolean(selectedTenant.resident_portal_enabled),
       is_pilot: Boolean(selectedTenant.is_pilot),
       active: Boolean(selectedTenant.active),
     });
@@ -1397,6 +1420,7 @@ export default function PlatformAdminApp() {
       boundary_config_key: String(tenantForm.boundary_config_key || defaultBoundaryKey).trim() || defaultBoundaryKey,
       notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
       notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
+      resident_portal_enabled: Boolean(tenantForm.resident_portal_enabled),
       is_pilot: Boolean(tenantForm.is_pilot),
       active: Boolean(tenantForm.active),
     };
@@ -1420,6 +1444,7 @@ export default function PlatformAdminApp() {
       details: {
         primary_subdomain: payload.primary_subdomain,
         boundary_config_key: payload.boundary_config_key,
+        resident_portal_enabled: payload.resident_portal_enabled,
         is_pilot: payload.is_pilot,
         active: payload.active,
       },
@@ -2401,6 +2426,7 @@ export default function PlatformAdminApp() {
                           boundary_config_key: String(selectedTenant.boundary_config_key || ""),
                           notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
                           notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
+                          resident_portal_enabled: Boolean(selectedTenant.resident_portal_enabled),
                           is_pilot: Boolean(selectedTenant.is_pilot),
                           active: Boolean(selectedTenant.active),
                         });
@@ -2472,6 +2498,10 @@ export default function PlatformAdminApp() {
                     Upload a `Boundary GeoJSON` file in Files, then set it as boundary.
                   </span>
                 </label>
+                <div style={{ gridColumn: "1 / -1", fontSize: 11.5, color: palette.textMuted, marginTop: -2 }}>
+                  Turn on the resident updates homepage only when you want this tenant root URL to open into the
+                  new alerts, events, and preferences hub. Leave it off to keep the current map-first experience.
+                </div>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                   <span>Pothole Notification Email</span>
                   <input
@@ -2491,6 +2521,14 @@ export default function PlatformAdminApp() {
                     placeholder="utilities@examplemunicipality.gov"
                     style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                   />
+                </label>
+                <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={tenantForm.resident_portal_enabled}
+                    disabled={tenantReadOnly}
+                    onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))}
+                  /> Resident Updates Homepage Enabled
                 </label>
                 <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <input

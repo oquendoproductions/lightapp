@@ -12,6 +12,7 @@ function fallbackTenantConfig(tenantKey) {
     boundary_config_key: "ashtabula_city_geojson",
     notification_email_potholes: "",
     notification_email_water_drain: "",
+    resident_portal_enabled: false,
     is_pilot: tenantKey === "ashtabulacity",
     active: true,
   };
@@ -23,22 +24,36 @@ function isMissingRelationError(error) {
   return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
 }
 
+function isMissingColumnError(error) {
+  const code = String(error?.code || "").trim();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42703" || msg.includes("column") || msg.includes("schema cache");
+}
+
 function isAllowDefaultTenantFallback() {
   const raw = String(import.meta.env.VITE_ALLOW_DEFAULT_TENANT_FALLBACK ?? "true").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
 async function fetchTenantConfigFromDb(tenantKey) {
-  const { data, error } = await supabase
+  const selectBase =
+    "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active";
+  const preferred = await supabase
     .from("tenants")
-    .select(
-      "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active"
-    )
+    .select(`${selectBase},resident_portal_enabled`)
     .eq("tenant_key", tenantKey)
     .maybeSingle();
 
-  if (error) throw error;
-  return data || null;
+  if (!preferred.error) return preferred.data || null;
+  if (!isMissingColumnError(preferred.error)) throw preferred.error;
+
+  const fallback = await supabase
+    .from("tenants")
+    .select(selectBase)
+    .eq("tenant_key", tenantKey)
+    .maybeSingle();
+  if (fallback.error) throw fallback.error;
+  return fallback.data ? { ...fallback.data, resident_portal_enabled: false } : null;
 }
 
 export function TenantProvider({ resolution, children }) {

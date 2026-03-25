@@ -7,7 +7,7 @@ import { TenantGate, TenantProvider } from "./tenant/TenantContext";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
 
 const App = lazy(() => import("./App.jsx"));
-const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
+const MunicipalityApp = lazy(() => import("./MunicipalityApp.jsx"));
 const PlatformAdminApp = lazy(() => import("./PlatformAdminApp.jsx"));
 const TenantNotFoundApp = lazy(() => import("./TenantNotFoundApp.jsx"));
 const RedirectingApp = lazy(() => import("./RedirectingApp.jsx"));
@@ -52,7 +52,7 @@ if (resolution.mode === "redirect" && resolution.redirectTo) {
 
 const Root =
   resolution.mode === "municipality_app"
-    ? MapGoogleFull
+    ? MunicipalityApp
     : resolution.mode === "platform_admin"
       ? PlatformAdminApp
       : resolution.mode === "not_found"

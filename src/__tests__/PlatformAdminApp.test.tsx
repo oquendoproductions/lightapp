@@ -25,6 +25,7 @@ vi.mock("../supabaseClient", () => {
         boundary_config_key: "ashtabulacity_city_geojson",
         notification_email_potholes: "roads@ashtabula.gov",
         notification_email_water_drain: "utilities@ashtabula.gov",
+        resident_portal_enabled: false,
         is_pilot: true,
         active: true,
       },
