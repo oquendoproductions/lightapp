@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => ({
     },
   },
   platformUsers: [],
+  invokeMock: vi.fn(),
   resetData: () => {},
 }));
 
@@ -98,6 +99,7 @@ vi.mock("../supabaseClient", () => {
 
   mockState.resetData = () => {
     data = defaultData();
+    mockState.invokeMock.mockClear();
   };
 
   const normalizeText = (value: unknown) => String(value || "").trim().replace(/\s+/g, " ");
@@ -233,6 +235,7 @@ vi.mock("../supabaseClient", () => {
         data: {
           session: {
             user: mockState.sessionUser,
+            access_token: "platform-session-token",
           },
         },
       })),
@@ -249,7 +252,7 @@ vi.mock("../supabaseClient", () => {
     from: vi.fn((table: string) => new QueryBuilder(table)),
     rpc: vi.fn(async () => ({ data: [], error: null })),
     functions: {
-      invoke: vi.fn(async (_name: string, options?: { body?: any }) => {
+      invoke: mockState.invokeMock.mockImplementation(async (_name: string, options?: { body?: any; headers?: Record<string, string> }) => {
         const action = String(options?.body?.action || "").trim().toLowerCase();
 
         if (action === "search") {
@@ -354,6 +357,14 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("button", { name: /jordan rivera/i });
     expect(screen.getByText(/jordan\.rivera@example\.gov/i)).toBeInTheDocument();
     expect(screen.queryByText("user-1")).not.toBeInTheDocument();
+    expect(mockState.invokeMock).toHaveBeenLastCalledWith(
+      "platform-user-admin",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer platform-session-token",
+        }),
+      })
+    );
   });
 
   it("shows assignment names with edit controls and can return to Start Here from the logo", async () => {
@@ -383,5 +394,12 @@ describe("PlatformAdminApp", () => {
     await waitFor(() => {
       expect(screen.getByText(/updated jordan rivera to tenant admin\./i)).toBeInTheDocument();
     });
+  });
+
+  it("shows tenant hub launch labels in the workspace header", async () => {
+    await openUsersAndAdmins();
+
+    expect(screen.getByRole("link", { name: /open tenant hub/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open dev tenant hub/i })).toBeInTheDocument();
   });
 });

@@ -622,6 +622,28 @@ export default function PlatformAdminApp() {
     audit: "",
     hydrate: "",
   });
+
+  const invokePlatformUserAdmin = useCallback(async (body) => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      return { data: null, error: sessionError };
+    }
+
+    const accessToken = String(sessionData?.session?.access_token || "").trim();
+    if (!accessToken) {
+      return {
+        data: null,
+        error: new Error("Platform admin session expired. Sign in again and retry."),
+      };
+    }
+
+    return supabase.functions.invoke("platform-user-admin", {
+      body,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  }, []);
   const tenantAdminsRef = useRef([]);
 
   const tenantOptions = useMemo(
@@ -984,11 +1006,9 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
-      body: {
-        action: "lookup_users",
-        user_ids: userIds,
-      },
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "lookup_users",
+      user_ids: userIds,
     });
 
     if (error) {
@@ -1002,7 +1022,7 @@ export default function PlatformAdminApp() {
       next[key] = row;
     }
     setAssignmentUserSummariesById(next);
-  }, [canEditTenantCore, selectedTenantRoleAssignments]);
+  }, [canEditTenantCore, invokePlatformUserAdmin, selectedTenantRoleAssignments]);
 
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
@@ -1142,11 +1162,9 @@ export default function PlatformAdminApp() {
 
     setUserSearchLoading(true);
     setStatus((prev) => ({ ...prev, users: "" }));
-    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
-      body: {
-        action: "search",
-        query,
-      },
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "search",
+      query,
     });
     setUserSearchLoading(false);
 
@@ -1165,7 +1183,7 @@ export default function PlatformAdminApp() {
     }
 
     setStatus((prev) => ({ ...prev, users: `Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.` }));
-  }, [canEditTenantCore, userSearchQuery]);
+  }, [canEditTenantCore, invokePlatformUserAdmin, userSearchQuery]);
 
   const createAndAssignTenantUser = useCallback(async (event) => {
     event.preventDefault();
@@ -1186,16 +1204,14 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const { data, error } = await supabase.functions.invoke("platform-user-admin", {
-      body: {
-        action: "invite_and_assign",
-        tenant_key,
-        role,
-        first_name,
-        last_name,
-        email,
-        phone,
-      },
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "invite_and_assign",
+      tenant_key,
+      role,
+      first_name,
+      last_name,
+      email,
+      phone,
     });
 
     if (error) {
@@ -1230,7 +1246,7 @@ export default function PlatformAdminApp() {
         : `Assigned ${roleKeyToLabel(role)} to existing account ${email}.`,
     }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantCore, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2388,12 +2404,12 @@ export default function PlatformAdminApp() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
                     <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Live Map
+                      Open Tenant Hub
                     </a>
                   ) : null}
                   {selectedTenantDevUrl ? (
                     <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Dev Map
+                      Open Dev Tenant Hub
                     </a>
                   ) : null}
                 </div>
