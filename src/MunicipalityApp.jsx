@@ -609,6 +609,7 @@ export default function MunicipalityApp() {
   const [showEventComposer, setShowEventComposer] = useState(false);
   const [openNavMenu, setOpenNavMenu] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountSectionTarget, setAccountSectionTarget] = useState("");
   const [availableHubTenants, setAvailableHubTenants] = useState([]);
   const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
@@ -668,6 +669,16 @@ export default function MunicipalityApp() {
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || routePath !== ACCOUNT_PATH || !accountSectionTarget) return;
+    const targetId = accountSectionTarget;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    setAccountSectionTarget("");
+    return () => window.cancelAnimationFrame(frame);
+  }, [accountSectionTarget, routePath]);
 
   useEffect(() => {
     setAccountProfileDraft({
@@ -733,6 +744,14 @@ export default function MunicipalityApp() {
     }
     return [...lookup.values()].filter((row) => interestedTenantKeys.includes(trimOrEmpty(row?.tenant_key).toLowerCase()));
   }, [availableHubTenants, interestedTenantKeys, tenant?.tenantConfig?.primary_subdomain, tenantKey, tenantName]);
+
+  const accountDisplayName = trimOrEmpty(profile?.full_name)
+    || trimOrEmpty(session?.user?.user_metadata?.full_name)
+    || trimOrEmpty(profile?.email)
+    || trimOrEmpty(session?.user?.email)
+    || "Resident";
+  const accountEmail = trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email);
+  const accountRoleLabel = manageAccess ? "Municipality Staff" : "Resident Account";
 
   const publishedAlerts = useMemo(
     () => sortAlerts(alerts.filter((alert) => String(alert?.status || "").trim().toLowerCase() === "published")),
@@ -972,6 +991,12 @@ export default function MunicipalityApp() {
     window.history.pushState({}, "", target);
     setRoutePath(normalizeMunicipalityAppPath(target, tenantKey));
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openAccountSection(targetId) {
+    setAccountSectionTarget(targetId);
+    setAccountMenuOpen(false);
+    navigate(ACCOUNT_PATH);
   }
 
   function updatePreferenceDraft(topicKey, field, nextValue) {
@@ -1509,6 +1534,7 @@ export default function MunicipalityApp() {
                   type="button"
                   className="municipality-account-toggle"
                   aria-label="Open account menu"
+                  aria-expanded={accountMenuOpen}
                   onClick={() => setAccountMenuOpen((prev) => !prev)}
                 >
                   <span />
@@ -1517,26 +1543,38 @@ export default function MunicipalityApp() {
                 </button>
                 {accountMenuOpen ? (
                   <div className="municipality-account-menu">
-                    <button
-                      type="button"
-                      className="municipality-nav-menu-item"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        navigate(ACCOUNT_PATH);
-                      }}
-                    >
-                      Account Settings
-                    </button>
-                    <button
-                      type="button"
-                      className="municipality-nav-menu-item"
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        void supabase.auth.signOut();
-                      }}
-                    >
-                      Sign Out
-                    </button>
+                    <div className="municipality-account-menu-card">
+                      <div className="municipality-account-menu-eyebrow">Signed In</div>
+                      <div className="municipality-account-menu-name">{accountDisplayName}</div>
+                      <div className="municipality-account-menu-role">{accountRoleLabel}</div>
+                      {accountEmail ? <div className="municipality-account-menu-email">{accountEmail}</div> : null}
+                      <div className="municipality-account-menu-actions">
+                        <button
+                          type="button"
+                          className="municipality-nav-menu-item"
+                          onClick={() => openAccountSection("account-information")}
+                        >
+                          Account Settings
+                        </button>
+                        <button
+                          type="button"
+                          className="municipality-nav-menu-item"
+                          onClick={() => openAccountSection("notification-preferences")}
+                        >
+                          Notification Preferences
+                        </button>
+                        <button
+                          type="button"
+                          className="municipality-nav-menu-item municipality-account-menu-signout"
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            void supabase.auth.signOut();
+                          }}
+                        >
+                          Sign Out
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </>
@@ -1740,7 +1778,7 @@ export default function MunicipalityApp() {
                 </form>
               ) : (
                 <div className="municipality-topic-row">
-                  <div className="municipality-account-card municipality-account-card--section">
+                  <div id="account-information" className="municipality-account-card municipality-account-card--section">
                     <div className="municipality-settings-header">
                       <div>
                         <h4>Account Information</h4>
@@ -1806,7 +1844,7 @@ export default function MunicipalityApp() {
                     {accountSectionStatus.profile ? <p className={`municipality-inline-status${accountSectionStatus.profile.toLowerCase().includes("could not") || accountSectionStatus.profile.toLowerCase().includes("please") ? " is-error" : ""}`}>{accountSectionStatus.profile}</p> : null}
                   </div>
 
-                  <div className="municipality-account-card municipality-account-card--section">
+                  <div id="my-cities" className="municipality-account-card municipality-account-card--section">
                     <div className="municipality-settings-header">
                       <div>
                         <h4>My Cities</h4>
@@ -1877,7 +1915,7 @@ export default function MunicipalityApp() {
                     {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}
                   </div>
 
-                  <div className="municipality-account-card municipality-account-card--section">
+                  <div id="notification-preferences" className="municipality-account-card municipality-account-card--section">
                     <div className="municipality-settings-header">
                       <div>
                         <h4>Notification Preferences</h4>
@@ -1945,7 +1983,7 @@ export default function MunicipalityApp() {
                     {accountSectionStatus.notifications ? <p className={`municipality-inline-status${accountSectionStatus.notifications.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.notifications}</p> : null}
                   </div>
 
-                  <div className="municipality-account-card municipality-account-card--section">
+                  <div id="sign-in-security" className="municipality-account-card municipality-account-card--section">
                     <div className="municipality-settings-header">
                       <div>
                         <h4>Sign-In & Security</h4>
