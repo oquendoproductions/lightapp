@@ -74,18 +74,18 @@ const stickyBanner = {
   left: "50%",
   transform: "translateX(-50%)",
   zIndex: 90,
-  display: "flex",
+  display: "grid",
+  gridTemplateColumns: "minmax(180px, auto) 1fr minmax(58px, auto)",
   alignItems: "center",
-  justifyContent: "flex-end",
   gap: "1rem",
   width: "min(1200px, calc(100vw - 2.4rem))",
   minHeight: FIXED_BANNER_HEIGHT,
-  padding: "0.7rem 1rem",
-  border: "1px solid rgba(23,56,92,0.34)",
-  borderRadius: 999,
-  background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
-  backdropFilter: "blur(12px)",
-  boxShadow: "0 12px 28px rgba(7,25,45,0.18)",
+  padding: "16px 20px",
+  border: 0,
+  borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
+  background: "rgba(248, 251, 255, 0.88)",
+  backdropFilter: "blur(14px)",
+  boxShadow: "none",
 };
 
 const card = {
@@ -183,7 +183,7 @@ const tableHeadCell = {
 
 const brandTitleStack = {
   display: "grid",
-  gap: 3,
+  gap: 2,
   textAlign: "center",
 };
 
@@ -2304,14 +2304,13 @@ export default function PlatformAdminApp() {
         width: "calc(100vw - 1rem)",
         minHeight: "auto",
         padding: "0.48rem 0.7rem",
+        border: "1px solid rgba(23,56,92,0.34)",
+        borderBottom: 0,
         borderRadius: 18,
+        background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
+        boxShadow: "0 12px 28px rgba(7,25,45,0.18)",
       }
-    : {
-        ...stickyBanner,
-        display: "grid",
-        gridTemplateColumns: "minmax(180px, auto) 1fr minmax(58px, auto)",
-        alignItems: "center",
-      };
+    : stickyBanner;
   const bannerLogoStyle = isCompactViewport
     ? { ...brandLogo, height: 38, maxWidth: "min(180px, calc(100vw - 148px))" }
     : brandLogo;

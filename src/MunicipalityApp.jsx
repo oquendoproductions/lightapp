@@ -924,7 +924,19 @@ export default function MunicipalityApp() {
       }
 
       const nextKeys = [...new Set((interestsRes.data || []).map((row) => trimOrEmpty(row?.tenant_key).toLowerCase()).filter(Boolean))];
-      const normalizedKeys = nextKeys.includes(tenantKey) ? nextKeys : [tenantKey, ...nextKeys];
+      let normalizedKeys = nextKeys.includes(tenantKey) ? nextKeys : [tenantKey, ...nextKeys];
+      if (!nextKeys.includes(tenantKey)) {
+        const { error: syncError } = await supabase
+          .from("resident_tenant_interests")
+          .upsert([{ user_id: session.user.id, tenant_key: tenantKey }], { onConflict: "user_id,tenant_key" });
+        if (!cancelled && syncError) {
+          setAccountSectionStatus((prev) => ({
+            ...prev,
+            cities: syncError.message || "Could not sync the current municipality into your saved cities.",
+          }));
+        }
+      }
+      normalizedKeys = [...new Set(normalizedKeys)];
       setInterestedTenantKeys(normalizedKeys);
       setSavedInterestedTenantKeys(normalizedKeys);
     }
