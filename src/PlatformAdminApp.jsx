@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
 const TITLE_LOGO_ALT = "CityReport.io";
 
 const DOMAIN_OPTIONS = [
@@ -2282,6 +2283,7 @@ export default function PlatformAdminApp() {
   const bannerLogoStyle = isCompactViewport
     ? { ...brandLogo, height: 38, maxWidth: "min(180px, calc(100vw - 148px))" }
     : brandLogo;
+  const bannerLogoSrc = isCompactViewport ? MOBILE_TITLE_LOGO_SRC : TITLE_LOGO_SRC;
   const bannerMenuButtonStyle = isCompactViewport
     ? { ...menuToggleButton, width: 44, height: 44 }
     : menuToggleButton;
@@ -2306,7 +2308,7 @@ export default function PlatformAdminApp() {
         }}
         aria-label="Return to Start Here"
       >
-        <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
+        <img src={bannerLogoSrc} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
       </button>
       <button
         type="button"
