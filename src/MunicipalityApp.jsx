@@ -431,6 +431,127 @@ function EventFeed({ events, emptyText, showStatus = false, onStatusChange = nul
   );
 }
 
+function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit }) {
+  return (
+    <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
+      <h4>Create Alert</h4>
+      <div className="municipality-form-grid">
+        <div className="municipality-field">
+          <label htmlFor="alert-topic">Topic</label>
+          <select id="alert-topic" value={alertForm.topic_key} onChange={(event) => setAlertForm((prev) => ({ ...prev, topic_key: event.target.value }))}>
+            {Object.values(topicLookup).map((topic) => (
+              <option key={topic.topic_key} value={topic.topic_key}>
+                {topic.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-severity">Severity</label>
+          <select id="alert-severity" value={alertForm.severity} onChange={(event) => setAlertForm((prev) => ({ ...prev, severity: event.target.value }))}>
+            <option value="info">Info</option>
+            <option value="advisory">Advisory</option>
+            <option value="urgent">Urgent</option>
+            <option value="emergency">Emergency</option>
+          </select>
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-title">Title</label>
+          <input id="alert-title" value={alertForm.title} onChange={(event) => setAlertForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Water main repair on Lake Ave" />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-summary">Summary</label>
+          <textarea id="alert-summary" value={alertForm.summary} onChange={(event) => setAlertForm((prev) => ({ ...prev, summary: event.target.value }))} placeholder="Short resident-facing summary" />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-body">Details</label>
+          <textarea id="alert-body" value={alertForm.body} onChange={(event) => setAlertForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="What residents should expect and what action they should take." />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-starts">Starts</label>
+          <input id="alert-starts" type="datetime-local" value={alertForm.starts_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="alert-ends">Ends</label>
+          <input id="alert-ends" type="datetime-local" value={alertForm.ends_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+        </div>
+        <div className="municipality-checkbox-row">
+          <label className="municipality-checkbox">
+            <input type="checkbox" checked={alertForm.pinned} onChange={(event) => setAlertForm((prev) => ({ ...prev, pinned: event.target.checked }))} />
+            Pin at top
+          </label>
+          <label className="municipality-checkbox">
+            <span>Status</span>
+            <select value={alertForm.status} onChange={(event) => setAlertForm((prev) => ({ ...prev, status: event.target.value }))}>
+              <option value="published">Publish now</option>
+              <option value="draft">Save draft</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div className="municipality-actions">
+        <button type="submit" className="municipality-button municipality-button--primary">Save Alert</button>
+      </div>
+    </form>
+  );
+}
+
+function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit }) {
+  return (
+    <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
+      <h4>Create Event</h4>
+      <div className="municipality-form-grid">
+        <div className="municipality-field">
+          <label htmlFor="event-topic">Topic</label>
+          <select id="event-topic" value={eventForm.topic_key} onChange={(event) => setEventForm((prev) => ({ ...prev, topic_key: event.target.value }))}>
+            {Object.values(topicLookup).map((topic) => (
+              <option key={topic.topic_key} value={topic.topic_key}>
+                {topic.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="event-title">Title</label>
+          <input id="event-title" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Memorial Day parade route change" />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="event-summary">Summary</label>
+          <textarea id="event-summary" value={eventForm.summary} onChange={(event) => setEventForm((prev) => ({ ...prev, summary: event.target.value }))} placeholder="Short event summary" />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="event-body">Details</label>
+          <textarea id="event-body" value={eventForm.body} onChange={(event) => setEventForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="Parking guidance, route info, and resident expectations." />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="event-starts">Starts</label>
+          <input id="event-starts" type="datetime-local" value={eventForm.starts_at} onChange={(event) => setEventForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
+        </div>
+        <div className="municipality-field">
+          <label htmlFor="event-ends">Ends</label>
+          <input id="event-ends" type="datetime-local" value={eventForm.ends_at} onChange={(event) => setEventForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+        </div>
+        <div className="municipality-checkbox-row">
+          <label className="municipality-checkbox">
+            <input type="checkbox" checked={eventForm.all_day} onChange={(event) => setEventForm((prev) => ({ ...prev, all_day: event.target.checked }))} />
+            All day event
+          </label>
+          <label className="municipality-checkbox">
+            <span>Status</span>
+            <select value={eventForm.status} onChange={(event) => setEventForm((prev) => ({ ...prev, status: event.target.value }))}>
+              <option value="published">Publish now</option>
+              <option value="draft">Save draft</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div className="municipality-actions">
+        <button type="submit" className="municipality-button municipality-button--primary">Save Event</button>
+      </div>
+    </form>
+  );
+}
+
 export default function MunicipalityApp() {
   const tenant = useContext(TenantContext);
   const { session, profile, authReady, loadingProfile } = useResidentAuth();
@@ -455,6 +576,8 @@ export default function MunicipalityApp() {
   const [authForm, setAuthForm] = useState({ full_name: "", email: "", password: "" });
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [showAlertComposer, setShowAlertComposer] = useState(false);
+  const [showEventComposer, setShowEventComposer] = useState(false);
 
   useEffect(() => {
     function onPopState() {
@@ -801,6 +924,7 @@ export default function MunicipalityApp() {
     }
     setAlertForm(EMPTY_ALERT_FORM);
     setAdminStatus("Alert saved.");
+    setShowAlertComposer(true);
     setRoutePath((prev) => prev);
     const { data } = await supabase
       .from("municipality_alerts")
@@ -847,6 +971,7 @@ export default function MunicipalityApp() {
     }
     setEventForm({ ...EMPTY_EVENT_FORM, starts_at: toDateInputValue(new Date()) });
     setAdminStatus("Event saved.");
+    setShowEventComposer(true);
     const { data } = await supabase
       .from("municipality_events")
       .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
@@ -1072,122 +1197,30 @@ export default function MunicipalityApp() {
               <section className="municipality-card municipality-section" style={{ marginTop: 22 }}>
                 <h3>Municipality Publishing Desk</h3>
                 <p className="municipality-section-subtitle">
-                  Publish resident-facing alerts and events from the tenant homepage. Delivery is live in-app now, with email
+                  Use the alerts and events workspaces to create resident-facing notices. Delivery is live in-app now, with email
                   and push delivery fields already modeled for the next rollout.
                 </p>
-                <div className="municipality-admin-split" style={{ marginTop: 18 }}>
-                  <form className="municipality-topic-row municipality-topic-card" onSubmit={createAlert}>
-                    <h4>Create Alert</h4>
-                    <div className="municipality-form-grid">
-                      <div className="municipality-field">
-                        <label htmlFor="alert-topic">Topic</label>
-                        <select id="alert-topic" value={alertForm.topic_key} onChange={(event) => setAlertForm((prev) => ({ ...prev, topic_key: event.target.value }))}>
-                          {Object.values(topicLookup).map((topic) => (
-                            <option key={topic.topic_key} value={topic.topic_key}>
-                              {topic.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-severity">Severity</label>
-                        <select id="alert-severity" value={alertForm.severity} onChange={(event) => setAlertForm((prev) => ({ ...prev, severity: event.target.value }))}>
-                          <option value="info">Info</option>
-                          <option value="advisory">Advisory</option>
-                          <option value="urgent">Urgent</option>
-                          <option value="emergency">Emergency</option>
-                        </select>
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-title">Title</label>
-                        <input id="alert-title" value={alertForm.title} onChange={(event) => setAlertForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Water main repair on Lake Ave" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-summary">Summary</label>
-                        <textarea id="alert-summary" value={alertForm.summary} onChange={(event) => setAlertForm((prev) => ({ ...prev, summary: event.target.value }))} placeholder="Short resident-facing summary" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-body">Details</label>
-                        <textarea id="alert-body" value={alertForm.body} onChange={(event) => setAlertForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="What residents should expect and what action they should take." />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-starts">Starts</label>
-                        <input id="alert-starts" type="datetime-local" value={alertForm.starts_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="alert-ends">Ends</label>
-                        <input id="alert-ends" type="datetime-local" value={alertForm.ends_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
-                      </div>
-                      <div className="municipality-checkbox-row">
-                        <label className="municipality-checkbox">
-                          <input type="checkbox" checked={alertForm.pinned} onChange={(event) => setAlertForm((prev) => ({ ...prev, pinned: event.target.checked }))} />
-                          Pin at top
-                        </label>
-                        <label className="municipality-checkbox">
-                          <span>Status</span>
-                          <select value={alertForm.status} onChange={(event) => setAlertForm((prev) => ({ ...prev, status: event.target.value }))}>
-                            <option value="published">Publish now</option>
-                            <option value="draft">Save draft</option>
-                          </select>
-                        </label>
-                      </div>
-                    </div>
-                    <div className="municipality-actions">
-                      <button type="submit" className="municipality-button municipality-button--primary">Save Alert</button>
-                    </div>
-                  </form>
-
-                  <form className="municipality-topic-row municipality-topic-card" onSubmit={createEvent}>
-                    <h4>Create Event</h4>
-                    <div className="municipality-form-grid">
-                      <div className="municipality-field">
-                        <label htmlFor="event-topic">Topic</label>
-                        <select id="event-topic" value={eventForm.topic_key} onChange={(event) => setEventForm((prev) => ({ ...prev, topic_key: event.target.value }))}>
-                          {Object.values(topicLookup).map((topic) => (
-                            <option key={topic.topic_key} value={topic.topic_key}>
-                              {topic.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="event-title">Title</label>
-                        <input id="event-title" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Memorial Day parade route change" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="event-summary">Summary</label>
-                        <textarea id="event-summary" value={eventForm.summary} onChange={(event) => setEventForm((prev) => ({ ...prev, summary: event.target.value }))} placeholder="Short event summary" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="event-body">Details</label>
-                        <textarea id="event-body" value={eventForm.body} onChange={(event) => setEventForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="Parking guidance, route info, and resident expectations." />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="event-starts">Starts</label>
-                        <input id="event-starts" type="datetime-local" value={eventForm.starts_at} onChange={(event) => setEventForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="event-ends">Ends</label>
-                        <input id="event-ends" type="datetime-local" value={eventForm.ends_at} onChange={(event) => setEventForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
-                      </div>
-                      <div className="municipality-checkbox-row">
-                        <label className="municipality-checkbox">
-                          <input type="checkbox" checked={eventForm.all_day} onChange={(event) => setEventForm((prev) => ({ ...prev, all_day: event.target.checked }))} />
-                          All day event
-                        </label>
-                        <label className="municipality-checkbox">
-                          <span>Status</span>
-                          <select value={eventForm.status} onChange={(event) => setEventForm((prev) => ({ ...prev, status: event.target.value }))}>
-                            <option value="published">Publish now</option>
-                            <option value="draft">Save draft</option>
-                          </select>
-                        </label>
-                      </div>
-                    </div>
-                    <div className="municipality-actions">
-                      <button type="submit" className="municipality-button municipality-button--primary">Save Event</button>
-                    </div>
-                  </form>
+                <div className="municipality-actions municipality-actions--toolbar" style={{ marginTop: 18 }}>
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--primary"
+                    onClick={() => {
+                      setShowAlertComposer(true);
+                      navigate("/alerts");
+                    }}
+                  >
+                    Create Alert
+                  </button>
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--ghost"
+                    onClick={() => {
+                      setShowEventComposer(true);
+                      navigate("/events");
+                    }}
+                  >
+                    Create Event
+                  </button>
                 </div>
                 {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`} style={{ marginTop: 14 }}>{adminStatus}</p> : null}
               </section>
@@ -1197,6 +1230,28 @@ export default function MunicipalityApp() {
 
         {routePath === "/alerts" ? (
           <HomeCard title="Municipality Alerts" subtitle="Published alerts stay visible here for residents, while drafts remain visible only to staff with communications access.">
+            {manageAccess ? (
+              <div className="municipality-admin-panel">
+                <div className="municipality-actions municipality-actions--toolbar">
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--primary"
+                    onClick={() => setShowAlertComposer((prev) => !prev)}
+                  >
+                    {showAlertComposer ? "Hide Alert Composer" : "Create Alert"}
+                  </button>
+                </div>
+                {showAlertComposer ? (
+                  <AlertComposer
+                    topicLookup={topicLookup}
+                    alertForm={alertForm}
+                    setAlertForm={setAlertForm}
+                    onSubmit={createAlert}
+                  />
+                ) : null}
+                {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
+              </div>
+            ) : null}
             {dataLoading ? <div className="municipality-empty">Loading alerts…</div> : (
               <AlertFeed
                 alerts={manageAccess ? alerts : publishedAlerts}
@@ -1210,21 +1265,41 @@ export default function MunicipalityApp() {
 
         {routePath === "/events" ? (
           <HomeCard title="Municipality Events" subtitle="Calendar-friendly city events, scheduled maintenance, and public operations notices.">
-            <div className="municipality-actions" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="municipality-button municipality-button--ghost"
-                onClick={() => {
-                  if (!publishedEvents.length) return;
-                  downloadTextFile(
-                    `${tenantKey || "municipality"}-events.ics`,
-                    buildIcsFile(publishedEvents, tenantName),
-                    "text/calendar;charset=utf-8"
-                  );
-                }}
-              >
-                Download Calendar (.ics)
-              </button>
+            <div className="municipality-admin-panel">
+              <div className="municipality-actions municipality-actions--toolbar" style={{ marginTop: 16 }}>
+                {manageAccess ? (
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--primary"
+                    onClick={() => setShowEventComposer((prev) => !prev)}
+                  >
+                    {showEventComposer ? "Hide Event Composer" : "Create Event"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="municipality-button municipality-button--ghost"
+                  onClick={() => {
+                    if (!publishedEvents.length) return;
+                    downloadTextFile(
+                      `${tenantKey || "municipality"}-events.ics`,
+                      buildIcsFile(publishedEvents, tenantName),
+                      "text/calendar;charset=utf-8"
+                    );
+                  }}
+                >
+                  Download Calendar (.ics)
+                </button>
+              </div>
+              {manageAccess && showEventComposer ? (
+                <EventComposer
+                  topicLookup={topicLookup}
+                  eventForm={eventForm}
+                  setEventForm={setEventForm}
+                  onSubmit={createEvent}
+                />
+              ) : null}
+              {manageAccess && adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
             </div>
             {dataLoading ? <div className="municipality-empty">Loading events…</div> : (
               <EventFeed

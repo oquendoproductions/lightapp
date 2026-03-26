@@ -384,6 +384,15 @@
   gap: 10px;
 }
 
+.municipality-actions--toolbar {
+  align-items: center;
+}
+
+.municipality-admin-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .municipality-note,
 .municipality-inline-status {
   margin: 0;
