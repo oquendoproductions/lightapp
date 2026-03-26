@@ -275,6 +275,16 @@ function downloadTextFile(filename, text, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackSubdomain) {
+  const tenantKey = trimOrEmpty(row?.tenant_key).toLowerCase() || trimOrEmpty(fallbackTenantKey).toLowerCase();
+  if (!tenantKey) return null;
+  return {
+    tenant_key: tenantKey,
+    name: trimOrEmpty(row?.name) || trimOrEmpty(fallbackTenantName) || tenantKey,
+    primary_subdomain: trimOrEmpty(row?.primary_subdomain) || trimOrEmpty(fallbackSubdomain) || `${tenantKey}.cityreport.io`,
+  };
+}
+
 function buildTenantSwitchHref(env, targetTenant, currentRoutePath) {
   const tenantKey = trimOrEmpty(targetTenant?.tenant_key).toLowerCase();
   const subdomain = trimOrEmpty(targetTenant?.primary_subdomain).toLowerCase();
@@ -735,15 +745,41 @@ export default function MunicipalityApp() {
       if (!key) continue;
       lookup.set(key, tenantRow);
     }
-    if (tenantKey && !lookup.has(tenantKey)) {
-      lookup.set(tenantKey, {
-        tenant_key: tenantKey,
-        name: tenantName,
-        primary_subdomain: trimOrEmpty(tenant?.tenantConfig?.primary_subdomain) || `${tenantKey}.cityreport.io`,
-      });
+    const currentTenantOption = buildTenantOption(
+      null,
+      tenantKey,
+      tenantName,
+      trimOrEmpty(tenant?.tenantConfig?.primary_subdomain)
+    );
+    if (currentTenantOption && !lookup.has(currentTenantOption.tenant_key)) {
+      lookup.set(currentTenantOption.tenant_key, currentTenantOption);
     }
     return [...lookup.values()].filter((row) => interestedTenantKeys.includes(trimOrEmpty(row?.tenant_key).toLowerCase()));
   }, [availableHubTenants, interestedTenantKeys, tenant?.tenantConfig?.primary_subdomain, tenantKey, tenantName]);
+
+  const selectableTenants = useMemo(() => {
+    const lookup = new Map();
+    const currentTenantOption = buildTenantOption(
+      null,
+      tenantKey,
+      tenantName,
+      trimOrEmpty(tenant?.tenantConfig?.primary_subdomain)
+    );
+    if (currentTenantOption) {
+      lookup.set(currentTenantOption.tenant_key, currentTenantOption);
+    }
+    for (const tenantRow of availableHubTenants || []) {
+      const normalized = buildTenantOption(
+        tenantRow,
+        tenantKey,
+        tenantName,
+        trimOrEmpty(tenant?.tenantConfig?.primary_subdomain)
+      );
+      if (!normalized) continue;
+      lookup.set(normalized.tenant_key, normalized);
+    }
+    return [...lookup.values()].sort((a, b) => (trimOrEmpty(a?.name) || a.tenant_key).localeCompare(trimOrEmpty(b?.name) || b.tenant_key));
+  }, [availableHubTenants, tenant?.tenantConfig?.primary_subdomain, tenantKey, tenantName]);
 
   const accountDisplayName = trimOrEmpty(profile?.full_name)
     || trimOrEmpty(session?.user?.user_metadata?.full_name)
@@ -787,20 +823,27 @@ export default function MunicipalityApp() {
 
       if (cancelled) return;
 
+      const fallbackCurrentTenant = buildTenantOption(
+        null,
+        tenantKey,
+        tenantName,
+        trimOrEmpty(tenant?.tenantConfig?.primary_subdomain)
+      );
+
       if (tenantListRes.error) {
         if (isMissingFunctionError(tenantListRes.error)) {
-          setAvailableHubTenants([
-            {
-              tenant_key: tenantKey,
-              name: tenantName,
-              primary_subdomain: trimOrEmpty(tenant?.tenantConfig?.primary_subdomain) || `${tenantKey}.cityreport.io`,
-            },
-          ]);
+          setAvailableHubTenants(fallbackCurrentTenant ? [fallbackCurrentTenant] : []);
         } else {
-          setAvailableHubTenants([]);
+          setAvailableHubTenants(fallbackCurrentTenant ? [fallbackCurrentTenant] : []);
+          setAccountSectionStatus((prev) => ({
+            ...prev,
+            cities: tenantListRes.error.message || "Could not load the available municipality list.",
+          }));
         }
       } else {
-        setAvailableHubTenants(Array.isArray(tenantListRes.data) ? tenantListRes.data : []);
+        const nextTenantList = Array.isArray(tenantListRes.data) ? tenantListRes.data : [];
+        setAvailableHubTenants(nextTenantList.length ? nextTenantList : (fallbackCurrentTenant ? [fallbackCurrentTenant] : []));
+        setAccountSectionStatus((prev) => ({ ...prev, cities: "" }));
       }
 
       if (interestsRes.error) {
@@ -1879,28 +1922,38 @@ export default function MunicipalityApp() {
                           <label htmlFor="city-search">Search municipalities or tenants</label>
                           <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by city name or tenant key" />
                         </div>
-                        <div className="municipality-topic-row" style={{ marginTop: 12 }}>
-                          {availableHubTenants
-                            .filter((city) => {
-                              const query = trimOrEmpty(citySearchQuery).toLowerCase();
-                              if (!query) return true;
-                              return `${trimOrEmpty(city?.name)} ${trimOrEmpty(city?.tenant_key)}`.toLowerCase().includes(query);
-                            })
-                            .map((city) => {
-                              const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                              const checked = interestedTenantKeys.includes(cityKey);
-                              return (
-                                <label key={cityKey} className="municipality-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
-                                  />
-                                  {trimOrEmpty(city?.name) || cityKey}
-                                </label>
-                              );
-                            })}
-                        </div>
+                        {selectableTenants.filter((city) => {
+                          const query = trimOrEmpty(citySearchQuery).toLowerCase();
+                          if (!query) return true;
+                          return `${trimOrEmpty(city?.name)} ${trimOrEmpty(city?.tenant_key)}`.toLowerCase().includes(query);
+                        }).length ? (
+                          <div className="municipality-topic-row" style={{ marginTop: 12 }}>
+                            {selectableTenants
+                              .filter((city) => {
+                                const query = trimOrEmpty(citySearchQuery).toLowerCase();
+                                if (!query) return true;
+                                return `${trimOrEmpty(city?.name)} ${trimOrEmpty(city?.tenant_key)}`.toLowerCase().includes(query);
+                              })
+                              .map((city) => {
+                                const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                                const checked = interestedTenantKeys.includes(cityKey);
+                                return (
+                                  <label key={cityKey} className="municipality-checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
+                                    />
+                                    {trimOrEmpty(city?.name) || cityKey}
+                                  </label>
+                                );
+                              })}
+                          </div>
+                        ) : (
+                          <p className="municipality-note" style={{ marginTop: 12 }}>
+                            No municipalities matched that search yet.
+                          </p>
+                        )}
                       </>
                     ) : (
                       <div className="municipality-detail-grid">
@@ -1972,8 +2025,19 @@ export default function MunicipalityApp() {
                                 </label>
                               </div>
                             ) : (
-                              <div className="municipality-note municipality-topic-channel-summary">
-                                {[current.in_app_enabled ? "In-app" : null, current.email_enabled ? "Email" : null, current.web_push_enabled ? "Web push" : null].filter(Boolean).join(" • ") || "Off"}
+                              <div className="municipality-checkbox-row municipality-checkbox-row--readonly" style={{ marginTop: 12 }}>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.in_app_enabled)} disabled readOnly />
+                                  In-app
+                                </label>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.email_enabled)} disabled readOnly />
+                                  Email
+                                </label>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled readOnly />
+                                  Web push (next)
+                                </label>
                               </div>
                             )}
                           </article>
