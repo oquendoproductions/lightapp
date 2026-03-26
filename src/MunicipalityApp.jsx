@@ -1581,30 +1581,24 @@ export default function MunicipalityApp() {
                   Residents can come here first for live alerts, service changes, parade notices, and planned maintenance,
                   then jump straight into issue reporting when they need the map workspace.
                 </p>
+                <div className="municipality-metrics">
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/alerts")}>
+                    <strong>{activeAlertCount(publishedAlerts)}</strong>
+                    <span>Active Alerts</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/events")}>
+                    <strong>{upcomingEventCount(publishedEvents)}</strong>
+                    <span>Upcoming Events</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate(ACCOUNT_PATH)}>
+                    <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
+                    <span>{session?.user?.id ? "Enabled Topics" : "Topics Ready"}</span>
+                  </button>
+                </div>
                 <div className="municipality-hero-actions">
                   <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/report")}>
                     Report An Issue
                   </button>
-                  <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/events")}>
-                    Browse Events
-                  </button>
-                  <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate(ACCOUNT_PATH)}>
-                    Account Settings
-                  </button>
-                </div>
-                <div className="municipality-metrics">
-                  <div className="municipality-metric">
-                    <strong>{activeAlertCount(publishedAlerts)}</strong>
-                    <span>Active Alerts</span>
-                  </div>
-                  <div className="municipality-metric">
-                    <strong>{upcomingEventCount(publishedEvents)}</strong>
-                    <span>Upcoming Events</span>
-                  </div>
-                  <div className="municipality-metric">
-                    <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
-                    <span>{session?.user?.id ? "Enabled Topics" : "Topics Ready"}</span>
-                  </div>
                 </div>
               </div>
             </section>

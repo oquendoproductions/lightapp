@@ -243,6 +243,19 @@
   border: 1px solid rgba(23, 49, 79, 0.08);
 }
 
+.municipality-metric--button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.municipality-metric--button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(23, 49, 79, 0.18);
+  box-shadow: 0 14px 28px rgba(17, 49, 79, 0.1);
+}
+
 .municipality-metric strong {
   display: block;
   font-size: 28px;
