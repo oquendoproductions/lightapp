@@ -1655,6 +1655,22 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [entryStep, persistTenantRecord, refreshControlPlaneData]);
 
+  const cancelTenantEditing = useCallback(() => {
+    if (!selectedTenant) return;
+    setTenantForm({
+      tenant_key: String(selectedTenant.tenant_key || ""),
+      name: String(selectedTenant.name || ""),
+      primary_subdomain: String(selectedTenant.primary_subdomain || ""),
+      boundary_config_key: String(selectedTenant.boundary_config_key || ""),
+      notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
+      notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
+      resident_portal_enabled: Boolean(selectedTenant.resident_portal_enabled),
+      is_pilot: Boolean(selectedTenant.is_pilot),
+      active: Boolean(selectedTenant.active),
+    });
+    setIsEditingTenant(false);
+  }, [selectedTenant]);
+
   const saveTenantProfile = useCallback(async (event) => {
     event.preventDefault();
     const result = await persistTenantProfileRecord();
@@ -2546,6 +2562,23 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <>
+              <div style={{ ...subPanel, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 13.5, color: palette.textMuted }}>
+                  Switch workspaces, start a new tenant, or save tenant setup changes from here.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
+                  <button
+                    type="button"
+                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                    onClick={openAddTenantStep}
+                    disabled={!canEditTenantCore}
+                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
+                  >
+                    Add Tenant
+                  </button>
+                </div>
+              </div>
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                 <div style={{ display: "grid", gap: 2 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
@@ -2590,28 +2623,39 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : null}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
-                  <button
-                    type="button"
-                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    onClick={openAddTenantStep}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
-                  >
-                    Add Tenant
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    onClick={() => {
-                      setActiveTab("tenants");
-                      setIsEditingTenant(true);
-                    }}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Edit tenant setup" : "Only Platform Owner can edit tenant setup"}
-                  >
-                    Edit Tenant Setup
-                  </button>
+                  {isEditingTenant ? (
+                    <>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        onClick={() => void saveTenant({ preventDefault() {} })}
+                        disabled={!canEditTenantCore}
+                        title={canEditTenantCore ? "Save tenant setup" : "Only Platform Owner can save tenant setup"}
+                      >
+                        Save Tenant Setup
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={cancelTenantEditing}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                      onClick={() => {
+                        setActiveTab("tenants");
+                        setIsEditingTenant(true);
+                      }}
+                      disabled={!canEditTenantCore}
+                      title={canEditTenantCore ? "Edit tenant setup" : "Only Platform Owner can edit tenant setup"}
+                    >
+                      Edit Tenant Setup
+                    </button>
+                  )}
                 </div>
               </div>
               <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
@@ -2868,21 +2912,7 @@ export default function PlatformAdminApp() {
                     <button
                       type="button"
                       style={buttonAlt}
-                      onClick={() => {
-                        if (!selectedTenant) return;
-                        setTenantForm({
-                          tenant_key: String(selectedTenant.tenant_key || ""),
-                          name: String(selectedTenant.name || ""),
-                          primary_subdomain: String(selectedTenant.primary_subdomain || ""),
-                          boundary_config_key: String(selectedTenant.boundary_config_key || ""),
-                          notification_email_potholes: String(selectedTenant.notification_email_potholes || ""),
-                          notification_email_water_drain: String(selectedTenant.notification_email_water_drain || ""),
-                          resident_portal_enabled: Boolean(selectedTenant.resident_portal_enabled),
-                          is_pilot: Boolean(selectedTenant.is_pilot),
-                          active: Boolean(selectedTenant.active),
-                        });
-                        setIsEditingTenant(false);
-                      }}
+                      onClick={cancelTenantEditing}
                     >
                       Cancel
                     </button>
