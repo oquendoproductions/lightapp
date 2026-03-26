@@ -77,6 +77,17 @@ function trimOrEmpty(value) {
   return String(value || "").trim();
 }
 
+function validateStrongPassword(value) {
+  const password = String(value || "");
+  return (
+    password.length >= 8
+    && /[A-Z]/.test(password)
+    && /[a-z]/.test(password)
+    && /\d/.test(password)
+    && /[^A-Za-z0-9]/.test(password)
+  );
+}
+
 function coerceDateTimeInput(value) {
   const raw = trimOrEmpty(value);
   if (!raw) return null;
@@ -337,7 +348,7 @@ function useResidentAuth() {
     };
   }, [session?.user?.id, session?.user?.email]);
 
-  return { session, profile, authReady, loadingProfile };
+  return { session, setSession, profile, setProfile, authReady, loadingProfile };
 }
 
 function HomeCard({ title, children, subtitle, onTitleClick = null }) {
@@ -573,7 +584,7 @@ function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit }) {
 
 export default function MunicipalityApp() {
   const tenant = useContext(TenantContext);
-  const { session, profile, authReady, loadingProfile } = useResidentAuth();
+  const { session, setSession, profile, setProfile, authReady, loadingProfile } = useResidentAuth();
   const tenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
   const tenantName = trimOrEmpty(tenant?.tenantConfig?.name) || "Municipality";
   const residentPortalEnabled = Boolean(tenant?.tenantConfig?.resident_portal_enabled);
@@ -582,6 +593,7 @@ export default function MunicipalityApp() {
   const [alerts, setAlerts] = useState([]);
   const [events, setEvents] = useState([]);
   const [preferencesByTopic, setPreferencesByTopic] = useState({});
+  const [savedPreferencesByTopic, setSavedPreferencesByTopic] = useState({});
   const [featureStatus, setFeatureStatus] = useState({ ready: true, message: "" });
   const [dataLoading, setDataLoading] = useState(true);
   const [savingPrefs, setSavingPrefs] = useState(false);
@@ -602,6 +614,32 @@ export default function MunicipalityApp() {
   const [availableHubTenants, setAvailableHubTenants] = useState([]);
   const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
+  const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
+  const [citySearchQuery, setCitySearchQuery] = useState("");
+  const [accountSectionEdit, setAccountSectionEdit] = useState({
+    profile: false,
+    cities: false,
+    notifications: false,
+    security: false,
+  });
+  const [accountSectionStatus, setAccountSectionStatus] = useState({
+    profile: "",
+    cities: "",
+    notifications: "",
+    security: "",
+  });
+  const [securityDraft, setSecurityDraft] = useState({
+    next_email: "",
+    current_password: "",
+    new_password: "",
+    confirm_password: "",
+  });
+  const [savingSection, setSavingSection] = useState({
+    profile: false,
+    cities: false,
+    notifications: false,
+    security: false,
+  });
 
   useEffect(() => {
     function onPopState() {
@@ -632,6 +670,21 @@ export default function MunicipalityApp() {
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
   }, [accountMenuOpen]);
+
+  useEffect(() => {
+    setAccountProfileDraft({
+      full_name: trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name),
+      phone: trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone),
+      email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+    });
+  }, [profile?.email, profile?.full_name, profile?.phone, session?.user?.email, session?.user?.user_metadata?.full_name, session?.user?.user_metadata?.phone]);
+
+  useEffect(() => {
+    setSecurityDraft((prev) => ({
+      ...prev,
+      next_email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+    }));
+  }, [profile?.email, session?.user?.email]);
 
   if (!residentPortalEnabled) {
     return (
@@ -878,6 +931,7 @@ export default function MunicipalityApp() {
     async function loadPreferences() {
       if (!session?.user?.id) {
         setPreferencesByTopic({});
+        setSavedPreferencesByTopic({});
         return;
       }
       const { data, error } = await supabase
@@ -907,6 +961,7 @@ export default function MunicipalityApp() {
         };
       }
       setPreferencesByTopic(next);
+      setSavedPreferencesByTopic(next);
     }
     void loadPreferences();
     return () => {
@@ -944,10 +999,14 @@ export default function MunicipalityApp() {
     });
   }
 
-  async function saveAccountSettings() {
+  function setSectionEditing(sectionKey, isEditing) {
+    setAccountSectionEdit((prev) => ({ ...prev, [sectionKey]: isEditing }));
+  }
+
+  async function saveNotificationPreferences() {
     if (!session?.user?.id) return;
-    setSavingPrefs(true);
-    setPrefsStatus("");
+    setSavingSection((prev) => ({ ...prev, notifications: true }));
+    setAccountSectionStatus((prev) => ({ ...prev, notifications: "" }));
     const rows = Object.keys(topicLookup).map((topicKey) => {
       const fallbackEnabled = Boolean(topicLookup?.[topicKey]?.default_enabled);
       const current = preferencesByTopic?.[topicKey] || {};
@@ -965,11 +1024,21 @@ export default function MunicipalityApp() {
       .upsert(rows, { onConflict: "tenant_key,user_id,topic_key" });
 
     if (preferencesError) {
-      setSavingPrefs(false);
-      setPrefsStatus(preferencesError.message || "Could not save your notification preferences.");
+      setSavingSection((prev) => ({ ...prev, notifications: false }));
+      setAccountSectionStatus((prev) => ({ ...prev, notifications: preferencesError.message || "Could not save your notification preferences." }));
       return;
     }
 
+    setSavedPreferencesByTopic(preferencesByTopic);
+    setSavingSection((prev) => ({ ...prev, notifications: false }));
+    setAccountSectionStatus((prev) => ({ ...prev, notifications: "Notification preferences saved." }));
+    setSectionEditing("notifications", false);
+  }
+
+  async function saveInterestedCities() {
+    if (!session?.user?.id) return;
+    setSavingSection((prev) => ({ ...prev, cities: true }));
+    setAccountSectionStatus((prev) => ({ ...prev, cities: "" }));
     const nextInterestKeys = [...new Set(interestedTenantKeys.map((value) => trimOrEmpty(value).toLowerCase()).filter(Boolean))];
     const savedKeys = new Set(savedInterestedTenantKeys);
     const nextKeys = new Set(nextInterestKeys);
@@ -983,8 +1052,8 @@ export default function MunicipalityApp() {
         .eq("user_id", session.user.id)
         .in("tenant_key", keysToDelete);
       if (deleteError) {
-        setSavingPrefs(false);
-        setPrefsStatus(deleteError.message || "Could not update your city selections.");
+        setSavingSection((prev) => ({ ...prev, cities: false }));
+        setAccountSectionStatus((prev) => ({ ...prev, cities: deleteError.message || "Could not update your city selections." }));
         return;
       }
     }
@@ -997,15 +1066,139 @@ export default function MunicipalityApp() {
           tenant_key: selectedTenantKey,
         })));
       if (insertError) {
-        setSavingPrefs(false);
-        setPrefsStatus(insertError.message || "Could not update your city selections.");
+        setSavingSection((prev) => ({ ...prev, cities: false }));
+        setAccountSectionStatus((prev) => ({ ...prev, cities: insertError.message || "Could not update your city selections." }));
         return;
       }
     }
 
     setSavedInterestedTenantKeys(nextInterestKeys);
-    setSavingPrefs(false);
-    setPrefsStatus("Account settings saved.");
+    setSavingSection((prev) => ({ ...prev, cities: false }));
+    setAccountSectionStatus((prev) => ({ ...prev, cities: "City selections saved." }));
+    setSectionEditing("cities", false);
+  }
+
+  async function saveAccountProfile() {
+    if (!session?.user?.id) return;
+    const full_name = trimOrEmpty(accountProfileDraft.full_name);
+    const phone = trimOrEmpty(accountProfileDraft.phone);
+    const email = trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email);
+    if (!full_name) {
+      setAccountSectionStatus((prev) => ({ ...prev, profile: "Please enter your full name." }));
+      return;
+    }
+
+    setSavingSection((prev) => ({ ...prev, profile: true }));
+    setAccountSectionStatus((prev) => ({ ...prev, profile: "" }));
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .upsert(
+        [{
+          user_id: session.user.id,
+          full_name,
+          phone: phone || null,
+          email: email || null,
+        }],
+        { onConflict: "user_id" }
+      );
+
+    if (profileError) {
+      setSavingSection((prev) => ({ ...prev, profile: false }));
+      setAccountSectionStatus((prev) => ({ ...prev, profile: profileError.message || "Could not update your account information." }));
+      return;
+    }
+
+    const { error: metadataError } = await supabase.auth.updateUser({
+      data: { full_name, phone: phone || null },
+    });
+
+    if (metadataError) {
+      console.warn("[municipality account] auth metadata update warning:", metadataError);
+    }
+
+    setProfile((prev) => ({
+      ...(prev || {}),
+      full_name,
+      phone: phone || null,
+      email: email || prev?.email || null,
+    }));
+    setSavingSection((prev) => ({ ...prev, profile: false }));
+    setAccountSectionStatus((prev) => ({ ...prev, profile: "Account information saved." }));
+    setSectionEditing("profile", false);
+  }
+
+  async function saveSecuritySettings() {
+    if (!session?.user?.id) return;
+    const nextEmail = trimOrEmpty(securityDraft.next_email).toLowerCase();
+    const currentEmail = trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email);
+    const currentPassword = String(securityDraft.current_password || "");
+    const newPassword = String(securityDraft.new_password || "");
+    const confirmPassword = String(securityDraft.confirm_password || "");
+
+    if (!currentPassword.trim()) {
+      setAccountSectionStatus((prev) => ({ ...prev, security: "Enter your current password to change email or password." }));
+      return;
+    }
+
+    if ((newPassword || confirmPassword) && !validateStrongPassword(newPassword)) {
+      setAccountSectionStatus((prev) => ({ ...prev, security: "Use 8+ characters with uppercase, lowercase, number, and special character." }));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAccountSectionStatus((prev) => ({ ...prev, security: "New password and confirmation do not match." }));
+      return;
+    }
+
+    setSavingSection((prev) => ({ ...prev, security: true }));
+    setAccountSectionStatus((prev) => ({ ...prev, security: "" }));
+
+    const { error: reauthError } = await supabase.auth.signInWithPassword({
+      email: currentEmail,
+      password: currentPassword,
+    });
+    if (reauthError) {
+      setSavingSection((prev) => ({ ...prev, security: false }));
+      setAccountSectionStatus((prev) => ({ ...prev, security: reauthError.message || "Please verify your current password." }));
+      return;
+    }
+
+    let nextStatus = [];
+    if (nextEmail && nextEmail !== currentEmail) {
+      const { error: emailError } = await supabase.auth.updateUser({ email: nextEmail });
+      if (emailError) {
+        setSavingSection((prev) => ({ ...prev, security: false }));
+        setAccountSectionStatus((prev) => ({ ...prev, security: emailError.message || "Could not start the email change process." }));
+        return;
+      }
+      nextStatus.push("Check your inbox to verify your new email address.");
+    }
+
+    if (newPassword) {
+      const { error: passwordError } = await supabase.auth.updateUser({ password: newPassword });
+      if (passwordError) {
+        setSavingSection((prev) => ({ ...prev, security: false }));
+        setAccountSectionStatus((prev) => ({ ...prev, security: passwordError.message || "Could not update your password." }));
+        return;
+      }
+      nextStatus.push("Password updated.");
+    }
+
+    try {
+      const { data } = await supabase.auth.refreshSession();
+      if (data?.session) setSession(data.session);
+    } catch {
+      // no-op
+    }
+
+    setSecurityDraft({
+      next_email: nextEmail || currentEmail,
+      current_password: "",
+      new_password: "",
+      confirm_password: "",
+    });
+    setSavingSection((prev) => ({ ...prev, security: false }));
+    setAccountSectionStatus((prev) => ({ ...prev, security: nextStatus.length ? nextStatus.join(" ") : "Security settings saved." }));
+    setSectionEditing("security", false);
   }
 
   async function handleAuthSubmit(event) {
@@ -1555,67 +1748,278 @@ export default function MunicipalityApp() {
                 </form>
               ) : (
                 <div className="municipality-topic-row">
-                  <div className="municipality-account-card">
-                    <h4>{trimOrEmpty(profile?.full_name) || trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Resident"}</h4>
-                    <p className="municipality-note">{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</p>
+                  <div className="municipality-account-card municipality-account-card--section">
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Account Information</h4>
+                        <p className="municipality-note">Review your resident profile and update your name or phone number when needed.</p>
+                      </div>
+                      {accountSectionEdit.profile ? (
+                        <div className="municipality-actions">
+                          <button
+                            type="button"
+                            className="municipality-button municipality-button--ghost"
+                            onClick={() => {
+                              setAccountProfileDraft({
+                                full_name: trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name),
+                                phone: trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone),
+                                email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+                              });
+                              setSectionEditing("profile", false);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveAccountProfile()} disabled={savingSection.profile || loadingProfile || !authReady}>
+                            {savingSection.profile ? "Saving…" : "Save"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("profile", true)}>
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    {accountSectionEdit.profile ? (
+                      <div className="municipality-form-grid">
+                        <div className="municipality-field">
+                          <label htmlFor="account-full-name">Full name</label>
+                          <input id="account-full-name" value={accountProfileDraft.full_name} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, full_name: event.target.value }))} />
+                        </div>
+                        <div className="municipality-field">
+                          <label htmlFor="account-phone">Phone number</label>
+                          <input id="account-phone" value={accountProfileDraft.phone} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, phone: event.target.value }))} placeholder="(000) 000-0000" />
+                        </div>
+                        <div className="municipality-field">
+                          <label htmlFor="account-email-readonly">Email</label>
+                          <input id="account-email-readonly" value={trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email)} readOnly />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="municipality-detail-grid">
+                        <div className="municipality-detail-item">
+                          <span>Name</span>
+                          <strong>{trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name) || "Not provided"}</strong>
+                        </div>
+                        <div className="municipality-detail-item">
+                          <span>Email</span>
+                          <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
+                        </div>
+                        <div className="municipality-detail-item">
+                          <span>Phone</span>
+                          <strong>{trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone) || "Not provided"}</strong>
+                        </div>
+                      </div>
+                    )}
+                    {accountSectionStatus.profile ? <p className={`municipality-inline-status${accountSectionStatus.profile.toLowerCase().includes("could not") || accountSectionStatus.profile.toLowerCase().includes("please") ? " is-error" : ""}`}>{accountSectionStatus.profile}</p> : null}
                   </div>
-                  <div className="municipality-account-card">
-                    <h4>My Cities</h4>
-                    <p className="municipality-note">Choose which municipality hubs appear in your tenant switcher.</p>
-                    <div className="municipality-topic-row" style={{ marginTop: 12 }}>
-                      {availableHubTenants.map((city) => {
-                        const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                        const checked = interestedTenantKeys.includes(cityKey);
+
+                  <div className="municipality-account-card municipality-account-card--section">
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>My Cities</h4>
+                        <p className="municipality-note">Choose which municipality hubs appear in your tenant switcher.</p>
+                      </div>
+                      {accountSectionEdit.cities ? (
+                        <div className="municipality-actions">
+                          <button
+                            type="button"
+                            className="municipality-button municipality-button--ghost"
+                            onClick={() => {
+                              setInterestedTenantKeys(savedInterestedTenantKeys);
+                              setCitySearchQuery("");
+                              setSectionEditing("cities", false);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveInterestedCities()} disabled={savingSection.cities}>
+                            {savingSection.cities ? "Saving…" : "Save"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("cities", true)}>
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    {accountSectionEdit.cities ? (
+                      <>
+                        <div className="municipality-field">
+                          <label htmlFor="city-search">Search municipalities or tenants</label>
+                          <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by city name or tenant key" />
+                        </div>
+                        <div className="municipality-topic-row" style={{ marginTop: 12 }}>
+                          {availableHubTenants
+                            .filter((city) => {
+                              const query = trimOrEmpty(citySearchQuery).toLowerCase();
+                              if (!query) return true;
+                              return `${trimOrEmpty(city?.name)} ${trimOrEmpty(city?.tenant_key)}`.toLowerCase().includes(query);
+                            })
+                            .map((city) => {
+                              const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                              const checked = interestedTenantKeys.includes(cityKey);
+                              return (
+                                <label key={cityKey} className="municipality-checkbox">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
+                                  />
+                                  {trimOrEmpty(city?.name) || cityKey}
+                                </label>
+                              );
+                            })}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="municipality-detail-grid">
+                        {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).map((city) => (
+                          <div key={trimOrEmpty(city?.tenant_key)} className="municipality-detail-item">
+                            <span>Following</span>
+                            <strong>{trimOrEmpty(city?.name) || trimOrEmpty(city?.tenant_key)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}
+                  </div>
+
+                  <div className="municipality-account-card municipality-account-card--section">
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Notification Preferences</h4>
+                        <p className="municipality-note">Manage all of your update categories in one place. In-app and email are live now; web push is next.</p>
+                      </div>
+                      {accountSectionEdit.notifications ? (
+                        <div className="municipality-actions">
+                          <button
+                            type="button"
+                            className="municipality-button municipality-button--ghost"
+                            onClick={() => {
+                              setPreferencesByTopic(savedPreferencesByTopic);
+                              setSectionEditing("notifications", false);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveNotificationPreferences()} disabled={savingSection.notifications}>
+                            {savingSection.notifications ? "Saving…" : "Save"}
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("notifications", true)}>
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    <div className="municipality-topic-row municipality-topic-row--stacked">
+                      {Object.values(topicLookup).map((topic) => {
+                        const current = preferencesByTopic?.[topic.topic_key] || {
+                          in_app_enabled: Boolean(topic.default_enabled),
+                          email_enabled: false,
+                          web_push_enabled: false,
+                        };
                         return (
-                          <label key={cityKey} className="municipality-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
-                            />
-                            {trimOrEmpty(city?.name) || cityKey}
-                          </label>
+                          <article key={topic.topic_key} className="municipality-topic-card municipality-topic-card--row">
+                            <div className="municipality-topic-copy">
+                              <h4>{topic.label}</h4>
+                              <p className="municipality-note">{topic.description}</p>
+                            </div>
+                            {accountSectionEdit.notifications ? (
+                              <div className="municipality-checkbox-row" style={{ marginTop: 12 }}>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.in_app_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)} />
+                                  In-app
+                                </label>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.email_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)} />
+                                  Email
+                                </label>
+                                <label className="municipality-checkbox">
+                                  <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled />
+                                  Web push (next)
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="municipality-note municipality-topic-channel-summary">
+                                {[current.in_app_enabled ? "In-app" : null, current.email_enabled ? "Email" : null, current.web_push_enabled ? "Web push" : null].filter(Boolean).join(" • ") || "Off"}
+                              </div>
+                            )}
+                          </article>
                         );
                       })}
                     </div>
+                    {accountSectionStatus.notifications ? <p className={`municipality-inline-status${accountSectionStatus.notifications.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.notifications}</p> : null}
                   </div>
-                  <div className="municipality-account-card">
-                    <h4>Notification Preferences</h4>
-                    <p className="municipality-note">Choose which city updates you want first. In-app and email are live now; web push is next.</p>
-                  </div>
-                  {Object.values(topicLookup).map((topic) => {
-                    const current = preferencesByTopic?.[topic.topic_key] || {
-                      in_app_enabled: Boolean(topic.default_enabled),
-                      email_enabled: false,
-                      web_push_enabled: false,
-                    };
-                    return (
-                      <article key={topic.topic_key} className="municipality-topic-card">
-                        <h4>{topic.label}</h4>
-                        <p className="municipality-note">{topic.description}</p>
-                        <div className="municipality-checkbox-row" style={{ marginTop: 12 }}>
-                          <label className="municipality-checkbox">
-                            <input type="checkbox" checked={Boolean(current.in_app_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)} />
-                            In-app
-                          </label>
-                          <label className="municipality-checkbox">
-                            <input type="checkbox" checked={Boolean(current.email_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)} />
-                            Email
-                          </label>
-                          <label className="municipality-checkbox">
-                            <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled />
-                            Web push (next)
-                          </label>
+
+                  <div className="municipality-account-card municipality-account-card--section">
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Sign-In & Security</h4>
+                        <p className="municipality-note">Change your email with verification, or update your password from this section.</p>
+                      </div>
+                      {accountSectionEdit.security ? (
+                        <div className="municipality-actions">
+                          <button
+                            type="button"
+                            className="municipality-button municipality-button--ghost"
+                            onClick={() => {
+                              setSecurityDraft({
+                                next_email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+                                current_password: "",
+                                new_password: "",
+                                confirm_password: "",
+                              });
+                              setSectionEditing("security", false);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveSecuritySettings()} disabled={savingSection.security}>
+                            {savingSection.security ? "Saving…" : "Save"}
+                          </button>
                         </div>
-                      </article>
-                    );
-                  })}
-                  <div className="municipality-actions">
-                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveAccountSettings()} disabled={savingPrefs || loadingProfile || !authReady}>
-                      {savingPrefs ? "Saving…" : "Save Account Settings"}
-                    </button>
+                      ) : (
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("security", true)}>
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    {accountSectionEdit.security ? (
+                      <div className="municipality-form-grid">
+                        <div className="municipality-field">
+                          <label htmlFor="next-email">New email address</label>
+                          <input id="next-email" type="email" value={securityDraft.next_email} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, next_email: event.target.value }))} />
+                          <p className="municipality-note">If you change this, we will send a verification message before the new email becomes active.</p>
+                        </div>
+                        <div className="municipality-field">
+                          <label htmlFor="current-password">Current password</label>
+                          <input id="current-password" type="password" value={securityDraft.current_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, current_password: event.target.value }))} />
+                        </div>
+                        <div className="municipality-field">
+                          <label htmlFor="new-password">New password</label>
+                          <input id="new-password" type="password" value={securityDraft.new_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, new_password: event.target.value }))} placeholder="Leave blank to keep your current password" />
+                        </div>
+                        <div className="municipality-field">
+                          <label htmlFor="confirm-password">Confirm new password</label>
+                          <input id="confirm-password" type="password" value={securityDraft.confirm_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, confirm_password: event.target.value }))} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="municipality-detail-grid">
+                        <div className="municipality-detail-item">
+                          <span>Current email</span>
+                          <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
+                        </div>
+                        <div className="municipality-detail-item">
+                          <span>Password</span>
+                          <strong>Managed securely</strong>
+                        </div>
+                      </div>
+                    )}
+                    {accountSectionStatus.security ? <p className={`municipality-inline-status${accountSectionStatus.security.toLowerCase().includes("could not") || accountSectionStatus.security.toLowerCase().includes("enter your current password") || accountSectionStatus.security.toLowerCase().includes("use 8+") ? " is-error" : ""}`}>{accountSectionStatus.security}</p> : null}
                   </div>
-                  {prefsStatus ? <p className={`municipality-inline-status${prefsStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{prefsStatus}</p> : null}
                 </div>
               )}
             </HomeCard>

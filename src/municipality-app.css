@@ -453,6 +453,70 @@
   font-size: 17px;
 }
 
+.municipality-account-card--section {
+  gap: 16px;
+}
+
+.municipality-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.municipality-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+}
+
+.municipality-detail-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.municipality-detail-item span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #61788f;
+}
+
+.municipality-detail-item strong {
+  font-size: 15px;
+  line-height: 1.35;
+  color: #17314f;
+}
+
+.municipality-topic-row--stacked {
+  gap: 10px;
+}
+
+.municipality-topic-card--row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.municipality-topic-copy {
+  display: grid;
+  gap: 8px;
+  min-width: min(100%, 340px);
+}
+
+.municipality-topic-channel-summary {
+  align-self: center;
+  font-weight: 700;
+}
+
 .municipality-field {
   display: grid;
   gap: 6px;
