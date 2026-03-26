@@ -75,7 +75,7 @@ const stickyBanner = {
   zIndex: 90,
   display: "flex",
   alignItems: "center",
-  justifyContent: "space-between",
+  justifyContent: "flex-end",
   gap: "1rem",
   width: "min(1200px, calc(100vw - 2.4rem))",
   minHeight: FIXED_BANNER_HEIGHT,
@@ -178,15 +178,6 @@ const tableHeadCell = {
   padding: "8px 0",
   color: palette.textMuted,
   fontWeight: 800,
-};
-
-const brandLockup = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 10,
-  flex: 1,
-  minWidth: 0,
 };
 
 const brandTitleStack = {
@@ -2305,21 +2296,44 @@ export default function PlatformAdminApp() {
           setMenuOpen(false);
           returnToStart();
         }}
-        style={{ ...brandResetButton, ...brandLockup }}
+        style={{
+          ...brandResetButton,
+          position: "absolute",
+          left: isCompactViewport ? 10 : 16,
+          top: "50%",
+          transform: "translateY(-50%)",
+          zIndex: 1,
+        }}
         aria-label="Return to Start Here"
       >
         <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
-        <span style={brandTitleStack}>
-          <span style={{ fontSize: isCompactViewport ? 15 : 18, fontWeight: 900, color: palette.navy900 }}>
-            Platform Control Plane
-          </span>
-          <span style={{ fontSize: isCompactViewport ? 11.5 : 12.5, color: palette.textMuted, lineHeight: 1.35 }}>
-            Manage tenants, users, launch settings, and municipal operations from one place.
-          </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setMenuOpen(false);
+          returnToStart();
+        }}
+        style={{
+          ...brandResetButton,
+          ...brandTitleStack,
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          width: isCompactViewport ? "min(250px, calc(100vw - 128px))" : "min(640px, calc(100vw - 320px))",
+          minWidth: 0,
+        }}
+      >
+        <span style={{ fontSize: isCompactViewport ? 18 : 28, fontWeight: 950, color: palette.navy900, lineHeight: 1.05 }}>
+          Platform Control Plane
+        </span>
+        <span style={{ fontSize: isCompactViewport ? 11.5 : 12.5, color: palette.textMuted, lineHeight: 1.35 }}>
+          Manage tenants, users, launch settings, and municipal operations from one place.
         </span>
       </button>
       {showBannerMenu ? (
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", zIndex: 1 }}>
           <button
             type="button"
             aria-label={bannerMenuLabel}
