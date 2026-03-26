@@ -21801,24 +21801,25 @@ async function insertReportWithFallback(payload) {
 	                }}
 	            >
 	              {typeof onBackToHub === "function" ? (
-	                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
-	                  <button
-	                    type="button"
-	                    onClick={onBackToHub}
-	                    style={{
-	                      border: "1px solid var(--sl-ui-surface-border)",
-	                      background: "rgba(255,255,255,0.92)",
-	                      color: "var(--sl-ui-text)",
-	                      borderRadius: 999,
-	                      padding: "8px 12px",
-	                      fontSize: 13,
-	                      fontWeight: 800,
-	                      cursor: "pointer",
-	                    }}
-	                  >
-	                    Back to Hub
-	                  </button>
-	                </div>
+	                <button
+	                  type="button"
+	                  onClick={onBackToHub}
+	                  style={{
+	                    position: "absolute",
+	                    top: 10,
+	                    left: 10,
+	                    border: "1px solid var(--sl-ui-surface-border)",
+	                    background: "rgba(255,255,255,0.92)",
+	                    color: "var(--sl-ui-text)",
+	                    borderRadius: 999,
+	                    padding: "8px 12px",
+	                    fontSize: 13,
+	                    fontWeight: 800,
+	                    cursor: "pointer",
+	                  }}
+	                >
+	                  Back to Hub
+	                </button>
 	              ) : null}
 	              {titleLogoError ? (
 	                <>
@@ -22435,24 +22436,25 @@ async function insertReportWithFallback(payload) {
 	              {titleLogoError ? (
 	                <>
 	                {typeof onBackToHub === "function" ? (
-	                  <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
-	                    <button
-	                      type="button"
-	                      onClick={onBackToHub}
-	                      style={{
-	                        border: "1px solid var(--sl-ui-surface-border)",
-	                        background: "rgba(255,255,255,0.92)",
-	                        color: "var(--sl-ui-text)",
-	                        borderRadius: 999,
-	                        padding: "7px 11px",
-	                        fontSize: 12.5,
-	                        fontWeight: 800,
-	                        cursor: "pointer",
-	                      }}
-	                    >
-	                      Back to Hub
-	                    </button>
-	                  </div>
+	                  <button
+	                    type="button"
+	                    onClick={onBackToHub}
+	                    style={{
+	                      position: "absolute",
+	                      top: 9,
+	                      left: 9,
+	                      border: "1px solid var(--sl-ui-surface-border)",
+	                      background: "rgba(255,255,255,0.92)",
+	                      color: "var(--sl-ui-text)",
+	                      borderRadius: 999,
+	                      padding: "7px 11px",
+	                      fontSize: 12.5,
+	                      fontWeight: 800,
+	                      cursor: "pointer",
+	                    }}
+	                  >
+	                    Back to Hub
+	                  </button>
 	                ) : null}
 	                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
 	                  CityReport.io
@@ -22464,24 +22466,25 @@ async function insertReportWithFallback(payload) {
 	              ) : (
 	                <>
 	                  {typeof onBackToHub === "function" ? (
-	                    <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
-	                      <button
-	                        type="button"
-	                        onClick={onBackToHub}
-	                        style={{
-	                          border: "1px solid var(--sl-ui-surface-border)",
-	                          background: "rgba(255,255,255,0.92)",
-	                          color: "var(--sl-ui-text)",
-	                          borderRadius: 999,
-	                          padding: "7px 11px",
-	                          fontSize: 12.5,
-	                          fontWeight: 800,
-	                          cursor: "pointer",
-	                        }}
-	                      >
+	                    <button
+	                      type="button"
+	                      onClick={onBackToHub}
+	                      style={{
+	                        position: "absolute",
+	                        top: 9,
+	                        left: 9,
+	                        border: "1px solid var(--sl-ui-surface-border)",
+	                        background: "rgba(255,255,255,0.92)",
+	                        color: "var(--sl-ui-text)",
+	                        borderRadius: 999,
+	                        padding: "7px 11px",
+	                        fontSize: 12.5,
+	                        fontWeight: 800,
+	                        cursor: "pointer",
+	                      }}
+	                    >
 	                        Back to Hub
-	                      </button>
-	                    </div>
+	                    </button>
 	                  ) : null}
 	                  <img
 	                    src={titleLogoSrc}

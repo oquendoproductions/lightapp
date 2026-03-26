@@ -182,7 +182,7 @@
 
 .municipality-main--report {
   width: 100%;
-  padding: 96px 0 0;
+  padding: 0;
 }
 
 .municipality-hero {
@@ -620,7 +620,7 @@
   }
 
   .municipality-main--report {
-    padding-top: 18px;
+    padding-top: 0;
   }
 }
 
