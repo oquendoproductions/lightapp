@@ -336,7 +336,7 @@ describe("PlatformAdminApp", () => {
     const user = userEvent.setup();
     const { container } = render(<PlatformAdminApp />);
 
-    await screen.findByRole("heading", { name: /platform control plane/i });
+    await screen.findByRole("heading", { name: /start here/i });
 
     await user.type(screen.getByPlaceholderText(/search tenants by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
@@ -370,8 +370,10 @@ describe("PlatformAdminApp", () => {
   it("shows assignment names with edit controls and can return to Start Here from the logo", async () => {
     const { user } = await openUsersAndAdmins();
 
-    await screen.findByText("Jordan Rivera");
-    expect(screen.getByRole("button", { name: /edit/i })).toBeInTheDocument();
+    const assignmentCell = await screen.findByText("Jordan Rivera", { selector: "td" });
+    const assignmentRow = assignmentCell.closest("tr");
+    expect(assignmentRow).not.toBeNull();
+    expect(within(assignmentRow as HTMLTableRowElement).getByRole("button", { name: /^edit$/i })).toBeInTheDocument();
     expect(screen.queryByText("user-1")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText(/return to start here/i));
@@ -387,7 +389,7 @@ describe("PlatformAdminApp", () => {
     const assignmentRow = assignmentCell.closest("tr");
     expect(assignmentRow).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /edit/i }));
+    await user.click(within(assignmentRow as HTMLTableRowElement).getByRole("button", { name: /^edit$/i }));
     await user.selectOptions(within(assignmentRow as HTMLTableRowElement).getByRole("combobox"), "tenant_admin");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
@@ -401,5 +403,23 @@ describe("PlatformAdminApp", () => {
 
     expect(screen.getByRole("link", { name: /open tenant hub/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /open dev tenant hub/i })).toBeInTheDocument();
+  });
+
+  it("walks through add tenant as a step-by-step wizard", async () => {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /start here/i });
+    await user.click(screen.getByRole("button", { name: /^add tenant$/i }));
+
+    await screen.findByRole("heading", { name: /tenant contact information/i });
+    expect(screen.getByText(/1\. tenant contact information/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /next: contacts/i }));
+
+    await screen.findByRole("heading", { name: /primary \+ additional contacts/i });
+    await user.click(screen.getByRole("button", { name: /next: basic setup/i }));
+
+    await screen.findByRole("heading", { name: /basic setup/i });
+    expect(screen.getByRole("button", { name: /create tenant/i })).toBeInTheDocument();
   });
 });
