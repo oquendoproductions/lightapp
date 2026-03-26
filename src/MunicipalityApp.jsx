@@ -15,9 +15,10 @@ const NAV_ITEMS = [
   { key: "home", label: "Home", path: "/" },
   { key: "alerts", label: "Alerts", path: "/alerts" },
   { key: "events", label: "Events", path: "/events" },
-  { key: "preferences", label: "Preferences", path: "/preferences" },
   { key: "report", label: "Report An Issue", path: "/report", primary: true },
 ];
+
+const ACCOUNT_PATH = "/account";
 
 const DEFAULT_TOPIC_DETAILS = {
   emergency_alerts: { label: "Emergency Alerts", description: "Urgent citywide issues that need immediate attention." },
@@ -261,6 +262,18 @@ function downloadTextFile(filename, text, mimeType) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function buildTenantSwitchHref(env, targetTenant, currentRoutePath) {
+  const tenantKey = trimOrEmpty(targetTenant?.tenant_key).toLowerCase();
+  const subdomain = trimOrEmpty(targetTenant?.primary_subdomain).toLowerCase();
+  const routePath = currentRoutePath === ACCOUNT_PATH ? "/" : normalizeMunicipalityAppPath(currentRoutePath || "/", tenantKey);
+  if (!tenantKey) return "/";
+  if (env === "staging") {
+    return `https://dev.cityreport.io/${tenantKey}${routePath === "/" ? "" : routePath}`;
+  }
+  const host = subdomain || `${tenantKey}.cityreport.io`;
+  return `https://${host}${routePath === "/" ? "" : routePath}`;
 }
 
 function useResidentAuth() {
@@ -585,6 +598,10 @@ export default function MunicipalityApp() {
   const [showAlertComposer, setShowAlertComposer] = useState(false);
   const [showEventComposer, setShowEventComposer] = useState(false);
   const [openNavMenu, setOpenNavMenu] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [availableHubTenants, setAvailableHubTenants] = useState([]);
+  const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
+  const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
 
   useEffect(() => {
     function onPopState() {
@@ -608,6 +625,13 @@ export default function MunicipalityApp() {
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
   }, [openNavMenu]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !accountMenuOpen) return undefined;
+    const closeMenu = () => setAccountMenuOpen(false);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [accountMenuOpen]);
 
   if (!residentPortalEnabled) {
     return (
@@ -642,6 +666,23 @@ export default function MunicipalityApp() {
     [routePath, tenantKey]
   );
 
+  const switchableTenants = useMemo(() => {
+    const lookup = new Map();
+    for (const tenantRow of availableHubTenants || []) {
+      const key = trimOrEmpty(tenantRow?.tenant_key).toLowerCase();
+      if (!key) continue;
+      lookup.set(key, tenantRow);
+    }
+    if (tenantKey && !lookup.has(tenantKey)) {
+      lookup.set(tenantKey, {
+        tenant_key: tenantKey,
+        name: tenantName,
+        primary_subdomain: trimOrEmpty(tenant?.tenantConfig?.primary_subdomain) || `${tenantKey}.cityreport.io`,
+      });
+    }
+    return [...lookup.values()].filter((row) => interestedTenantKeys.includes(trimOrEmpty(row?.tenant_key).toLowerCase()));
+  }, [availableHubTenants, interestedTenantKeys, tenant?.tenantConfig?.primary_subdomain, tenantKey, tenantName]);
+
   const publishedAlerts = useMemo(
     () => sortAlerts(alerts.filter((alert) => String(alert?.status || "").trim().toLowerCase() === "published")),
     [alerts]
@@ -654,6 +695,66 @@ export default function MunicipalityApp() {
 
   const homeAlerts = useMemo(() => publishedAlerts.slice(0, 3), [publishedAlerts]);
   const homeEvents = useMemo(() => publishedEvents.slice(0, 4), [publishedEvents]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTenantInterests() {
+      if (!session?.user?.id) {
+        setAvailableHubTenants([]);
+        setInterestedTenantKeys([]);
+        setSavedInterestedTenantKeys([]);
+        return;
+      }
+
+      const [tenantListRes, interestsRes] = await Promise.all([
+        supabase.rpc("list_resident_hub_tenants"),
+        supabase
+          .from("resident_tenant_interests")
+          .select("tenant_key")
+          .eq("user_id", session.user.id),
+      ]);
+
+      if (cancelled) return;
+
+      if (tenantListRes.error) {
+        if (isMissingFunctionError(tenantListRes.error)) {
+          setAvailableHubTenants([
+            {
+              tenant_key: tenantKey,
+              name: tenantName,
+              primary_subdomain: trimOrEmpty(tenant?.tenantConfig?.primary_subdomain) || `${tenantKey}.cityreport.io`,
+            },
+          ]);
+        } else {
+          setAvailableHubTenants([]);
+        }
+      } else {
+        setAvailableHubTenants(Array.isArray(tenantListRes.data) ? tenantListRes.data : []);
+      }
+
+      if (interestsRes.error) {
+        if (isMissingRelationError(interestsRes.error)) {
+          setInterestedTenantKeys([tenantKey]);
+          setSavedInterestedTenantKeys([tenantKey]);
+        } else {
+          setInterestedTenantKeys([]);
+          setSavedInterestedTenantKeys([]);
+        }
+        return;
+      }
+
+      const nextKeys = [...new Set((interestsRes.data || []).map((row) => trimOrEmpty(row?.tenant_key).toLowerCase()).filter(Boolean))];
+      const normalizedKeys = nextKeys.includes(tenantKey) ? nextKeys : [tenantKey, ...nextKeys];
+      setInterestedTenantKeys(normalizedKeys);
+      setSavedInterestedTenantKeys(normalizedKeys);
+    }
+
+    void loadTenantInterests();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, tenant?.tenantConfig?.primary_subdomain, tenantKey, tenantName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -832,7 +933,18 @@ export default function MunicipalityApp() {
     }));
   }
 
-  async function savePreferences() {
+  function updateTenantInterest(tenantKeyInput, enabled) {
+    const key = trimOrEmpty(tenantKeyInput).toLowerCase();
+    if (!key) return;
+    setInterestedTenantKeys((prev) => {
+      const next = new Set(prev);
+      if (enabled) next.add(key);
+      else next.delete(key);
+      return [...next];
+    });
+  }
+
+  async function saveAccountSettings() {
     if (!session?.user?.id) return;
     setSavingPrefs(true);
     setPrefsStatus("");
@@ -848,15 +960,52 @@ export default function MunicipalityApp() {
         web_push_enabled: current.web_push_enabled ?? false,
       };
     });
-    const { error } = await supabase
+    const { error: preferencesError } = await supabase
       .from("resident_notification_preferences")
       .upsert(rows, { onConflict: "tenant_key,user_id,topic_key" });
-    setSavingPrefs(false);
-    if (error) {
-      setPrefsStatus(error.message || "Could not save your preferences.");
+
+    if (preferencesError) {
+      setSavingPrefs(false);
+      setPrefsStatus(preferencesError.message || "Could not save your notification preferences.");
       return;
     }
-    setPrefsStatus("Preferences saved.");
+
+    const nextInterestKeys = [...new Set(interestedTenantKeys.map((value) => trimOrEmpty(value).toLowerCase()).filter(Boolean))];
+    const savedKeys = new Set(savedInterestedTenantKeys);
+    const nextKeys = new Set(nextInterestKeys);
+    const keysToDelete = [...savedKeys].filter((key) => !nextKeys.has(key));
+    const keysToInsert = nextInterestKeys.filter((key) => !savedKeys.has(key));
+
+    if (keysToDelete.length) {
+      const { error: deleteError } = await supabase
+        .from("resident_tenant_interests")
+        .delete()
+        .eq("user_id", session.user.id)
+        .in("tenant_key", keysToDelete);
+      if (deleteError) {
+        setSavingPrefs(false);
+        setPrefsStatus(deleteError.message || "Could not update your city selections.");
+        return;
+      }
+    }
+
+    if (keysToInsert.length) {
+      const { error: insertError } = await supabase
+        .from("resident_tenant_interests")
+        .insert(keysToInsert.map((selectedTenantKey) => ({
+          user_id: session.user.id,
+          tenant_key: selectedTenantKey,
+        })));
+      if (insertError) {
+        setSavingPrefs(false);
+        setPrefsStatus(insertError.message || "Could not update your city selections.");
+        return;
+      }
+    }
+
+    setSavedInterestedTenantKeys(nextInterestKeys);
+    setSavingPrefs(false);
+    setPrefsStatus("Account settings saved.");
   }
 
   async function handleAuthSubmit(event) {
@@ -1056,75 +1205,153 @@ export default function MunicipalityApp() {
             <p>Resident notices, civic events, and issue reporting in one place.</p>
           </div>
         </div>
-        <nav className="municipality-nav" aria-label="Municipality navigation">
-          {navLinks.map((item) => {
-            const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
-            if (!showManageMenu) {
-              return (
-                <a
-                  key={item.key}
-                  href={item.href}
-                  className={`${item.primary ? "municipality-button municipality-button--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigate(item.path);
-                  }}
-                >
-                  {item.label}
-                </a>
-              );
-            }
+        <div className="municipality-topbar-actions">
+          <nav className="municipality-nav" aria-label="Municipality navigation">
+            {navLinks.map((item) => {
+              const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
+              if (!showManageMenu) {
+                return (
+                  <a
+                    key={item.key}
+                    href={item.href}
+                    className={`${item.primary ? "municipality-button municipality-button--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigate(item.path);
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                );
+              }
 
-            const isAlertsMenu = item.key === "alerts";
-            const isOpen = openNavMenu === item.key;
-            const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
-            const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
-            return (
-              <div
-                key={item.key}
-                className="municipality-nav-dropdown"
-                onClick={(event) => event.stopPropagation()}
-              >
+              const isAlertsMenu = item.key === "alerts";
+              const isOpen = openNavMenu === item.key;
+              const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
+              const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
+              return (
+                <div
+                  key={item.key}
+                  className="municipality-nav-dropdown"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
+                    onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
+                  >
+                    {item.label}
+                  </button>
+                  {isOpen ? (
+                    <div className="municipality-nav-menu">
+                      <button
+                        type="button"
+                        className="municipality-nav-menu-item"
+                        onClick={() => {
+                          setOpenNavMenu("");
+                          navigate(item.path);
+                        }}
+                      >
+                        {viewLabel}
+                      </button>
+                      <button
+                        type="button"
+                        className="municipality-nav-menu-item"
+                        onClick={() => {
+                          setOpenNavMenu("");
+                          if (isAlertsMenu) setShowAlertComposer(true);
+                          else setShowEventComposer(true);
+                          navigate(item.path);
+                        }}
+                      >
+                        {createLabel}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {session?.user?.id && switchableTenants.length ? (
+              <div className="municipality-nav-dropdown" onClick={(event) => event.stopPropagation()}>
                 <button
                   type="button"
-                  className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
-                  onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
+                  className={`municipality-nav-link municipality-nav-button${openNavMenu === "tenants" ? " is-active" : ""}`}
+                  onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
                 >
-                  {item.label}
+                  Tenants
                 </button>
-                {isOpen ? (
+                {openNavMenu === "tenants" ? (
                   <div className="municipality-nav-menu">
-                    <button
-                      type="button"
-                      className="municipality-nav-menu-item"
-                      onClick={() => {
-                        setOpenNavMenu("");
-                        navigate(item.path);
-                      }}
-                    >
-                      {viewLabel}
-                    </button>
-                    <button
-                      type="button"
-                      className="municipality-nav-menu-item"
-                      onClick={() => {
-                        setOpenNavMenu("");
-                        if (isAlertsMenu) {
-                          setShowAlertComposer(true);
-                        } else {
-                          setShowEventComposer(true);
-                        }
-                        navigate(item.path);
-                      }}
-                    >
-                      {createLabel}
-                    </button>
+                    {switchableTenants.map((city) => {
+                      const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath);
+                      return (
+                        <a
+                          key={cityKey}
+                          href={targetHref}
+                          className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                          onClick={() => setOpenNavMenu("")}
+                        >
+                          {trimOrEmpty(city?.name) || cityKey}
+                        </a>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
-            );
-          })}
-        </nav>
+            ) : null}
+          </nav>
+
+          <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
+            {!session?.user?.id ? (
+              <button
+                type="button"
+                className="municipality-button municipality-button--ghost"
+                onClick={() => navigate(ACCOUNT_PATH)}
+              >
+                Login
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="municipality-account-toggle"
+                  aria-label="Open account menu"
+                  onClick={() => setAccountMenuOpen((prev) => !prev)}
+                >
+                  <span />
+                  <span />
+                  <span />
+                </button>
+                {accountMenuOpen ? (
+                  <div className="municipality-account-menu">
+                    <button
+                      type="button"
+                      className="municipality-nav-menu-item"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate(ACCOUNT_PATH);
+                      }}
+                    >
+                      Account Settings
+                    </button>
+                    <button
+                      type="button"
+                      className="municipality-nav-menu-item"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        void supabase.auth.signOut();
+                      }}
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
       </header>
     );
   }
@@ -1156,7 +1383,7 @@ export default function MunicipalityApp() {
 
         {routePath === "/" ? (
           <>
-            <section className="municipality-hero">
+            <section className="municipality-hero municipality-hero--single">
               <div className="municipality-card municipality-hero-copy">
                 <h2>City notices first. Reporting tools right behind them.</h2>
                 <p>
@@ -1170,8 +1397,8 @@ export default function MunicipalityApp() {
                   <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/events")}>
                     Browse Events
                   </button>
-                  <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/preferences")}>
-                    Manage Preferences
+                  <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate(ACCOUNT_PATH)}>
+                    Account Settings
                   </button>
                 </div>
                 <div className="municipality-metrics">
@@ -1188,43 +1415,6 @@ export default function MunicipalityApp() {
                     <span>{session?.user?.id ? "Enabled Topics" : "Topics Ready"}</span>
                   </div>
                 </div>
-              </div>
-
-              <div className="municipality-side-stack">
-                <aside className="municipality-card municipality-side-panel">
-                  <h3>Resident Account</h3>
-                  {session?.user?.id ? (
-                    <>
-                      <p>
-                        Signed in as <strong>{trimOrEmpty(profile?.full_name) || trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Resident"}</strong>.
-                      </p>
-                      <div className="municipality-actions">
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/preferences")}>
-                          Notification Preferences
-                        </button>
-                        <button
-                          type="button"
-                          className="municipality-button municipality-button--ghost"
-                          onClick={() => {
-                            void supabase.auth.signOut();
-                          }}
-                        >
-                          Sign Out
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p>Create a resident account to choose which city updates you want to receive first.</p>
-                      <div className="municipality-actions">
-                        <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/preferences")}>
-                          Sign In Or Create Account
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </aside>
-
               </div>
             </section>
 
@@ -1331,12 +1521,12 @@ export default function MunicipalityApp() {
           </HomeCard>
         ) : null}
 
-        {routePath === "/preferences" ? (
+        {routePath === ACCOUNT_PATH ? (
           <section>
-            <HomeCard title="Notification Preferences" subtitle="Choose which city updates you want first. In-app and email preferences are live now; web push is held for the next delivery pass.">
+            <HomeCard title="Account Settings" subtitle="Manage your notification preferences and the cities you want to follow.">
               {!session?.user?.id ? (
                 <form className="municipality-auth-panel" onSubmit={handleAuthSubmit}>
-                  <h4>{authMode === "login" ? "Sign in to manage alerts" : "Create your resident account"}</h4>
+                  <h4>{authMode === "login" ? "Sign in to manage your cities" : "Create your resident account"}</h4>
                   <div className="municipality-form-grid">
                     {authMode === "signup" ? (
                       <div className="municipality-field">
@@ -1365,6 +1555,34 @@ export default function MunicipalityApp() {
                 </form>
               ) : (
                 <div className="municipality-topic-row">
+                  <div className="municipality-account-card">
+                    <h4>{trimOrEmpty(profile?.full_name) || trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Resident"}</h4>
+                    <p className="municipality-note">{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</p>
+                  </div>
+                  <div className="municipality-account-card">
+                    <h4>My Cities</h4>
+                    <p className="municipality-note">Choose which municipality hubs appear in your tenant switcher.</p>
+                    <div className="municipality-topic-row" style={{ marginTop: 12 }}>
+                      {availableHubTenants.map((city) => {
+                        const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                        const checked = interestedTenantKeys.includes(cityKey);
+                        return (
+                          <label key={cityKey} className="municipality-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
+                            />
+                            {trimOrEmpty(city?.name) || cityKey}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="municipality-account-card">
+                    <h4>Notification Preferences</h4>
+                    <p className="municipality-note">Choose which city updates you want first. In-app and email are live now; web push is next.</p>
+                  </div>
                   {Object.values(topicLookup).map((topic) => {
                     const current = preferencesByTopic?.[topic.topic_key] || {
                       in_app_enabled: Boolean(topic.default_enabled),
@@ -1393,8 +1611,8 @@ export default function MunicipalityApp() {
                     );
                   })}
                   <div className="municipality-actions">
-                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => void savePreferences()} disabled={savingPrefs || loadingProfile || !authReady}>
-                      {savingPrefs ? "Saving…" : "Save Preferences"}
+                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveAccountSettings()} disabled={savingPrefs || loadingProfile || !authReady}>
+                      {savingPrefs ? "Saving…" : "Save Account Settings"}
                     </button>
                   </div>
                   {prefsStatus ? <p className={`municipality-inline-status${prefsStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{prefsStatus}</p> : null}

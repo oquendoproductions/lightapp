@@ -41,10 +41,12 @@ export function normalizeMunicipalityAppPath(pathname, tenantKey) {
   if (
     stripped === "/preferences" ||
     stripped.startsWith("/preferences/") ||
+    stripped === "/account" ||
+    stripped.startsWith("/account/") ||
     stripped === "/notifications" ||
     stripped.startsWith("/notifications/")
   ) {
-    return "/preferences";
+    return "/account";
   }
   return "/";
 }
