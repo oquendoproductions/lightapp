@@ -2306,7 +2306,12 @@ export default function PlatformAdminApp() {
         padding: "0.48rem 0.7rem",
         borderRadius: 18,
       }
-    : stickyBanner;
+    : {
+        ...stickyBanner,
+        display: "grid",
+        gridTemplateColumns: "minmax(180px, auto) 1fr minmax(58px, auto)",
+        alignItems: "center",
+      };
   const bannerLogoStyle = isCompactViewport
     ? { ...brandLogo, height: 38, maxWidth: "min(180px, calc(100vw - 148px))" }
     : brandLogo;
@@ -2327,10 +2332,11 @@ export default function PlatformAdminApp() {
         }}
         style={{
           ...brandResetButton,
-          position: "absolute",
-          left: isCompactViewport ? 10 : 16,
-          top: "50%",
-          transform: "translateY(-50%)",
+          position: isCompactViewport ? "absolute" : "static",
+          left: isCompactViewport ? 10 : undefined,
+          top: isCompactViewport ? "50%" : undefined,
+          transform: isCompactViewport ? "translateY(-50%)" : "none",
+          justifySelf: "start",
           zIndex: 1,
         }}
         aria-label="Return to Start Here"
@@ -2346,12 +2352,13 @@ export default function PlatformAdminApp() {
         style={{
           ...brandResetButton,
           ...brandTitleStack,
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          transform: "translate(-50%, -50%)",
+          position: isCompactViewport ? "absolute" : "static",
+          left: isCompactViewport ? "50%" : undefined,
+          top: isCompactViewport ? "50%" : undefined,
+          transform: isCompactViewport ? "translate(-50%, -50%)" : "none",
           width: isCompactViewport ? "min(250px, calc(100vw - 128px))" : "min(640px, calc(100vw - 320px))",
           minWidth: 0,
+          justifySelf: "center",
         }}
       >
         <span style={{ fontSize: isCompactViewport ? 18 : 28, fontWeight: 950, color: palette.navy900, lineHeight: 1.05 }}>
@@ -2362,7 +2369,7 @@ export default function PlatformAdminApp() {
         </span>
       </button>
       {showBannerMenu ? (
-        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1 }}>
+        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end" }}>
           <button
             type="button"
             aria-label={bannerMenuLabel}
