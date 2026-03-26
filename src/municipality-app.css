@@ -64,6 +64,11 @@
   box-shadow: 0 10px 20px rgba(17, 49, 79, 0.12);
 }
 
+.municipality-brand picture {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
 .municipality-brand-copy {
   display: grid;
   gap: 2px;
@@ -709,20 +714,29 @@
 
 @media (max-width: 720px) {
   .municipality-topbar {
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
     gap: 12px;
     padding: 14px 14px 16px;
   }
 
   .municipality-topbar-actions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 10px;
+    display: contents;
+  }
+
+  .municipality-brand {
+    grid-column: 1 / -1;
+    justify-content: center;
+    padding-right: 56px;
+  }
+
+  .municipality-brand-copy {
+    gap: 1px;
   }
 
   .municipality-nav {
+    grid-column: 1 / -1;
     justify-content: flex-start;
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -761,12 +775,17 @@
   }
 
   .municipality-account-anchor {
+    grid-column: 2;
+    grid-row: 1;
     justify-self: end;
+    align-self: start;
+    z-index: 1;
   }
 
   .municipality-brand img {
-    width: 48px;
-    height: 48px;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
   }
 
   .municipality-brand h1 {

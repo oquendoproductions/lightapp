@@ -10,6 +10,7 @@ import "./municipality-app.css";
 const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
 
 const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const MOBILE_BRAND_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
 
 const NAV_ITEMS = [
   { key: "home", label: "Home", path: "/" },
@@ -1572,7 +1573,10 @@ export default function MunicipalityApp() {
     return (
       <header className={`municipality-topbar${floating ? " municipality-topbar--floating" : ""}`}>
         <div className="municipality-brand">
-          <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
+          <picture>
+            <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
+            <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
+          </picture>
           <div className="municipality-brand-copy">
             <p className="municipality-brand-eyebrow">Municipality Hub</p>
             <h1>{tenantName}</h1>
