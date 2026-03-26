@@ -405,10 +405,10 @@
 }
 
 .municipality-account-menu-signout {
-  justify-self: start;
-  width: fit-content;
+  justify-self: stretch;
+  width: 100%;
   min-width: 0;
-  padding-inline: 18px;
+  padding-inline: 12px;
 }
 
 .municipality-side-panel p,
