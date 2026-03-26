@@ -18673,10 +18673,12 @@ async function insertReportWithFallback(payload) {
     <div
       className="sl-root"
       style={{
-        position: "relative",
+        position: "fixed",
+        inset: 0,
         height: "100dvh",
         minHeight: "100vh",
-        width: "100vw",
+        width: "100%",
+        maxWidth: "100%",
         overflow: "hidden",
       }}
     >
@@ -18690,7 +18692,11 @@ async function insertReportWithFallback(payload) {
           -webkit-overflow-scrolling: auto;
           background: #fff;
         }
-        #root { height: 100%; overflow: hidden; }
+        #root {
+          height: 100%;
+          width: 100%;
+          overflow: hidden;
+        }
 
         :root {
           --sl-ui-brand-green: #2a7262;
