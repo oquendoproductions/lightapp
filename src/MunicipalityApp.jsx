@@ -596,8 +596,6 @@ export default function MunicipalityApp() {
   const [savedPreferencesByTopic, setSavedPreferencesByTopic] = useState({});
   const [featureStatus, setFeatureStatus] = useState({ ready: true, message: "" });
   const [dataLoading, setDataLoading] = useState(true);
-  const [savingPrefs, setSavingPrefs] = useState(false);
-  const [prefsStatus, setPrefsStatus] = useState("");
   const [manageAccess, setManageAccess] = useState(false);
   const [manageLoading, setManageLoading] = useState(false);
   const [alertForm, setAlertForm] = useState(EMPTY_ALERT_FORM);
@@ -949,7 +947,7 @@ export default function MunicipalityApp() {
           });
           return;
         }
-        setPrefsStatus(error.message || "Could not load your notification preferences.");
+        setAccountSectionStatus((prev) => ({ ...prev, notifications: error.message || "Could not load your notification preferences." }));
         return;
       }
       const next = {};
