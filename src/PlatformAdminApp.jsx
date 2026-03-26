@@ -611,6 +611,7 @@ export default function PlatformAdminApp() {
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const bannerMenuRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
@@ -1106,6 +1107,16 @@ export default function PlatformAdminApp() {
     window.addEventListener("resize", syncViewportWidth);
     return () => window.removeEventListener("resize", syncViewportWidth);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !menuOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (bannerMenuRef.current?.contains(event.target)) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => window.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [menuOpen]);
 
   useEffect(() => {
     let mounted = true;
@@ -2335,7 +2346,7 @@ export default function PlatformAdminApp() {
         </span>
       </button>
       {showBannerMenu ? (
-        <div style={{ position: "relative", zIndex: 1 }}>
+        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1 }}>
           <button
             type="button"
             aria-label={bannerMenuLabel}
