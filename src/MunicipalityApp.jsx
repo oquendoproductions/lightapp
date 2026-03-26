@@ -294,7 +294,34 @@ function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackS
   };
 }
 
-function buildTenantSwitchHref(env, targetTenant, currentRoutePath) {
+function buildTenantSwitchHash(session) {
+  const accessToken = trimOrEmpty(session?.access_token);
+  const refreshToken = trimOrEmpty(session?.refresh_token);
+  if (!accessToken || !refreshToken) return "";
+  const params = new URLSearchParams();
+  params.set("cr_access_token", accessToken);
+  params.set("cr_refresh_token", refreshToken);
+  return `#${params.toString()}`;
+}
+
+function extractTenantSwitchSession(rawHash) {
+  const hash = String(rawHash || "").trim().replace(/^#/, "");
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const accessToken = trimOrEmpty(params.get("cr_access_token"));
+  const refreshToken = trimOrEmpty(params.get("cr_refresh_token"));
+  if (!accessToken || !refreshToken) return null;
+  params.delete("cr_access_token");
+  params.delete("cr_refresh_token");
+  const nextHash = params.toString();
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    cleanedHash: nextHash ? `#${nextHash}` : "",
+  };
+}
+
+function buildTenantSwitchHref(env, targetTenant, currentRoutePath, session = null) {
   const tenantKey = trimOrEmpty(targetTenant?.tenant_key).toLowerCase();
   const subdomain = trimOrEmpty(targetTenant?.primary_subdomain).toLowerCase();
   const routePath = currentRoutePath === ACCOUNT_PATH || currentRoutePath === NOTIFICATION_PATH
@@ -302,10 +329,10 @@ function buildTenantSwitchHref(env, targetTenant, currentRoutePath) {
     : normalizeMunicipalityAppPath(currentRoutePath || "/", tenantKey);
   if (!tenantKey) return "/";
   if (env === "staging") {
-    return `https://dev.cityreport.io/${tenantKey}${routePath === "/" ? "" : routePath}`;
+    return `https://dev.cityreport.io/${tenantKey}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
   }
   const host = subdomain || `${tenantKey}.cityreport.io`;
-  return `https://${host}${routePath === "/" ? "" : routePath}`;
+  return `https://${host}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
 }
 
 function useResidentAuth() {
@@ -316,11 +343,28 @@ function useResidentAuth() {
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
+    const hydrateSession = async () => {
+      if (typeof window !== "undefined") {
+        const handoffSession = extractTenantSwitchSession(window.location.hash);
+        if (handoffSession) {
+          try {
+            await supabase.auth.setSession({
+              access_token: handoffSession.access_token,
+              refresh_token: handoffSession.refresh_token,
+            });
+            const nextUrl = `${window.location.pathname}${window.location.search}${handoffSession.cleanedHash}`;
+            window.history.replaceState({}, "", nextUrl);
+          } catch {
+            // no-op
+          }
+        }
+      }
+      const { data } = await supabase.auth.getSession();
       if (!mounted) return;
       setSession(data?.session || null);
       setAuthReady(true);
-    });
+    };
+    void hydrateSession();
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession || null);
       setAuthReady(true);
@@ -1570,19 +1614,31 @@ export default function MunicipalityApp() {
   }
 
   function renderHeader(floating = false) {
+    const mobileNavItems = [
+      { key: "home", label: "Home", path: "/" },
+      { key: "alerts", label: "Alerts", path: "/alerts" },
+      { key: "events", label: "Events", path: "/events" },
+      { key: "report", label: "Report", path: "/report", primary: true },
+    ];
+
     return (
       <header className={`municipality-topbar${floating ? " municipality-topbar--floating" : ""}`}>
         <div className="municipality-title-bar">
-          <div className="municipality-brand">
+          <button
+            type="button"
+            className="municipality-brand"
+            onClick={() => navigate("/")}
+            aria-label="Return to municipality home"
+          >
             <picture>
               <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
               <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
             </picture>
-            <div className="municipality-brand-copy">
-              <p className="municipality-brand-eyebrow">Municipality Hub</p>
-              <h1>{tenantName}</h1>
-              <p>Resident notices, civic events, and issue reporting in one place.</p>
-            </div>
+          </button>
+          <div className="municipality-brand-copy">
+            <p className="municipality-brand-eyebrow">Municipality Hub</p>
+            <h1>{tenantName}</h1>
+            <p>Resident notices, civic events, and issue reporting in one place.</p>
           </div>
           <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
             {!session?.user?.id ? (
@@ -1732,7 +1788,7 @@ export default function MunicipalityApp() {
                   <div className="municipality-nav-menu">
                     {switchableTenants.map((city) => {
                       const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath);
+                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
                       return (
                         <a
                           key={cityKey}
@@ -1750,6 +1806,59 @@ export default function MunicipalityApp() {
             ) : null}
           </nav>
         </div>
+        <nav
+          className="municipality-mobile-nav"
+          aria-label="Municipality mobile navigation"
+          style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
+        >
+          {mobileNavItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+              onClick={() => navigate(item.path)}
+            >
+              {item.label}
+            </button>
+          ))}
+          {session?.user?.id && switchableTenants.length ? (
+            <button
+              type="button"
+              className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
+              onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
+            >
+              Tenants
+            </button>
+          ) : null}
+        </nav>
+        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
+          <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
+            <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-mobile-sheet-header">
+                <strong>Switch Municipality</strong>
+                <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
+                  Close
+                </button>
+              </div>
+              <div className="municipality-mobile-sheet-list">
+                {switchableTenants.map((city) => {
+                  const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                  const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
+                  return (
+                    <a
+                      key={cityKey}
+                      href={targetHref}
+                      className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                      onClick={() => setOpenNavMenu("")}
+                    >
+                      {trimOrEmpty(city?.name) || cityKey}
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </header>
     );
   }
