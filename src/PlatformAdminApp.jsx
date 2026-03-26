@@ -183,13 +183,16 @@ const tableHeadCell = {
 const brandLockup = {
   display: "flex",
   alignItems: "center",
-  gap: 12,
+  justifyContent: "center",
+  gap: 10,
+  flex: 1,
+  minWidth: 0,
 };
 
 const brandTitleStack = {
   display: "grid",
-  gap: 2,
-  textAlign: "left",
+  gap: 3,
+  textAlign: "center",
 };
 
 const brandResetButton = {
@@ -203,9 +206,9 @@ const brandResetButton = {
 };
 
 const brandLogo = {
-  height: 68,
+  height: 56,
   width: "auto",
-  maxWidth: "min(330px, calc(100vw - 136px))",
+  maxWidth: "min(240px, calc(100vw - 180px))",
   display: "block",
 };
 
@@ -2286,7 +2289,7 @@ export default function PlatformAdminApp() {
       }
     : stickyBanner;
   const bannerLogoStyle = isCompactViewport
-    ? { ...brandLogo, height: 44, maxWidth: "min(330px, calc(100vw - 108px))" }
+    ? { ...brandLogo, height: 38, maxWidth: "min(180px, calc(100vw - 148px))" }
     : brandLogo;
   const bannerMenuButtonStyle = isCompactViewport
     ? { ...menuToggleButton, width: 44, height: 44 }
@@ -2307,11 +2310,11 @@ export default function PlatformAdminApp() {
       >
         <img src={TITLE_LOGO_SRC} alt={TITLE_LOGO_ALT} style={bannerLogoStyle} />
         <span style={brandTitleStack}>
-          <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-            CityReport.io
-          </span>
           <span style={{ fontSize: isCompactViewport ? 15 : 18, fontWeight: 900, color: palette.navy900 }}>
             Platform Control Plane
+          </span>
+          <span style={{ fontSize: isCompactViewport ? 11.5 : 12.5, color: palette.textMuted, lineHeight: 1.35 }}>
+            Manage tenants, users, launch settings, and municipal operations from one place.
           </span>
         </span>
       </button>
@@ -2519,63 +2522,16 @@ export default function PlatformAdminApp() {
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                 <div style={{ display: "grid", gap: 2 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                    Tenant Workspace
+                    Tenant
                   </div>
                   <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
                     {selectedTenant?.name || selectedTenantKey}
                   </div>
                   <div style={{ fontSize: 13, color: palette.textMuted }}>
-                    {selectedTenantKey}
+                    {selectedTenant?.primary_subdomain || selectedTenantKey}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
-                  <button
-                    type="button"
-                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    onClick={openAddTenantStep}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
-                  >
-                    Add Tenant
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    onClick={() => {
-                      setActiveTab("tenants");
-                      setIsEditingTenant(true);
-                    }}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Edit tenant setup" : "Only Platform Owner can edit tenant setup"}
-                  >
-                    Edit Tenant Setup
-                  </button>
-                </div>
-              </div>
-              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
-                <div style={{ fontSize: 12, color: palette.textMuted }}>Current Tenant Workspace</div>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 360 }}>
-                  <span>Workspace Section</span>
-                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                    {TAB_OPTIONS.map((tab) => (
-                      <option key={tab.key} value={tab.key}>{tab.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {selectedTenantLiveUrl ? (
-                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Tenant Hub
-                    </a>
-                  ) : null}
-                  {selectedTenantDevUrl ? (
-                    <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Dev Tenant Hub
-                    </a>
-                  ) : null}
-                </div>
-                <div style={{ ...responsiveActionGrid, marginTop: 4 }}>
+                <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
                   <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <input
                       type="checkbox"
@@ -2606,6 +2562,52 @@ export default function PlatformAdminApp() {
                     Setup toggles are editable here. Save them from the tenant setup editor below.
                   </div>
                 ) : null}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
+                  <button
+                    type="button"
+                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                    onClick={openAddTenantStep}
+                    disabled={!canEditTenantCore}
+                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
+                  >
+                    Add Tenant
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                    onClick={() => {
+                      setActiveTab("tenants");
+                      setIsEditingTenant(true);
+                    }}
+                    disabled={!canEditTenantCore}
+                    title={canEditTenantCore ? "Edit tenant setup" : "Only Platform Owner can edit tenant setup"}
+                  >
+                    Edit Tenant Setup
+                  </button>
+                </div>
+              </div>
+              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 360 }}>
+                  <span>Workspace Section</span>
+                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
+                    {TAB_OPTIONS.map((tab) => (
+                      <option key={tab.key} value={tab.key}>{tab.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {selectedTenantLiveUrl ? (
+                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                      Open Tenant Hub
+                    </a>
+                  ) : null}
+                  {selectedTenantDevUrl ? (
+                    <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                      Open Dev Tenant Hub
+                    </a>
+                  ) : null}
+                </div>
               </div>
             </>
           ) : null}
