@@ -21808,14 +21808,15 @@ async function insertReportWithFallback(payload) {
 	                    position: "absolute",
 	                    top: 10,
 	                    left: 10,
-	                    border: "1px solid var(--sl-ui-surface-border)",
-	                    background: "rgba(255,255,255,0.92)",
-	                    color: "var(--sl-ui-text)",
+	                    border: "1px solid rgba(255,255,255,0.18)",
+	                    background: "var(--sl-ui-brand-blue)",
+	                    color: "#ffffff",
 	                    borderRadius: 999,
 	                    padding: "8px 12px",
 	                    fontSize: 13,
 	                    fontWeight: 800,
 	                    cursor: "pointer",
+	                    boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
 	                  }}
 	                >
 	                  Back to Hub
@@ -22402,7 +22403,7 @@ async function insertReportWithFallback(payload) {
                   border: "1px solid var(--sl-ui-surface-border)",
                   borderRadius: 12,
                   boxShadow: "var(--sl-ui-surface-shadow)",
-                  padding: "12px 12px",
+                  padding: typeof onBackToHub === "function" ? "12px 12px 12px 52px" : "12px 12px",
                   display: "grid",
                   gap: 5,
                   position: "relative",
@@ -22441,19 +22442,27 @@ async function insertReportWithFallback(payload) {
 	                    onClick={onBackToHub}
 	                    style={{
 	                      position: "absolute",
-	                      top: 9,
+	                      top: "50%",
 	                      left: 9,
-	                      border: "1px solid var(--sl-ui-surface-border)",
-	                      background: "rgba(255,255,255,0.92)",
-	                      color: "var(--sl-ui-text)",
+	                      transform: "translateY(-50%)",
+	                      width: 32,
+	                      height: 32,
+	                      border: "1px solid rgba(255,255,255,0.18)",
+	                      background: "var(--sl-ui-brand-blue)",
+	                      color: "#ffffff",
 	                      borderRadius: 999,
-	                      padding: "7px 11px",
-	                      fontSize: 12.5,
+	                      padding: 0,
+	                      display: "grid",
+	                      placeItems: "center",
+	                      fontSize: 18,
 	                      fontWeight: 800,
 	                      cursor: "pointer",
+	                      boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
 	                    }}
+	                    aria-label="Back to Hub"
+	                    title="Back to Hub"
 	                  >
-	                    Back to Hub
+	                    ←
 	                  </button>
 	                ) : null}
 	                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
@@ -22471,19 +22480,27 @@ async function insertReportWithFallback(payload) {
 	                      onClick={onBackToHub}
 	                      style={{
 	                        position: "absolute",
-	                        top: 9,
+	                        top: "50%",
 	                        left: 9,
-	                        border: "1px solid var(--sl-ui-surface-border)",
-	                        background: "rgba(255,255,255,0.92)",
-	                        color: "var(--sl-ui-text)",
+	                        transform: "translateY(-50%)",
+	                        width: 32,
+	                        height: 32,
+	                        border: "1px solid rgba(255,255,255,0.18)",
+	                        background: "var(--sl-ui-brand-blue)",
+	                        color: "#ffffff",
 	                        borderRadius: 999,
-	                        padding: "7px 11px",
-	                        fontSize: 12.5,
+	                        padding: 0,
+	                        display: "grid",
+	                        placeItems: "center",
+	                        fontSize: 18,
 	                        fontWeight: 800,
 	                        cursor: "pointer",
+	                        boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
 	                      }}
+	                      aria-label="Back to Hub"
+	                      title="Back to Hub"
 	                    >
-	                        Back to Hub
+	                        ←
 	                    </button>
 	                  ) : null}
 	                  <img

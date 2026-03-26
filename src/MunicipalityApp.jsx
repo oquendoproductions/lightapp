@@ -1385,6 +1385,8 @@ export default function MunicipalityApp() {
         return;
       }
       setAuthStatus("Signed in.");
+      setAccountSectionTarget("");
+      navigate("/");
       return;
     }
 
@@ -1410,6 +1412,12 @@ export default function MunicipalityApp() {
       );
     }
     setAuthBusy(false);
+    if (data?.session?.user?.id) {
+      setAuthStatus("Account created. You're now signed in.");
+      setAccountSectionTarget("");
+      navigate("/");
+      return;
+    }
     setAuthStatus("Account created. If email confirmation is enabled, please confirm your email and then sign in.");
     setAuthMode("login");
   }
@@ -1588,7 +1596,7 @@ export default function MunicipalityApp() {
                   <a
                     key={item.key}
                     href={item.href}
-                    className={`${item.primary ? "municipality-button municipality-button--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
+                    className={`${item.primary ? "municipality-button municipality-button--primary municipality-nav-link--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
                     onClick={(event) => {
                       event.preventDefault();
                       navigate(item.path);
