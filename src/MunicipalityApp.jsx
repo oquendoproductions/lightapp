@@ -212,6 +212,13 @@ function toDateInputValue(date = new Date()) {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
+function toDateTimeLocalValue(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return toDateInputValue(parsed);
+}
+
 function buildIcsFile(events, tenantName) {
   const escapeValue = (value) =>
     String(value || "")
@@ -377,7 +384,7 @@ function HomeCard({ title, children, subtitle, onTitleClick = null }) {
   );
 }
 
-function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = null }) {
+function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = null, onEdit = null }) {
   if (!alerts.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
     <div className="municipality-item-list">
@@ -406,6 +413,11 @@ function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = nul
           ) : null}
           {showStatus && typeof onStatusChange === "function" ? (
             <div className="municipality-actions" style={{ marginTop: 12 }}>
+              {typeof onEdit === "function" ? (
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => onEdit(alert)}>
+                  Edit
+                </button>
+              ) : null}
               {alert.status !== "published" ? (
                 <button type="button" className="municipality-button municipality-button--primary" onClick={() => onStatusChange(alert, "published")}>
                   Publish
@@ -424,7 +436,7 @@ function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = nul
   );
 }
 
-function EventFeed({ events, emptyText, showStatus = false, onStatusChange = null }) {
+function EventFeed({ events, emptyText, showStatus = false, onStatusChange = null, onEdit = null }) {
   if (!events.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
     <div className="municipality-item-list">
@@ -453,6 +465,11 @@ function EventFeed({ events, emptyText, showStatus = false, onStatusChange = nul
           ) : null}
           {showStatus && typeof onStatusChange === "function" ? (
             <div className="municipality-actions" style={{ marginTop: 12 }}>
+              {typeof onEdit === "function" ? (
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => onEdit(event)}>
+                  Edit
+                </button>
+              ) : null}
               {event.status !== "published" ? (
                 <button type="button" className="municipality-button municipality-button--primary" onClick={() => onStatusChange(event, "published")}>
                   Publish
@@ -471,10 +488,10 @@ function EventFeed({ events, emptyText, showStatus = false, onStatusChange = nul
   );
 }
 
-function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit }) {
+function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit, heading = "Create Alert", submitLabel = "Save Alert" }) {
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
-      <h4>Create Alert</h4>
+      <h4>{heading}</h4>
       <div className="municipality-form-grid">
         <div className="municipality-field">
           <label htmlFor="alert-topic">Topic</label>
@@ -525,21 +542,22 @@ function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit }) {
             <select value={alertForm.status} onChange={(event) => setAlertForm((prev) => ({ ...prev, status: event.target.value }))}>
               <option value="published">Publish now</option>
               <option value="draft">Save draft</option>
+              <option value="archived">Keep archived</option>
             </select>
           </label>
         </div>
       </div>
       <div className="municipality-actions">
-        <button type="submit" className="municipality-button municipality-button--primary">Save Alert</button>
+        <button type="submit" className="municipality-button municipality-button--primary">{submitLabel}</button>
       </div>
     </form>
   );
 }
 
-function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit }) {
+function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit, heading = "Create Event", submitLabel = "Save Event" }) {
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
-      <h4>Create Event</h4>
+      <h4>{heading}</h4>
       <div className="municipality-form-grid">
         <div className="municipality-field">
           <label htmlFor="event-topic">Topic</label>
@@ -581,12 +599,13 @@ function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit }) {
             <select value={eventForm.status} onChange={(event) => setEventForm((prev) => ({ ...prev, status: event.target.value }))}>
               <option value="published">Publish now</option>
               <option value="draft">Save draft</option>
+              <option value="archived">Keep archived</option>
             </select>
           </label>
         </div>
       </div>
       <div className="municipality-actions">
-        <button type="submit" className="municipality-button municipality-button--primary">Save Event</button>
+        <button type="submit" className="municipality-button municipality-button--primary">{submitLabel}</button>
       </div>
     </form>
   );
@@ -617,6 +636,8 @@ export default function MunicipalityApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [showAlertComposer, setShowAlertComposer] = useState(false);
   const [showEventComposer, setShowEventComposer] = useState(false);
+  const [editingAlertId, setEditingAlertId] = useState(null);
+  const [editingEventId, setEditingEventId] = useState(null);
   const [openNavMenu, setOpenNavMenu] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountSectionTarget, setAccountSectionTarget] = useState("");
@@ -1054,6 +1075,81 @@ export default function MunicipalityApp() {
     }));
   }
 
+  function populateAlertForm(alert) {
+    setAlertForm({
+      topic_key: trimOrEmpty(alert?.topic_key) || EMPTY_ALERT_FORM.topic_key,
+      title: trimOrEmpty(alert?.title),
+      summary: trimOrEmpty(alert?.summary),
+      body: trimOrEmpty(alert?.body),
+      severity: trimOrEmpty(alert?.severity) || EMPTY_ALERT_FORM.severity,
+      location_name: trimOrEmpty(alert?.location_name),
+      location_address: trimOrEmpty(alert?.location_address),
+      cta_label: trimOrEmpty(alert?.cta_label),
+      cta_url: trimOrEmpty(alert?.cta_url),
+      starts_at: toDateTimeLocalValue(alert?.starts_at),
+      ends_at: toDateTimeLocalValue(alert?.ends_at),
+      pinned: Boolean(alert?.pinned),
+      status: trimOrEmpty(alert?.status) || EMPTY_ALERT_FORM.status,
+    });
+  }
+
+  function populateEventForm(eventRow) {
+    setEventForm({
+      topic_key: trimOrEmpty(eventRow?.topic_key) || EMPTY_EVENT_FORM.topic_key,
+      title: trimOrEmpty(eventRow?.title),
+      summary: trimOrEmpty(eventRow?.summary),
+      body: trimOrEmpty(eventRow?.body),
+      location_name: trimOrEmpty(eventRow?.location_name),
+      location_address: trimOrEmpty(eventRow?.location_address),
+      cta_label: trimOrEmpty(eventRow?.cta_label),
+      cta_url: trimOrEmpty(eventRow?.cta_url),
+      starts_at: toDateTimeLocalValue(eventRow?.starts_at),
+      ends_at: toDateTimeLocalValue(eventRow?.ends_at),
+      all_day: Boolean(eventRow?.all_day),
+      status: trimOrEmpty(eventRow?.status) || EMPTY_EVENT_FORM.status,
+    });
+  }
+
+  function startNewAlert() {
+    setAdminStatus("");
+    setEditingAlertId(null);
+    setAlertForm({ ...EMPTY_ALERT_FORM });
+    setShowAlertComposer(true);
+  }
+
+  function startEditAlert(alert) {
+    setAdminStatus("");
+    setEditingAlertId(alert?.id || null);
+    populateAlertForm(alert);
+    setShowAlertComposer(true);
+  }
+
+  function closeAlertComposer() {
+    setShowAlertComposer(false);
+    setEditingAlertId(null);
+    setAlertForm({ ...EMPTY_ALERT_FORM });
+  }
+
+  function startNewEvent() {
+    setAdminStatus("");
+    setEditingEventId(null);
+    setEventForm({ ...EMPTY_EVENT_FORM, starts_at: toDateInputValue(new Date()) });
+    setShowEventComposer(true);
+  }
+
+  function startEditEvent(eventRow) {
+    setAdminStatus("");
+    setEditingEventId(eventRow?.id || null);
+    populateEventForm(eventRow);
+    setShowEventComposer(true);
+  }
+
+  function closeEventComposer() {
+    setShowEventComposer(false);
+    setEditingEventId(null);
+    setEventForm({ ...EMPTY_EVENT_FORM, starts_at: toDateInputValue(new Date()) });
+  }
+
   function updateTenantInterest(tenantKeyInput, enabled) {
     const key = trimOrEmpty(tenantKeyInput).toLowerCase();
     if (!key) return;
@@ -1318,6 +1414,35 @@ export default function MunicipalityApp() {
     setAuthMode("login");
   }
 
+  async function reloadAlerts() {
+    const { data } = await supabase
+      .from("municipality_alerts")
+      .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+      .order("pinned", { ascending: false })
+      .order("starts_at", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (data) {
+      setAlerts(sortAlerts(data.map((item) => ({
+        ...item,
+        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
+      }))));
+    }
+  }
+
+  async function reloadEvents() {
+    const { data } = await supabase
+      .from("municipality_events")
+      .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+      .order("starts_at", { ascending: true })
+      .order("created_at", { ascending: false });
+    if (data) {
+      setEvents(sortEvents(data.map((item) => ({
+        ...item,
+        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
+      }))));
+    }
+  }
+
   async function createAlert(event) {
     event.preventDefault();
     setAdminStatus("");
@@ -1336,34 +1461,28 @@ export default function MunicipalityApp() {
       status: alertForm.status,
       starts_at: coerceDateTimeInput(alertForm.starts_at),
       ends_at: coerceDateTimeInput(alertForm.ends_at),
-      published_at: alertForm.status === "published" ? new Date().toISOString() : null,
       delivery_channels: ["in_app", "email"],
     };
     if (!payload.title || !payload.topic_key) {
       setAdminStatus("Alert title and topic are required.");
       return;
     }
-    const { error } = await supabase.from("municipality_alerts").insert([payload]);
+    const isEditing = Boolean(editingAlertId);
+    const currentAlert = isEditing ? alerts.find((item) => item.id === editingAlertId) : null;
+    payload.published_at = payload.status === "published"
+      ? (currentAlert?.published_at || new Date().toISOString())
+      : null;
+    const query = isEditing
+      ? supabase.from("municipality_alerts").update(payload).eq("id", editingAlertId)
+      : supabase.from("municipality_alerts").insert([payload]);
+    const { error } = await query;
     if (error) {
-      setAdminStatus(error.message || "Could not publish the alert.");
+      setAdminStatus(error.message || `Could not ${isEditing ? "update" : "publish"} the alert.`);
       return;
     }
-    setAlertForm(EMPTY_ALERT_FORM);
-    setAdminStatus("Alert saved.");
-    setShowAlertComposer(true);
-    setRoutePath((prev) => prev);
-    const { data } = await supabase
-      .from("municipality_alerts")
-      .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
-      .order("pinned", { ascending: false })
-      .order("starts_at", { ascending: false })
-      .order("created_at", { ascending: false });
-    if (data) {
-      setAlerts(sortAlerts(data.map((item) => ({
-        ...item,
-        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
-      }))));
-    }
+    closeAlertComposer();
+    setAdminStatus(isEditing ? "Alert updated." : "Alert saved.");
+    await reloadAlerts();
   }
 
   async function createEvent(event) {
@@ -1383,32 +1502,28 @@ export default function MunicipalityApp() {
       status: eventForm.status,
       starts_at: coerceDateTimeInput(eventForm.starts_at),
       ends_at: coerceDateTimeInput(eventForm.ends_at),
-      published_at: eventForm.status === "published" ? new Date().toISOString() : null,
       delivery_channels: ["in_app", "email"],
     };
     if (!payload.title || !payload.topic_key || !payload.starts_at) {
       setAdminStatus("Event title, topic, and start time are required.");
       return;
     }
-    const { error } = await supabase.from("municipality_events").insert([payload]);
+    const isEditing = Boolean(editingEventId);
+    const currentEvent = isEditing ? events.find((item) => item.id === editingEventId) : null;
+    payload.published_at = payload.status === "published"
+      ? (currentEvent?.published_at || new Date().toISOString())
+      : null;
+    const query = isEditing
+      ? supabase.from("municipality_events").update(payload).eq("id", editingEventId)
+      : supabase.from("municipality_events").insert([payload]);
+    const { error } = await query;
     if (error) {
-      setAdminStatus(error.message || "Could not save the event.");
+      setAdminStatus(error.message || `Could not ${isEditing ? "update" : "save"} the event.`);
       return;
     }
-    setEventForm({ ...EMPTY_EVENT_FORM, starts_at: toDateInputValue(new Date()) });
-    setAdminStatus("Event saved.");
-    setShowEventComposer(true);
-    const { data } = await supabase
-      .from("municipality_events")
-      .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
-      .order("starts_at", { ascending: true })
-      .order("created_at", { ascending: false });
-    if (data) {
-      setEvents(sortEvents(data.map((item) => ({
-        ...item,
-        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
-      }))));
-    }
+    closeEventComposer();
+    setAdminStatus(isEditing ? "Event updated." : "Event saved.");
+    await reloadEvents();
   }
 
   async function updateAlertStatus(alert, nextStatus) {
@@ -1518,8 +1633,8 @@ export default function MunicipalityApp() {
                         className="municipality-nav-menu-item"
                         onClick={() => {
                           setOpenNavMenu("");
-                          if (isAlertsMenu) setShowAlertComposer(true);
-                          else setShowEventComposer(true);
+                          if (isAlertsMenu) startNewAlert();
+                          else startNewEvent();
                           navigate(item.path);
                         }}
                       >
@@ -1711,7 +1826,10 @@ export default function MunicipalityApp() {
                   <button
                     type="button"
                     className="municipality-button municipality-button--primary"
-                    onClick={() => setShowAlertComposer((prev) => !prev)}
+                    onClick={() => {
+                      if (showAlertComposer) closeAlertComposer();
+                      else startNewAlert();
+                    }}
                   >
                     {showAlertComposer ? "Back" : "Create Alert"}
                   </button>
@@ -1722,6 +1840,8 @@ export default function MunicipalityApp() {
                     alertForm={alertForm}
                     setAlertForm={setAlertForm}
                     onSubmit={createAlert}
+                    heading={editingAlertId ? "Edit Alert" : "Create Alert"}
+                    submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
                   />
                 ) : null}
                 {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
@@ -1733,6 +1853,7 @@ export default function MunicipalityApp() {
                 emptyText="No alerts have been published yet."
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateAlertStatus : null}
+                onEdit={manageAccess ? startEditAlert : null}
               />
             )}
           </HomeCard>
@@ -1746,7 +1867,10 @@ export default function MunicipalityApp() {
                   <button
                     type="button"
                     className="municipality-button municipality-button--primary"
-                    onClick={() => setShowEventComposer((prev) => !prev)}
+                    onClick={() => {
+                      if (showEventComposer) closeEventComposer();
+                      else startNewEvent();
+                    }}
                   >
                     {showEventComposer ? "Back" : "Create Event"}
                   </button>
@@ -1772,6 +1896,8 @@ export default function MunicipalityApp() {
                   eventForm={eventForm}
                   setEventForm={setEventForm}
                   onSubmit={createEvent}
+                  heading={editingEventId ? "Edit Event" : "Create Event"}
+                  submitLabel={editingEventId ? "Update Event" : "Save Event"}
                 />
               ) : null}
               {manageAccess && adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
@@ -1782,6 +1908,7 @@ export default function MunicipalityApp() {
                 emptyText="No events have been published yet."
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateEventStatus : null}
+                onEdit={manageAccess ? startEditEvent : null}
               />
             )}
           </HomeCard>
