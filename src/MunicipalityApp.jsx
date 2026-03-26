@@ -1572,115 +1572,18 @@ export default function MunicipalityApp() {
   function renderHeader(floating = false) {
     return (
       <header className={`municipality-topbar${floating ? " municipality-topbar--floating" : ""}`}>
-        <div className="municipality-brand">
-          <picture>
-            <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
-            <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
-          </picture>
-          <div className="municipality-brand-copy">
-            <p className="municipality-brand-eyebrow">Municipality Hub</p>
-            <h1>{tenantName}</h1>
-            <p>Resident notices, civic events, and issue reporting in one place.</p>
+        <div className="municipality-title-bar">
+          <div className="municipality-brand">
+            <picture>
+              <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
+              <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
+            </picture>
+            <div className="municipality-brand-copy">
+              <p className="municipality-brand-eyebrow">Municipality Hub</p>
+              <h1>{tenantName}</h1>
+              <p>Resident notices, civic events, and issue reporting in one place.</p>
+            </div>
           </div>
-        </div>
-        <div className="municipality-topbar-actions">
-          <nav className="municipality-nav" aria-label="Municipality navigation">
-            {navLinks.map((item) => {
-              const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
-              if (!showManageMenu) {
-                return (
-                  <a
-                    key={item.key}
-                    href={item.href}
-                    className={`${item.primary ? "municipality-button municipality-button--primary municipality-nav-link--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      navigate(item.path);
-                    }}
-                  >
-                    {item.label}
-                  </a>
-                );
-              }
-
-              const isAlertsMenu = item.key === "alerts";
-              const isOpen = openNavMenu === item.key;
-              const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
-              const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
-              return (
-                <div
-                  key={item.key}
-                  className="municipality-nav-dropdown"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
-                    onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
-                  >
-                    {item.label}
-                  </button>
-                  {isOpen ? (
-                    <div className="municipality-nav-menu">
-                      <button
-                        type="button"
-                        className="municipality-nav-menu-item"
-                        onClick={() => {
-                          setOpenNavMenu("");
-                          navigate(item.path);
-                        }}
-                      >
-                        {viewLabel}
-                      </button>
-                      <button
-                        type="button"
-                        className="municipality-nav-menu-item"
-                        onClick={() => {
-                          setOpenNavMenu("");
-                          if (isAlertsMenu) startNewAlert();
-                          else startNewEvent();
-                          navigate(item.path);
-                        }}
-                      >
-                        {createLabel}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-
-            {session?.user?.id && switchableTenants.length ? (
-              <div className="municipality-nav-dropdown" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className={`municipality-nav-link municipality-nav-button${openNavMenu === "tenants" ? " is-active" : ""}`}
-                  onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
-                >
-                  Tenants
-                </button>
-                {openNavMenu === "tenants" ? (
-                  <div className="municipality-nav-menu">
-                    {switchableTenants.map((city) => {
-                      const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath);
-                      return (
-                        <a
-                          key={cityKey}
-                          href={targetHref}
-                          className="municipality-nav-menu-item municipality-nav-menu-item--link"
-                          onClick={() => setOpenNavMenu("")}
-                        >
-                          {trimOrEmpty(city?.name) || cityKey}
-                        </a>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </nav>
-
           <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
             {!session?.user?.id ? (
               <button
@@ -1748,6 +1651,104 @@ export default function MunicipalityApp() {
               </>
             )}
           </div>
+        </div>
+        <div className="municipality-tabs-bar">
+          <nav className="municipality-nav" aria-label="Municipality navigation">
+            {navLinks.map((item) => {
+              const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
+              if (!showManageMenu) {
+                return (
+                  <a
+                    key={item.key}
+                    href={item.href}
+                    className={`${item.primary ? "municipality-button municipality-button--primary municipality-nav-link--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigate(item.path);
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                );
+              }
+
+              const isAlertsMenu = item.key === "alerts";
+              const isOpen = openNavMenu === item.key;
+              const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
+              const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
+              return (
+                <div
+                  key={item.key}
+                  className="municipality-nav-dropdown"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
+                    onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
+                  >
+                    {item.label}
+                  </button>
+                  {isOpen ? (
+                    <div className="municipality-nav-menu">
+                      <button
+                        type="button"
+                        className="municipality-nav-menu-item"
+                        onClick={() => {
+                          setOpenNavMenu("");
+                          navigate(item.path);
+                        }}
+                      >
+                        {viewLabel}
+                      </button>
+                      <button
+                        type="button"
+                        className="municipality-nav-menu-item"
+                        onClick={() => {
+                          setOpenNavMenu("");
+                          if (isAlertsMenu) startNewAlert();
+                          else startNewEvent();
+                          navigate(item.path);
+                        }}
+                      >
+                        {createLabel}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {session?.user?.id && switchableTenants.length ? (
+              <div className="municipality-nav-dropdown municipality-nav-dropdown--tenants" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className={`municipality-nav-link municipality-nav-button${openNavMenu === "tenants" ? " is-active" : ""}`}
+                  onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
+                >
+                  Tenants
+                </button>
+                {openNavMenu === "tenants" ? (
+                  <div className="municipality-nav-menu">
+                    {switchableTenants.map((city) => {
+                      const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath);
+                      return (
+                        <a
+                          key={cityKey}
+                          href={targetHref}
+                          className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                          onClick={() => setOpenNavMenu("")}
+                        >
+                          {trimOrEmpty(city?.name) || cityKey}
+                        </a>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </nav>
         </div>
       </header>
     );
