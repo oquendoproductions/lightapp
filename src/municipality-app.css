@@ -83,7 +83,12 @@
   gap: 10px;
 }
 
+.municipality-nav-dropdown {
+  position: relative;
+}
+
 .municipality-nav-link,
+.municipality-nav-button,
 .municipality-button {
   border: 1px solid rgba(23, 49, 79, 0.15);
   border-radius: 999px;
@@ -98,6 +103,7 @@
 }
 
 .municipality-nav-link:hover,
+.municipality-nav-button:hover,
 .municipality-button:hover {
   transform: translateY(-1px);
   border-color: rgba(23, 49, 79, 0.28);
@@ -105,10 +111,43 @@
 }
 
 .municipality-nav-link.is-active,
+.municipality-nav-button.is-active,
 .municipality-button--primary {
   background: linear-gradient(135deg, #113d5f 0%, #176d78 100%);
   border-color: transparent;
   color: #f7fbff;
+}
+
+.municipality-nav-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 190px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 49, 79, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(17, 49, 79, 0.14);
+  display: grid;
+  gap: 6px;
+  z-index: 30;
+}
+
+.municipality-nav-menu-item {
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  border-radius: 14px;
+  background: rgba(246, 250, 255, 0.96);
+  color: #17314f;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.municipality-nav-menu-item:hover {
+  border-color: rgba(23, 49, 79, 0.18);
+  background: rgba(238, 246, 255, 1);
 }
 
 .municipality-button--ghost {
@@ -209,6 +248,24 @@
 .municipality-section h3 {
   margin: 0;
   font-size: 20px;
+}
+
+.municipality-title-link {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #17314f;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.municipality-title-link:hover {
+  color: #176d78;
+  text-decoration: underline;
 }
 
 .municipality-side-panel p,

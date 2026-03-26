@@ -327,10 +327,16 @@ function useResidentAuth() {
   return { session, profile, authReady, loadingProfile };
 }
 
-function HomeCard({ title, children, subtitle }) {
+function HomeCard({ title, children, subtitle, onTitleClick = null }) {
   return (
     <section className="municipality-card municipality-section">
-      <h3>{title}</h3>
+      {typeof onTitleClick === "function" ? (
+        <button type="button" className="municipality-title-link" onClick={onTitleClick}>
+          {title}
+        </button>
+      ) : (
+        <h3>{title}</h3>
+      )}
       {subtitle ? <p className="municipality-section-subtitle">{subtitle}</p> : null}
       {children}
     </section>
@@ -578,6 +584,7 @@ export default function MunicipalityApp() {
   const [authBusy, setAuthBusy] = useState(false);
   const [showAlertComposer, setShowAlertComposer] = useState(false);
   const [showEventComposer, setShowEventComposer] = useState(false);
+  const [openNavMenu, setOpenNavMenu] = useState("");
 
   useEffect(() => {
     function onPopState() {
@@ -590,6 +597,17 @@ export default function MunicipalityApp() {
   useEffect(() => {
     setRoutePath(normalizeMunicipalityAppPath(window.location.pathname, tenantKey));
   }, [tenantKey]);
+
+  useEffect(() => {
+    setOpenNavMenu("");
+  }, [routePath]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !openNavMenu) return undefined;
+    const closeMenu = () => setOpenNavMenu("");
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [openNavMenu]);
 
   if (!residentPortalEnabled) {
     return (
@@ -1039,19 +1057,73 @@ export default function MunicipalityApp() {
           </div>
         </div>
         <nav className="municipality-nav" aria-label="Municipality navigation">
-          {navLinks.map((item) => (
-            <a
-              key={item.key}
-              href={item.href}
-              className={`${item.primary ? "municipality-button municipality-button--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
-              onClick={(event) => {
-                event.preventDefault();
-                navigate(item.path);
-              }}
-            >
-              {item.label}
-            </a>
-          ))}
+          {navLinks.map((item) => {
+            const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
+            if (!showManageMenu) {
+              return (
+                <a
+                  key={item.key}
+                  href={item.href}
+                  className={`${item.primary ? "municipality-button municipality-button--primary" : "municipality-nav-link"}${item.active ? " is-active" : ""}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate(item.path);
+                  }}
+                >
+                  {item.label}
+                </a>
+              );
+            }
+
+            const isAlertsMenu = item.key === "alerts";
+            const isOpen = openNavMenu === item.key;
+            const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
+            const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
+            return (
+              <div
+                key={item.key}
+                className="municipality-nav-dropdown"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
+                  onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
+                >
+                  {item.label}
+                </button>
+                {isOpen ? (
+                  <div className="municipality-nav-menu">
+                    <button
+                      type="button"
+                      className="municipality-nav-menu-item"
+                      onClick={() => {
+                        setOpenNavMenu("");
+                        navigate(item.path);
+                      }}
+                    >
+                      {viewLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className="municipality-nav-menu-item"
+                      onClick={() => {
+                        setOpenNavMenu("");
+                        if (isAlertsMenu) {
+                          setShowAlertComposer(true);
+                        } else {
+                          setShowEventComposer(true);
+                        }
+                        navigate(item.path);
+                      }}
+                    >
+                      {createLabel}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </nav>
       </header>
     );
@@ -1113,7 +1185,7 @@ export default function MunicipalityApp() {
                   </div>
                   <div className="municipality-metric">
                     <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
-                    <span>{session?.user?.id ? "Subscribed Topics" : "Topics Ready"}</span>
+                    <span>{session?.user?.id ? "Enabled Topics" : "Topics Ready"}</span>
                   </div>
                 </div>
               </div>
@@ -1153,73 +1225,25 @@ export default function MunicipalityApp() {
                   )}
                 </aside>
 
-                <aside className="municipality-card municipality-side-panel">
-                  <h3>Calendar-Friendly</h3>
-                  <p>
-                    Upcoming civic events and planned maintenance can be downloaded into a calendar file today,
-                    with linked calendar subscriptions ready for the next delivery step.
-                  </p>
-                  <div className="municipality-actions">
-                    <button
-                      type="button"
-                      className="municipality-button municipality-button--ghost"
-                      onClick={() => {
-                        if (!publishedEvents.length) return;
-                        downloadTextFile(
-                          `${tenantKey || "municipality"}-events.ics`,
-                          buildIcsFile(publishedEvents, tenantName),
-                          "text/calendar;charset=utf-8"
-                        );
-                      }}
-                    >
-                      Download Calendar File
-                    </button>
-                  </div>
-                </aside>
               </div>
             </section>
 
             <section className="municipality-section-grid">
-              <HomeCard title="Current Alerts" subtitle="Road work, utility interruptions, service changes, and urgent notices.">
+              <HomeCard
+                title="Current Alerts"
+                subtitle="Road work, utility interruptions, service changes, and urgent notices."
+                onTitleClick={() => navigate("/alerts")}
+              >
                 {dataLoading ? <div className="municipality-empty">Loading alerts…</div> : <AlertFeed alerts={homeAlerts} emptyText="No active alerts are published right now." />}
               </HomeCard>
-              <HomeCard title="Upcoming Events" subtitle="Parades, public meetings, sanitation changes, and scheduled maintenance.">
+              <HomeCard
+                title="Upcoming Events"
+                subtitle="Parades, public meetings, sanitation changes, and scheduled maintenance."
+                onTitleClick={() => navigate("/events")}
+              >
                 {dataLoading ? <div className="municipality-empty">Loading events…</div> : <EventFeed events={homeEvents} emptyText="No upcoming events are published yet." />}
               </HomeCard>
             </section>
-
-            {manageAccess ? (
-              <section className="municipality-card municipality-section" style={{ marginTop: 22 }}>
-                <h3>Municipality Publishing Desk</h3>
-                <p className="municipality-section-subtitle">
-                  Use the alerts and events workspaces to create resident-facing notices. Delivery is live in-app now, with email
-                  and push delivery fields already modeled for the next rollout.
-                </p>
-                <div className="municipality-actions municipality-actions--toolbar" style={{ marginTop: 18 }}>
-                  <button
-                    type="button"
-                    className="municipality-button municipality-button--primary"
-                    onClick={() => {
-                      setShowAlertComposer(true);
-                      navigate("/alerts");
-                    }}
-                  >
-                    Create Alert
-                  </button>
-                  <button
-                    type="button"
-                    className="municipality-button municipality-button--ghost"
-                    onClick={() => {
-                      setShowEventComposer(true);
-                      navigate("/events");
-                    }}
-                  >
-                    Create Event
-                  </button>
-                </div>
-                {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`} style={{ marginTop: 14 }}>{adminStatus}</p> : null}
-              </section>
-            ) : null}
           </>
         ) : null}
 
@@ -1308,7 +1332,7 @@ export default function MunicipalityApp() {
         ) : null}
 
         {routePath === "/preferences" ? (
-          <section className="municipality-section-grid">
+          <section>
             <HomeCard title="Notification Preferences" subtitle="Choose which city updates you want first. In-app and email preferences are live now; web push is held for the next delivery pass.">
               {!session?.user?.id ? (
                 <form className="municipality-auth-panel" onSubmit={handleAuthSubmit}>
@@ -1374,33 +1398,6 @@ export default function MunicipalityApp() {
                     </button>
                   </div>
                   {prefsStatus ? <p className={`municipality-inline-status${prefsStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{prefsStatus}</p> : null}
-                </div>
-              )}
-            </HomeCard>
-
-            <HomeCard title="Resident Summary" subtitle="This is the first-pass account experience for the municipality hub. The reporting workspace still keeps its own deeper account tools.">
-              {session?.user?.id ? (
-                <div className="municipality-account-card">
-                  <h4>{trimOrEmpty(profile?.full_name) || trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Resident"}</h4>
-                  <p className="municipality-note">{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</p>
-                  <p className="municipality-note">
-                    {currentPreferenceCount} topic{currentPreferenceCount === 1 ? "" : "s"} currently enabled across in-app or email delivery.
-                  </p>
-                  <div className="municipality-actions">
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/report")}>
-                      Open Reporting Workspace
-                    </button>
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => { void supabase.auth.signOut(); }}>
-                      Sign Out
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="municipality-account-card">
-                  <h4>Why sign in?</h4>
-                  <p className="municipality-note">
-                    Resident accounts unlock notification preferences now and will also carry forward into mobile-app delivery later.
-                  </p>
                 </div>
               )}
             </HomeCard>
