@@ -1060,14 +1060,9 @@ export default function MunicipalityApp() {
   if (routePath === "/report") {
     return (
       <div className="municipality-shell">
-        <div className="municipality-report-overlay">
-          <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/")}>
-            Back To Updates
-          </button>
-        </div>
         <div className="municipality-main municipality-main--report">
           <Suspense fallback={<div className="municipality-empty" style={{ margin: 16 }}>Loading reporting workspace…</div>}>
-            <MapGoogleFull />
+            <MapGoogleFull onBackToHub={() => navigate("/")} />
           </Suspense>
         </div>
       </div>
@@ -1238,7 +1233,7 @@ export default function MunicipalityApp() {
                     className="municipality-button municipality-button--primary"
                     onClick={() => setShowAlertComposer((prev) => !prev)}
                   >
-                    {showAlertComposer ? "Hide Alert Composer" : "Create Alert"}
+                    {showAlertComposer ? "Back" : "Create Alert"}
                   </button>
                 </div>
                 {showAlertComposer ? (
@@ -1273,7 +1268,7 @@ export default function MunicipalityApp() {
                     className="municipality-button municipality-button--primary"
                     onClick={() => setShowEventComposer((prev) => !prev)}
                   >
-                    {showEventComposer ? "Hide Event Composer" : "Create Event"}
+                    {showEventComposer ? "Back" : "Create Event"}
                   </button>
                 ) : null}
                 <button

@@ -409,13 +409,6 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.municipality-report-overlay {
-  position: fixed;
-  top: 20px;
-  left: 20px;
-  z-index: 30;
-}
-
 .municipality-empty {
   margin-top: 16px;
   padding: 18px;
@@ -441,11 +434,6 @@
 
   .municipality-main--report {
     padding-top: 18px;
-  }
-
-  .municipality-report-overlay {
-    position: static;
-    margin: 0 16px 12px;
   }
 }
 

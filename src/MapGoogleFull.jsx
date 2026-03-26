@@ -10326,7 +10326,7 @@ function normalizeOfficialSignRow(row) {
 // ==================================================
 // SECTION 8 — Main App
 // ==================================================
-export default function App() {
+export default function App({ onBackToHub = null }) {
   const mapRef = useRef(null);
   const flyAnimRef = useRef(null);
   const flyInfoTimerRef = useRef(null);
@@ -21787,9 +21787,9 @@ async function insertReportWithFallback(payload) {
               </button>
             </div>
 
-            <div
-                style={{
-                  background: "var(--sl-ui-surface-bg)",
+	            <div
+	                style={{
+	                  background: "var(--sl-ui-surface-bg)",
                   border: "1px solid var(--sl-ui-surface-border)",
                   borderRadius: 14,
                   boxShadow: "var(--sl-ui-surface-shadow)",
@@ -21797,11 +21797,31 @@ async function insertReportWithFallback(payload) {
                   display: "grid",
                   gap: 6,
                   position: "relative",
-                  color: "var(--sl-ui-text)",
-                }}
-            >
-              {titleLogoError ? (
-                <>
+	                  color: "var(--sl-ui-text)",
+	                }}
+	            >
+	              {typeof onBackToHub === "function" ? (
+	                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
+	                  <button
+	                    type="button"
+	                    onClick={onBackToHub}
+	                    style={{
+	                      border: "1px solid var(--sl-ui-surface-border)",
+	                      background: "rgba(255,255,255,0.92)",
+	                      color: "var(--sl-ui-text)",
+	                      borderRadius: 999,
+	                      padding: "8px 12px",
+	                      fontSize: 13,
+	                      fontWeight: 800,
+	                      cursor: "pointer",
+	                    }}
+	                  >
+	                    Back to Hub
+	                  </button>
+	                </div>
+	              ) : null}
+	              {titleLogoError ? (
+	                <>
                   <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
                     CityReport.io
                   </div>
@@ -22412,30 +22432,72 @@ async function insertReportWithFallback(payload) {
               }}
             />
 
-              {titleLogoError ? (
-                <>
-                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-                  CityReport.io
-                </div>
+	              {titleLogoError ? (
+	                <>
+	                {typeof onBackToHub === "function" ? (
+	                  <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
+	                    <button
+	                      type="button"
+	                      onClick={onBackToHub}
+	                      style={{
+	                        border: "1px solid var(--sl-ui-surface-border)",
+	                        background: "rgba(255,255,255,0.92)",
+	                        color: "var(--sl-ui-text)",
+	                        borderRadius: 999,
+	                        padding: "7px 11px",
+	                        fontSize: 12.5,
+	                        fontWeight: 800,
+	                        cursor: "pointer",
+	                      }}
+	                    >
+	                      Back to Hub
+	                    </button>
+	                  </div>
+	                ) : null}
+	                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
+	                  CityReport.io
+	                </div>
                   <div style={{ fontSize: 11, opacity: 0.78, textAlign: "center", lineHeight: 1.2 }}>
                     transparent reporting, visible progress.
                   </div>
                 </>
-              ) : (
-                <img
-                  src={titleLogoSrc}
-                  alt={TITLE_LOGO_ALT}
-                  onError={() => setTitleLogoError(true)}
-                style={{
-                  display: "block",
-                  margin: "0 auto",
-                  width: "100%",
-                  maxWidth: "100%",
-                  height: 63,
-                  objectFit: "contain",
-                }}
-              />
-            )}
+	              ) : (
+	                <>
+	                  {typeof onBackToHub === "function" ? (
+	                    <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 6 }}>
+	                      <button
+	                        type="button"
+	                        onClick={onBackToHub}
+	                        style={{
+	                          border: "1px solid var(--sl-ui-surface-border)",
+	                          background: "rgba(255,255,255,0.92)",
+	                          color: "var(--sl-ui-text)",
+	                          borderRadius: 999,
+	                          padding: "7px 11px",
+	                          fontSize: 12.5,
+	                          fontWeight: 800,
+	                          cursor: "pointer",
+	                        }}
+	                      >
+	                        Back to Hub
+	                      </button>
+	                    </div>
+	                  ) : null}
+	                  <img
+	                    src={titleLogoSrc}
+	                    alt={TITLE_LOGO_ALT}
+	                    onError={() => setTitleLogoError(true)}
+	                  style={{
+	                    display: "block",
+	                    margin: "0 auto",
+	                    width: "100%",
+	                    maxWidth: "100%",
+	                    height: 63,
+	                    objectFit: "contain",
+	                  }}
+	                />
+	                </>
+	            )}
 
               </div>
 
