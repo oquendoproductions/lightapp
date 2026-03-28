@@ -1722,59 +1722,6 @@ export default function MunicipalityApp() {
               )}
             </div>
           </div>
-          <nav
-            className="municipality-mobile-nav"
-            aria-label="Municipality mobile navigation"
-            style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
-          >
-            {mobileNavItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
-                onClick={() => navigate(item.path)}
-              >
-                {item.label}
-              </button>
-            ))}
-            {session?.user?.id && switchableTenants.length ? (
-              <button
-                type="button"
-                className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
-                onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
-              >
-                Tenants
-              </button>
-            ) : null}
-          </nav>
-          {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
-            <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
-              <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
-                <div className="municipality-mobile-sheet-header">
-                  <strong>Switch Municipality</strong>
-                  <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
-                    Close
-                  </button>
-                </div>
-                <div className="municipality-mobile-sheet-list">
-                  {switchableTenants.map((city) => {
-                    const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                    const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
-                    return (
-                      <a
-                        key={cityKey}
-                        href={targetHref}
-                        className="municipality-nav-menu-item municipality-nav-menu-item--link"
-                        onClick={() => setOpenNavMenu("")}
-                      >
-                        {trimOrEmpty(city?.name) || cityKey}
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : null}
         </header>
         <div className="municipality-tabs-shell">
           <div className="municipality-tabs-bar">
@@ -1876,6 +1823,59 @@ export default function MunicipalityApp() {
             </nav>
           </div>
         </div>
+        <nav
+          className="municipality-mobile-nav"
+          aria-label="Municipality mobile navigation"
+          style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
+        >
+          {mobileNavItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+              onClick={() => navigate(item.path)}
+            >
+              {item.label}
+            </button>
+          ))}
+          {session?.user?.id && switchableTenants.length ? (
+            <button
+              type="button"
+              className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
+              onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
+            >
+              Tenants
+            </button>
+          ) : null}
+        </nav>
+        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
+          <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
+            <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-mobile-sheet-header">
+                <strong>Switch Municipality</strong>
+                <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
+                  Close
+                </button>
+              </div>
+              <div className="municipality-mobile-sheet-list">
+                {switchableTenants.map((city) => {
+                  const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                  const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
+                  return (
+                    <a
+                      key={cityKey}
+                      href={targetHref}
+                      className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                      onClick={() => setOpenNavMenu("")}
+                    >
+                      {trimOrEmpty(city?.name) || cityKey}
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </>
     );
   }

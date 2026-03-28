@@ -780,7 +780,7 @@
 
 @media (max-width: 720px) {
   .municipality-topbar {
-    padding: 12px 12px 18px;
+    padding: 10px 10px 8px;
     border-bottom: 0;
     background: rgba(245, 250, 255, 0.8);
   }
@@ -788,8 +788,8 @@
   .municipality-title-bar {
     position: relative;
     grid-template-columns: 44px 1fr 44px;
-    min-height: 82px;
-    padding: 12px 14px;
+    min-height: 72px;
+    padding: 8px 12px;
     border: 1px solid rgba(23, 49, 79, 0.18);
     border-radius: 28px;
     background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
@@ -801,8 +801,8 @@
   }
 
   .municipality-brand-copy {
-    padding-inline: 8px;
-    gap: 1px;
+    padding-inline: 6px;
+    gap: 0;
   }
 
   .municipality-tabs-bar {
@@ -827,11 +827,12 @@
   }
 
   .municipality-brand-copy h1 {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   .municipality-brand-copy p {
-    font-size: 11px;
+    font-size: 10px;
+    line-height: 1.2;
   }
 
   .municipality-account-toggle {
