@@ -2297,30 +2297,31 @@ export default function PlatformAdminApp() {
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
-    ? { ...shell, padding: "90px 8px 42px" }
+    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px 42px" }
     : shell;
   const bannerStyle = isCompactViewport
     ? {
         ...stickyBanner,
-        top: 10,
-        left: 10,
-        width: "calc(100vw - 20px)",
-        gridTemplateColumns: "44px 1fr 44px",
-        minHeight: 72,
-        padding: "8px 12px",
+        top: "var(--mobile-header-top-offset)",
+        left: "var(--mobile-header-horizontal-inset)",
+        right: "var(--mobile-header-horizontal-inset)",
+        width: "auto",
+        gridTemplateColumns: "var(--mobile-header-side-column) 1fr var(--mobile-header-side-column)",
+        height: "var(--mobile-header-height)",
+        minHeight: "var(--mobile-header-height)",
+        padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
         border: "1px solid rgba(23, 49, 79, 0.18)",
-        borderBottom: 0,
-        borderRadius: 28,
-        background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
-        boxShadow: "0 12px 28px rgba(7,25,45,0.18)",
+        borderRadius: "var(--mobile-header-radius)",
+        background: "var(--mobile-header-background)",
+        boxShadow: "var(--mobile-header-shadow)",
       }
     : stickyBanner;
   const bannerLogoStyle = isCompactViewport
-    ? { ...brandLogo, height: 42, maxWidth: 42 }
+    ? { ...brandLogo, height: "var(--mobile-header-logo-size)", maxWidth: "var(--mobile-header-logo-size)" }
     : brandLogo;
   const bannerLogoSrc = isCompactViewport ? MOBILE_TITLE_LOGO_SRC : TITLE_LOGO_SRC;
   const bannerMenuButtonStyle = isCompactViewport
-    ? { ...menuToggleButton, width: 44, height: 44 }
+    ? { ...menuToggleButton, width: "var(--mobile-header-menu-size)", height: "var(--mobile-header-menu-size)" }
     : menuToggleButton;
   const menuLineWidth = isCompactViewport ? 16 : 18;
   const menuLineGap = isCompactViewport ? 3 : 4;
@@ -2335,7 +2336,7 @@ export default function PlatformAdminApp() {
         }}
         style={{
           ...brandResetButton,
-          width: isCompactViewport ? 44 : undefined,
+          width: isCompactViewport ? "var(--mobile-header-side-column)" : undefined,
           justifySelf: "start",
           zIndex: 1,
         }}
@@ -2352,24 +2353,35 @@ export default function PlatformAdminApp() {
         style={{
           ...brandResetButton,
           ...brandTitleStack,
-          gap: isCompactViewport ? 0 : brandTitleStack.gap,
+          gap: isCompactViewport ? "var(--mobile-header-stack-gap)" : brandTitleStack.gap,
           width: isCompactViewport ? "100%" : "min(640px, calc(100vw - 320px))",
           paddingInline: isCompactViewport ? 6 : 0,
           minWidth: 0,
           justifySelf: "center",
+          alignContent: isCompactViewport ? "center" : undefined,
         }}
       >
         <span style={{
-          fontSize: isCompactViewport ? 16 : "var(--desktop-header-title-size)",
+          visibility: "hidden",
+          fontSize: isCompactViewport ? "var(--mobile-header-eyebrow-size)" : "9px",
+          fontWeight: 800,
+          letterSpacing: "var(--desktop-header-eyebrow-letter-spacing)",
+          lineHeight: 1,
+          textTransform: "uppercase",
+        }}>
+          Municipality Hub
+        </span>
+        <span style={{
+          fontSize: isCompactViewport ? "var(--mobile-header-title-size)" : "var(--desktop-header-title-size)",
           fontWeight: "var(--desktop-header-title-weight)",
           color: palette.navy900,
-          lineHeight: isCompactViewport ? 1.05 : "var(--desktop-header-title-line-height)",
+          lineHeight: isCompactViewport ? "var(--mobile-header-title-line-height)" : "var(--desktop-header-title-line-height)",
         }}>
           Platform Control Plane
         </span>
       </button>
       {showBannerMenu ? (
-        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end", width: isCompactViewport ? 44 : undefined }}>
+        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end", width: isCompactViewport ? "var(--mobile-header-side-column)" : undefined }}>
           <button
             type="button"
             aria-label={bannerMenuLabel}

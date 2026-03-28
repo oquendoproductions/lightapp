@@ -781,33 +781,39 @@
 
 @media (max-width: 720px) {
   .municipality-topbar {
-    padding: 10px 10px 8px;
-    border-bottom: 0;
-    background: rgba(245, 250, 255, 0.8);
+    position: fixed;
+    inset: var(--mobile-header-top-offset) var(--mobile-header-horizontal-inset) auto;
+    z-index: 90;
+    padding: 0;
+    border: 0;
+    backdrop-filter: none;
+    background: transparent;
   }
 
   .municipality-title-bar {
     position: relative;
-    grid-template-columns: 44px 1fr 44px;
-    min-height: 72px;
-    padding: 8px 12px;
+    grid-template-columns: var(--mobile-header-side-column) 1fr var(--mobile-header-side-column);
+    height: var(--mobile-header-height);
+    min-height: var(--mobile-header-height);
+    padding: var(--mobile-header-padding-y) var(--mobile-header-padding-x);
     border: 1px solid rgba(23, 49, 79, 0.18);
-    border-radius: 28px;
-    background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
-    box-shadow: 0 12px 28px rgba(7, 25, 45, 0.14);
+    border-radius: var(--mobile-header-radius);
+    background: var(--mobile-header-background);
+    box-shadow: var(--mobile-header-shadow);
   }
 
   .municipality-brand {
-    width: 44px;
+    width: var(--mobile-header-side-column);
   }
 
   .municipality-brand-copy {
     padding-inline: 6px;
-    gap: 0;
+    gap: var(--mobile-header-stack-gap);
+    align-content: center;
   }
 
   .municipality-brand-eyebrow {
-    font-size: 8px;
+    font-size: var(--mobile-header-eyebrow-size);
   }
 
   .municipality-tabs-bar {
@@ -827,17 +833,18 @@
   }
 
   .municipality-brand img {
-    width: 42px;
-    height: 42px;
+    width: var(--mobile-header-logo-size);
+    height: var(--mobile-header-logo-size);
   }
 
   .municipality-brand-copy h1 {
-    font-size: 16px;
+    font-size: var(--mobile-header-title-size);
+    line-height: var(--mobile-header-title-line-height);
   }
 
   .municipality-account-toggle {
-    width: 44px;
-    height: 44px;
+    width: var(--mobile-header-menu-size);
+    height: var(--mobile-header-menu-size);
   }
 
   .municipality-account-menu {
@@ -939,6 +946,7 @@
 
   .municipality-main {
     width: min(1180px, calc(100vw - 20px));
+    padding-top: calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 28px);
     padding-bottom: 108px;
   }
 }

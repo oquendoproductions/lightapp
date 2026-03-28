@@ -12,4 +12,19 @@
   --desktop-header-subtitle-line-height: 1.35;
   --desktop-header-eyebrow-size: 10px;
   --desktop-header-eyebrow-letter-spacing: 0.14em;
+  --mobile-header-top-offset: 10px;
+  --mobile-header-horizontal-inset: 10px;
+  --mobile-header-height: 72px;
+  --mobile-header-side-column: 44px;
+  --mobile-header-padding-y: 8px;
+  --mobile-header-padding-x: 12px;
+  --mobile-header-radius: 28px;
+  --mobile-header-logo-size: 42px;
+  --mobile-header-menu-size: 44px;
+  --mobile-header-title-size: 16px;
+  --mobile-header-title-line-height: 1.05;
+  --mobile-header-eyebrow-size: 5px;
+  --mobile-header-stack-gap: 0;
+  --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
+  --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
 }
