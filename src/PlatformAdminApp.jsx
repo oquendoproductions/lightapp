@@ -2362,14 +2362,14 @@ export default function PlatformAdminApp() {
         }}
       >
         <span style={{
-          visibility: "hidden",
           fontSize: isCompactViewport ? "var(--mobile-header-eyebrow-size)" : "9px",
           fontWeight: 800,
           letterSpacing: "var(--desktop-header-eyebrow-letter-spacing)",
           lineHeight: 1,
           textTransform: "uppercase",
+          color: "#13856e",
         }}>
-          Municipality Hub
+          Developer Dashboard
         </span>
         <span style={{
           fontSize: isCompactViewport ? "var(--mobile-header-title-size)" : "var(--desktop-header-title-size)",
