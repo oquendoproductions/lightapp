@@ -655,6 +655,7 @@ export default function MunicipalityApp() {
   const [adminStatus, setAdminStatus] = useState("");
   const [authMode, setAuthMode] = useState("login");
   const [authForm, setAuthForm] = useState({ full_name: "", email: "", password: "" });
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [showAlertComposer, setShowAlertComposer] = useState(false);
@@ -692,6 +693,10 @@ export default function MunicipalityApp() {
     notifications: false,
     security: false,
   });
+  const authEmailAutoComplete = authMode === "login" ? "username" : "email";
+  const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
+  const authEmailName = authMode === "login" ? "username" : "email";
+  const authPasswordName = authMode === "login" ? "current-password" : "new-password";
 
   useEffect(() => {
     function onPopState() {
@@ -2065,16 +2070,45 @@ export default function MunicipalityApp() {
                     {authMode === "signup" ? (
                       <div className="municipality-field">
                         <label htmlFor="resident-name">Full name</label>
-                        <input id="resident-name" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
+                        <input id="resident-name" name="name" autoComplete="name" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
                       </div>
                     ) : null}
                     <div className="municipality-field">
                       <label htmlFor="resident-email">Email</label>
-                      <input id="resident-email" type="email" value={authForm.email} onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="you@example.com" />
+                      <input
+                        id="resident-email"
+                        name={authEmailName}
+                        type="email"
+                        inputMode="email"
+                        autoComplete={authEmailAutoComplete}
+                        autoCapitalize="none"
+                        spellCheck="false"
+                        value={authForm.email}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        placeholder="you@example.com"
+                      />
                     </div>
                     <div className="municipality-field">
                       <label htmlFor="resident-password">Password</label>
-                      <input id="resident-password" type="password" value={authForm.password} onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))} placeholder="Password" />
+                      <div className="municipality-password-row">
+                        <input
+                          id="resident-password"
+                          name={authPasswordName}
+                          type={showAuthPassword ? "text" : "password"}
+                          autoComplete={authPasswordAutoComplete}
+                          value={authForm.password}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                          placeholder="Password"
+                        />
+                        <button
+                          type="button"
+                          className="municipality-password-toggle"
+                          onClick={() => setShowAuthPassword((prev) => !prev)}
+                          aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        >
+                          {showAuthPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div className="municipality-actions">
@@ -2329,16 +2363,45 @@ export default function MunicipalityApp() {
                     {authMode === "signup" ? (
                       <div className="municipality-field">
                         <label htmlFor="resident-name-notifications">Full name</label>
-                        <input id="resident-name-notifications" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
+                        <input id="resident-name-notifications" name="name" autoComplete="name" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
                       </div>
                     ) : null}
                     <div className="municipality-field">
                       <label htmlFor="resident-email-notifications">Email</label>
-                      <input id="resident-email-notifications" type="email" value={authForm.email} onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="you@example.com" />
+                      <input
+                        id="resident-email-notifications"
+                        name={authEmailName}
+                        type="email"
+                        inputMode="email"
+                        autoComplete={authEmailAutoComplete}
+                        autoCapitalize="none"
+                        spellCheck="false"
+                        value={authForm.email}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        placeholder="you@example.com"
+                      />
                     </div>
                     <div className="municipality-field">
                       <label htmlFor="resident-password-notifications">Password</label>
-                      <input id="resident-password-notifications" type="password" value={authForm.password} onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))} placeholder="Password" />
+                      <div className="municipality-password-row">
+                        <input
+                          id="resident-password-notifications"
+                          name={authPasswordName}
+                          type={showAuthPassword ? "text" : "password"}
+                          autoComplete={authPasswordAutoComplete}
+                          value={authForm.password}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                          placeholder="Password"
+                        />
+                        <button
+                          type="button"
+                          className="municipality-password-toggle"
+                          onClick={() => setShowAuthPassword((prev) => !prev)}
+                          aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        >
+                          {showAuthPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div className="municipality-actions">
