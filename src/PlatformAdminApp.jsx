@@ -2305,6 +2305,7 @@ export default function PlatformAdminApp() {
         top: 10,
         left: 10,
         width: "calc(100vw - 20px)",
+        gridTemplateColumns: "44px 1fr 44px",
         minHeight: 72,
         padding: "8px 12px",
         border: "1px solid rgba(23, 49, 79, 0.18)",
@@ -2334,10 +2335,7 @@ export default function PlatformAdminApp() {
         }}
         style={{
           ...brandResetButton,
-          position: isCompactViewport ? "absolute" : "static",
-          left: isCompactViewport ? 10 : undefined,
-          top: isCompactViewport ? "50%" : undefined,
-          transform: isCompactViewport ? "translateY(-50%)" : "none",
+          width: isCompactViewport ? 44 : undefined,
           justifySelf: "start",
           zIndex: 1,
         }}
@@ -2354,11 +2352,9 @@ export default function PlatformAdminApp() {
         style={{
           ...brandResetButton,
           ...brandTitleStack,
-          position: isCompactViewport ? "absolute" : "static",
-          left: isCompactViewport ? "50%" : undefined,
-          top: isCompactViewport ? "50%" : undefined,
-          transform: isCompactViewport ? "translate(-50%, -50%)" : "none",
-          width: isCompactViewport ? "min(250px, calc(100vw - 120px))" : "min(640px, calc(100vw - 320px))",
+          gap: isCompactViewport ? 0 : brandTitleStack.gap,
+          width: isCompactViewport ? "100%" : "min(640px, calc(100vw - 320px))",
+          paddingInline: isCompactViewport ? 6 : 0,
           minWidth: 0,
           justifySelf: "center",
         }}
@@ -2380,7 +2376,7 @@ export default function PlatformAdminApp() {
         </span>
       </button>
       {showBannerMenu ? (
-        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end" }}>
+        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end", width: isCompactViewport ? 44 : undefined }}>
           <button
             type="button"
             aria-label={bannerMenuLabel}
