@@ -52,6 +52,12 @@ export function normalizeMunicipalityAppPath(pathname, tenantKey) {
   ) {
     return "/account";
   }
+  if (
+    stripped === "/settings" ||
+    stripped.startsWith("/settings/")
+  ) {
+    return "/settings";
+  }
   return "/";
 }
 

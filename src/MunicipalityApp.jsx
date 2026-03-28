@@ -32,6 +32,55 @@ const NAV_ITEMS = [
 
 const ACCOUNT_PATH = "/account";
 const NOTIFICATION_PATH = "/notifications";
+const SETTINGS_PATH = "/settings";
+
+const LOCATION_SETTINGS_GROUPS = [
+  {
+    key: "publishing",
+    title: "Publishing + Notices",
+    description: "Review active notices, draft new alerts, and keep event publishing organized for this location.",
+    actions: [
+      { label: "Manage Alerts", path: "/alerts" },
+      { label: "Manage Events", path: "/events" },
+    ],
+  },
+  {
+    key: "reports",
+    title: "Reports + Exports",
+    description: "Run location activity reports, pilot exports, and operational summaries from one place.",
+    actions: [
+      { label: "Run Reports", disabled: true },
+      { label: "Export Activity", disabled: true },
+    ],
+  },
+  {
+    key: "team",
+    title: "Users + Team Access",
+    description: "Add users, review who has access, and keep staff contacts organized for this location.",
+    actions: [
+      { label: "Add Users", disabled: true },
+      { label: "View Team Access", disabled: true },
+    ],
+  },
+  {
+    key: "roles",
+    title: "Roles + Permissions",
+    description: "Assign staff roles and define which admin actions each person can manage.",
+    actions: [
+      { label: "Assign Roles", disabled: true },
+      { label: "Review Permissions", disabled: true },
+    ],
+  },
+  {
+    key: "calendar",
+    title: "Calendar Sync",
+    description: "Connect calendars, review sync health, and keep city event feeds up to date.",
+    actions: [
+      { label: "Sync Calendars", disabled: true },
+      { label: "Review Sources", disabled: true },
+    ],
+  },
+];
 
 const DEFAULT_TOPIC_DETAILS = {
   emergency_alerts: { label: "Emergency Alerts", description: "Urgent citywide issues that need immediate attention." },
@@ -1062,7 +1111,7 @@ export default function MunicipalityApp() {
         if (isMissingRelationError(firstError)) {
           setFeatureStatus({
             ready: false,
-            message: "This tenant updates feature is ready in code, but the database migration has not been applied yet.",
+            message: "This location updates feature is ready in code, but the database migration has not been applied yet.",
           });
           setTopics([]);
           setAlerts([]);
@@ -1755,6 +1804,18 @@ export default function MunicipalityApp() {
                           >
                             Notification Preferences
                           </button>
+                          {manageAccess ? (
+                            <button
+                              type="button"
+                              className="municipality-nav-menu-item"
+                              onClick={() => {
+                                setAccountMenuOpen(false);
+                                navigate(SETTINGS_PATH);
+                              }}
+                            >
+                              Location Settings
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="municipality-nav-menu-item municipality-account-menu-signout"
@@ -1849,7 +1910,7 @@ export default function MunicipalityApp() {
                   className={`municipality-nav-link municipality-nav-button${openNavMenu === "tenants" ? " is-active" : ""}`}
                   onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
                 >
-                  Tenants
+                  Locations
                 </button>
                 {openNavMenu === "tenants" ? (
                   <div className="municipality-nav-menu">
@@ -1910,7 +1971,7 @@ export default function MunicipalityApp() {
                 setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
               }}
             >
-              Tenants
+              Locations
             </button>
           ) : null}
           <button
@@ -1925,7 +1986,7 @@ export default function MunicipalityApp() {
           <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
             <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
               <div className="municipality-mobile-sheet-header">
-                <strong>Switch Municipality</strong>
+                <strong>Switch Location</strong>
                 <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
                   Close
                 </button>
@@ -1957,8 +2018,8 @@ export default function MunicipalityApp() {
                   <h3>{authMode === "login" ? "Sign In" : "Create Account"}</h3>
                   <p>
                     {authMode === "login"
-                      ? "Sign in with your resident account to manage preferences and follow municipalities."
-                      : "Create your resident account to manage notifications and saved city selections."}
+                      ? "Sign in with your resident account to manage preferences and follow locations."
+                      : "Create your resident account to manage notifications and saved location selections."}
                   </p>
                 </div>
                 <button type="button" className="municipality-auth-modal-close" onClick={closeAuthModal} aria-label="Close sign-in dialog">
@@ -2276,13 +2337,76 @@ export default function MunicipalityApp() {
           </HomeCard>
         ) : null}
 
+        {routePath === SETTINGS_PATH ? (
+          <section>
+            <HomeCard title="Location Settings" subtitle="Run staff admin actions for this location from one place.">
+              {!session?.user?.id ? (
+                <div className="municipality-auth-cta">
+                  <h4>Sign in to manage this location</h4>
+                  <p className="municipality-note">Use the location staff login to access reports, calendars, users, and admin tools.</p>
+                  <div className="municipality-actions">
+                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
+                      Sign In
+                    </button>
+                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => openAuthModal("signup")}>
+                      Create Account
+                    </button>
+                  </div>
+                </div>
+              ) : !manageAccess ? (
+                <div className="municipality-auth-cta">
+                  <h4>Location settings are limited to location staff</h4>
+                  <p className="municipality-note">This page is reserved for permitted staff who manage publishing, reports, calendars, and team access for this location.</p>
+                </div>
+              ) : (
+                <div className="municipality-topic-row">
+                  {LOCATION_SETTINGS_GROUPS.map((group) => (
+                    <div key={group.key} className="municipality-account-card municipality-account-card--section">
+                      <div className="municipality-settings-header">
+                        <div>
+                          <h4>{group.title}</h4>
+                          <p className="municipality-note">{group.description}</p>
+                        </div>
+                      </div>
+                      <div className="municipality-actions">
+                        {group.actions.map((action) => (
+                          action.path ? (
+                            <button
+                              key={action.label}
+                              type="button"
+                              className={`municipality-button${action.path === "/alerts" || action.path === "/events" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                              onClick={() => navigate(action.path)}
+                            >
+                              {action.label}
+                            </button>
+                          ) : (
+                            <button
+                              key={action.label}
+                              type="button"
+                              className="municipality-button municipality-button--ghost"
+                              disabled
+                            >
+                              {action.label}
+                            </button>
+                          )
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <p className="municipality-note">More location admin tools will be added here next so staff can manage operations without leaving the hub.</p>
+                </div>
+              )}
+            </HomeCard>
+          </section>
+        ) : null}
+
         {routePath === ACCOUNT_PATH ? (
           <section>
-            <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the cities you follow.">
+            <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the locations you follow.">
               {!session?.user?.id ? (
                 <div className="municipality-auth-cta">
                   <h4>Sign in to manage your account settings</h4>
-                  <p className="municipality-note">Use the resident login modal to access account information, city selections, and notification settings.</p>
+                  <p className="municipality-note">Use the resident login modal to access account information, location selections, and notification settings.</p>
                   <div className="municipality-actions">
                     <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
                       Sign In
@@ -2363,8 +2487,8 @@ export default function MunicipalityApp() {
                   <div className="municipality-account-card municipality-account-card--section">
                     <div className="municipality-settings-header">
                       <div>
-                        <h4>My Cities</h4>
-                        <p className="municipality-note">Choose which municipality hubs appear in your tenant switcher.</p>
+                        <h4>My Locations</h4>
+                        <p className="municipality-note">Choose which locations appear in your location switcher.</p>
                       </div>
                       {accountSectionEdit.cities ? (
                         <div className="municipality-actions">
@@ -2392,8 +2516,8 @@ export default function MunicipalityApp() {
                     {accountSectionEdit.cities ? (
                       <>
                         <div className="municipality-field">
-                          <label htmlFor="city-search">Search municipalities or tenants</label>
-                          <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by city name or tenant key" />
+                          <label htmlFor="city-search">Search locations</label>
+                          <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by location name or cityreport key" />
                         </div>
                         {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).length ? (
                           <div className="municipality-detail-grid">
@@ -2405,7 +2529,7 @@ export default function MunicipalityApp() {
                             ))}
                           </div>
                         ) : (
-                          <p className="municipality-note">You are not following any municipality hubs yet.</p>
+                          <p className="municipality-note">You are not following any locations yet.</p>
                         )}
                         {trimOrEmpty(citySearchQuery) ? searchedTenants.length ? (
                           <div className="municipality-topic-row" style={{ marginTop: 12 }}>
@@ -2426,11 +2550,11 @@ export default function MunicipalityApp() {
                           </div>
                         ) : (
                           <p className="municipality-note" style={{ marginTop: 12 }}>
-                            No municipalities matched that search yet.
+                            No locations matched that search yet.
                           </p>
                         ) : (
                           <p className="municipality-note" style={{ marginTop: 12 }}>
-                            Search for a municipality to add it to your list.
+                            Search for a location to add it to your list.
                           </p>
                         )}
                       </>
@@ -2445,7 +2569,7 @@ export default function MunicipalityApp() {
                           ))}
                         </div>
                       ) : (
-                        <p className="municipality-note">Search for municipalities to build your followed city list.</p>
+                        <p className="municipality-note">Search for locations to build your followed list.</p>
                       )
                     )}
                     {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}

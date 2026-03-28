@@ -338,7 +338,7 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /start here/i });
 
-    await user.type(screen.getByPlaceholderText(/search tenants by name, key, or subdomain/i), "ashtabula");
+    await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
     await user.selectOptions(screen.getByLabelText(/workspace section/i), "users");
 
@@ -349,7 +349,7 @@ describe("PlatformAdminApp", () => {
   it("shows the person-first existing-account flow and hides UUIDs in search results", async () => {
     const { user, container } = await openUsersAndAdmins();
 
-    expect(container.textContent?.indexOf("Find Person")).toBeLessThan(container.textContent?.indexOf("Tenant Role") ?? Infinity);
+    expect(container.textContent?.indexOf("Find Person")).toBeLessThan(container.textContent?.indexOf("Organization Role") ?? Infinity);
 
     await user.type(screen.getByPlaceholderText(/exact email, exact phone, or full name/i), "jordan.rivera@example.gov");
     await user.click(screen.getByRole("button", { name: /search accounts/i }));
@@ -379,7 +379,7 @@ describe("PlatformAdminApp", () => {
     await user.click(screen.getByLabelText(/return to start here/i));
 
     await screen.findByRole("heading", { name: /start here/i });
-    expect(screen.getByPlaceholderText(/search tenants by name, key, or subdomain/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i)).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {
@@ -394,15 +394,15 @@ describe("PlatformAdminApp", () => {
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/updated jordan rivera to tenant admin\./i)).toBeInTheDocument();
+      expect(screen.getByText(/updated jordan rivera to organization admin\./i)).toBeInTheDocument();
     });
   });
 
   it("shows tenant hub launch labels in the workspace header", async () => {
     await openUsersAndAdmins();
 
-    expect(screen.getByRole("link", { name: /open tenant hub/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /open dev tenant hub/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open organization hub/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open dev organization hub/i })).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
@@ -410,16 +410,16 @@ describe("PlatformAdminApp", () => {
     render(<PlatformAdminApp />);
 
     await screen.findByRole("heading", { name: /start here/i });
-    await user.click(screen.getByRole("button", { name: /^add tenant$/i }));
+    await user.click(screen.getByRole("button", { name: /^add organization$/i }));
 
-    await screen.findByRole("heading", { name: /tenant contact information/i });
-    expect(screen.getByText(/1\. tenant contact information/i)).toBeInTheDocument();
+    await screen.findByRole("heading", { name: /organization contact information/i });
+    expect(screen.getByText(/1\. organization contact information/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /next: contacts/i }));
 
     await screen.findByRole("heading", { name: /primary \+ additional contacts/i });
     await user.click(screen.getByRole("button", { name: /next: basic setup/i }));
 
     await screen.findByRole("heading", { name: /basic setup/i });
-    expect(screen.getByRole("button", { name: /create tenant/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create organization/i })).toBeInTheDocument();
   });
 });

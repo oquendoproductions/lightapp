@@ -21,7 +21,7 @@ const DOMAIN_OPTIONS = [
 ];
 
 const TAB_OPTIONS = [
-  { key: "tenants", label: "Tenant Info" },
+  { key: "tenants", label: "Organization Info" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
   { key: "domains", label: "Domains + Features" },
@@ -287,7 +287,7 @@ const tabSelectBase = {
 };
 
 const ADD_TENANT_STEPS = [
-  { key: "organization", label: "Tenant Contact Information" },
+  { key: "organization", label: "Organization Contact Information" },
   { key: "contacts", label: "Primary + Additional Contacts" },
   { key: "setup", label: "Basic Setup" },
 ];
@@ -448,6 +448,14 @@ function sanitizeRoleKey(value) {
     .slice(0, 40);
 }
 
+function toOrganizationLanguage(value) {
+  return String(value || "")
+    .replace(/\bTenants\b/g, "Organizations")
+    .replace(/\btenants\b/g, "organizations")
+    .replace(/\bTenant\b/g, "Organization")
+    .replace(/\btenant\b/g, "organization");
+}
+
 function isMissingColumnError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
@@ -455,10 +463,10 @@ function isMissingColumnError(error) {
 }
 
 function roleKeyToLabel(roleKey) {
-  return String(roleKey || "")
+  return toOrganizationLanguage(String(roleKey || "")
     .trim()
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+    .replace(/\b\w/g, (ch) => ch.toUpperCase()));
 }
 
 function buildAssignmentRowKey(row) {
@@ -493,26 +501,26 @@ function buildAuditActionLabel(row) {
   const action = String(row?.action || "").trim().toLowerCase();
   const roleLabel = roleKeyToLabel(String(row?.details?.role || "").trim());
 
-  if (action === "tenant_upsert") return "Saved tenant details";
+  if (action === "tenant_upsert") return "Saved organization details";
   if (action === "tenant_profile_upsert") return "Saved contact profile";
   if (action === "tenant_domains_features_upsert") return "Saved domains and map features";
   if (action === "tenant_user_role_assigned") {
-    return roleLabel ? `Assigned ${roleLabel} role` : "Assigned tenant role";
+    return roleLabel ? `Assigned ${roleLabel} role` : "Assigned organization role";
   }
   if (action === "tenant_user_role_removed") {
-    return roleLabel ? `Removed ${roleLabel} role` : "Removed tenant role";
+    return roleLabel ? `Removed ${roleLabel} role` : "Removed organization role";
   }
   if (action === "tenant_user_role_changed") {
-    return roleLabel ? `Changed role to ${roleLabel}` : "Changed tenant role";
+    return roleLabel ? `Changed role to ${roleLabel}` : "Changed organization role";
   }
-  if (action === "tenant_role_created") return "Created tenant role";
-  if (action === "tenant_role_removed") return "Removed tenant role definition";
+  if (action === "tenant_role_created") return "Created organization role";
+  if (action === "tenant_role_removed") return "Removed organization role definition";
   if (action === "tenant_role_permissions_saved") return "Saved role permissions";
   if (action === "tenant_boundary_from_file_applied") return "Applied boundary from file";
-  if (action === "tenant_file_uploaded") return "Uploaded tenant file";
-  if (action === "tenant_file_removed") return "Removed tenant file";
+  if (action === "tenant_file_uploaded") return "Uploaded organization file";
+  if (action === "tenant_file_removed") return "Removed organization file";
 
-  return titleCaseWords(action.replace(/_/g, " "));
+  return toOrganizationLanguage(titleCaseWords(action.replace(/_/g, " ")));
 }
 
 function buildAuditEntityLabel(row) {
@@ -521,18 +529,18 @@ function buildAuditEntityLabel(row) {
   const roleLabel = roleKeyToLabel(String(row?.details?.role || "").trim());
   const fileName = String(row?.details?.file_name || "").trim();
 
-  if (entityType === "tenant") return entityId ? `Tenant: ${entityId}` : "Tenant";
-  if (entityType === "tenant_profile") return "Tenant contact profile";
-  if (entityType === "tenant_config") return "Tenant domains and map settings";
+  if (entityType === "tenant") return entityId ? `Organization: ${entityId}` : "Organization";
+  if (entityType === "tenant_profile") return "Organization contact profile";
+  if (entityType === "tenant_config") return "Organization domains and map settings";
   if (entityType === "tenant_user_role") {
-    return roleLabel ? `${roleLabel} assignment` : (entityId ? `User ${entityId}` : "Tenant user role");
+    return roleLabel ? `${roleLabel} assignment` : (entityId ? `User ${entityId}` : "Organization user role");
   }
-  if (entityType === "tenant_role") return roleLabel || (entityId ? `Role: ${entityId}` : "Tenant role");
-  if (entityType === "tenant_permissions") return roleLabel ? `${roleLabel} permissions` : "Tenant role permissions";
-  if (entityType === "tenant_boundary") return entityId ? `Boundary: ${entityId}` : "Tenant boundary";
-  if (entityType === "tenant_file") return fileName || entityId || "Tenant file";
+  if (entityType === "tenant_role") return roleLabel || (entityId ? `Role: ${entityId}` : "Organization role");
+  if (entityType === "tenant_permissions") return roleLabel ? `${roleLabel} permissions` : "Organization role permissions";
+  if (entityType === "tenant_boundary") return entityId ? `Boundary: ${entityId}` : "Organization boundary";
+  if (entityType === "tenant_file") return fileName || entityId || "Organization file";
 
-  return entityId ? `${titleCaseWords(entityType.replace(/_/g, " "))}: ${entityId}` : titleCaseWords(entityType.replace(/_/g, " "));
+  return entityId ? `${toOrganizationLanguage(titleCaseWords(entityType.replace(/_/g, " ")))}: ${entityId}` : toOrganizationLanguage(titleCaseWords(entityType.replace(/_/g, " ")));
 }
 
 function cleanOptional(value) {
@@ -793,7 +801,7 @@ export default function PlatformAdminApp() {
     for (const row of tenantRoleDefinitions || []) {
       const key = String(row?.role || "").trim();
       if (!key) continue;
-      out[key] = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+      out[key] = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
     }
     return out;
   }, [tenantRoleDefinitions]);
@@ -1983,7 +1991,7 @@ export default function PlatformAdminApp() {
 
     const tenant_key = sanitizeTenantKey(selectedTenantKey);
     const role = sanitizeRoleKey(roleForm.role);
-    const role_label = String(roleForm.role_label || "").trim() || roleKeyToLabel(role);
+    const role_label = toOrganizationLanguage(String(roleForm.role_label || "").trim() || roleKeyToLabel(role));
     if (!tenant_key) {
       setStatus((prev) => ({ ...prev, roles: "Select a tenant first." }));
       return;
@@ -2660,15 +2668,15 @@ export default function PlatformAdminApp() {
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, fontSize: 20, color: palette.navy900 }}>Start Here</h2>
               <p style={{ margin: 0, fontSize: 13.5, color: palette.textMuted }}>
-                Add a new tenant, or search and open an existing tenant workspace.
+                Add a new organization, or search and open an existing organization workspace.
               </p>
               <button type="button" style={{ ...buttonBase, width: "fit-content" }} onClick={openAddTenantStep}>
-                Add Tenant
+                Add Organization
               </button>
               <input
                 value={tenantSearch}
                 onChange={(e) => setTenantSearch(e.target.value)}
-                placeholder="Search tenants by name, key, or subdomain"
+                placeholder="Search organizations by name, key, or subdomain"
                 style={{ ...inputBase, maxWidth: 620, fontSize: 16 }}
               />
               <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
@@ -2690,11 +2698,11 @@ export default function PlatformAdminApp() {
                   );
                 }) : (
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Search results will appear after you enter a tenant name, key, or subdomain.
+                    Search results will appear after you enter an organization name, key, or subdomain.
                   </div>
                 )}
                 {hasTenantSearchQuery && !filteredTenantRows.length ? (
-                  <div style={{ fontSize: 12.5, color: palette.red600 }}>No tenants match this search.</div>
+                  <div style={{ fontSize: 12.5, color: palette.red600 }}>No organizations match this search.</div>
                 ) : null}
               </div>
             </div>
@@ -2703,7 +2711,7 @@ export default function PlatformAdminApp() {
             <div style={{ ...subPanel, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13.5, color: palette.textMuted }}>
-                  New tenant flow active. Complete each onboarding step in order.
+                  New organization flow active. Complete each onboarding step in order.
                 </span>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="button" style={buttonAlt} onClick={returnToStart}>Back</button>
@@ -2741,25 +2749,25 @@ export default function PlatformAdminApp() {
             <>
               <div style={{ ...subPanel, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 13.5, color: palette.textMuted }}>
-                  Switch workspaces, start a new tenant, or save tenant setup changes from here.
+                  Switch workspaces, start a new organization, or save organization setup changes from here.
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Tenant</button>
+                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Organization</button>
                   <button
                     type="button"
                     style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
                     onClick={openAddTenantStep}
                     disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create tenant" : "Only Platform Owner can create tenants"}
+                    title={canEditTenantCore ? "Create organization" : "Only Platform Owner can create organizations"}
                   >
-                    Add Tenant
+                    Add Organization
                   </button>
                 </div>
               </div>
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                 <div style={{ display: "grid", gap: 2 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                    Tenant
+                    Organization
                   </div>
                   <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
                     {selectedTenant?.name || selectedTenantKey}
@@ -2791,12 +2799,12 @@ export default function PlatformAdminApp() {
                       checked={tenantForm.active}
                       disabled={!isEditingTenant || !canEditTenantCore}
                       onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))}
-                    /> Active Tenant
+                    /> Active Organization
                   </label>
                 </div>
                 {isEditingTenant ? (
                   <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                    Setup toggles are editable here. Save them from the tenant setup editor below.
+                    Setup toggles are editable here. Save them from the organization setup editor below.
                   </div>
                 ) : null}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2807,9 +2815,9 @@ export default function PlatformAdminApp() {
                         style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
                         onClick={() => void saveTenant({ preventDefault() {} })}
                         disabled={!canEditTenantCore}
-                        title={canEditTenantCore ? "Save tenant setup" : "Only Platform Owner can save tenant setup"}
+                        title={canEditTenantCore ? "Save organization setup" : "Only Platform Owner can save organization setup"}
                       >
-                        Save Tenant Setup
+                        Save Organization Setup
                       </button>
                       <button
                         type="button"
@@ -2828,9 +2836,9 @@ export default function PlatformAdminApp() {
                         setIsEditingTenant(true);
                       }}
                       disabled={!canEditTenantCore}
-                      title={canEditTenantCore ? "Edit tenant setup" : "Only Platform Owner can edit tenant setup"}
+                      title={canEditTenantCore ? "Edit organization setup" : "Only Platform Owner can edit organization setup"}
                     >
-                      Edit Tenant Setup
+                      Edit Organization Setup
                     </button>
                   )}
                 </div>
@@ -2847,19 +2855,19 @@ export default function PlatformAdminApp() {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {selectedTenantLiveUrl ? (
                     <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Tenant Hub
+                      Open Organization Hub
                     </a>
                   ) : null}
                   {selectedTenantDevUrl ? (
                     <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Dev Tenant Hub
+                      Open Dev Organization Hub
                     </a>
                   ) : null}
                 </div>
               </div>
             </>
           ) : null}
-          {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{status.hydrate}</div> : null}
+          {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{toOrganizationLanguage(status.hydrate)}</div> : null}
         </header>
 
         {showTenantsSection ? (
@@ -2868,7 +2876,7 @@ export default function PlatformAdminApp() {
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Tenant Contact Information" : "Tenant Contact Information"}
+                    {inAddTenantFlow ? "Organization Contact Information" : "Organization Contact Information"}
                   </h2>
                   {!inAddTenantFlow ? (
                     profileReadOnly ? (
@@ -2976,7 +2984,7 @@ export default function PlatformAdminApp() {
                     <button type="submit" style={buttonBase}>Save Contact Information</button>
                   </form>
                 ) : null}
-                {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.profile}</div> : null}
+                {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
               </div>
             ) : null}
 
@@ -3075,7 +3083,7 @@ export default function PlatformAdminApp() {
                     <button type="submit" style={buttonBase}>Save Contact Information</button>
                   </form>
                 ) : null}
-                {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.profile}</div> : null}
+                {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
               </div>
             ) : null}
 
@@ -3083,7 +3091,7 @@ export default function PlatformAdminApp() {
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Basic Setup" : "Edit Tenant Setup"}
+                    {inAddTenantFlow ? "Basic Setup" : "Edit Organization Setup"}
                   </h2>
                   {!inAddTenantFlow && !tenantReadOnly ? (
                     <button
@@ -3097,7 +3105,7 @@ export default function PlatformAdminApp() {
                 </div>
                 <form onSubmit={inAddTenantFlow ? finishAddTenantSetup : saveTenant} style={responsiveTwoColGrid}>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Tenant Key (system ID)</span>
+                    <span>Organization Key (system ID)</span>
                     <input
                       value={tenantForm.tenant_key}
                       onChange={(e) => {
@@ -3119,11 +3127,11 @@ export default function PlatformAdminApp() {
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Tenant Name</span>
+                    <span>Organization Name</span>
                     <input readOnly={tenantReadOnly} value={tenantForm.name} onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Primary Tenant URL</span>
+                    <span>Primary Organization URL</span>
                     <input readOnly={tenantReadOnly} value={tenantForm.primary_subdomain} onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))} placeholder="examplemunicipality.cityreport.io" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -3134,7 +3142,7 @@ export default function PlatformAdminApp() {
                     </span>
                   </label>
                   <div style={{ gridColumn: "1 / -1", fontSize: 11.5, color: palette.textMuted, marginTop: -2 }}>
-                    Turn on the resident updates homepage only when you want this tenant root URL to open into the
+                    Turn on the resident updates homepage only when you want this organization root URL to open into the
                     new alerts, events, and municipality hub. Leave it off to keep the map-first experience.
                   </div>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -3152,7 +3160,7 @@ export default function PlatformAdminApp() {
                     <input type="checkbox" checked={tenantForm.is_pilot} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} /> Pilot Municipality
                   </label>
                   <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input type="checkbox" checked={tenantForm.active} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Tenant
+                    <input type="checkbox" checked={tenantForm.active} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Organization
                   </label>
                   <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {inAddTenantFlow ? (
@@ -3161,17 +3169,17 @@ export default function PlatformAdminApp() {
                           Back
                         </button>
                         <button type="submit" style={buttonBase}>
-                          Create Tenant
+                          Create Organization
                         </button>
                       </>
                     ) : (
                       <button type="submit" style={buttonBase}>
-                        Save Tenant Setup
+                        Save Organization Setup
                       </button>
                     )}
                   </div>
                 </form>
-                {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.tenant}</div> : null}
+                {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.tenant)}</div> : null}
               </div>
             ) : null}
           </section>
@@ -3182,7 +3190,7 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Users and Admins</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                Add a person to this tenant by finding an existing account or creating a new invited account, then assign one tenant role.
+                Add a person to this organization by finding an existing account or creating a new invited account, then assign one organization role.
               </p>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
@@ -3252,7 +3260,7 @@ export default function PlatformAdminApp() {
 
                   <div style={{ display: "grid", gap: 8 }}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 320 }}>
-                      <span>Tenant Role</span>
+                      <span>Organization Role</span>
                       <select
                         value={assignForm.role}
                         onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
@@ -3262,15 +3270,15 @@ export default function PlatformAdminApp() {
                         {assignableTenantRoles.map((row) => {
                           const key = String(row?.role || "");
                           if (!key) return null;
-                          const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                          const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
                           return (
                             <option key={key} value={key}>{label}</option>
                           );
                         })}
                         {!assignableTenantRoles.length ? (
                           <>
-                            <option value="tenant_employee">Tenant Employee</option>
-                            <option value="tenant_admin">Tenant Admin</option>
+                            <option value="tenant_employee">Organization Employee</option>
+                            <option value="tenant_admin">Organization Admin</option>
                           </>
                         ) : null}
                       </select>
@@ -3283,7 +3291,7 @@ export default function PlatformAdminApp() {
                       onClick={() => void assignTenantAdmin({ preventDefault() {} })}
                       style={{ ...buttonBase, opacity: canEditTenantCore && assignForm.user_id ? 1 : 0.55 }}
                       disabled={!canEditTenantCore || !assignForm.user_id}
-                      title={assignForm.user_id ? "Assign tenant role" : "Select an account first"}
+                      title={assignForm.user_id ? "Assign organization role" : "Select an account first"}
                     >
                       Assign Role
                     </button>
@@ -3342,7 +3350,7 @@ export default function PlatformAdminApp() {
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Tenant Role</span>
+                    <span>Organization Role</span>
                     <select
                       value={assignForm.role}
                       onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
@@ -3352,15 +3360,15 @@ export default function PlatformAdminApp() {
                       {assignableTenantRoles.map((row) => {
                         const key = String(row?.role || "");
                         if (!key) return null;
-                        const label = String(row?.role_label || "").trim() || roleKeyToLabel(key);
+                        const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
                         return (
                           <option key={key} value={key}>{label}</option>
                         );
                       })}
                       {!assignableTenantRoles.length ? (
                         <>
-                          <option value="tenant_employee">Tenant Employee</option>
-                          <option value="tenant_admin">Tenant Admin</option>
+                          <option value="tenant_employee">Organization Employee</option>
+                          <option value="tenant_admin">Organization Admin</option>
                         </>
                       ) : null}
                     </select>
@@ -3369,17 +3377,17 @@ export default function PlatformAdminApp() {
                     type="submit"
                     style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
                     disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create account and assign tenant role" : "Only Platform Owner can create tenant users here"}
+                    title={canEditTenantCore ? "Create account and assign organization role" : "Only Platform Owner can create organization users here"}
                   >
                     Create Account + Assign Role
                   </button>
                 </form>
               )}
-              {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.users}</div> : null}
+              {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Current Tenant Role Assignments</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Role Assignments</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
@@ -3409,15 +3417,15 @@ export default function PlatformAdminApp() {
                               {assignableTenantRoles.map((roleRow) => {
                                 const key = String(roleRow?.role || "").trim();
                                 if (!key) return null;
-                                const label = String(roleRow?.role_label || "").trim() || roleKeyToLabel(key);
+                                const label = toOrganizationLanguage(String(roleRow?.role_label || "").trim() || roleKeyToLabel(key));
                                 return (
                                   <option key={key} value={key}>{label}</option>
                                 );
                               })}
                               {!assignableTenantRoles.length ? (
                                 <>
-                                  <option value="tenant_employee">Tenant Employee</option>
-                                  <option value="tenant_admin">Tenant Admin</option>
+                                  <option value="tenant_employee">Organization Employee</option>
+                                  <option value="tenant_admin">Organization Admin</option>
                                 </>
                               ) : null}
                             </select>
@@ -3434,7 +3442,7 @@ export default function PlatformAdminApp() {
                                 style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
                                 onClick={() => void saveTenantAdminRoleEdit(row)}
                                 disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Save role change" : "Only Platform Owner can edit tenant roles here"}
+                                title={canEditTenantCore ? "Save role change" : "Only Platform Owner can edit organization roles here"}
                               >
                                 Save
                               </button>
@@ -3459,7 +3467,7 @@ export default function PlatformAdminApp() {
                                   setEditingAssignmentRole(String(row?.role || "").trim());
                                 }}
                                 disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Edit role" : "Only Platform Owner can edit tenant roles here"}
+                                title={canEditTenantCore ? "Edit role" : "Only Platform Owner can edit organization roles here"}
                               >
                                 Edit
                               </button>
@@ -3468,7 +3476,7 @@ export default function PlatformAdminApp() {
                                 style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
                                 onClick={() => void removeTenantAdmin(row)}
                                 disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove tenant roles here"}
+                                title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove organization roles here"}
                               >
                                 Remove
                               </button>
@@ -3479,7 +3487,7 @@ export default function PlatformAdminApp() {
                     )})}
                     {!selectedTenantRoleAssignments.length ? (
                       <tr>
-                        <td colSpan={4} style={{ padding: "10px 0", opacity: 0.75 }}>No tenant users have been assigned yet.</td>
+                        <td colSpan={4} style={{ padding: "10px 0", opacity: 0.75 }}>No organization users have been assigned yet.</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -3492,9 +3500,9 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Create Tenant Role</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Create Organization Role</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                Create custom roles for {selectedTenantKey}, then enable or disable module permissions.
+                Create custom roles for {selectedTenantKey}, then enable or disable organization permissions.
               </p>
               <form onSubmit={createTenantRole} style={responsiveActionGrid}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -3526,7 +3534,7 @@ export default function PlatformAdminApp() {
                   Create Role
                 </button>
               </form>
-              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.roles}</div> : null}
+              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
@@ -3546,7 +3554,7 @@ export default function PlatformAdminApp() {
                     {sortedTenantRoleDefinitions.map((row) => {
                       const role = String(row?.role || "").trim();
                       if (!role) return null;
-                      const roleLabel = String(row?.role_label || "").trim() || roleKeyToLabel(role);
+                      const roleLabel = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role));
                       const assignments = Number(tenantRoleAssignmentCounts?.[role] || 0);
                       const isSelected = role === selectedRoleKey;
                       const canRemove = canEditTenantCore && row?.is_system !== true && assignments === 0;
@@ -3584,7 +3592,7 @@ export default function PlatformAdminApp() {
                     })}
                     {!sortedTenantRoleDefinitions.length ? (
                       <tr>
-                        <td colSpan={5} style={{ padding: "10px 0", opacity: 0.75 }}>No roles found for this tenant.</td>
+                        <td colSpan={5} style={{ padding: "10px 0", opacity: 0.75 }}>No roles found for this organization.</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -3594,7 +3602,7 @@ export default function PlatformAdminApp() {
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>
-                Manage Role Permission {selectedRoleDefinition ? `(${String(selectedRoleDefinition.role_label || selectedRoleDefinition.role)})` : ""}
+                Manage Role Permission {selectedRoleDefinition ? `(${toOrganizationLanguage(String(selectedRoleDefinition.role_label || selectedRoleDefinition.role))})` : ""}
               </h2>
               {selectedRoleDefinition ? (
                 <>
@@ -3802,7 +3810,7 @@ export default function PlatformAdminApp() {
 
                 <button type="submit" style={{ ...buttonBase, width: "fit-content" }}>Save Domains + Features</button>
               </form>
-              {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.domains}</div> : null}
+              {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.domains)}</div> : null}
             </div>
           </section>
         ) : null}
@@ -3810,7 +3818,7 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "files" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Tenant Files</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Organization Files</h2>
               <form onSubmit={uploadTenantFile} style={responsiveActionGrid}>
                 <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
                   <option value="contract">Contract</option>
@@ -3822,7 +3830,7 @@ export default function PlatformAdminApp() {
                 <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
                 <button type="submit" style={buttonBase}>Upload</button>
               </form>
-              {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.files}</div> : null}
+              {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
@@ -3868,13 +3876,13 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "audit" ? (
           <section style={{ ...card, display: "grid", gap: 8 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Tenant Audit ({selectedTenantKey})</h2>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Organization Audit ({selectedTenantKey})</h2>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr>
                     <th style={tableHeadCell}>When</th>
-                    <th style={tableHeadCell}>Tenant</th>
+                    <th style={tableHeadCell}>Organization</th>
                     <th style={tableHeadCell}>What Happened</th>
                     <th style={tableHeadCell}>Changed Item</th>
                     <th style={tableHeadCell}>Actor</th>
@@ -3898,7 +3906,7 @@ export default function PlatformAdminApp() {
                 </tbody>
               </table>
             </div>
-            {status.audit ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{status.audit}</div> : null}
+            {status.audit ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.audit)}</div> : null}
           </section>
         ) : null}
       </section>
