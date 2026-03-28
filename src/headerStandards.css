@@ -10,7 +10,7 @@
   --desktop-header-title-weight: 950;
   --desktop-header-subtitle-size: 12.5px;
   --desktop-header-subtitle-line-height: 1.35;
-  --desktop-header-eyebrow-size: 10px;
+  --desktop-header-eyebrow-size: 15px;
   --desktop-header-eyebrow-letter-spacing: 0.14em;
   --mobile-header-top-offset: 10px;
   --mobile-header-horizontal-inset: 10px;
@@ -23,7 +23,7 @@
   --mobile-header-menu-size: 44px;
   --mobile-header-title-size: 16px;
   --mobile-header-title-line-height: 1.05;
-  --mobile-header-eyebrow-size: 5px;
+  --mobile-header-eyebrow-size: 10px;
   --mobile-header-stack-gap: 0;
   --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
   --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
