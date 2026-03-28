@@ -96,14 +96,14 @@
 
 .municipality-brand-copy {
   display: grid;
-  gap: 2px;
+  gap: 0;
   flex: 1 1 auto;
   min-width: 0;
   text-align: center;
 }
 
 .municipality-brand-eyebrow {
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.14em;
@@ -118,7 +118,7 @@
 }
 
 .municipality-brand p {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 12.5px;
   line-height: 1.25;
   color: #536b83;
