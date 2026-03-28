@@ -603,6 +603,34 @@
   font-size: 17px;
 }
 
+.municipality-auth-login-fields {
+  display: grid;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.municipality-auth-login-fields input {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid rgba(23, 49, 79, 0.14);
+  border-radius: 16px;
+  background: #ffffff;
+  color: #17314f;
+  font: inherit;
+}
+
+.municipality-auth-password-toggle-link {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: #176d78;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+}
+
 .municipality-account-card--section {
   gap: 16px;
 }
