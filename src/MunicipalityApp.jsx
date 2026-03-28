@@ -1631,8 +1631,10 @@ export default function MunicipalityApp() {
       { key: "home", label: "Home", path: "/" },
       { key: "alerts", label: "Alerts", path: "/alerts" },
       { key: "events", label: "Events", path: "/events" },
-      { key: "report", label: "Report", path: "/report", primary: true },
     ];
+    const reportNavItem = { key: "report", label: "Report", path: "/report", primary: true };
+    const standardNavItems = navLinks.filter((item) => item.key !== "report");
+    const reportDesktopItem = navLinks.find((item) => item.key === "report");
 
     return (
       <>
@@ -1725,7 +1727,7 @@ export default function MunicipalityApp() {
         <div className="municipality-tabs-shell">
           <div className="municipality-tabs-bar">
             <nav className="municipality-nav" aria-label="Municipality navigation">
-            {navLinks.map((item) => {
+            {standardNavItems.map((item) => {
               const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
               if (!showManageMenu) {
                 return (
@@ -1819,6 +1821,18 @@ export default function MunicipalityApp() {
                 ) : null}
               </div>
             ) : null}
+            {reportDesktopItem ? (
+              <a
+                href={reportDesktopItem.href}
+                className={`${reportDesktopItem.primary ? "municipality-button municipality-button--primary municipality-nav-link--primary" : "municipality-nav-link"}${reportDesktopItem.active ? " is-active" : ""}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  navigate(reportDesktopItem.path);
+                }}
+              >
+                {reportDesktopItem.label}
+              </a>
+            ) : null}
             </nav>
           </div>
         </div>
@@ -1846,6 +1860,13 @@ export default function MunicipalityApp() {
               Tenants
             </button>
           ) : null}
+          <button
+            type="button"
+            className={`municipality-mobile-nav-link${reportNavItem.path === routePath ? " is-active" : ""}${reportNavItem.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+            onClick={() => navigate(reportNavItem.path)}
+          >
+            {reportNavItem.label}
+          </button>
         </nav>
         {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
           <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
