@@ -57,7 +57,7 @@ const palette = {
   textMuted: "#4a617a",
 };
 
-const FIXED_BANNER_TOP = 12;
+const FIXED_BANNER_TOP = 0;
 const FIXED_BANNER_HEIGHT = 88;
 
 const shell = {
@@ -2301,7 +2301,7 @@ export default function PlatformAdminApp() {
   const bannerStyle = isCompactViewport
     ? {
         ...stickyBanner,
-        top: 7,
+        top: 0,
         width: "calc(100vw - 1rem)",
         minHeight: "auto",
         padding: "0.48rem 0.7rem",
