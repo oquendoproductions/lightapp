@@ -2297,24 +2297,25 @@ export default function PlatformAdminApp() {
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
-    ? { ...shell, padding: "72px 8px 42px" }
+    ? { ...shell, padding: "90px 8px 42px" }
     : shell;
   const bannerStyle = isCompactViewport
     ? {
         ...stickyBanner,
-        top: 0,
-        width: "calc(100vw - 1rem)",
-        minHeight: "auto",
-        padding: "0.48rem 0.7rem",
-        border: "1px solid rgba(23,56,92,0.34)",
+        top: 10,
+        left: 10,
+        width: "calc(100vw - 20px)",
+        minHeight: 72,
+        padding: "8px 12px",
+        border: "1px solid rgba(23, 49, 79, 0.18)",
         borderBottom: 0,
-        borderRadius: 18,
+        borderRadius: 28,
         background: "linear-gradient(112deg, rgba(236,245,255,0.93), rgba(221,239,233,0.9))",
         boxShadow: "0 12px 28px rgba(7,25,45,0.18)",
       }
     : stickyBanner;
   const bannerLogoStyle = isCompactViewport
-    ? { ...brandLogo, height: 38, maxWidth: "min(180px, calc(100vw - 148px))" }
+    ? { ...brandLogo, height: 42, maxWidth: 42 }
     : brandLogo;
   const bannerLogoSrc = isCompactViewport ? MOBILE_TITLE_LOGO_SRC : TITLE_LOGO_SRC;
   const bannerMenuButtonStyle = isCompactViewport
@@ -2357,13 +2358,13 @@ export default function PlatformAdminApp() {
           left: isCompactViewport ? "50%" : undefined,
           top: isCompactViewport ? "50%" : undefined,
           transform: isCompactViewport ? "translate(-50%, -50%)" : "none",
-          width: isCompactViewport ? "min(250px, calc(100vw - 128px))" : "min(640px, calc(100vw - 320px))",
+          width: isCompactViewport ? "min(250px, calc(100vw - 120px))" : "min(640px, calc(100vw - 320px))",
           minWidth: 0,
           justifySelf: "center",
         }}
       >
         <span style={{
-          fontSize: isCompactViewport ? 18 : "var(--desktop-header-title-size)",
+          fontSize: isCompactViewport ? 16 : "var(--desktop-header-title-size)",
           fontWeight: "var(--desktop-header-title-weight)",
           color: palette.navy900,
           lineHeight: isCompactViewport ? 1.05 : "var(--desktop-header-title-line-height)",
@@ -2371,9 +2372,9 @@ export default function PlatformAdminApp() {
           Platform Control Plane
         </span>
         <span style={{
-          fontSize: isCompactViewport ? 11.5 : "var(--desktop-header-subtitle-size)",
+          fontSize: isCompactViewport ? 10 : "var(--desktop-header-subtitle-size)",
           color: palette.textMuted,
-          lineHeight: isCompactViewport ? 1.35 : "var(--desktop-header-subtitle-line-height)",
+          lineHeight: isCompactViewport ? 1.2 : "var(--desktop-header-subtitle-line-height)",
         }}>
           Manage tenants, users, launch settings, and municipal operations from one place.
         </span>
