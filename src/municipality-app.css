@@ -631,6 +631,74 @@
   padding: 0;
 }
 
+.municipality-auth-cta {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  background: linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%);
+}
+
+.municipality-auth-cta h4 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.municipality-auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 96;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(9, 25, 41, 0.4);
+}
+
+.municipality-auth-modal {
+  width: min(560px, calc(100vw - 24px));
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 26px;
+  border: 1px solid rgba(173, 198, 224, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(246, 251, 255, 0.98) 100%);
+  box-shadow: 0 24px 46px rgba(17, 49, 79, 0.18);
+}
+
+.municipality-auth-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.municipality-auth-modal-header h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.municipality-auth-modal-header p {
+  margin: 6px 0 0;
+  color: #4a617a;
+}
+
+.municipality-auth-modal-close {
+  border: 0;
+  background: transparent;
+  color: #176d78;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+}
+
+.municipality-auth-panel--modal {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .municipality-account-card--section {
   gap: 16px;
 }
@@ -998,5 +1066,15 @@
     width: min(1180px, calc(100vw - 20px));
     padding-top: calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 28px);
     padding-bottom: 108px;
+  }
+
+  .municipality-auth-modal-backdrop {
+    padding: 12px;
+  }
+
+  .municipality-auth-modal {
+    width: min(100%, 520px);
+    padding: 18px;
+    border-radius: 24px;
   }
 }

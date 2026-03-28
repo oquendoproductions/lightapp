@@ -624,6 +624,7 @@ export default function PlatformAdminApp() {
   const [platformAccessRole, setPlatformAccessRole] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
 
@@ -2456,12 +2457,31 @@ export default function PlatformAdminApp() {
               onChange={(e) => setLoginEmail(e.target.value)}
               style={inputBase}
             />
-            <input
-              {...getStandardLoginPasswordInputProps(false)}
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              style={inputBase}
-            />
+            <div style={{ display: "grid", gap: 6 }}>
+              <input
+                {...getStandardLoginPasswordInputProps(showLoginPassword)}
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                style={inputBase}
+              />
+              <button
+                type="button"
+                onClick={() => setShowLoginPassword((prev) => !prev)}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: palette.mint700,
+                  font: "inherit",
+                  fontSize: 12.5,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  padding: 0,
+                  justifySelf: "start",
+                }}
+              >
+                {showLoginPassword ? "Hide password" : "Show password"}
+              </button>
+            </div>
             <button type="submit" style={{ ...buttonBase, width: "fit-content", minWidth: 140 }} disabled={loginLoading}>
               {loginLoading ? "Signing in..." : "Sign in"}
             </button>

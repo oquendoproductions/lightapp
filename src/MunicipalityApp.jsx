@@ -663,6 +663,7 @@ export default function MunicipalityApp() {
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [showAlertComposer, setShowAlertComposer] = useState(false);
   const [showEventComposer, setShowEventComposer] = useState(false);
   const [editingAlertId, setEditingAlertId] = useState(null);
@@ -699,6 +700,19 @@ export default function MunicipalityApp() {
     security: false,
   });
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
+
+  function openAuthModal(nextMode = "login") {
+    setAuthMode(nextMode);
+    setAuthStatus("");
+    setShowAuthPassword(false);
+    setAuthModalOpen(true);
+  }
+
+  function closeAuthModal() {
+    setAuthModalOpen(false);
+    setAuthStatus("");
+    setShowAuthPassword(false);
+  }
 
   useEffect(() => {
     function onPopState() {
@@ -1417,8 +1431,10 @@ export default function MunicipalityApp() {
         setAuthStatus(error.message || "Could not sign in.");
         return;
       }
-      setAuthStatus("Signed in.");
-      navigate("/");
+      setAuthStatus("");
+      setAuthForm({ full_name: "", email: "", password: "" });
+      setShowAuthPassword(false);
+      setAuthModalOpen(false);
       return;
     }
 
@@ -1445,8 +1461,10 @@ export default function MunicipalityApp() {
     }
     setAuthBusy(false);
     if (data?.session?.user?.id) {
-      setAuthStatus("Account created. You're now signed in.");
-      navigate("/");
+      setAuthStatus("");
+      setAuthForm({ full_name: "", email: "", password: "" });
+      setShowAuthPassword(false);
+      setAuthModalOpen(false);
       return;
     }
     setAuthStatus("Account created. If email confirmation is enabled, please confirm your email and then sign in.");
@@ -1648,7 +1666,7 @@ export default function MunicipalityApp() {
                 <button
                   type="button"
                   className="municipality-button municipality-button--ghost"
-                  onClick={() => navigate(ACCOUNT_PATH)}
+                  onClick={() => openAuthModal("login")}
                 >
                   Login
                 </button>
@@ -1887,6 +1905,109 @@ export default function MunicipalityApp() {
             </div>
           </div>
         ) : null}
+        {authModalOpen && !session?.user?.id ? (
+          <div className="municipality-auth-modal-backdrop" onClick={closeAuthModal}>
+            <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-auth-modal-header">
+                <div>
+                  <h3>{authMode === "login" ? "Sign In" : "Create Account"}</h3>
+                  <p>
+                    {authMode === "login"
+                      ? "Sign in with your resident account to manage preferences and follow municipalities."
+                      : "Create your resident account to manage notifications and saved city selections."}
+                  </p>
+                </div>
+                <button type="button" className="municipality-auth-modal-close" onClick={closeAuthModal} aria-label="Close sign-in dialog">
+                  Close
+                </button>
+              </div>
+              <form className="municipality-auth-panel municipality-auth-panel--modal" onSubmit={handleAuthSubmit} key={`modal-auth-${authMode}`} {...STANDARD_LOGIN_FORM_PROPS}>
+                {authMode === "login" ? (
+                  <div className="municipality-auth-login-fields">
+                    <input
+                      id="resident-auth-modal-email"
+                      {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                      value={authForm.email}
+                      onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                    />
+                    <input
+                      id="resident-auth-modal-password"
+                      {...getStandardLoginPasswordInputProps(showAuthPassword)}
+                      value={authForm.password}
+                      onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="municipality-auth-password-toggle-link"
+                      onClick={() => setShowAuthPassword((prev) => !prev)}
+                      aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                    >
+                      {showAuthPassword ? "Hide password" : "Show password"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="municipality-form-grid">
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-modal-name">Full name</label>
+                      <input
+                        id="resident-auth-modal-name"
+                        name="name"
+                        autoComplete="name"
+                        value={authForm.full_name}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))}
+                        placeholder="Your name"
+                      />
+                    </div>
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-modal-email-signup">Email</label>
+                      <input
+                        id="resident-auth-modal-email-signup"
+                        name="email"
+                        type="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck="false"
+                        value={authForm.email}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        placeholder="you@example.com"
+                      />
+                    </div>
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-modal-password-signup">Password</label>
+                      <input
+                        id="resident-auth-modal-password-signup"
+                        type={showAuthPassword ? "text" : "password"}
+                        name="new-password"
+                        autoComplete={authPasswordAutoComplete}
+                        placeholder="Password"
+                        value={authForm.password}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="municipality-auth-password-toggle-link"
+                      onClick={() => setShowAuthPassword((prev) => !prev)}
+                      aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                    >
+                      {showAuthPassword ? "Hide password" : "Show password"}
+                    </button>
+                  </div>
+                )}
+                <div className="municipality-actions">
+                  <button type="submit" className="municipality-button municipality-button--primary" disabled={authBusy}>
+                    {authBusy ? "Working…" : authMode === "login" ? "Sign In" : "Create Account"}
+                  </button>
+                  <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setAuthMode((prev) => (prev === "login" ? "signup" : "login"))}>
+                    {authMode === "login" ? "Create Account Instead" : "Use Existing Account"}
+                  </button>
+                </div>
+                {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
+              </form>
+            </div>
+          </div>
+        ) : null}
       </>
     );
   }
@@ -2066,76 +2187,18 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the cities you follow.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} key={`account-auth-${authMode}`} {...STANDARD_LOGIN_FORM_PROPS}>
-                  <h4>{authMode === "login" ? "Sign in to manage your account settings" : "Create your resident account"}</h4>
-                  {authMode === "login" ? (
-                    <div className="municipality-auth-login-fields">
-                      <input
-                        id="resident-email"
-                        {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
-                        value={authForm.email}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                      />
-                      <input
-                        id="resident-password"
-                        {...getStandardLoginPasswordInputProps(showAuthPassword)}
-                        value={authForm.password}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                      />
-                      <button
-                        type="button"
-                        className="municipality-auth-password-toggle-link"
-                        onClick={() => setShowAuthPassword((prev) => !prev)}
-                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
-                      >
-                        {showAuthPassword ? "Hide password" : "Show password"}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="municipality-form-grid">
-                      <div className="municipality-field">
-                        <label htmlFor="resident-name">Full name</label>
-                        <input id="resident-name" name="name" autoComplete="name" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="resident-email">Email</label>
-                        <input
-                          id="resident-email"
-                          name="email"
-                          type="email"
-                          autoComplete="email"
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          spellCheck="false"
-                          value={authForm.email}
-                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                          placeholder="you@example.com"
-                        />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="resident-password">Password</label>
-                        <input
-                          id="resident-password"
-                          type={showAuthPassword ? "text" : "password"}
-                          name="new-password"
-                          autoComplete={authPasswordAutoComplete}
-                          placeholder="Password"
-                          value={authForm.password}
-                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  )}
+                <div className="municipality-auth-cta">
+                  <h4>Sign in to manage your account settings</h4>
+                  <p className="municipality-note">Use the resident login modal to access account information, city selections, and notification settings.</p>
                   <div className="municipality-actions">
-                    <button type="submit" className="municipality-button municipality-button--primary" disabled={authBusy}>
-                      {authBusy ? "Working…" : authMode === "login" ? "Sign In" : "Create Account"}
+                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
+                      Sign In
                     </button>
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setAuthMode((prev) => (prev === "login" ? "signup" : "login"))}>
-                      {authMode === "login" ? "Create Account Instead" : "Use Existing Account"}
+                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => openAuthModal("signup")}>
+                      Create Account
                     </button>
                   </div>
-                  {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
-                </form>
+                </div>
               ) : (
                 <div className="municipality-topic-row">
                   <div className="municipality-account-card municipality-account-card--section">
@@ -2372,76 +2435,18 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Notification Preferences" subtitle="Choose which municipal updates you want to receive and how you want to receive them.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} key={`notification-auth-${authMode}`} {...STANDARD_LOGIN_FORM_PROPS}>
-                  <h4>{authMode === "login" ? "Sign in to manage your notification preferences" : "Create your resident account"}</h4>
-                  {authMode === "login" ? (
-                    <div className="municipality-auth-login-fields">
-                      <input
-                        id="resident-email-notifications"
-                        {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
-                        value={authForm.email}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                      />
-                      <input
-                        id="resident-password-notifications"
-                        {...getStandardLoginPasswordInputProps(showAuthPassword)}
-                        value={authForm.password}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                      />
-                      <button
-                        type="button"
-                        className="municipality-auth-password-toggle-link"
-                        onClick={() => setShowAuthPassword((prev) => !prev)}
-                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
-                      >
-                        {showAuthPassword ? "Hide password" : "Show password"}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="municipality-form-grid">
-                      <div className="municipality-field">
-                        <label htmlFor="resident-name-notifications">Full name</label>
-                        <input id="resident-name-notifications" name="name" autoComplete="name" value={authForm.full_name} onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="resident-email-notifications">Email</label>
-                        <input
-                          id="resident-email-notifications"
-                          name="email"
-                          type="email"
-                          autoComplete="email"
-                          autoCapitalize="none"
-                          autoCorrect="off"
-                          spellCheck="false"
-                          value={authForm.email}
-                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                          placeholder="you@example.com"
-                        />
-                      </div>
-                      <div className="municipality-field">
-                        <label htmlFor="resident-password-notifications">Password</label>
-                        <input
-                          id="resident-password-notifications"
-                          type={showAuthPassword ? "text" : "password"}
-                          name="new-password"
-                          autoComplete={authPasswordAutoComplete}
-                          placeholder="Password"
-                          value={authForm.password}
-                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  )}
+                <div className="municipality-auth-cta">
+                  <h4>Sign in to manage your notification preferences</h4>
+                  <p className="municipality-note">Open the resident login modal to sign in or create an account before changing notification settings.</p>
                   <div className="municipality-actions">
-                    <button type="submit" className="municipality-button municipality-button--primary" disabled={authBusy}>
-                      {authBusy ? "Working…" : authMode === "login" ? "Sign In" : "Create Account"}
+                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
+                      Sign In
                     </button>
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setAuthMode((prev) => (prev === "login" ? "signup" : "login"))}>
-                      {authMode === "login" ? "Create Account Instead" : "Use Existing Account"}
+                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => openAuthModal("signup")}>
+                      Create Account
                     </button>
                   </div>
-                  {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
-                </form>
+                </div>
               ) : (
                 <div className="municipality-topic-row">
                   <div className="municipality-account-card municipality-account-card--section">
