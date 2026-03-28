@@ -5,6 +5,7 @@ import React, { Fragment, forwardRef, memo, useCallback, useEffect, useImperativ
 import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
+import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
 
@@ -11777,14 +11778,15 @@ export default function App({ onBackToHub = null }) {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    hydrateCrossTenantSession(supabase).then((nextSession) => {
       if (!mounted) return;
-      setSession(data.session || null);
+      setSession(nextSession || null);
       setAuthReady(true); // ✅ important
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (event, newSession) => {
+        syncCrossTenantAuthState(event, newSession || null);
         setSession(newSession);
         setAuthReady(true); // ✅ important
         if (event === "PASSWORD_RECOVERY") {
@@ -12298,7 +12300,10 @@ export default function App({ onBackToHub = null }) {
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (!error) {
+      markCrossTenantLogout();
+    }
     reauthAtRef.current = 0;
     setIsAdmin(false);
     setAuthEmail("");

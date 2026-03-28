@@ -5,6 +5,11 @@ import {
   buildMunicipalityAppHref,
   normalizeMunicipalityAppPath,
 } from "./municipality/appShellRouting";
+import {
+  hydrateCrossTenantSession,
+  markCrossTenantLogout,
+  syncCrossTenantAuthState,
+} from "./auth/crossTenantAuth";
 import "./headerStandards.css";
 import "./municipality-app.css";
 
@@ -305,23 +310,6 @@ function buildTenantSwitchHash(session) {
   return `#${params.toString()}`;
 }
 
-function extractTenantSwitchSession(rawHash) {
-  const hash = String(rawHash || "").trim().replace(/^#/, "");
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
-  const accessToken = trimOrEmpty(params.get("cr_access_token"));
-  const refreshToken = trimOrEmpty(params.get("cr_refresh_token"));
-  if (!accessToken || !refreshToken) return null;
-  params.delete("cr_access_token");
-  params.delete("cr_refresh_token");
-  const nextHash = params.toString();
-  return {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    cleanedHash: nextHash ? `#${nextHash}` : "",
-  };
-}
-
 function buildTenantSwitchHref(env, targetTenant, currentRoutePath, session = null) {
   const tenantKey = trimOrEmpty(targetTenant?.tenant_key).toLowerCase();
   const subdomain = trimOrEmpty(targetTenant?.primary_subdomain).toLowerCase();
@@ -345,28 +333,14 @@ function useResidentAuth() {
   useEffect(() => {
     let mounted = true;
     const hydrateSession = async () => {
-      if (typeof window !== "undefined") {
-        const handoffSession = extractTenantSwitchSession(window.location.hash);
-        if (handoffSession) {
-          try {
-            await supabase.auth.setSession({
-              access_token: handoffSession.access_token,
-              refresh_token: handoffSession.refresh_token,
-            });
-            const nextUrl = `${window.location.pathname}${window.location.search}${handoffSession.cleanedHash}`;
-            window.history.replaceState({}, "", nextUrl);
-          } catch {
-            // no-op
-          }
-        }
-      }
-      const { data } = await supabase.auth.getSession();
+      const sessionData = await hydrateCrossTenantSession(supabase);
       if (!mounted) return;
-      setSession(data?.session || null);
+      setSession(sessionData || null);
       setAuthReady(true);
     };
     void hydrateSession();
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      syncCrossTenantAuthState(event, nextSession || null);
       setSession(nextSession || null);
       setAuthReady(true);
     });
@@ -1472,6 +1446,13 @@ export default function MunicipalityApp() {
     setAuthMode("login");
   }
 
+  async function handleResidentSignOut() {
+    const { error } = await supabase.auth.signOut();
+    if (!error) {
+      markCrossTenantLogout();
+    }
+  }
+
   async function reloadAlerts() {
     const { data } = await supabase
       .from("municipality_alerts")
@@ -1710,7 +1691,7 @@ export default function MunicipalityApp() {
                             className="municipality-nav-menu-item municipality-account-menu-signout"
                             onClick={() => {
                               setAccountMenuOpen(false);
-                              void supabase.auth.signOut();
+                              void handleResidentSignOut();
                             }}
                           >
                             Sign Out
