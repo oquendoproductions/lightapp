@@ -71,14 +71,14 @@ const shell = {
 const stickyBanner = {
   position: "fixed",
   top: FIXED_BANNER_TOP,
-  left: "50%",
-  transform: "translateX(-50%)",
+  left: 0,
+  transform: "none",
   zIndex: 90,
   display: "grid",
-  gridTemplateColumns: "minmax(180px, auto) 1fr minmax(58px, auto)",
+  gridTemplateColumns: "minmax(220px, 1fr) minmax(0, 2fr) minmax(220px, 1fr)",
   alignItems: "center",
   gap: "1rem",
-  width: "min(1200px, calc(100vw - 2.4rem))",
+  width: "100%",
   minHeight: FIXED_BANNER_HEIGHT,
   padding: "16px 20px",
   border: 0,
@@ -86,6 +86,7 @@ const stickyBanner = {
   background: "rgba(248, 251, 255, 0.88)",
   backdropFilter: "blur(14px)",
   boxShadow: "none",
+  boxSizing: "border-box",
 };
 
 const card = {

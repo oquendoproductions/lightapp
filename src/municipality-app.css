@@ -33,14 +33,16 @@
 
 .municipality-title-bar {
   display: grid;
-  grid-template-columns: minmax(180px, auto) 1fr minmax(58px, auto);
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr) minmax(220px, 1fr);
   align-items: center;
   gap: 16px;
   min-height: 72px;
   min-width: 0;
+  width: 100%;
 }
 
 .municipality-tabs-bar {
+  width: 100%;
   padding: 10px 12px;
   border: 1px solid rgba(23, 49, 79, 0.08);
   border-radius: 22px;
@@ -114,15 +116,18 @@
 }
 
 .municipality-nav {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 10px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
   min-width: 0;
+  width: 100%;
 }
 
 .municipality-nav-dropdown {
   position: relative;
+  width: 100%;
 }
 
 .municipality-nav-link,
@@ -161,6 +166,20 @@
   background: linear-gradient(135deg, #113d5f 0%, #176d78 100%);
   border-color: transparent;
   color: #f7fbff;
+}
+
+.municipality-nav > a,
+.municipality-nav > .municipality-nav-dropdown {
+  width: 100%;
+}
+
+.municipality-nav > a,
+.municipality-nav > .municipality-nav-dropdown > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  text-align: center;
 }
 
 .municipality-nav-menu {
