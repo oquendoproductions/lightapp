@@ -9,6 +9,7 @@ import { Domains } from "./components/homepage/Domains.jsx";
 import { Trust } from "./components/homepage/Trust.jsx";
 import { SiteFooter } from "./components/homepage/SiteFooter.jsx";
 import { trackEvent } from "./lib/homepage/analytics.js";
+import "./headerStandards.css";
 import "./homepage.css";
 
 const SECTION_LINKS = [
@@ -70,12 +71,21 @@ export default function App() {
   return (
     <div className="page-shell">
       <header className="top-bar" aria-label="Site header">
-        <a className="brand" href="#hero" onClick={(event) => event.preventDefault()}>
-          <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
-        </a>
-        <button className="btn btn-secondary" onClick={onBookDemo}>
-          Book pilot demo
-        </button>
+        <div className="top-bar-inner">
+          <a className="brand" href="#hero" onClick={(event) => event.preventDefault()}>
+            <picture>
+              <source media="(max-width: 760px)" srcSet="/CityReport-pin-logo.png" />
+              <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
+            </picture>
+          </a>
+          <button className="marketing-header-title" type="button" onClick={() => smoothScrollTo("hero")}>
+            CityReport.io
+          </button>
+          <button className="btn btn-secondary marketing-header-cta" onClick={onBookDemo}>
+            <span className="marketing-header-cta-desktop">Book Pilot Demo</span>
+            <span className="marketing-header-cta-mobile">Book Demo</span>
+          </button>
+        </div>
       </header>
 
       <nav className="section-rail" aria-label="Homepage sections">
