@@ -73,14 +73,9 @@ export default function App() {
       <header className="top-bar" aria-label="Site header">
         <div className="top-bar-inner">
           <a className="brand" href="#hero" onClick={(event) => event.preventDefault()}>
-            <picture>
-              <source media="(max-width: 760px)" srcSet="/CityReport-pin-logo.png" />
-              <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
-            </picture>
+            <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
           </a>
-          <button className="marketing-header-title" type="button" onClick={() => smoothScrollTo("hero")}>
-            CityReport.io
-          </button>
+          <div className="marketing-header-spacer" aria-hidden="true" />
           <button className="btn btn-secondary marketing-header-cta" onClick={onBookDemo}>
             <span className="marketing-header-cta-desktop">Book Pilot Demo</span>
             <span className="marketing-header-cta-mobile">Book Demo</span>

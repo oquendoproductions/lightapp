@@ -54,7 +54,7 @@ body {
   min-height: var(--top-bar-height);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(var(--desktop-header-side-column), 1fr) minmax(0, 2fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 1rem;
 }
@@ -73,23 +73,8 @@ body {
   display: block;
 }
 
-.marketing-header-title {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  background: transparent;
-  color: var(--brand-navy-strong);
-  font-family: "Fraunces", "Times New Roman", serif;
-  font-size: var(--desktop-header-title-size);
-  font-weight: var(--desktop-header-title-weight);
-  line-height: var(--desktop-header-title-line-height);
-  letter-spacing: -0.012em;
-  text-align: center;
-  cursor: pointer;
-}
-
-.marketing-header-title:hover {
-  color: var(--brand-green-strong);
+.marketing-header-spacer {
+  display: none;
 }
 
 .marketing-header-cta {
@@ -772,7 +757,7 @@ h3 {
     min-height: var(--mobile-header-height);
     height: var(--mobile-header-height);
     padding: var(--mobile-header-padding-y) var(--mobile-header-padding-x);
-    grid-template-columns: var(--mobile-header-side-column) 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     border: 1px solid rgba(23, 56, 92, 0.34);
     border-radius: var(--mobile-header-radius);
     background: var(--mobile-header-background);
@@ -780,14 +765,9 @@ h3 {
   }
 
   .brand-logo {
-    width: var(--mobile-header-logo-size);
-    height: var(--mobile-header-logo-size);
-  }
-
-  .marketing-header-title {
-    font-size: var(--mobile-header-title-size);
-    line-height: var(--mobile-header-title-line-height);
-    padding-inline: 6px;
+    width: auto;
+    max-width: min(190px, calc(100vw - 132px));
+    height: 42px;
   }
 
   .marketing-header-cta {
