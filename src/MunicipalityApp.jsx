@@ -1702,7 +1702,7 @@ export default function MunicipalityApp() {
               </picture>
             </button>
             <div className="municipality-brand-copy">
-              <p className="municipality-brand-eyebrow">Municipality Hub</p>
+              <p className="municipality-brand-eyebrow app-header-eyebrow">Municipality Hub</p>
               <h1>{tenantName}</h1>
             </div>
             <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>

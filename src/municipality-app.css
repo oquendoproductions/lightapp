@@ -105,12 +105,6 @@
 
 .municipality-brand-eyebrow {
   margin: 0;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: var(--desktop-header-eyebrow-letter-spacing);
-  line-height: 1;
-  text-transform: uppercase;
-  color: #13856e;
 }
 
 .municipality-brand-copy h1 {
@@ -928,10 +922,6 @@
     padding-inline: 6px;
     gap: var(--mobile-header-stack-gap);
     align-content: center;
-  }
-
-  .municipality-brand-eyebrow {
-    font-size: var(--mobile-header-eyebrow-size);
   }
 
   .municipality-tabs-bar {

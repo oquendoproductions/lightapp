@@ -2448,14 +2448,7 @@ export default function PlatformAdminApp() {
           alignContent: isCompactViewport ? "center" : undefined,
         }}
       >
-        <span style={{
-          fontSize: isCompactViewport ? "var(--mobile-header-eyebrow-size)" : "9px",
-          fontWeight: 800,
-          letterSpacing: "var(--desktop-header-eyebrow-letter-spacing)",
-          lineHeight: 1,
-          textTransform: "uppercase",
-          color: "#13856e",
-        }}>
+        <span className="app-header-eyebrow">
           Developer Dashboard
         </span>
         <span style={{

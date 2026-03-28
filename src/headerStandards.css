@@ -28,3 +28,19 @@
   --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
   --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
 }
+
+.app-header-eyebrow {
+  margin: 0;
+  font-size: var(--desktop-header-eyebrow-size);
+  font-weight: 800;
+  letter-spacing: var(--desktop-header-eyebrow-letter-spacing);
+  line-height: 1;
+  text-transform: uppercase;
+  color: #13856e;
+}
+
+@media (max-width: 760px) {
+  .app-header-eyebrow {
+    font-size: var(--mobile-header-eyebrow-size);
+  }
+}
