@@ -2367,13 +2367,6 @@ export default function PlatformAdminApp() {
         }}>
           Platform Control Plane
         </span>
-        <span style={{
-          fontSize: isCompactViewport ? 10 : "var(--desktop-header-subtitle-size)",
-          color: palette.textMuted,
-          lineHeight: isCompactViewport ? 1.2 : "var(--desktop-header-subtitle-line-height)",
-        }}>
-          Manage tenants, users, launch settings, and municipal operations from one place.
-        </span>
       </button>
       {showBannerMenu ? (
         <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end", width: isCompactViewport ? 44 : undefined }}>

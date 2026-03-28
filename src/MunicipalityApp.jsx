@@ -1652,7 +1652,6 @@ export default function MunicipalityApp() {
             <div className="municipality-brand-copy">
               <p className="municipality-brand-eyebrow">Municipality Hub</p>
               <h1>{tenantName}</h1>
-              <p>Resident notices, civic events, and issue reporting in one place.</p>
             </div>
             <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
               {!session?.user?.id ? (

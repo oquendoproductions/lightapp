@@ -97,7 +97,7 @@
 
 .municipality-brand-copy {
   display: grid;
-  gap: var(--desktop-header-stack-gap);
+  gap: 1px;
   flex: 1 1 auto;
   min-width: 0;
   text-align: center;
@@ -105,9 +105,10 @@
 
 .municipality-brand-eyebrow {
   margin: 0;
-  font-size: var(--desktop-header-eyebrow-size);
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: var(--desktop-header-eyebrow-letter-spacing);
+  line-height: 1;
   text-transform: uppercase;
   color: #13856e;
 }
@@ -805,6 +806,10 @@
     gap: 0;
   }
 
+  .municipality-brand-eyebrow {
+    font-size: 8px;
+  }
+
   .municipality-tabs-bar {
     display: none;
   }
@@ -828,11 +833,6 @@
 
   .municipality-brand-copy h1 {
     font-size: 16px;
-  }
-
-  .municipality-brand-copy p {
-    font-size: 10px;
-    line-height: 1.2;
   }
 
   .municipality-account-toggle {
