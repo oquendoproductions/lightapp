@@ -97,7 +97,7 @@
 
 .municipality-brand-copy {
   display: grid;
-  gap: 1px;
+  gap: var(--desktop-header-stack-gap);
   flex: 1 1 auto;
   min-width: 0;
   text-align: center;
@@ -105,6 +105,7 @@
 
 .municipality-brand-eyebrow {
   margin: 0;
+  display: block;
 }
 
 .municipality-brand-copy h1 {
