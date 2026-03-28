@@ -58,7 +58,7 @@ const palette = {
 };
 
 const FIXED_BANNER_TOP = 0;
-const FIXED_BANNER_HEIGHT = 88;
+const FIXED_BANNER_HEIGHT = 90;
 
 const shell = {
   minHeight: "100vh",
@@ -2361,7 +2361,7 @@ export default function PlatformAdminApp() {
           justifySelf: "center",
         }}
       >
-        <span style={{ fontSize: isCompactViewport ? 18 : 28, fontWeight: 950, color: palette.navy900, lineHeight: 1.05 }}>
+        <span style={{ fontSize: isCompactViewport ? 18 : 24, fontWeight: 950, color: palette.navy900, lineHeight: 1.05 }}>
           Platform Control Plane
         </span>
         <span style={{ fontSize: isCompactViewport ? 11.5 : 12.5, color: palette.textMuted, lineHeight: 1.35 }}>
