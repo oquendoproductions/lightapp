@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./headerStandards.css";
+import {
+  STANDARD_LOGIN_EMAIL_INPUT_PROPS,
+  STANDARD_LOGIN_FORM_PROPS,
+  getStandardLoginPasswordInputProps,
+} from "./auth/loginFieldStandards";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
@@ -2444,21 +2449,17 @@ export default function PlatformAdminApp() {
           <p style={{ margin: 0, color: palette.textMuted }}>
             Sign in with your platform admin account to manage municipalities and operational settings.
           </p>
-          <form onSubmit={signInPlatformAdmin} style={{ display: "grid", gap: 8, maxWidth: 420 }}>
+          <form onSubmit={signInPlatformAdmin} style={{ display: "grid", gap: 8, maxWidth: 420 }} {...STANDARD_LOGIN_FORM_PROPS}>
             <input
-              type="email"
-              autoComplete="email"
+              {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
-              placeholder="Email"
               style={inputBase}
             />
             <input
-              type="password"
-              autoComplete="current-password"
+              {...getStandardLoginPasswordInputProps(false)}
               value={loginPassword}
               onChange={(e) => setLoginPassword(e.target.value)}
-              placeholder="Password"
               style={inputBase}
             />
             <button type="submit" style={{ ...buttonBase, width: "fit-content", minWidth: 140 }} disabled={loginLoading}>

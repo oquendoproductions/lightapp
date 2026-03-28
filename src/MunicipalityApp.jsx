@@ -10,6 +10,11 @@ import {
   markCrossTenantLogout,
   syncCrossTenantAuthState,
 } from "./auth/crossTenantAuth";
+import {
+  STANDARD_LOGIN_EMAIL_INPUT_PROPS,
+  STANDARD_LOGIN_FORM_PROPS,
+  getStandardLoginPasswordInputProps,
+} from "./auth/loginFieldStandards";
 import "./headerStandards.css";
 import "./municipality-app.css";
 
@@ -693,10 +698,7 @@ export default function MunicipalityApp() {
     notifications: false,
     security: false,
   });
-  const authEmailAutoComplete = "email";
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
-  const authEmailName = authMode === "login" ? undefined : "email";
-  const authPasswordName = authMode === "login" ? undefined : "new-password";
 
   useEffect(() => {
     function onPopState() {
@@ -2064,7 +2066,7 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the cities you follow.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} autoComplete="on" key={`account-auth-${authMode}`}>
+                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} key={`account-auth-${authMode}`} {...STANDARD_LOGIN_FORM_PROPS}>
                   <h4>{authMode === "login" ? "Sign in to manage your account settings" : "Create your resident account"}</h4>
                   <div className="municipality-form-grid">
                     {authMode === "signup" ? (
@@ -2075,30 +2077,43 @@ export default function MunicipalityApp() {
                     ) : null}
                     <div className="municipality-field">
                       <label htmlFor="resident-email">Email</label>
-                      <input
-                        id="resident-email"
-                        name={authEmailName}
-                        type="email"
-                        autoComplete={authEmailAutoComplete}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck="false"
-                        value={authForm.email}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                        placeholder="you@example.com"
-                      />
+                      {authMode === "login" ? (
+                        <input
+                          id="resident-email"
+                          {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                          value={authForm.email}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        />
+                      ) : (
+                        <input
+                          id="resident-email"
+                          name="email"
+                          type="email"
+                          autoComplete="email"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck="false"
+                          value={authForm.email}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                          placeholder="you@example.com"
+                        />
+                      )}
                     </div>
                     <div className="municipality-field">
                       <label htmlFor="resident-password">Password</label>
                       <div className="municipality-password-row">
                         <input
                           id="resident-password"
-                          name={authPasswordName}
-                          type={showAuthPassword ? "text" : "password"}
-                          autoComplete={authPasswordAutoComplete}
+                          {...(authMode === "login"
+                            ? getStandardLoginPasswordInputProps(showAuthPassword)
+                            : {
+                                type: showAuthPassword ? "text" : "password",
+                                name: "new-password",
+                                autoComplete: authPasswordAutoComplete,
+                                placeholder: "Password",
+                              })}
                           value={authForm.password}
                           onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                          placeholder="Password"
                         />
                         <button
                           type="button"
@@ -2357,7 +2372,7 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Notification Preferences" subtitle="Choose which municipal updates you want to receive and how you want to receive them.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} autoComplete="on" key={`notification-auth-${authMode}`}>
+                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} key={`notification-auth-${authMode}`} {...STANDARD_LOGIN_FORM_PROPS}>
                   <h4>{authMode === "login" ? "Sign in to manage your notification preferences" : "Create your resident account"}</h4>
                   <div className="municipality-form-grid">
                     {authMode === "signup" ? (
@@ -2368,30 +2383,43 @@ export default function MunicipalityApp() {
                     ) : null}
                     <div className="municipality-field">
                       <label htmlFor="resident-email-notifications">Email</label>
-                      <input
-                        id="resident-email-notifications"
-                        name={authEmailName}
-                        type="email"
-                        autoComplete={authEmailAutoComplete}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck="false"
-                        value={authForm.email}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
-                        placeholder="you@example.com"
-                      />
+                      {authMode === "login" ? (
+                        <input
+                          id="resident-email-notifications"
+                          {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                          value={authForm.email}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        />
+                      ) : (
+                        <input
+                          id="resident-email-notifications"
+                          name="email"
+                          type="email"
+                          autoComplete="email"
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck="false"
+                          value={authForm.email}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                          placeholder="you@example.com"
+                        />
+                      )}
                     </div>
                     <div className="municipality-field">
                       <label htmlFor="resident-password-notifications">Password</label>
                       <div className="municipality-password-row">
                         <input
                           id="resident-password-notifications"
-                          name={authPasswordName}
-                          type={showAuthPassword ? "text" : "password"}
-                          autoComplete={authPasswordAutoComplete}
+                          {...(authMode === "login"
+                            ? getStandardLoginPasswordInputProps(showAuthPassword)
+                            : {
+                                type: showAuthPassword ? "text" : "password",
+                                name: "new-password",
+                                autoComplete: authPasswordAutoComplete,
+                                placeholder: "Password",
+                              })}
                           value={authForm.password}
                           onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                          placeholder="Password"
                         />
                         <button
                           type="button"

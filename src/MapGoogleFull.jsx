@@ -6,6 +6,7 @@ import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-go
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
+import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } from "./auth/loginFieldStandards";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
 
@@ -3434,19 +3435,17 @@ function AuthGateModal({
           </div>
 
           <input
-            placeholder="Email"
+            {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
             value={authEmail}
             onChange={(e) => {
               clearLoginError?.();
               setAuthEmail(e.target.value);
             }}
             style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
-            autoCapitalize="none"
           />
           <div style={{ position: "relative" }}>
             <input
-              placeholder="Password"
-              type={showLoginPassword ? "text" : "password"}
+              {...getStandardLoginPasswordInputProps(showLoginPassword)}
               value={authPassword}
               onChange={(e) => {
                 clearLoginError?.();
