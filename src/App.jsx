@@ -72,10 +72,10 @@ export default function App() {
     <div className="page-shell">
       <header className="top-bar" aria-label="Site header">
         <div className="top-bar-inner">
-          <a className="brand" href="#hero" onClick={(event) => event.preventDefault()}>
+          <div className="marketing-header-spacer" aria-hidden="true" />
+          <a className="brand marketing-header-brand" href="#hero" onClick={(event) => event.preventDefault()}>
             <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
           </a>
-          <div className="marketing-header-spacer" aria-hidden="true" />
           <button className="btn btn-secondary marketing-header-cta" onClick={onBookDemo}>
             <span className="marketing-header-cta-desktop">Book Pilot Demo</span>
             <span className="marketing-header-cta-mobile">Book Demo</span>
