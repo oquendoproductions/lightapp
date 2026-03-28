@@ -1634,94 +1634,150 @@ export default function MunicipalityApp() {
     ];
 
     return (
-      <header className={`municipality-topbar${floating ? " municipality-topbar--floating" : ""}`}>
-        <div className="municipality-title-bar">
-          <button
-            type="button"
-            className="municipality-brand"
-            onClick={() => navigate("/")}
-            aria-label="Return to municipality home"
-          >
-            <picture>
-              <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
-              <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
-            </picture>
-          </button>
-          <div className="municipality-brand-copy">
-            <p className="municipality-brand-eyebrow">Municipality Hub</p>
-            <h1>{tenantName}</h1>
-            <p>Resident notices, civic events, and issue reporting in one place.</p>
-          </div>
-          <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
-            {!session?.user?.id ? (
-              <button
-                type="button"
-                className="municipality-button municipality-button--ghost"
-                onClick={() => navigate(ACCOUNT_PATH)}
-              >
-                Login
-              </button>
-            ) : (
-              <>
+      <>
+        <header className={`municipality-topbar${floating ? " municipality-topbar--floating" : ""}`}>
+          <div className="municipality-title-bar">
+            <button
+              type="button"
+              className="municipality-brand"
+              onClick={() => navigate("/")}
+              aria-label="Return to municipality home"
+            >
+              <picture>
+                <source media="(max-width: 720px)" srcSet={MOBILE_BRAND_LOGO_SRC} />
+                <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
+              </picture>
+            </button>
+            <div className="municipality-brand-copy">
+              <p className="municipality-brand-eyebrow">Municipality Hub</p>
+              <h1>{tenantName}</h1>
+              <p>Resident notices, civic events, and issue reporting in one place.</p>
+            </div>
+            <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
+              {!session?.user?.id ? (
                 <button
                   type="button"
-                  className="municipality-account-toggle"
-                  aria-label="Open account menu"
-                  aria-expanded={accountMenuOpen}
-                  onClick={() => setAccountMenuOpen((prev) => !prev)}
+                  className="municipality-button municipality-button--ghost"
+                  onClick={() => navigate(ACCOUNT_PATH)}
                 >
-                  <span />
-                  <span />
-                  <span />
+                  Login
                 </button>
-                {accountMenuOpen ? (
-                  <div className="municipality-account-menu">
-                    <div className="municipality-account-menu-card">
-                      <div className="municipality-account-menu-eyebrow">Signed In</div>
-                      <div className="municipality-account-menu-name">{accountDisplayName}</div>
-                      <div className="municipality-account-menu-role">{accountRoleLabel}</div>
-                      {accountEmail ? <div className="municipality-account-menu-email">{accountEmail}</div> : null}
-                      <div className="municipality-account-menu-actions">
-                        <button
-                          type="button"
-                          className="municipality-nav-menu-item"
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            navigate(ACCOUNT_PATH);
-                          }}
-                        >
-                          Account Settings
-                        </button>
-                        <button
-                          type="button"
-                          className="municipality-nav-menu-item"
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            navigate(NOTIFICATION_PATH);
-                          }}
-                        >
-                          Notification Preferences
-                        </button>
-                        <button
-                          type="button"
-                          className="municipality-nav-menu-item municipality-account-menu-signout"
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            void supabase.auth.signOut();
-                          }}
-                        >
-                          Sign Out
-                        </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="municipality-account-toggle"
+                    aria-label="Open account menu"
+                    aria-expanded={accountMenuOpen}
+                    onClick={() => setAccountMenuOpen((prev) => !prev)}
+                  >
+                    <span />
+                    <span />
+                    <span />
+                  </button>
+                  {accountMenuOpen ? (
+                    <div className="municipality-account-menu">
+                      <div className="municipality-account-menu-card">
+                        <div className="municipality-account-menu-eyebrow">Signed In</div>
+                        <div className="municipality-account-menu-name">{accountDisplayName}</div>
+                        <div className="municipality-account-menu-role">{accountRoleLabel}</div>
+                        {accountEmail ? <div className="municipality-account-menu-email">{accountEmail}</div> : null}
+                        <div className="municipality-account-menu-actions">
+                          <button
+                            type="button"
+                            className="municipality-nav-menu-item"
+                            onClick={() => {
+                              setAccountMenuOpen(false);
+                              navigate(ACCOUNT_PATH);
+                            }}
+                          >
+                            Account Settings
+                          </button>
+                          <button
+                            type="button"
+                            className="municipality-nav-menu-item"
+                            onClick={() => {
+                              setAccountMenuOpen(false);
+                              navigate(NOTIFICATION_PATH);
+                            }}
+                          >
+                            Notification Preferences
+                          </button>
+                          <button
+                            type="button"
+                            className="municipality-nav-menu-item municipality-account-menu-signout"
+                            onClick={() => {
+                              setAccountMenuOpen(false);
+                              void supabase.auth.signOut();
+                            }}
+                          >
+                            Sign Out
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : null}
-              </>
-            )}
+                  ) : null}
+                </>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="municipality-tabs-bar">
-          <nav className="municipality-nav" aria-label="Municipality navigation">
+          <nav
+            className="municipality-mobile-nav"
+            aria-label="Municipality mobile navigation"
+            style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
+          >
+            {mobileNavItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+                onClick={() => navigate(item.path)}
+              >
+                {item.label}
+              </button>
+            ))}
+            {session?.user?.id && switchableTenants.length ? (
+              <button
+                type="button"
+                className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
+                onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
+              >
+                Tenants
+              </button>
+            ) : null}
+          </nav>
+          {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
+            <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
+              <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
+                <div className="municipality-mobile-sheet-header">
+                  <strong>Switch Municipality</strong>
+                  <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
+                    Close
+                  </button>
+                </div>
+                <div className="municipality-mobile-sheet-list">
+                  {switchableTenants.map((city) => {
+                    const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                    const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
+                    return (
+                      <a
+                        key={cityKey}
+                        href={targetHref}
+                        className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                        onClick={() => setOpenNavMenu("")}
+                      >
+                        {trimOrEmpty(city?.name) || cityKey}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </header>
+        <div className="municipality-tabs-shell">
+          <div className="municipality-tabs-bar">
+            <nav className="municipality-nav" aria-label="Municipality navigation">
             {navLinks.map((item) => {
               const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
               if (!showManageMenu) {
@@ -1816,62 +1872,10 @@ export default function MunicipalityApp() {
                 ) : null}
               </div>
             ) : null}
-          </nav>
-        </div>
-        <nav
-          className="municipality-mobile-nav"
-          aria-label="Municipality mobile navigation"
-          style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
-        >
-          {mobileNavItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
-              onClick={() => navigate(item.path)}
-            >
-              {item.label}
-            </button>
-          ))}
-          {session?.user?.id && switchableTenants.length ? (
-            <button
-              type="button"
-              className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
-              onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
-            >
-              Tenants
-            </button>
-          ) : null}
-        </nav>
-        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
-          <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
-            <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
-              <div className="municipality-mobile-sheet-header">
-                <strong>Switch Municipality</strong>
-                <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
-                  Close
-                </button>
-              </div>
-              <div className="municipality-mobile-sheet-list">
-                {switchableTenants.map((city) => {
-                  const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                  const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
-                  return (
-                    <a
-                      key={cityKey}
-                      href={targetHref}
-                      className="municipality-nav-menu-item municipality-nav-menu-item--link"
-                      onClick={() => setOpenNavMenu("")}
-                    >
-                      {trimOrEmpty(city?.name) || cityKey}
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
+            </nav>
           </div>
-        ) : null}
-      </header>
+        </div>
+      </>
     );
   }
 

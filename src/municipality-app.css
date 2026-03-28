@@ -22,10 +22,9 @@
 .municipality-topbar {
   position: sticky;
   top: 0;
-  z-index: 25;
-  display: grid;
-  gap: 12px;
-  padding: 16px 20px;
+  z-index: 26;
+  display: block;
+  padding: 0 20px;
   border-bottom: 1px solid rgba(23, 49, 79, 0.08);
   backdrop-filter: blur(14px);
   background: rgba(248, 251, 255, 0.88);
@@ -36,9 +35,19 @@
   grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr) minmax(220px, 1fr);
   align-items: center;
   gap: 16px;
-  min-height: 72px;
+  min-height: 88px;
   min-width: 0;
   width: 100%;
+}
+
+.municipality-tabs-shell {
+  position: sticky;
+  top: 88px;
+  z-index: 25;
+  padding: 10px 20px 12px;
+  border-bottom: 1px solid rgba(23, 49, 79, 0.08);
+  backdrop-filter: blur(14px);
+  background: rgba(248, 251, 255, 0.8);
 }
 
 .municipality-tabs-bar {
@@ -756,6 +765,11 @@
     border-radius: 0 0 24px 24px;
   }
 
+  .municipality-tabs-shell {
+    position: static;
+    top: auto;
+  }
+
   .municipality-main--report {
     padding-top: 0;
   }
@@ -763,7 +777,6 @@
 
 @media (max-width: 720px) {
   .municipality-topbar {
-    gap: 12px;
     padding: 12px 12px 18px;
     border-bottom: 0;
     background: rgba(245, 250, 255, 0.8);
@@ -790,6 +803,10 @@
   }
 
   .municipality-tabs-bar {
+    display: none;
+  }
+
+  .municipality-tabs-shell {
     display: none;
   }
 
