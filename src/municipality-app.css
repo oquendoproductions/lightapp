@@ -112,7 +112,7 @@
   color: #13856e;
 }
 
-.municipality-brand h1 {
+.municipality-brand-copy h1 {
   margin: 0;
   font-size: 24px;
   font-weight: 950;
@@ -120,7 +120,7 @@
   color: #102b46;
 }
 
-.municipality-brand p {
+.municipality-brand-copy p {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.35;
@@ -826,11 +826,11 @@
     height: 42px;
   }
 
-  .municipality-brand h1 {
+  .municipality-brand-copy h1 {
     font-size: 18px;
   }
 
-  .municipality-brand p {
+  .municipality-brand-copy p {
     font-size: 11px;
   }
 
