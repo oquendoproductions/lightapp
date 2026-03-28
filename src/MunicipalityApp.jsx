@@ -1855,7 +1855,10 @@ export default function MunicipalityApp() {
             <button
               type="button"
               className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
-              onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
+              }}
             >
               Tenants
             </button>
