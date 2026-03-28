@@ -2,8 +2,9 @@ import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import "leaflet/dist/leaflet.css";
 import "./index.css";
-import { supabase } from "./supabaseClient";
+import { supabase, setSupabaseTenantKey } from "./supabaseClient";
 import { TenantGate, TenantProvider } from "./tenant/TenantContext";
+import { setRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
 
 const App = lazy(() => import("./App.jsx"));
@@ -17,6 +18,11 @@ const resolution = resolveTenantRequest({
   pathname: window.location.pathname,
   search: window.location.search,
 });
+
+if (resolution.mode === "municipality_app" && resolution.tenantKey) {
+  const tenantKey = setRuntimeTenantKey(resolution.tenantKey);
+  setSupabaseTenantKey(tenantKey);
+}
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
