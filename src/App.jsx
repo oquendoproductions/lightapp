@@ -18,7 +18,6 @@ const SECTION_LINKS = [
   { id: "workflow", label: "Workflow" },
   { id: "domains", label: "Domains" },
   { id: "trust", label: "Trust" },
-  { id: "lead", label: "Demo" },
 ];
 
 function smoothScrollTo(sectionId) {

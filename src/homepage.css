@@ -97,9 +97,10 @@ body {
   top: calc(var(--sticky-top) + var(--top-bar-height) + var(--rail-gap));
   z-index: 50;
   margin-top: 0.75rem;
-  display: flex;
-  gap: 0.45rem;
-  flex-wrap: wrap;
+  margin-inline: -0.4rem;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
   padding: 0.45rem;
   border: 1px solid rgba(20, 57, 95, 0.28);
   border-radius: 999px;
@@ -113,6 +114,7 @@ body {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.8);
   color: var(--brand-navy);
+  width: 100%;
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -799,6 +801,8 @@ h3 {
   .section-rail {
     position: static;
     margin-top: calc(var(--mobile-header-top-offset) + 0.55rem);
+    margin-inline: 0;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     border-radius: 14px;
   }
 
