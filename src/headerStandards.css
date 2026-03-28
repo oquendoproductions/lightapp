@@ -1,0 +1,15 @@
+:root {
+  --desktop-header-height: 90px;
+  --desktop-header-side-column: 220px;
+  --desktop-header-horizontal-padding: 20px;
+  --desktop-header-logo-height: 56px;
+  --desktop-header-menu-size: 58px;
+  --desktop-header-stack-gap: 2px;
+  --desktop-header-title-size: 24px;
+  --desktop-header-title-line-height: 1.05;
+  --desktop-header-title-weight: 950;
+  --desktop-header-subtitle-size: 12.5px;
+  --desktop-header-subtitle-line-height: 1.35;
+  --desktop-header-eyebrow-size: 10px;
+  --desktop-header-eyebrow-letter-spacing: 0.14em;
+}

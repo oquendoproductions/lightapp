@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
+import "./headerStandards.css";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
@@ -57,12 +58,12 @@ const palette = {
   textMuted: "#4a617a",
 };
 
-const FIXED_BANNER_TOP = 0;
-const FIXED_BANNER_HEIGHT = 90;
+const FIXED_BANNER_TOP = "0px";
+const FIXED_BANNER_HEIGHT = "var(--desktop-header-height)";
 
 const shell = {
   minHeight: "100vh",
-  padding: `${FIXED_BANNER_HEIGHT + FIXED_BANNER_TOP + 24}px 18px 42px`,
+  padding: `calc(${FIXED_BANNER_HEIGHT} + ${FIXED_BANNER_TOP} + 24px) 18px 42px`,
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
@@ -75,12 +76,12 @@ const stickyBanner = {
   transform: "none",
   zIndex: 90,
   display: "grid",
-  gridTemplateColumns: "minmax(220px, 1fr) minmax(0, 2fr) minmax(220px, 1fr)",
+  gridTemplateColumns: "minmax(var(--desktop-header-side-column), 1fr) minmax(0, 2fr) minmax(var(--desktop-header-side-column), 1fr)",
   alignItems: "center",
   gap: "1rem",
   width: "100%",
   minHeight: FIXED_BANNER_HEIGHT,
-  padding: "16px 20px",
+  padding: "16px var(--desktop-header-horizontal-padding)",
   border: 0,
   borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
   background: "rgba(248, 251, 255, 0.88)",
@@ -184,7 +185,7 @@ const tableHeadCell = {
 
 const brandTitleStack = {
   display: "grid",
-  gap: 2,
+  gap: "var(--desktop-header-stack-gap)",
   textAlign: "center",
 };
 
@@ -199,7 +200,7 @@ const brandResetButton = {
 };
 
 const brandLogo = {
-  height: 56,
+  height: "var(--desktop-header-logo-height)",
   width: "auto",
   maxWidth: "min(240px, calc(100vw - 180px))",
   display: "block",
@@ -209,8 +210,8 @@ const menuToggleButton = {
   border: "1px solid rgba(26, 49, 83, 0.22)",
   background: "rgba(255,255,255,0.92)",
   color: palette.navy900,
-  width: 58,
-  height: 58,
+  width: "var(--desktop-header-menu-size)",
+  height: "var(--desktop-header-menu-size)",
   borderRadius: 999,
   display: "inline-flex",
   alignItems: "center",
@@ -2361,10 +2362,19 @@ export default function PlatformAdminApp() {
           justifySelf: "center",
         }}
       >
-        <span style={{ fontSize: isCompactViewport ? 18 : 24, fontWeight: 950, color: palette.navy900, lineHeight: 1.05 }}>
+        <span style={{
+          fontSize: isCompactViewport ? 18 : "var(--desktop-header-title-size)",
+          fontWeight: "var(--desktop-header-title-weight)",
+          color: palette.navy900,
+          lineHeight: isCompactViewport ? 1.05 : "var(--desktop-header-title-line-height)",
+        }}>
           Platform Control Plane
         </span>
-        <span style={{ fontSize: isCompactViewport ? 11.5 : 12.5, color: palette.textMuted, lineHeight: 1.35 }}>
+        <span style={{
+          fontSize: isCompactViewport ? 11.5 : "var(--desktop-header-subtitle-size)",
+          color: palette.textMuted,
+          lineHeight: isCompactViewport ? 1.35 : "var(--desktop-header-subtitle-line-height)",
+        }}>
           Manage tenants, users, launch settings, and municipal operations from one place.
         </span>
       </button>

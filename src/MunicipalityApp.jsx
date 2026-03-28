@@ -5,6 +5,7 @@ import {
   buildMunicipalityAppHref,
   normalizeMunicipalityAppPath,
 } from "./municipality/appShellRouting";
+import "./headerStandards.css";
 import "./municipality-app.css";
 
 const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
