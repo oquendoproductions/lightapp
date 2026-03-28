@@ -693,10 +693,10 @@ export default function MunicipalityApp() {
     notifications: false,
     security: false,
   });
-  const authEmailAutoComplete = authMode === "login" ? "username" : "email";
+  const authEmailAutoComplete = "email";
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
-  const authEmailName = authMode === "login" ? "username" : "email";
-  const authPasswordName = authMode === "login" ? "current-password" : "new-password";
+  const authEmailName = authMode === "login" ? undefined : "email";
+  const authPasswordName = authMode === "login" ? undefined : "new-password";
 
   useEffect(() => {
     function onPopState() {
@@ -2064,7 +2064,7 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the cities you follow.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit}>
+                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} autoComplete="on" key={`account-auth-${authMode}`}>
                   <h4>{authMode === "login" ? "Sign in to manage your account settings" : "Create your resident account"}</h4>
                   <div className="municipality-form-grid">
                     {authMode === "signup" ? (
@@ -2079,9 +2079,9 @@ export default function MunicipalityApp() {
                         id="resident-email"
                         name={authEmailName}
                         type="email"
-                        inputMode="email"
                         autoComplete={authEmailAutoComplete}
                         autoCapitalize="none"
+                        autoCorrect="off"
                         spellCheck="false"
                         value={authForm.email}
                         onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
@@ -2357,7 +2357,7 @@ export default function MunicipalityApp() {
           <section>
             <HomeCard title="Notification Preferences" subtitle="Choose which municipal updates you want to receive and how you want to receive them.">
               {!session?.user?.id ? (
-                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit}>
+                <form className="municipality-auth-panel" onSubmit={handleAuthSubmit} autoComplete="on" key={`notification-auth-${authMode}`}>
                   <h4>{authMode === "login" ? "Sign in to manage your notification preferences" : "Create your resident account"}</h4>
                   <div className="municipality-form-grid">
                     {authMode === "signup" ? (
@@ -2372,9 +2372,9 @@ export default function MunicipalityApp() {
                         id="resident-email-notifications"
                         name={authEmailName}
                         type="email"
-                        inputMode="email"
                         autoComplete={authEmailAutoComplete}
                         autoCapitalize="none"
+                        autoCorrect="off"
                         spellCheck="false"
                         value={authForm.email}
                         onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
