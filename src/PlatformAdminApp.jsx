@@ -134,6 +134,25 @@ const buttonAlt = {
   boxShadow: "none",
 };
 
+const passwordFieldWrap = {
+  position: "relative",
+};
+
+const passwordToggleInline = {
+  position: "absolute",
+  top: "50%",
+  right: 10,
+  transform: "translateY(-50%)",
+  border: 0,
+  background: "transparent",
+  color: palette.mint700,
+  font: "inherit",
+  fontSize: 12.5,
+  fontWeight: 800,
+  cursor: "pointer",
+  padding: 0,
+};
+
 const signOutButton = {
   ...buttonAlt,
   padding: "4px 10px",
@@ -157,6 +176,27 @@ const responsiveTwoColGrid = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
   gap: 8,
+};
+
+const authModalBackdrop = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 95,
+  display: "grid",
+  placeItems: "center",
+  padding: 20,
+  background: "rgba(9, 25, 41, 0.38)",
+};
+
+const authModalCard = {
+  width: "min(480px, calc(100vw - 24px))",
+  display: "grid",
+  gap: 14,
+  padding: 18,
+  borderRadius: 20,
+  border: `1px solid ${palette.border}`,
+  background: "linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(246,251,255,0.98) 100%)",
+  boxShadow: "0 24px 46px rgba(16,43,70,0.18)",
 };
 
 const responsiveActionGrid = {
@@ -627,6 +667,11 @@ export default function PlatformAdminApp() {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [loginStatus, setLoginStatus] = useState("");
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
+  const [authResetLoading, setAuthResetLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState("tenants");
 
@@ -1167,6 +1212,7 @@ export default function PlatformAdminApp() {
     }
     setLoginLoading(true);
     setLoginError("");
+    setLoginStatus("");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoginLoading(false);
     if (error) {
@@ -1175,6 +1221,41 @@ export default function PlatformAdminApp() {
     }
     setLoginPassword("");
   }, [loginEmail, loginPassword]);
+
+  const openForgotPasswordModal = useCallback(() => {
+    setForgotPasswordEmail(String(loginEmail || "").trim());
+    setForgotPasswordError("");
+    setForgotPasswordOpen(true);
+  }, [loginEmail]);
+
+  const closeForgotPasswordModal = useCallback(() => {
+    setForgotPasswordOpen(false);
+    setForgotPasswordError("");
+    setAuthResetLoading(false);
+  }, []);
+
+  const sendPasswordReset = useCallback(async () => {
+    const email = String(forgotPasswordEmail || "").trim().toLowerCase();
+    if (!email) {
+      setForgotPasswordError("Enter email");
+      return false;
+    }
+
+    setForgotPasswordError("");
+    setAuthResetLoading(true);
+    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    setAuthResetLoading(false);
+
+    if (error) {
+      setForgotPasswordError(String(error?.message || "Password reset email failed."));
+      return false;
+    }
+
+    setForgotPasswordOpen(false);
+    setLoginStatus("Check your email. If an account exists for that address, a password reset link has been sent.");
+    return true;
+  }, [forgotPasswordEmail]);
 
   const signOutPlatformAdmin = useCallback(async () => {
     await supabase.auth.signOut();
@@ -2458,15 +2539,25 @@ export default function PlatformAdminApp() {
               style={inputBase}
             />
             <div style={{ display: "grid", gap: 6 }}>
-              <input
-                {...getStandardLoginPasswordInputProps(showLoginPassword)}
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                style={inputBase}
-              />
+              <div style={passwordFieldWrap}>
+                <input
+                  {...getStandardLoginPasswordInputProps(showLoginPassword)}
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  style={{ ...inputBase, paddingRight: 74 }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((prev) => !prev)}
+                  style={passwordToggleInline}
+                  aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                >
+                  {showLoginPassword ? "Hide" : "Show"}
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() => setShowLoginPassword((prev) => !prev)}
+                onClick={openForgotPasswordModal}
                 style={{
                   border: 0,
                   background: "transparent",
@@ -2479,7 +2570,7 @@ export default function PlatformAdminApp() {
                   justifySelf: "start",
                 }}
               >
-                {showLoginPassword ? "Hide password" : "Show password"}
+                Forgot password?
               </button>
             </div>
             <button type="submit" style={{ ...buttonBase, width: "fit-content", minWidth: 140 }} disabled={loginLoading}>
@@ -2487,6 +2578,59 @@ export default function PlatformAdminApp() {
             </button>
           </form>
           {loginError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{loginError}</p> : null}
+          {loginStatus ? <p style={{ margin: 0, color: palette.mint700, fontSize: 12.5, fontWeight: 700 }}>{loginStatus}</p> : null}
+          {forgotPasswordOpen ? (
+            <div style={authModalBackdrop} onClick={closeForgotPasswordModal}>
+              <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Reset Password</h2>
+                    <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                      Enter your account email and we&apos;ll send a password reset link.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeForgotPasswordModal}
+                    style={{
+                      ...buttonAlt,
+                      minWidth: 0,
+                      width: 34,
+                      height: 34,
+                      padding: 0,
+                      borderRadius: 10,
+                      fontSize: 18,
+                      lineHeight: 1,
+                    }}
+                    aria-label="Close password reset dialog"
+                  >
+                    ×
+                  </button>
+                </div>
+                <input
+                  {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                  value={forgotPasswordEmail}
+                  onChange={(event) => setForgotPasswordEmail(event.target.value)}
+                  style={inputBase}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !authResetLoading) {
+                      event.preventDefault();
+                      void sendPasswordReset();
+                    }
+                  }}
+                />
+                {forgotPasswordError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{forgotPasswordError}</p> : null}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={{ ...buttonBase, minWidth: 160 }} disabled={authResetLoading} onClick={() => void sendPasswordReset()}>
+                    {authResetLoading ? "Sending reset..." : "Send Reset Email"}
+                  </button>
+                  <button type="button" style={{ ...buttonAlt, minWidth: 120 }} onClick={closeForgotPasswordModal}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
       </main>
     );

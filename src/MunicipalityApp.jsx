@@ -664,6 +664,10 @@ export default function MunicipalityApp() {
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authResetLoading, setAuthResetLoading] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
   const [showAlertComposer, setShowAlertComposer] = useState(false);
   const [showEventComposer, setShowEventComposer] = useState(false);
   const [editingAlertId, setEditingAlertId] = useState(null);
@@ -705,6 +709,8 @@ export default function MunicipalityApp() {
     setAuthMode(nextMode);
     setAuthStatus("");
     setShowAuthPassword(false);
+    setForgotPasswordOpen(false);
+    setForgotPasswordError("");
     setAuthModalOpen(true);
   }
 
@@ -712,6 +718,44 @@ export default function MunicipalityApp() {
     setAuthModalOpen(false);
     setAuthStatus("");
     setShowAuthPassword(false);
+    setForgotPasswordOpen(false);
+    setForgotPasswordError("");
+    setAuthResetLoading(false);
+  }
+
+  function openForgotPasswordModal() {
+    setForgotPasswordEmail(trimOrEmpty(authForm.email));
+    setForgotPasswordError("");
+    setForgotPasswordOpen(true);
+  }
+
+  function closeForgotPasswordModal() {
+    setForgotPasswordOpen(false);
+    setForgotPasswordError("");
+    setAuthResetLoading(false);
+  }
+
+  async function sendPasswordReset() {
+    const email = trimOrEmpty(forgotPasswordEmail).toLowerCase();
+    if (!email) {
+      setForgotPasswordError("Enter email");
+      return false;
+    }
+
+    setForgotPasswordError("");
+    setAuthResetLoading(true);
+    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    setAuthResetLoading(false);
+
+    if (error) {
+      setForgotPasswordError(String(error?.message || "Password reset email failed."));
+      return false;
+    }
+
+    setForgotPasswordOpen(false);
+    setAuthStatus("Check your email. If an account exists for that address, a password reset link has been sent.");
+    return true;
   }
 
   useEffect(() => {
@@ -1930,19 +1974,28 @@ export default function MunicipalityApp() {
                       value={authForm.email}
                       onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
                     />
-                    <input
-                      id="resident-auth-modal-password"
-                      {...getStandardLoginPasswordInputProps(showAuthPassword)}
-                      value={authForm.password}
-                      onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                    />
+                    <div className="municipality-password-row">
+                      <input
+                        id="resident-auth-modal-password"
+                        {...getStandardLoginPasswordInputProps(showAuthPassword)}
+                        value={authForm.password}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        className="municipality-password-toggle"
+                        onClick={() => setShowAuthPassword((prev) => !prev)}
+                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                      >
+                        {showAuthPassword ? "Hide" : "Show"}
+                      </button>
+                    </div>
                     <button
                       type="button"
                       className="municipality-auth-password-toggle-link"
-                      onClick={() => setShowAuthPassword((prev) => !prev)}
-                      aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                      onClick={openForgotPasswordModal}
                     >
-                      {showAuthPassword ? "Hide password" : "Show password"}
+                      Forgot password?
                     </button>
                   </div>
                 ) : (
@@ -1975,24 +2028,26 @@ export default function MunicipalityApp() {
                     </div>
                     <div className="municipality-field">
                       <label htmlFor="resident-auth-modal-password-signup">Password</label>
-                      <input
-                        id="resident-auth-modal-password-signup"
-                        type={showAuthPassword ? "text" : "password"}
-                        name="new-password"
-                        autoComplete={authPasswordAutoComplete}
-                        placeholder="Password"
-                        value={authForm.password}
-                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
-                      />
+                      <div className="municipality-password-row">
+                        <input
+                          id="resident-auth-modal-password-signup"
+                          type={showAuthPassword ? "text" : "password"}
+                          name="new-password"
+                          autoComplete={authPasswordAutoComplete}
+                          placeholder="Password"
+                          value={authForm.password}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                        />
+                        <button
+                          type="button"
+                          className="municipality-password-toggle"
+                          onClick={() => setShowAuthPassword((prev) => !prev)}
+                          aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        >
+                          {showAuthPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      className="municipality-auth-password-toggle-link"
-                      onClick={() => setShowAuthPassword((prev) => !prev)}
-                      aria-label={showAuthPassword ? "Hide password" : "Show password"}
-                    >
-                      {showAuthPassword ? "Hide password" : "Show password"}
-                    </button>
                   </div>
                 )}
                 <div className="municipality-actions">
@@ -2005,6 +2060,44 @@ export default function MunicipalityApp() {
                 </div>
                 {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
               </form>
+            </div>
+          </div>
+        ) : null}
+        {forgotPasswordOpen && !session?.user?.id ? (
+          <div className="municipality-auth-modal-backdrop" onClick={closeForgotPasswordModal}>
+            <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-auth-modal-header">
+                <div>
+                  <h3>Reset Password</h3>
+                  <p>Enter your account email and we&apos;ll send a password reset link.</p>
+                </div>
+                <button type="button" className="municipality-auth-modal-close" onClick={closeForgotPasswordModal} aria-label="Close password reset dialog">
+                  Close
+                </button>
+              </div>
+              <div className="municipality-auth-login-fields">
+                <input
+                  id="resident-auth-modal-reset-email"
+                  {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                  value={forgotPasswordEmail}
+                  onChange={(event) => setForgotPasswordEmail(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !authResetLoading) {
+                      event.preventDefault();
+                      void sendPasswordReset();
+                    }
+                  }}
+                />
+              </div>
+              {forgotPasswordError ? <p className="municipality-inline-status is-error">{forgotPasswordError}</p> : null}
+              <div className="municipality-actions">
+                <button type="button" className="municipality-button municipality-button--primary" disabled={authResetLoading} onClick={() => void sendPasswordReset()}>
+                  {authResetLoading ? "Sending reset…" : "Send Reset Email"}
+                </button>
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={closeForgotPasswordModal}>
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
