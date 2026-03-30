@@ -48,6 +48,8 @@ const DEFAULT_TENANT_PERMISSION_KEYS = ROLE_PERMISSION_MODULES.flatMap((module) 
   ROLE_PERMISSION_ACTIONS.map((action) => `${module.key}.${action.key}`)
 );
 
+const ORGANIZATION_DELETION_HOLD_DAYS = 30;
+
 const palette = {
   navy900: "#102b46",
   navy700: "#1d466d",
@@ -637,6 +639,17 @@ function statusText(error, okText) {
   return `Error: ${String(error?.message || error || "unknown error")}`;
 }
 
+function formatDateTimeDisplay(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(parsed);
+}
+
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim().toUpperCase();
   const msg = String(error?.message || "").toLowerCase();
@@ -719,6 +732,9 @@ export default function PlatformAdminApp() {
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [status, setStatus] = useState({
     tenant: "",
@@ -763,6 +779,8 @@ export default function PlatformAdminApp() {
     () => (tenants || []).find((t) => String(t?.tenant_key || "") === String(selectedTenantKey || "")) || null,
     [tenants, selectedTenantKey]
   );
+  const selectedTenantDeletionScheduledFor = String(selectedTenant?.deletion_scheduled_for || "").trim();
+  const selectedTenantPendingDeletion = Boolean(selectedTenantDeletionScheduledFor);
 
   const filteredTenantRows = useMemo(() => {
     const q = String(tenantSearch || "").trim().toLowerCase();
@@ -922,9 +940,10 @@ export default function PlatformAdminApp() {
 
   const loadTenants = useCallback(async () => {
     const baseSelect = "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active,updated_at";
+    const deleteSelect = "deletion_requested_at,deletion_scheduled_for,deletion_requested_by,active_before_deletion";
     let result = await supabase
       .from("tenants")
-      .select(`${baseSelect},resident_portal_enabled`)
+      .select(`${baseSelect},resident_portal_enabled,${deleteSelect}`)
       .order("tenant_key", { ascending: true });
 
     if (result.error && isMissingColumnError(result.error)) {
@@ -934,7 +953,14 @@ export default function PlatformAdminApp() {
         .order("tenant_key", { ascending: true });
       if (result.error) throw result.error;
       const fallbackRows = Array.isArray(result.data)
-        ? result.data.map((row) => ({ ...row, resident_portal_enabled: false }))
+        ? result.data.map((row) => ({
+          ...row,
+          resident_portal_enabled: false,
+          deletion_requested_at: null,
+          deletion_scheduled_for: null,
+          deletion_requested_by: null,
+          active_before_deletion: null,
+        }))
         : [];
       setTenants(fallbackRows);
       return;
@@ -1112,6 +1138,7 @@ export default function PlatformAdminApp() {
 
   const refreshControlPlaneData = useCallback(async () => {
     try {
+      await purgeExpiredOrganizationDeletions();
       await Promise.all([
         loadTenants(),
         loadTenantAdmins(),
@@ -1125,7 +1152,7 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canEditTenantCore) {
@@ -1511,6 +1538,12 @@ export default function PlatformAdminApp() {
   }, [tenantOptions, selectedTenantKey]);
 
   useEffect(() => {
+    setDeleteConfirmOpen(false);
+    setDeleteConfirmText("");
+    setDeleteLoading(false);
+  }, [selectedTenantKey]);
+
+  useEffect(() => {
     if (entryStep !== "tenant") return;
     if (isEditingTenant) return;
     if (!selectedTenant) return;
@@ -1789,6 +1822,148 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     await refreshControlPlaneData();
   }, [persistTenantProfileRecord, persistTenantRecord, refreshControlPlaneData, tenantForm.tenant_key]);
+
+  async function purgeExpiredOrganizationDeletions() {
+    if (!canEditTenantCore) return;
+    const { data, error } = await supabase
+      .from("tenants")
+      .select("tenant_key,name,deletion_requested_at,deletion_scheduled_for,deletion_requested_by");
+    if (error) {
+      if (isMissingColumnError(error)) return;
+      throw error;
+    }
+    const now = Date.now();
+    const dueRows = (Array.isArray(data) ? data : []).filter((row) => {
+      const scheduled = String(row?.deletion_scheduled_for || "").trim();
+      if (!scheduled) return false;
+      const scheduledMs = new Date(scheduled).getTime();
+      return Number.isFinite(scheduledMs) && scheduledMs <= now;
+    });
+    for (const row of dueRows) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      if (!tenantKey) continue;
+      await logAudit({
+        tenant_key: tenantKey,
+        action: "tenant_deleted",
+        entity_type: "tenant",
+        entity_id: tenantKey,
+        details: {
+          scheduled_for: cleanOptional(row?.deletion_scheduled_for),
+          requested_at: cleanOptional(row?.deletion_requested_at),
+          requested_by: cleanOptional(row?.deletion_requested_by),
+          deleted_by: cleanOptional(sessionUserId),
+        },
+      });
+      const { error: deleteError } = await supabase
+        .from("tenants")
+        .delete()
+        .eq("tenant_key", tenantKey);
+      if (deleteError) throw deleteError;
+    }
+  }
+
+  const scheduleOrganizationDeletion = useCallback(async () => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can schedule organization deletion." }));
+      return;
+    }
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    if (!tenantKey || !selectedTenant) {
+      setStatus((prev) => ({ ...prev, tenant: "Select an organization first." }));
+      return;
+    }
+    if (deleteConfirmText !== tenantKey) {
+      setStatus((prev) => ({ ...prev, tenant: `Type ${tenantKey} exactly to confirm the 30-day deletion hold.` }));
+      return;
+    }
+
+    const scheduledFor = new Date();
+    scheduledFor.setDate(scheduledFor.getDate() + ORGANIZATION_DELETION_HOLD_DAYS);
+
+    setDeleteLoading(true);
+    const { error } = await supabase
+      .from("tenants")
+      .update({
+        deletion_requested_at: new Date().toISOString(),
+        deletion_scheduled_for: scheduledFor.toISOString(),
+        deletion_requested_by: cleanOptional(sessionUserId),
+        active_before_deletion: selectedTenant?.active !== false,
+        active: false,
+      })
+      .eq("tenant_key", tenantKey);
+
+    setDeleteLoading(false);
+    if (error) {
+      setStatus((prev) => ({ ...prev, tenant: statusText(error, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key: tenantKey,
+      action: "tenant_deletion_scheduled",
+      entity_type: "tenant",
+      entity_id: tenantKey,
+      details: {
+        scheduled_for: scheduledFor.toISOString(),
+        hold_days: ORGANIZATION_DELETION_HOLD_DAYS,
+      },
+    });
+
+    setDeleteConfirmOpen(false);
+    setDeleteConfirmText("");
+    setStatus((prev) => ({
+      ...prev,
+      tenant: `Scheduled ${tenantKey} for deletion on ${formatDateTimeDisplay(scheduledFor.toISOString())}. Organization data will be held for ${ORGANIZATION_DELETION_HOLD_DAYS} days before deletion.`,
+    }));
+    await refreshControlPlaneData();
+  }, [canEditTenantCore, deleteConfirmText, refreshControlPlaneData, selectedTenant, selectedTenantKey, sessionUserId, logAudit]);
+
+  const cancelOrganizationDeletion = useCallback(async () => {
+    if (!canEditTenantCore) {
+      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can cancel organization deletion." }));
+      return;
+    }
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    if (!tenantKey || !selectedTenantPendingDeletion) {
+      setStatus((prev) => ({ ...prev, tenant: "No scheduled organization deletion is active." }));
+      return;
+    }
+
+    setDeleteLoading(true);
+    const { error } = await supabase
+      .from("tenants")
+      .update({
+        deletion_requested_at: null,
+        deletion_scheduled_for: null,
+        deletion_requested_by: null,
+        active: selectedTenant?.active_before_deletion === null || selectedTenant?.active_before_deletion === undefined
+          ? selectedTenant?.active !== false
+          : Boolean(selectedTenant?.active_before_deletion),
+        active_before_deletion: null,
+      })
+      .eq("tenant_key", tenantKey);
+    setDeleteLoading(false);
+
+    if (error) {
+      setStatus((prev) => ({ ...prev, tenant: statusText(error, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key: tenantKey,
+      action: "tenant_deletion_cancelled",
+      entity_type: "tenant",
+      entity_id: tenantKey,
+      details: {
+        cancelled_by: cleanOptional(sessionUserId),
+      },
+    });
+
+    setDeleteConfirmOpen(false);
+    setDeleteConfirmText("");
+    setStatus((prev) => ({ ...prev, tenant: `Cancelled the scheduled deletion hold for ${tenantKey}.` }));
+    await refreshControlPlaneData();
+  }, [canEditTenantCore, logAudit, refreshControlPlaneData, selectedTenant, selectedTenantKey, selectedTenantPendingDeletion, sessionUserId]);
 
   const saveDomainAndFeatureSettings = useCallback(async (event) => {
     event.preventDefault();
@@ -2828,20 +3003,90 @@ export default function PlatformAdminApp() {
                       </button>
                     </>
                   ) : (
-                    <button
-                      type="button"
-                      style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                      onClick={() => {
-                        setActiveTab("tenants");
-                        setIsEditingTenant(true);
-                      }}
-                      disabled={!canEditTenantCore}
-                      title={canEditTenantCore ? "Edit organization setup" : "Only Platform Owner can edit organization setup"}
-                    >
-                      Edit Organization Setup
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        onClick={() => {
+                          setActiveTab("tenants");
+                          setIsEditingTenant(true);
+                        }}
+                        disabled={!canEditTenantCore}
+                        title={canEditTenantCore ? "Edit organization setup" : "Only Platform Owner can edit organization setup"}
+                      >
+                        Edit Organization Setup
+                      </button>
+                      {selectedTenantPendingDeletion ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantCore ? 1 : 0.55 }}
+                          onClick={() => void cancelOrganizationDeletion()}
+                          disabled={!canEditTenantCore || deleteLoading}
+                          title={canEditTenantCore ? "Cancel scheduled organization deletion" : "Only Platform Owner can cancel organization deletion"}
+                        >
+                          {deleteLoading ? "Saving..." : "Cancel Deletion"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantCore ? 1 : 0.55 }}
+                          onClick={() => {
+                            setDeleteConfirmOpen((prev) => !prev);
+                            setDeleteConfirmText("");
+                            setStatus((prev) => ({ ...prev, tenant: "" }));
+                          }}
+                          disabled={!canEditTenantCore}
+                          title={canEditTenantCore ? "Schedule organization deletion" : "Only Platform Owner can schedule organization deletion"}
+                        >
+                          Schedule Deletion
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
+                {selectedTenantPendingDeletion ? (
+                  <div style={{ fontSize: 12.5, color: palette.red600 }}>
+                    This organization is scheduled for deletion on {formatDateTimeDisplay(selectedTenantDeletionScheduledFor)}.
+                    The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
+                  </div>
+                ) : null}
+                {!isEditingTenant && deleteConfirmOpen ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
+                      Schedule organization deletion
+                    </div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Type <b>{selectedTenantKey}</b> to confirm. This organization will be marked inactive now and permanently deleted after a {ORGANIZATION_DELETION_HOLD_DAYS}-day hold.
+                    </div>
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(event) => setDeleteConfirmText(event.target.value)}
+                      placeholder={`Type ${selectedTenantKey} to confirm`}
+                      style={{ ...inputBase, maxWidth: 320 }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                        disabled={deleteLoading || deleteConfirmText !== selectedTenantKey}
+                        onClick={() => void scheduleOrganizationDeletion()}
+                      >
+                        {deleteLoading ? "Scheduling..." : "Confirm 30-Day Deletion Hold"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={deleteLoading}
+                        onClick={() => {
+                          setDeleteConfirmOpen(false);
+                          setDeleteConfirmText("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 360 }}>
