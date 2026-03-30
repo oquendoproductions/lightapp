@@ -33,6 +33,7 @@ const NAV_ITEMS = [
 const ACCOUNT_PATH = "/account";
 const NOTIFICATION_PATH = "/notifications";
 const SETTINGS_PATH = "/settings";
+const SETTINGS_SECTION_PREFIX = "location-settings-";
 
 const LOCATION_SETTINGS_GROUPS = [
   {
@@ -40,8 +41,8 @@ const LOCATION_SETTINGS_GROUPS = [
     title: "Publishing + Notices",
     description: "Review active notices, draft new alerts, and keep event publishing organized for this location.",
     actions: [
-      { label: "Manage Alerts", path: "/alerts" },
-      { label: "Manage Events", path: "/events" },
+      { key: "manage-alerts", label: "Manage Alerts", path: "/alerts" },
+      { key: "manage-events", label: "Manage Events", path: "/events" },
     ],
   },
   {
@@ -49,8 +50,8 @@ const LOCATION_SETTINGS_GROUPS = [
     title: "Reports + Exports",
     description: "Run location activity reports, pilot exports, and operational summaries from one place.",
     actions: [
-      { label: "Run Reports", disabled: true },
-      { label: "Export Activity", disabled: true },
+      { key: "run-reports", label: "Run Reports" },
+      { key: "export-activity", label: "Export Activity" },
     ],
   },
   {
@@ -58,8 +59,8 @@ const LOCATION_SETTINGS_GROUPS = [
     title: "Users + Team Access",
     description: "Add users, review who has access, and keep staff contacts organized for this location.",
     actions: [
-      { label: "Add Users", disabled: true },
-      { label: "View Team Access", disabled: true },
+      { key: "add-users", label: "Add Users" },
+      { key: "view-team-access", label: "View Team Access" },
     ],
   },
   {
@@ -67,8 +68,8 @@ const LOCATION_SETTINGS_GROUPS = [
     title: "Roles + Permissions",
     description: "Assign staff roles and define which admin actions each person can manage.",
     actions: [
-      { label: "Assign Roles", disabled: true },
-      { label: "Review Permissions", disabled: true },
+      { key: "assign-roles", label: "Assign Roles" },
+      { key: "review-permissions", label: "Review Permissions" },
     ],
   },
   {
@@ -76,8 +77,8 @@ const LOCATION_SETTINGS_GROUPS = [
     title: "Calendar Sync",
     description: "Connect calendars, review sync health, and keep city event feeds up to date.",
     actions: [
-      { label: "Sync Calendars", disabled: true },
-      { label: "Review Sources", disabled: true },
+      { key: "sync-calendars", label: "Sync Calendars" },
+      { key: "review-sources", label: "Review Sources" },
     ],
   },
 ];
@@ -133,6 +134,12 @@ function isMissingFunctionError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
   return code === "42883" || msg.includes("function") || msg.includes("schema cache");
+}
+
+function isPermissionError(error) {
+  const code = String(error?.code || "").trim();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42501" || msg.includes("permission") || msg.includes("policy") || msg.includes("row level");
 }
 
 function trimOrEmpty(value) {
@@ -342,6 +349,37 @@ function downloadTextFile(filename, text, mimeType) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function escapeCsvValue(value) {
+  const normalized = String(value ?? "");
+  if (!normalized.includes(",") && !normalized.includes("\"") && !normalized.includes("\n")) return normalized;
+  return `"${normalized.replace(/"/g, "\"\"")}"`;
+}
+
+function buildCsvFile(headers, rows) {
+  const lines = [headers.map(escapeCsvValue).join(",")];
+  for (const row of rows) {
+    lines.push(row.map(escapeCsvValue).join(","));
+  }
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function summarizeSourceLabel(sourceType) {
+  const key = trimOrEmpty(sourceType).toLowerCase();
+  if (!key || key === "manual") return "Manual";
+  if (key === "calendar_import") return "Calendar Import";
+  return key.replace(/_/g, " ");
+}
+
+function shortUserId(value) {
+  const normalized = trimOrEmpty(value);
+  if (normalized.length <= 12) return normalized || "Unknown user";
+  return `${normalized.slice(0, 8)}…${normalized.slice(-4)}`;
+}
+
+function getSettingsSectionId(sectionKey) {
+  return `${SETTINGS_SECTION_PREFIX}${sectionKey}`;
 }
 
 function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackSubdomain) {
@@ -726,6 +764,19 @@ export default function MunicipalityApp() {
   const [availableHubTenants, setAvailableHubTenants] = useState([]);
   const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState("");
+  const [activeSettingsSection, setActiveSettingsSection] = useState("reports");
+  const [teamAssignments, setTeamAssignments] = useState([]);
+  const [roleDefinitions, setRoleDefinitions] = useState([]);
+  const [rolePermissions, setRolePermissions] = useState([]);
+  const [permissionCatalog, setPermissionCatalog] = useState([]);
+  const [settingsSectionStatus, setSettingsSectionStatus] = useState({
+    reports: "",
+    team: "",
+    roles: "",
+    calendar: "",
+  });
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
@@ -953,6 +1004,36 @@ export default function MunicipalityApp() {
     () => sortEvents(events.filter((event) => String(event?.status || "").trim().toLowerCase() === "published")),
     [events]
   );
+  const permissionLabelLookup = useMemo(
+    () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
+    [permissionCatalog]
+  );
+  const permissionsByRole = useMemo(() => {
+    const lookup = {};
+    for (const row of rolePermissions || []) {
+      const roleKey = trimOrEmpty(row?.role);
+      if (!roleKey || !row?.allowed) continue;
+      if (!lookup[roleKey]) lookup[roleKey] = [];
+      lookup[roleKey].push(row);
+    }
+    return lookup;
+  }, [rolePermissions]);
+  const teamAssignmentsByRole = useMemo(() => {
+    const lookup = {};
+    for (const row of teamAssignments || []) {
+      const roleKey = trimOrEmpty(row?.role) || "unassigned";
+      lookup[roleKey] = (lookup[roleKey] || 0) + 1;
+    }
+    return lookup;
+  }, [teamAssignments]);
+  const eventSourceSummary = useMemo(() => {
+    const lookup = {};
+    for (const row of events || []) {
+      const key = trimOrEmpty(row?.source_type) || "manual";
+      lookup[key] = (lookup[key] || 0) + 1;
+    }
+    return lookup;
+  }, [events]);
 
   const homeAlerts = useMemo(() => publishedAlerts.slice(0, 3), [publishedAlerts]);
   const homeEvents = useMemo(() => publishedEvents.slice(0, 4), [publishedEvents]);
@@ -1098,7 +1179,7 @@ export default function MunicipalityApp() {
 
       const eventQuery = supabase
         .from("municipality_events")
-        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
         .order("starts_at", { ascending: true })
         .order("created_at", { ascending: false });
 
@@ -1152,6 +1233,75 @@ export default function MunicipalityApp() {
       cancelled = true;
     };
   }, [tenantKey, session?.user?.id, manageAccess]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLocationSettingsData() {
+      if (routePath !== SETTINGS_PATH || !session?.user?.id || !manageAccess) {
+        setSettingsLoading(false);
+        return;
+      }
+
+      setSettingsLoading(true);
+      setSettingsStatus("");
+      setSettingsSectionStatus({
+        reports: "",
+        team: "",
+        roles: "",
+        calendar: "",
+      });
+
+      const [teamRes, rolesRes, permissionsRes, catalogRes] = await Promise.all([
+        supabase
+          .from("tenant_user_roles")
+          .select("user_id,role,status,created_at,updated_at")
+          .eq("tenant_key", tenantKey)
+          .order("updated_at", { ascending: false }),
+        supabase
+          .from("tenant_role_definitions")
+          .select("role,role_label,is_system,active,created_at,updated_at")
+          .eq("tenant_key", tenantKey)
+          .order("is_system", { ascending: false })
+          .order("role_label", { ascending: true }),
+        supabase
+          .from("tenant_role_permissions")
+          .select("role,permission_key,allowed")
+          .eq("tenant_key", tenantKey)
+          .eq("allowed", true)
+          .order("role", { ascending: true }),
+        supabase
+          .from("tenant_permissions_catalog")
+          .select("permission_key,module_key,action_key,label,sort_order")
+          .order("sort_order", { ascending: true }),
+      ]);
+
+      if (cancelled) return;
+
+      setTeamAssignments(teamRes.error ? [] : (teamRes.data || []));
+      setRoleDefinitions(rolesRes.error ? [] : (rolesRes.data || []));
+      setRolePermissions(permissionsRes.error ? [] : (permissionsRes.data || []));
+      setPermissionCatalog(catalogRes.error ? [] : (catalogRes.data || []));
+      setSettingsSectionStatus({
+        reports: "",
+        team: teamRes.error
+          ? (isPermissionError(teamRes.error) ? "Team access visibility requires the users.access permission for this location." : teamRes.error.message || "Could not load team access.")
+          : "",
+        roles: rolesRes.error || permissionsRes.error || catalogRes.error
+          ? ((isPermissionError(rolesRes.error || permissionsRes.error || catalogRes.error)
+            ? "Role details require the roles.access or users.access permission for this location."
+            : (rolesRes.error || permissionsRes.error || catalogRes.error)?.message) || "Could not load roles and permissions.")
+          : "",
+        calendar: "",
+      });
+      setSettingsLoading(false);
+    }
+
+    void loadLocationSettingsData();
+    return () => {
+      cancelled = true;
+    };
+  }, [manageAccess, routePath, session?.user?.id, tenantKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1501,6 +1651,133 @@ export default function MunicipalityApp() {
     setSavingSection((prev) => ({ ...prev, security: false }));
     setAccountSectionStatus((prev) => ({ ...prev, security: nextStatus.length ? nextStatus.join(" ") : "Security settings saved." }));
     setSectionEditing("security", false);
+  }
+
+  function focusSettingsSection(sectionKey) {
+    const normalizedKey = trimOrEmpty(sectionKey);
+    if (!normalizedKey) return;
+    setActiveSettingsSection(normalizedKey);
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(getSettingsSectionId(normalizedKey));
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function downloadActivityExport() {
+    const rows = [
+      ...alerts.map((alert) => [
+        "alert",
+        trimOrEmpty(alert?.title),
+        trimOrEmpty(alert?.status),
+        trimOrEmpty(alert?.topic_label || alert?.topic_key),
+        trimOrEmpty(alert?.severity),
+        trimOrEmpty(alert?.starts_at),
+        trimOrEmpty(alert?.ends_at),
+        trimOrEmpty(alert?.location_name),
+        trimOrEmpty(alert?.location_address),
+      ]),
+      ...events.map((eventRow) => [
+        "event",
+        trimOrEmpty(eventRow?.title),
+        trimOrEmpty(eventRow?.status),
+        trimOrEmpty(eventRow?.topic_label || eventRow?.topic_key),
+        eventRow?.all_day ? "all_day" : "scheduled",
+        trimOrEmpty(eventRow?.starts_at),
+        trimOrEmpty(eventRow?.ends_at),
+        trimOrEmpty(eventRow?.location_name),
+        trimOrEmpty(eventRow?.location_address),
+      ]),
+    ];
+    downloadTextFile(
+      `${tenantKey || "location"}-activity-export.csv`,
+      buildCsvFile(
+        ["record_type", "title", "status", "topic", "priority_or_timing", "starts_at", "ends_at", "location_name", "location_address"],
+        rows
+      ),
+      "text/csv;charset=utf-8"
+    );
+    setSettingsStatus("Location activity export downloaded.");
+  }
+
+  function downloadRoleAccessExport() {
+    const rows = (roleDefinitions || []).map((roleRow) => {
+      const allowedPermissions = (permissionsByRole[roleRow.role] || []).map((permissionRow) =>
+        permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key
+      );
+      return [
+        trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role),
+        roleRow?.active ? "active" : "inactive",
+        roleRow?.is_system ? "system" : "custom",
+        String(allowedPermissions.length),
+        allowedPermissions.join(" | "),
+      ];
+    });
+    downloadTextFile(
+      `${tenantKey || "location"}-role-access.csv`,
+      buildCsvFile(["role", "status", "type", "allowed_permissions", "permission_labels"], rows),
+      "text/csv;charset=utf-8"
+    );
+    setSettingsStatus("Role and permission export downloaded.");
+  }
+
+  function downloadLocationCalendar() {
+    if (!publishedEvents.length) {
+      setSettingsStatus("Publish an event first, then download the location calendar.");
+      return;
+    }
+    downloadTextFile(
+      `${tenantKey || "location"}-events.ics`,
+      buildIcsFile(publishedEvents, tenantName),
+      "text/calendar;charset=utf-8"
+    );
+    setSettingsStatus("Location calendar downloaded.");
+  }
+
+  function handleLocationSettingsAction(actionKey) {
+    switch (actionKey) {
+      case "manage-alerts":
+        navigate("/alerts");
+        return;
+      case "manage-events":
+        navigate("/events");
+        return;
+      case "run-reports":
+        focusSettingsSection("reports");
+        setSettingsStatus("Reports are ready below.");
+        return;
+      case "export-activity":
+        focusSettingsSection("reports");
+        downloadActivityExport();
+        return;
+      case "add-users":
+        focusSettingsSection("team");
+        setSettingsStatus("Team access tools are ready below. New account creation will plug into this section next.");
+        return;
+      case "view-team-access":
+        focusSettingsSection("team");
+        setSettingsStatus("Current location access is listed below.");
+        return;
+      case "assign-roles":
+        focusSettingsSection("roles");
+        setSettingsStatus("Role assignments and permission coverage are ready below.");
+        return;
+      case "review-permissions":
+        focusSettingsSection("roles");
+        setSettingsStatus("Permission coverage is ready below.");
+        return;
+      case "sync-calendars":
+        focusSettingsSection("calendar");
+        downloadLocationCalendar();
+        return;
+      case "review-sources":
+        focusSettingsSection("calendar");
+        setSettingsStatus("Calendar sources are summarized below.");
+        return;
+      default:
+        return;
+    }
   }
 
   async function handleAuthSubmit(event) {
@@ -2370,30 +2647,204 @@ export default function MunicipalityApp() {
                       </div>
                       <div className="municipality-actions">
                         {group.actions.map((action) => (
-                          action.path ? (
-                            <button
-                              key={action.label}
-                              type="button"
-                              className={`municipality-button${action.path === "/alerts" || action.path === "/events" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                              onClick={() => navigate(action.path)}
-                            >
-                              {action.label}
-                            </button>
-                          ) : (
-                            <button
-                              key={action.label}
-                              type="button"
-                              className="municipality-button municipality-button--ghost"
-                              disabled
-                            >
-                              {action.label}
-                            </button>
-                          )
+                          <button
+                            key={action.key}
+                            type="button"
+                            className={`municipality-button${action.path ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                            onClick={() => {
+                              if (action.path) navigate(action.path);
+                              else handleLocationSettingsAction(action.key);
+                            }}
+                          >
+                            {action.label}
+                          </button>
                         ))}
                       </div>
                     </div>
                   ))}
-                  <p className="municipality-note">More location admin tools will be added here next so staff can manage operations without leaving the hub.</p>
+                  {settingsStatus ? <p className="municipality-inline-status">{settingsStatus}</p> : null}
+                  {settingsLoading ? <p className="municipality-inline-status">Loading location admin data…</p> : null}
+                  <div
+                    id={getSettingsSectionId("reports")}
+                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "reports" ? " is-active" : ""}`}
+                  >
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Reports + Exports</h4>
+                        <p className="municipality-note">Review a quick operational snapshot, then export location activity for pilot check-ins and staff review.</p>
+                      </div>
+                      <div className="municipality-actions">
+                        <button type="button" className="municipality-button municipality-button--primary" onClick={downloadActivityExport}>
+                          Download Activity CSV
+                        </button>
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
+                          Download Role Matrix
+                        </button>
+                      </div>
+                    </div>
+                    {settingsSectionStatus.reports ? <p className="municipality-inline-status">{settingsSectionStatus.reports}</p> : null}
+                    <div className="municipality-detail-grid">
+                      <div className="municipality-detail-item">
+                        <span>Alerts Loaded</span>
+                        <strong>{alerts.length}</strong>
+                      </div>
+                      <div className="municipality-detail-item">
+                        <span>Published Alerts</span>
+                        <strong>{publishedAlerts.length}</strong>
+                      </div>
+                      <div className="municipality-detail-item">
+                        <span>Events Loaded</span>
+                        <strong>{events.length}</strong>
+                      </div>
+                      <div className="municipality-detail-item">
+                        <span>Published Events</span>
+                        <strong>{publishedEvents.length}</strong>
+                      </div>
+                      <div className="municipality-detail-item">
+                        <span>Topics Active</span>
+                        <strong>{topics.length}</strong>
+                      </div>
+                      <div className="municipality-detail-item">
+                        <span>Staff Assignments</span>
+                        <strong>{teamAssignments.length}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    id={getSettingsSectionId("team")}
+                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "team" ? " is-active" : ""}`}
+                  >
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Users + Team Access</h4>
+                        <p className="municipality-note">Review who currently has access to this location and which role each person is carrying.</p>
+                      </div>
+                    </div>
+                    {settingsSectionStatus.team ? <p className={`municipality-inline-status${settingsSectionStatus.team.toLowerCase().includes("requires") || settingsSectionStatus.team.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
+                    {!settingsSectionStatus.team ? (
+                      <>
+                        <div className="municipality-detail-grid">
+                          <div className="municipality-detail-item">
+                            <span>Total Assignments</span>
+                            <strong>{teamAssignments.length}</strong>
+                          </div>
+                          {Object.entries(teamAssignmentsByRole).map(([roleKey, count]) => (
+                            <div key={roleKey} className="municipality-detail-item">
+                              <span>{trimOrEmpty(roleDefinitions.find((row) => row.role === roleKey)?.role_label) || roleKey.replace(/_/g, " ")}</span>
+                              <strong>{count}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        {teamAssignments.length ? (
+                          <div className="municipality-settings-list">
+                            {teamAssignments.map((assignment) => (
+                              <div key={`${assignment.user_id}-${assignment.role}`} className="municipality-settings-list-item">
+                                <div>
+                                  <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
+                                  <p className="municipality-note">
+                                    {trimOrEmpty(roleDefinitions.find((row) => row.role === assignment.role)?.role_label) || trimOrEmpty(assignment.role).replace(/_/g, " ")}
+                                    {" • "}
+                                    {trimOrEmpty(assignment.status) || "active"}
+                                  </p>
+                                </div>
+                                <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="municipality-empty">No location access assignments are visible yet.</div>
+                        )}
+                        <p className="municipality-note">New account creation and invite flow will plug into this area next. This section is now ready for access review.</p>
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div
+                    id={getSettingsSectionId("roles")}
+                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "roles" ? " is-active" : ""}`}
+                  >
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Roles + Permissions</h4>
+                        <p className="municipality-note">Use this role matrix to confirm who can access reports, users, communications, and other location admin tools.</p>
+                      </div>
+                      <div className="municipality-actions">
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
+                          Export Roles CSV
+                        </button>
+                      </div>
+                    </div>
+                    {settingsSectionStatus.roles ? <p className="municipality-inline-status is-error">{settingsSectionStatus.roles}</p> : null}
+                    {!settingsSectionStatus.roles ? (
+                      roleDefinitions.length ? (
+                        <div className="municipality-settings-list">
+                          {roleDefinitions.map((roleRow) => {
+                            const allowedPermissions = permissionsByRole[roleRow.role] || [];
+                            return (
+                              <div key={roleRow.role} className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                <div>
+                                  <strong>{trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role)}</strong>
+                                  <p className="municipality-note">
+                                    {roleRow?.is_system ? "System role" : "Custom role"}
+                                    {" • "}
+                                    {roleRow?.active ? "Active" : "Inactive"}
+                                  </p>
+                                </div>
+                                <div className="municipality-chip-row">
+                                  {allowedPermissions.length ? (
+                                    allowedPermissions.map((permissionRow) => (
+                                      <span key={`${roleRow.role}-${permissionRow.permission_key}`} className="municipality-chip">
+                                        {permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="municipality-note">No permissions enabled for this role.</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="municipality-empty">No role definitions are visible for this location yet.</div>
+                      )
+                    ) : null}
+                  </div>
+
+                  <div
+                    id={getSettingsSectionId("calendar")}
+                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "calendar" ? " is-active" : ""}`}
+                  >
+                    <div className="municipality-settings-header">
+                      <div>
+                        <h4>Calendar Sync</h4>
+                        <p className="municipality-note">Download the live location calendar and review which event sources are currently driving the public schedule.</p>
+                      </div>
+                      <div className="municipality-actions">
+                        <button type="button" className="municipality-button municipality-button--primary" onClick={downloadLocationCalendar}>
+                          Download Calendar (.ics)
+                        </button>
+                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/events")}>
+                          Open Events
+                        </button>
+                      </div>
+                    </div>
+                    {settingsSectionStatus.calendar ? <p className="municipality-inline-status">{settingsSectionStatus.calendar}</p> : null}
+                    <div className="municipality-detail-grid">
+                      <div className="municipality-detail-item">
+                        <span>Published Events</span>
+                        <strong>{publishedEvents.length}</strong>
+                      </div>
+                      {Object.entries(eventSourceSummary).map(([sourceKey, count]) => (
+                        <div key={sourceKey} className="municipality-detail-item">
+                          <span>{summarizeSourceLabel(sourceKey)}</span>
+                          <strong>{count}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="municipality-note">External calendar sync is not wired yet, but this section is now the single place to review source mix and export the current public calendar.</p>
+                  </div>
                 </div>
               )}
             </HomeCard>
