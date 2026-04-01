@@ -822,6 +822,29 @@
   gap: 10px;
 }
 
+.municipality-settings-item-actions-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.municipality-settings-sublist {
+  display: grid;
+  gap: 10px;
+}
+
+.municipality-settings-sublist-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  background: rgba(244, 249, 252, 0.86);
+}
+
 .municipality-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -913,6 +936,10 @@
   resize: vertical;
 }
 
+.municipality-field--file input[type="file"] {
+  padding: 10px 12px;
+}
+
 .municipality-inline-field-row {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
@@ -989,6 +1016,13 @@
 .municipality-admin-panel {
   display: grid;
   gap: 14px;
+}
+
+.municipality-asset-form-shell {
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(23, 109, 120, 0.18);
+  background: linear-gradient(180deg, rgba(246, 252, 255, 0.98) 0%, rgba(236, 246, 250, 0.96) 100%);
 }
 
 .municipality-note,
