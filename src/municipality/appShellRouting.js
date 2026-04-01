@@ -26,17 +26,32 @@ export function normalizeMunicipalityAppPath(pathname, tenantKey) {
   ) {
     return "/";
   }
+  if (stripped === "/reports" || stripped.startsWith("/reports/")) return "/reports";
   if (
     stripped === "/report" ||
     stripped.startsWith("/report/") ||
-    stripped === "/reports" ||
-    stripped.startsWith("/reports/") ||
     stripped === "/gmaps" ||
     stripped.startsWith("/gmaps/")
   ) {
     return "/report";
   }
+  if (
+    stripped === "/alerts/create" ||
+    stripped.startsWith("/alerts/create/") ||
+    stripped === "/alerts/schedule" ||
+    stripped.startsWith("/alerts/schedule/")
+  ) {
+    return "/alerts/create";
+  }
   if (stripped === "/alerts" || stripped.startsWith("/alerts/")) return "/alerts";
+  if (
+    stripped === "/events/create" ||
+    stripped.startsWith("/events/create/") ||
+    stripped === "/events/schedule" ||
+    stripped.startsWith("/events/schedule/")
+  ) {
+    return "/events/create";
+  }
   if (stripped === "/events" || stripped.startsWith("/events/")) return "/events";
   if (
     stripped === "/preferences" ||
@@ -44,19 +59,19 @@ export function normalizeMunicipalityAppPath(pathname, tenantKey) {
     stripped === "/notifications" ||
     stripped.startsWith("/notifications/")
   ) {
-    return "/notifications";
+    return "/settings/account-notifications";
   }
   if (
     stripped === "/account" ||
     stripped.startsWith("/account/")
   ) {
-    return "/account";
+    return "/settings/account-info";
   }
   if (
     stripped === "/settings" ||
     stripped.startsWith("/settings/")
   ) {
-    return "/settings";
+    return stripped;
   }
   return "/";
 }

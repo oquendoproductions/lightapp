@@ -11,9 +11,9 @@ describe("municipality app shell routing", () => {
     expect(stripTenantPathPrefix("/ashtabulacity/events", "ashtabulacity")).toBe("/events");
   });
 
-  it("normalizes legacy gmaps and reports paths into the report workspace", () => {
+  it("normalizes legacy gmaps into the report workspace and keeps hub reports on the reports page", () => {
     expect(normalizeMunicipalityAppPath("/gmaps", "ashtabulacity")).toBe("/report");
-    expect(normalizeMunicipalityAppPath("/reports?tab=open", "ashtabulacity")).toBe("/report");
+    expect(normalizeMunicipalityAppPath("/reports?tab=open", "ashtabulacity")).toBe("/reports");
   });
 
   it("falls back unknown municipality paths to home", () => {

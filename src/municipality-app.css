@@ -716,6 +716,80 @@
   flex-wrap: wrap;
 }
 
+.municipality-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.municipality-settings-sidebar,
+.municipality-settings-content {
+  display: grid;
+  gap: 14px;
+}
+
+.municipality-settings-sidebar {
+  position: sticky;
+  top: 132px;
+}
+
+.municipality-settings-group {
+  padding: 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  background: linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%);
+}
+
+.municipality-settings-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #17314f;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.municipality-settings-group-toggle.is-active {
+  border-color: rgba(23, 109, 120, 0.24);
+  background: rgba(23, 109, 120, 0.08);
+}
+
+.municipality-settings-group-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.municipality-settings-link {
+  width: 100%;
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #17314f;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.municipality-settings-link.is-active {
+  background: linear-gradient(135deg, #113d5f 0%, #176d78 100%);
+  border-color: transparent;
+  color: #f7fbff;
+  text-shadow: 0 1px 0 rgba(9, 31, 48, 0.22);
+}
+
 .municipality-detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
@@ -918,12 +992,17 @@
 @media (max-width: 980px) {
   .municipality-hero,
   .municipality-section-grid,
-  .municipality-admin-split {
+  .municipality-admin-split,
+  .municipality-settings-layout {
     grid-template-columns: 1fr;
   }
 
   .municipality-settings-list-item {
     display: grid;
+  }
+
+  .municipality-settings-sidebar {
+    position: static;
   }
 
   .municipality-topbar,

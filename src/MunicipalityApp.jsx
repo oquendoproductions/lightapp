@@ -27,58 +27,45 @@ const NAV_ITEMS = [
   { key: "home", label: "Home", path: "/" },
   { key: "alerts", label: "Alerts", path: "/alerts" },
   { key: "events", label: "Events", path: "/events" },
-  { key: "report", label: "Report An Issue", path: "/report", primary: true },
+  { key: "reports", label: "Reports", path: "/reports" },
+  { key: "report", label: "View Map", path: "/report", primary: true },
 ];
 
-const ACCOUNT_PATH = "/account";
-const NOTIFICATION_PATH = "/notifications";
 const SETTINGS_PATH = "/settings";
-const SETTINGS_SECTION_PREFIX = "location-settings-";
-
-const LOCATION_SETTINGS_GROUPS = [
+const SETTINGS_DEFAULT_PAGE = "/settings/account-info";
+const SETTINGS_NAV = [
   {
-    key: "publishing",
-    title: "Publishing + Notices",
-    description: "Review active notices, draft new alerts, and keep event publishing organized for this location.",
-    actions: [
-      { key: "manage-alerts", label: "Manage Alerts", path: "/alerts" },
-      { key: "manage-events", label: "Manage Events", path: "/events" },
+    key: "account",
+    label: "Account",
+    items: [
+      { key: "account-info", label: "Account Info", path: "/settings/account-info" },
+      { key: "account-notifications", label: "Notification Preferences", path: "/settings/account-notifications" },
+      { key: "update-password", label: "Update Password", path: "/settings/update-password" },
     ],
   },
   {
-    key: "reports",
-    title: "Reports + Exports",
-    description: "Run location activity reports, pilot exports, and operational summaries from one place.",
-    actions: [
-      { key: "run-reports", label: "Run Reports" },
-      { key: "export-activity", label: "Export Activity" },
+    key: "organization",
+    label: "Organization Info",
+    items: [
+      { key: "organization-general", label: "General Settings", path: "/settings/organization-general" },
+      { key: "organization-assets", label: "Assets", path: "/settings/organization-assets" },
+      { key: "calendar", label: "Calendar", path: "/settings/calendar" },
     ],
   },
   {
     key: "team",
-    title: "Users + Team Access",
-    description: "Add users, review who has access, and keep staff contacts organized for this location.",
-    actions: [
-      { key: "add-users", label: "Add Users" },
-      { key: "view-team-access", label: "View Team Access" },
+    label: "Team Access",
+    items: [
+      { key: "manage-employees", label: "Manage Employees", path: "/settings/manage-employees" },
+      { key: "roles-permissions", label: "Roles & Permissions", path: "/settings/roles-permissions" },
+      { key: "security-checks", label: "Security Checks", path: "/settings/security-checks" },
     ],
   },
   {
-    key: "roles",
-    title: "Roles + Permissions",
-    description: "Assign staff roles and define which admin actions each person can manage.",
-    actions: [
-      { key: "assign-roles", label: "Assign Roles" },
-      { key: "review-permissions", label: "Review Permissions" },
-    ],
-  },
-  {
-    key: "calendar",
-    title: "Calendar Sync",
-    description: "Connect calendars, review sync health, and keep city event feeds up to date.",
-    actions: [
-      { key: "sync-calendars", label: "Sync Calendars" },
-      { key: "review-sources", label: "Review Sources" },
+    key: "map",
+    label: "Map Settings",
+    items: [
+      { key: "visual-appearance", label: "Visual Appearance", path: "/settings/visual-appearance" },
     ],
   },
 ];
@@ -378,10 +365,6 @@ function shortUserId(value) {
   return `${normalized.slice(0, 8)}…${normalized.slice(-4)}`;
 }
 
-function getSettingsSectionId(sectionKey) {
-  return `${SETTINGS_SECTION_PREFIX}${sectionKey}`;
-}
-
 function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackSubdomain) {
   const tenantKey = trimOrEmpty(row?.tenant_key).toLowerCase() || trimOrEmpty(fallbackTenantKey).toLowerCase();
   if (!tenantKey) return null;
@@ -405,15 +388,25 @@ function buildTenantSwitchHash(session) {
 function buildTenantSwitchHref(env, targetTenant, currentRoutePath, session = null) {
   const tenantKey = trimOrEmpty(targetTenant?.tenant_key).toLowerCase();
   const subdomain = trimOrEmpty(targetTenant?.primary_subdomain).toLowerCase();
-  const routePath = currentRoutePath === ACCOUNT_PATH || currentRoutePath === NOTIFICATION_PATH
-    ? "/"
-    : normalizeMunicipalityAppPath(currentRoutePath || "/", tenantKey);
+  const normalizedPath = normalizeMunicipalityAppPath(currentRoutePath || "/", tenantKey);
+  const routePath = String(normalizedPath || "").startsWith("/settings") ? "/" : normalizedPath;
   if (!tenantKey) return "/";
   if (env === "staging") {
     return `https://dev.cityreport.io/${tenantKey}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
   }
   const host = subdomain || `${tenantKey}.cityreport.io`;
   return `https://${host}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
+}
+
+function getSettingsPageMeta(routePath) {
+  for (const category of SETTINGS_NAV) {
+    for (const item of category.items) {
+      if (item.path === routePath) {
+        return { category, item };
+      }
+    }
+  }
+  return { category: SETTINGS_NAV[0], item: SETTINGS_NAV[0].items[0] };
 }
 
 function useResidentAuth() {
@@ -766,16 +759,27 @@ export default function MunicipalityApp() {
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState("");
-  const [activeSettingsSection, setActiveSettingsSection] = useState("reports");
+  const [openSettingsGroups, setOpenSettingsGroups] = useState({
+    account: true,
+    organization: true,
+    team: true,
+    map: true,
+  });
   const [teamAssignments, setTeamAssignments] = useState([]);
   const [roleDefinitions, setRoleDefinitions] = useState([]);
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
+  const [organizationProfile, setOrganizationProfile] = useState(null);
+  const [mapAppearance, setMapAppearance] = useState(null);
+  const [assetLibrary, setAssetLibrary] = useState([]);
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
+    organization: "",
+    assets: "",
     reports: "",
     team: "",
     roles: "",
     calendar: "",
+    map: "",
   });
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [citySearchQuery, setCitySearchQuery] = useState("");
@@ -804,6 +808,9 @@ export default function MunicipalityApp() {
     security: false,
   });
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
+  const settingsMeta = useMemo(() => getSettingsPageMeta(routePath), [routePath]);
+  const activeSettingsCategoryKey = settingsMeta.category.key;
+  const activeSettingsItemKey = settingsMeta.item.key;
 
   function openAuthModal(nextMode = "login") {
     setAuthMode(nextMode);
@@ -875,6 +882,11 @@ export default function MunicipalityApp() {
   }, [routePath]);
 
   useEffect(() => {
+    if (!String(routePath || "").startsWith("/settings")) return;
+    setOpenSettingsGroups((prev) => ({ ...prev, [activeSettingsCategoryKey]: true }));
+  }, [activeSettingsCategoryKey, routePath]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !openNavMenu) return undefined;
     const closeMenu = () => setOpenNavMenu("");
     window.addEventListener("click", closeMenu);
@@ -931,7 +943,11 @@ export default function MunicipalityApp() {
       NAV_ITEMS.map((item) => ({
         ...item,
         href: buildMunicipalityAppHref(window.location.pathname, tenantKey, item.path),
-        active: item.path === routePath,
+        active:
+          routePath === item.path
+          || (item.path === "/alerts" && routePath.startsWith("/alerts"))
+          || (item.path === "/events" && routePath.startsWith("/events"))
+          || (item.path === "/reports" && routePath.startsWith("/reports")),
       })),
     [routePath, tenantKey]
   );
@@ -1238,7 +1254,7 @@ export default function MunicipalityApp() {
     let cancelled = false;
 
     async function loadLocationSettingsData() {
-      if (routePath !== SETTINGS_PATH || !session?.user?.id || !manageAccess) {
+      if (!String(routePath || "").startsWith(SETTINGS_PATH) || !session?.user?.id) {
         setSettingsLoading(false);
         return;
       }
@@ -1246,13 +1262,26 @@ export default function MunicipalityApp() {
       setSettingsLoading(true);
       setSettingsStatus("");
       setSettingsSectionStatus({
+        organization: "",
+        assets: "",
         reports: "",
         team: "",
         roles: "",
         calendar: "",
+        map: "",
       });
 
-      const [teamRes, rolesRes, permissionsRes, catalogRes] = await Promise.all([
+      const locationQueries = manageAccess ? Promise.all([
+        supabase
+          .from("tenant_profiles")
+          .select("*")
+          .eq("tenant_key", tenantKey)
+          .maybeSingle(),
+        supabase
+          .from("tenant_map_features")
+          .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
+          .eq("tenant_key", tenantKey)
+          .maybeSingle(),
         supabase
           .from("tenant_user_roles")
           .select("user_id,role,status,created_at,updated_at")
@@ -1274,25 +1303,76 @@ export default function MunicipalityApp() {
           .from("tenant_permissions_catalog")
           .select("permission_key,module_key,action_key,label,sort_order")
           .order("sort_order", { ascending: true }),
-      ]);
+      ]) : Promise.resolve([null, null, null, null, null, null]);
+
+      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes] = await locationQueries;
 
       if (cancelled) return;
 
-      setTeamAssignments(teamRes.error ? [] : (teamRes.data || []));
-      setRoleDefinitions(rolesRes.error ? [] : (rolesRes.data || []));
-      setRolePermissions(permissionsRes.error ? [] : (permissionsRes.data || []));
-      setPermissionCatalog(catalogRes.error ? [] : (catalogRes.data || []));
+      const nextProfile = profileRes?.error ? null : (profileRes?.data || null);
+      const nextMapAppearance = mapRes?.error ? null : (mapRes?.data || null);
+      const nextAssetLibrary = [
+        {
+          key: "location-logo",
+          label: "Location Logo",
+          description: "Primary CityReport location branding asset.",
+          status: "Ready for upload workflow",
+        },
+        nextProfile?.website_url ? {
+          key: "location-website",
+          label: "Website Link",
+          description: nextProfile.website_url,
+          status: "Linked",
+        } : null,
+        tenant?.tenantConfig?.boundary_config_key ? {
+          key: "boundary-config",
+          label: "Boundary Config",
+          description: tenant.tenantConfig.boundary_config_key,
+          status: "Attached",
+        } : null,
+        {
+          key: "streetlight-inventory",
+          label: "Streetlight Inventory",
+          description: "Streetlight files and exports are managed as shared location assets.",
+          status: "Available",
+        },
+        {
+          key: "calendar-feed",
+          label: "Calendar Feed",
+          description: "Published events can be exported as a calendar feed for this location.",
+          status: publishedEvents.length ? "Published" : "Ready",
+        },
+      ].filter(Boolean);
+
+      setOrganizationProfile(nextProfile);
+      setMapAppearance(nextMapAppearance);
+      setAssetLibrary(nextAssetLibrary);
+      setTeamAssignments(teamRes?.error ? [] : (teamRes?.data || []));
+      setRoleDefinitions(rolesRes?.error ? [] : (rolesRes?.data || []));
+      setRolePermissions(permissionsRes?.error ? [] : (permissionsRes?.data || []));
+      setPermissionCatalog(catalogRes?.error ? [] : (catalogRes?.data || []));
       setSettingsSectionStatus({
+        organization: profileRes?.error
+          ? ((isPermissionError(profileRes.error)
+            ? "Organization information requires organization.access for this location."
+            : profileRes.error.message) || "Could not load organization information.")
+          : "",
+        assets: "",
         reports: "",
-        team: teamRes.error
+        team: teamRes?.error
           ? (isPermissionError(teamRes.error) ? "Team access visibility requires the users.access permission for this location." : teamRes.error.message || "Could not load team access.")
           : "",
-        roles: rolesRes.error || permissionsRes.error || catalogRes.error
-          ? ((isPermissionError(rolesRes.error || permissionsRes.error || catalogRes.error)
+        roles: rolesRes?.error || permissionsRes?.error || catalogRes?.error
+          ? ((isPermissionError(rolesRes?.error || permissionsRes?.error || catalogRes?.error)
             ? "Role details require the roles.access or users.access permission for this location."
-            : (rolesRes.error || permissionsRes.error || catalogRes.error)?.message) || "Could not load roles and permissions.")
+            : (rolesRes?.error || permissionsRes?.error || catalogRes?.error)?.message) || "Could not load roles and permissions.")
           : "",
         calendar: "",
+        map: mapRes?.error
+          ? ((isPermissionError(mapRes.error)
+            ? "Map settings require map.access for this location."
+            : mapRes.error.message) || "Could not load map settings.")
+          : "",
       });
       setSettingsLoading(false);
     }
@@ -1301,7 +1381,7 @@ export default function MunicipalityApp() {
     return () => {
       cancelled = true;
     };
-  }, [manageAccess, routePath, session?.user?.id, tenantKey]);
+  }, [manageAccess, publishedEvents.length, routePath, session?.user?.id, tenant?.tenantConfig?.boundary_config_key, tenantKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1653,16 +1733,9 @@ export default function MunicipalityApp() {
     setSectionEditing("security", false);
   }
 
-  function focusSettingsSection(sectionKey) {
-    const normalizedKey = trimOrEmpty(sectionKey);
-    if (!normalizedKey) return;
-    setActiveSettingsSection(normalizedKey);
-    if (typeof window === "undefined") return;
-    window.requestAnimationFrame(() => {
-      const target = document.getElementById(getSettingsSectionId(normalizedKey));
-      if (!target) return;
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+  function focusSettingsSection(routeTarget) {
+    if (!routeTarget) return;
+    navigate(routeTarget);
   }
 
   function downloadActivityExport() {
@@ -1737,42 +1810,36 @@ export default function MunicipalityApp() {
 
   function handleLocationSettingsAction(actionKey) {
     switch (actionKey) {
-      case "manage-alerts":
-        navigate("/alerts");
-        return;
-      case "manage-events":
-        navigate("/events");
-        return;
       case "run-reports":
-        focusSettingsSection("reports");
+        focusSettingsSection("/reports");
         setSettingsStatus("Reports are ready below.");
         return;
       case "export-activity":
-        focusSettingsSection("reports");
+        focusSettingsSection("/reports");
         downloadActivityExport();
         return;
       case "add-users":
-        focusSettingsSection("team");
+        focusSettingsSection("/settings/manage-employees");
         setSettingsStatus("Team access tools are ready below. New account creation will plug into this section next.");
         return;
       case "view-team-access":
-        focusSettingsSection("team");
+        focusSettingsSection("/settings/manage-employees");
         setSettingsStatus("Current location access is listed below.");
         return;
       case "assign-roles":
-        focusSettingsSection("roles");
+        focusSettingsSection("/settings/roles-permissions");
         setSettingsStatus("Role assignments and permission coverage are ready below.");
         return;
       case "review-permissions":
-        focusSettingsSection("roles");
+        focusSettingsSection("/settings/roles-permissions");
         setSettingsStatus("Permission coverage is ready below.");
         return;
       case "sync-calendars":
-        focusSettingsSection("calendar");
+        focusSettingsSection("/settings/calendar");
         downloadLocationCalendar();
         return;
       case "review-sources":
-        focusSettingsSection("calendar");
+        focusSettingsSection("/settings/calendar");
         setSettingsStatus("Calendar sources are summarized below.");
         return;
       default:
@@ -2005,10 +2072,11 @@ export default function MunicipalityApp() {
   function renderHeader(floating = false) {
     const mobileNavItems = [
       { key: "home", label: "Home", path: "/" },
-      { key: "alerts", label: "Alerts", path: "/alerts" },
       { key: "events", label: "Events", path: "/events" },
+      { key: "alerts", label: "Alerts", path: "/alerts" },
+      { key: "reports", label: "Reports", path: "/reports" },
     ];
-    const reportNavItem = { key: "report", label: "Report", path: "/report", primary: true };
+    const reportNavItem = { key: "report", label: "Map", path: "/report", primary: true };
     const standardNavItems = navLinks.filter((item) => item.key !== "report");
     const reportDesktopItem = navLinks.find((item) => item.key === "report");
 
@@ -2061,38 +2129,28 @@ export default function MunicipalityApp() {
                         <div className="municipality-account-menu-role">{accountRoleLabel}</div>
                         {accountEmail ? <div className="municipality-account-menu-email">{accountEmail}</div> : null}
                         <div className="municipality-account-menu-actions">
-                          <button
-                            type="button"
-                            className="municipality-nav-menu-item"
-                            onClick={() => {
-                              setAccountMenuOpen(false);
-                              navigate(ACCOUNT_PATH);
-                            }}
-                          >
-                            Account Settings
-                          </button>
-                          <button
-                            type="button"
-                            className="municipality-nav-menu-item"
-                            onClick={() => {
-                              setAccountMenuOpen(false);
-                              navigate(NOTIFICATION_PATH);
-                            }}
-                          >
-                            Notification Preferences
-                          </button>
-                          {manageAccess ? (
+                          {session?.user?.id && switchableTenants.length ? (
                             <button
                               type="button"
                               className="municipality-nav-menu-item"
                               onClick={() => {
                                 setAccountMenuOpen(false);
-                                navigate(SETTINGS_PATH);
+                                setOpenNavMenu("tenants");
                               }}
                             >
-                              Location Settings
+                              Locations
                             </button>
                           ) : null}
+                          <button
+                            type="button"
+                            className="municipality-nav-menu-item"
+                            onClick={() => {
+                              setAccountMenuOpen(false);
+                              navigate(SETTINGS_DEFAULT_PAGE);
+                            }}
+                          >
+                            Settings
+                          </button>
                           <button
                             type="button"
                             className="municipality-nav-menu-item municipality-account-menu-signout"
@@ -2169,7 +2227,7 @@ export default function MunicipalityApp() {
                           setOpenNavMenu("");
                           if (isAlertsMenu) startNewAlert();
                           else startNewEvent();
-                          navigate(item.path);
+                          navigate(isAlertsMenu ? "/alerts/create" : "/events/create");
                         }}
                       >
                         {createLabel}
@@ -2181,33 +2239,7 @@ export default function MunicipalityApp() {
             })}
 
             {session?.user?.id && switchableTenants.length ? (
-              <div className="municipality-nav-dropdown municipality-nav-dropdown--tenants" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className={`municipality-nav-link municipality-nav-button${openNavMenu === "tenants" ? " is-active" : ""}`}
-                  onClick={() => setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"))}
-                >
-                  Locations
-                </button>
-                {openNavMenu === "tenants" ? (
-                  <div className="municipality-nav-menu">
-                    {switchableTenants.map((city) => {
-                      const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                      const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
-                      return (
-                        <a
-                          key={cityKey}
-                          href={targetHref}
-                          className="municipality-nav-menu-item municipality-nav-menu-item--link"
-                          onClick={() => setOpenNavMenu("")}
-                        >
-                          {trimOrEmpty(city?.name) || cityKey}
-                        </a>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+              null
             ) : null}
             {reportDesktopItem ? (
               <a
@@ -2227,13 +2259,13 @@ export default function MunicipalityApp() {
         <nav
           className="municipality-mobile-nav"
           aria-label="Municipality mobile navigation"
-          style={{ gridTemplateColumns: `repeat(${session?.user?.id && switchableTenants.length ? 5 : 4}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}
         >
           {mobileNavItems.map((item) => (
             <button
               key={item.key}
               type="button"
-              className={`municipality-mobile-nav-link${item.path === routePath ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+              className={`municipality-mobile-nav-link${routePath === item.path || (item.path === "/alerts" && routePath.startsWith("/alerts")) || (item.path === "/events" && routePath.startsWith("/events")) || (item.path === "/reports" && routePath.startsWith("/reports")) ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
               onClick={() => navigate(item.path)}
             >
               {item.label}
@@ -2456,6 +2488,35 @@ export default function MunicipalityApp() {
   }
 
   const currentPreferenceCount = Object.values(preferencesByTopic || {}).filter((entry) => entry?.in_app_enabled || entry?.email_enabled).length;
+  const alertsCreateMode = routePath === "/alerts/create";
+  const eventsCreateMode = routePath === "/events/create";
+  const settingsRouteActive = String(routePath || "").startsWith("/settings");
+  const organizationInfo = organizationProfile || {};
+  const organizationGeneralFields = [
+    { label: "Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
+    { label: "Email", value: trimOrEmpty(organizationInfo.contact_primary_email) || "Not provided" },
+    { label: "Alternate Name", value: trimOrEmpty(organizationInfo.legal_name) || "Not provided" },
+    { label: "Phone", value: trimOrEmpty(organizationInfo.contact_primary_phone) || "Not provided" },
+    { label: "Website", value: trimOrEmpty(organizationInfo.website_url) || "Not provided" },
+    {
+      label: "Address",
+      value: [
+        trimOrEmpty(organizationInfo.mailing_address_1),
+        trimOrEmpty(organizationInfo.mailing_address_2),
+        trimOrEmpty(organizationInfo.mailing_city),
+        trimOrEmpty(organizationInfo.mailing_state),
+        trimOrEmpty(organizationInfo.mailing_zip),
+      ].filter(Boolean).join(", ") || trimOrEmpty(organizationInfo.mailing_address) || "Not provided",
+    },
+    { label: "Time Zone", value: trimOrEmpty(organizationInfo.timezone) || "America/New_York" },
+    { label: "Time Format", value: "12-hour" },
+  ];
+  const mapAppearanceFields = [
+    { label: "Boundary Border", value: mapAppearance?.show_boundary_border === false ? "Hidden" : "Visible" },
+    { label: "Outside Boundary Shade", value: mapAppearance?.shade_outside_boundary === false ? "Off" : "On" },
+    { label: "Border Color", value: trimOrEmpty(mapAppearance?.boundary_border_color) || "#e53935" },
+    { label: "Border Width", value: `${mapAppearance?.boundary_border_width || 4}px` },
+  ];
 
   return (
     <div className="municipality-shell">
@@ -2472,10 +2533,10 @@ export default function MunicipalityApp() {
           <>
             <section className="municipality-hero municipality-hero--single">
               <div className="municipality-card municipality-hero-copy">
-                <h2>City notices first. Reporting tools right behind them.</h2>
+                <h2>Location summary first. Operations tools right behind it.</h2>
                 <p>
-                  Residents can come here first for live alerts, service changes, parade notices, and planned maintenance,
-                  then jump straight into issue reporting when they need the map workspace.
+                  Use the hub to keep up with live alerts, scheduled events, and location-wide activity, then jump into the
+                  map workspace when you need to process reports directly.
                 </p>
                 <div className="municipality-metrics">
                   <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/alerts")}>
@@ -2486,14 +2547,14 @@ export default function MunicipalityApp() {
                     <strong>{upcomingEventCount(publishedEvents)}</strong>
                     <span>Upcoming Events</span>
                   </button>
-                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate(session?.user?.id ? NOTIFICATION_PATH : ACCOUNT_PATH)}>
-                    <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
-                    <span>{session?.user?.id ? "Enabled Topics" : "Topics Ready"}</span>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/reports")}>
+                    <strong>{publishedAlerts.length + publishedEvents.length}</strong>
+                    <span>Domain Overview</span>
                   </button>
                 </div>
                 <div className="municipality-hero-actions">
                   <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/report")}>
-                    Report An Issue
+                    Open Map Workspace
                   </button>
                 </div>
               </div>
@@ -2518,61 +2579,78 @@ export default function MunicipalityApp() {
           </>
         ) : null}
 
-        {routePath === "/alerts" ? (
-          <HomeCard title="Municipality Alerts" subtitle="Published alerts stay visible here for residents, while drafts remain visible only to staff with communications access.">
-            {manageAccess ? (
-              <div className="municipality-admin-panel">
-                <div className="municipality-actions municipality-actions--toolbar">
+        {(routePath === "/alerts" || routePath === "/alerts/create") ? (
+          <HomeCard title="Location Alerts" subtitle="Create, schedule, and review public alerts for this location.">
+            <div className="municipality-admin-panel">
+              <div className="municipality-actions municipality-actions--toolbar">
+                <button
+                  type="button"
+                  className={`municipality-button${!alertsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => navigate("/alerts")}
+                >
+                  View Alerts
+                </button>
+                {manageAccess ? (
                   <button
                     type="button"
-                    className="municipality-button municipality-button--primary"
+                    className={`municipality-button${alertsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
                     onClick={() => {
-                      if (showAlertComposer) closeAlertComposer();
-                      else startNewAlert();
+                      startNewAlert();
+                      navigate("/alerts/create");
                     }}
                   >
-                    {showAlertComposer ? "Back" : "Create Alert"}
+                    Create / Schedule
                   </button>
-                </div>
-                {showAlertComposer ? (
-                  <AlertComposer
-                    topicLookup={topicLookup}
-                    alertForm={alertForm}
-                    setAlertForm={setAlertForm}
-                    onSubmit={createAlert}
-                    heading={editingAlertId ? "Edit Alert" : "Create Alert"}
-                    submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
-                  />
                 ) : null}
-                {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
               </div>
-            ) : null}
+              {manageAccess && alertsCreateMode ? (
+                <AlertComposer
+                  topicLookup={topicLookup}
+                  alertForm={alertForm}
+                  setAlertForm={setAlertForm}
+                  onSubmit={createAlert}
+                  heading={editingAlertId ? "Edit Alert" : "Create Alert"}
+                  submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
+                />
+              ) : null}
+              {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
+            </div>
             {dataLoading ? <div className="municipality-empty">Loading alerts…</div> : (
               <AlertFeed
                 alerts={manageAccess ? alerts : publishedAlerts}
                 emptyText="No alerts have been published yet."
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateAlertStatus : null}
-                onEdit={manageAccess ? startEditAlert : null}
+                onEdit={manageAccess ? (alert) => {
+                  startEditAlert(alert);
+                  navigate("/alerts/create");
+                } : null}
               />
             )}
           </HomeCard>
         ) : null}
 
-        {routePath === "/events" ? (
-          <HomeCard title="Municipality Events" subtitle="Calendar-friendly city events, scheduled maintenance, and public operations notices.">
+        {(routePath === "/events" || routePath === "/events/create") ? (
+          <HomeCard title="Location Events" subtitle="Create, schedule, and review public events for this location.">
             <div className="municipality-admin-panel">
-              <div className="municipality-actions municipality-actions--toolbar" style={{ marginTop: 16 }}>
+              <div className="municipality-actions municipality-actions--toolbar">
+                <button
+                  type="button"
+                  className={`municipality-button${!eventsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => navigate("/events")}
+                >
+                  View Events
+                </button>
                 {manageAccess ? (
                   <button
                     type="button"
-                    className="municipality-button municipality-button--primary"
+                    className={`municipality-button${eventsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
                     onClick={() => {
-                      if (showEventComposer) closeEventComposer();
-                      else startNewEvent();
+                      startNewEvent();
+                      navigate("/events/create");
                     }}
                   >
-                    {showEventComposer ? "Back" : "Create Event"}
+                    Create / Schedule
                   </button>
                 ) : null}
                 <button
@@ -2581,7 +2659,7 @@ export default function MunicipalityApp() {
                   onClick={() => {
                     if (!publishedEvents.length) return;
                     downloadTextFile(
-                      `${tenantKey || "municipality"}-events.ics`,
+                      `${tenantKey || "location"}-events.ics`,
                       buildIcsFile(publishedEvents, tenantName),
                       "text/calendar;charset=utf-8"
                     );
@@ -2590,7 +2668,7 @@ export default function MunicipalityApp() {
                   Download Calendar (.ics)
                 </button>
               </div>
-              {manageAccess && showEventComposer ? (
+              {manageAccess && eventsCreateMode ? (
                 <EventComposer
                   topicLookup={topicLookup}
                   eventForm={eventForm}
@@ -2600,7 +2678,7 @@ export default function MunicipalityApp() {
                   submitLabel={editingEventId ? "Update Event" : "Save Event"}
                 />
               ) : null}
-              {manageAccess && adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
+              {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
             </div>
             {dataLoading ? <div className="municipality-empty">Loading events…</div> : (
               <EventFeed
@@ -2608,19 +2686,61 @@ export default function MunicipalityApp() {
                 emptyText="No events have been published yet."
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateEventStatus : null}
-                onEdit={manageAccess ? startEditEvent : null}
+                onEdit={manageAccess ? (eventRow) => {
+                  startEditEvent(eventRow);
+                  navigate("/events/create");
+                } : null}
               />
             )}
           </HomeCard>
         ) : null}
 
-        {routePath === SETTINGS_PATH ? (
+        {routePath === "/reports" ? (
+          <HomeCard title="Domain Reports" subtitle="Review domain activity for this location and export what your team needs.">
+            <div className="municipality-admin-panel">
+              <div className="municipality-detail-grid">
+                <div className="municipality-detail-item">
+                  <span>Published Alerts</span>
+                  <strong>{publishedAlerts.length}</strong>
+                </div>
+                <div className="municipality-detail-item">
+                  <span>Published Events</span>
+                  <strong>{publishedEvents.length}</strong>
+                </div>
+                <div className="municipality-detail-item">
+                  <span>Enabled Topics</span>
+                  <strong>{topics.length}</strong>
+                </div>
+                <div className="municipality-detail-item">
+                  <span>Resident Preferences</span>
+                  <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
+                </div>
+              </div>
+              <div className="municipality-actions">
+                <button type="button" className="municipality-button municipality-button--primary" onClick={downloadActivityExport}>
+                  Export Activity CSV
+                </button>
+                {manageAccess ? (
+                  <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
+                    Export Role Matrix
+                  </button>
+                ) : null}
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/report")}>
+                  Open Map
+                </button>
+              </div>
+              <p className="municipality-note">This reports view mirrors the location activity summary side of the map reports flow while keeping exports and overview metrics in one place.</p>
+            </div>
+          </HomeCard>
+        ) : null}
+
+        {settingsRouteActive ? (
           <section>
-            <HomeCard title="Location Settings" subtitle="Run staff admin actions for this location from one place.">
+            <HomeCard title="Settings" subtitle="Manage your account, organization details, team access, and map presentation from one place.">
               {!session?.user?.id ? (
                 <div className="municipality-auth-cta">
-                  <h4>Sign in to manage this location</h4>
-                  <p className="municipality-note">Use the location staff login to access reports, calendars, users, and admin tools.</p>
+                  <h4>Sign in to open settings</h4>
+                  <p className="municipality-note">Use the location login to manage account details, locations, and organization tools.</p>
                   <div className="municipality-actions">
                     <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
                       Sign In
@@ -2630,570 +2750,619 @@ export default function MunicipalityApp() {
                     </button>
                   </div>
                 </div>
-              ) : !manageAccess ? (
-                <div className="municipality-auth-cta">
-                  <h4>Location settings are limited to location staff</h4>
-                  <p className="municipality-note">This page is reserved for permitted staff who manage publishing, reports, calendars, and team access for this location.</p>
-                </div>
               ) : (
-                <div className="municipality-topic-row">
-                  {LOCATION_SETTINGS_GROUPS.map((group) => (
-                    <div key={group.key} className="municipality-account-card municipality-account-card--section">
-                      <div className="municipality-settings-header">
-                        <div>
-                          <h4>{group.title}</h4>
-                          <p className="municipality-note">{group.description}</p>
-                        </div>
-                      </div>
-                      <div className="municipality-actions">
-                        {group.actions.map((action) => (
-                          <button
-                            key={action.key}
-                            type="button"
-                            className={`municipality-button${action.path ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                            onClick={() => {
-                              if (action.path) navigate(action.path);
-                              else handleLocationSettingsAction(action.key);
-                            }}
-                          >
-                            {action.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {settingsStatus ? <p className="municipality-inline-status">{settingsStatus}</p> : null}
-                  {settingsLoading ? <p className="municipality-inline-status">Loading location admin data…</p> : null}
-                  <div
-                    id={getSettingsSectionId("reports")}
-                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "reports" ? " is-active" : ""}`}
-                  >
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Reports + Exports</h4>
-                        <p className="municipality-note">Review a quick operational snapshot, then export location activity for pilot check-ins and staff review.</p>
-                      </div>
-                      <div className="municipality-actions">
-                        <button type="button" className="municipality-button municipality-button--primary" onClick={downloadActivityExport}>
-                          Download Activity CSV
+                <div className="municipality-settings-layout">
+                  <aside className="municipality-settings-sidebar">
+                    {SETTINGS_NAV.map((category) => (
+                      <div key={category.key} className="municipality-settings-group">
+                        <button
+                          type="button"
+                          className={`municipality-settings-group-toggle${activeSettingsCategoryKey === category.key ? " is-active" : ""}`}
+                          onClick={() => setOpenSettingsGroups((prev) => ({ ...prev, [category.key]: !prev[category.key] }))}
+                        >
+                          <span>{category.label}</span>
+                          <span>{openSettingsGroups[category.key] ? "−" : "+"}</span>
                         </button>
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
-                          Download Role Matrix
-                        </button>
-                      </div>
-                    </div>
-                    {settingsSectionStatus.reports ? <p className="municipality-inline-status">{settingsSectionStatus.reports}</p> : null}
-                    <div className="municipality-detail-grid">
-                      <div className="municipality-detail-item">
-                        <span>Alerts Loaded</span>
-                        <strong>{alerts.length}</strong>
-                      </div>
-                      <div className="municipality-detail-item">
-                        <span>Published Alerts</span>
-                        <strong>{publishedAlerts.length}</strong>
-                      </div>
-                      <div className="municipality-detail-item">
-                        <span>Events Loaded</span>
-                        <strong>{events.length}</strong>
-                      </div>
-                      <div className="municipality-detail-item">
-                        <span>Published Events</span>
-                        <strong>{publishedEvents.length}</strong>
-                      </div>
-                      <div className="municipality-detail-item">
-                        <span>Topics Active</span>
-                        <strong>{topics.length}</strong>
-                      </div>
-                      <div className="municipality-detail-item">
-                        <span>Staff Assignments</span>
-                        <strong>{teamAssignments.length}</strong>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    id={getSettingsSectionId("team")}
-                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "team" ? " is-active" : ""}`}
-                  >
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Users + Team Access</h4>
-                        <p className="municipality-note">Review who currently has access to this location and which role each person is carrying.</p>
-                      </div>
-                    </div>
-                    {settingsSectionStatus.team ? <p className={`municipality-inline-status${settingsSectionStatus.team.toLowerCase().includes("requires") || settingsSectionStatus.team.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
-                    {!settingsSectionStatus.team ? (
-                      <>
-                        <div className="municipality-detail-grid">
-                          <div className="municipality-detail-item">
-                            <span>Total Assignments</span>
-                            <strong>{teamAssignments.length}</strong>
-                          </div>
-                          {Object.entries(teamAssignmentsByRole).map(([roleKey, count]) => (
-                            <div key={roleKey} className="municipality-detail-item">
-                              <span>{trimOrEmpty(roleDefinitions.find((row) => row.role === roleKey)?.role_label) || roleKey.replace(/_/g, " ")}</span>
-                              <strong>{count}</strong>
-                            </div>
-                          ))}
-                        </div>
-                        {teamAssignments.length ? (
-                          <div className="municipality-settings-list">
-                            {teamAssignments.map((assignment) => (
-                              <div key={`${assignment.user_id}-${assignment.role}`} className="municipality-settings-list-item">
-                                <div>
-                                  <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
-                                  <p className="municipality-note">
-                                    {trimOrEmpty(roleDefinitions.find((row) => row.role === assignment.role)?.role_label) || trimOrEmpty(assignment.role).replace(/_/g, " ")}
-                                    {" • "}
-                                    {trimOrEmpty(assignment.status) || "active"}
-                                  </p>
-                                </div>
-                                <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
-                              </div>
+                        {openSettingsGroups[category.key] ? (
+                          <div className="municipality-settings-group-items">
+                            {category.items.map((item) => (
+                              <button
+                                key={item.key}
+                                type="button"
+                                className={`municipality-settings-link${activeSettingsItemKey === item.key ? " is-active" : ""}`}
+                                onClick={() => navigate(item.path)}
+                              >
+                                {item.label}
+                              </button>
                             ))}
                           </div>
-                        ) : (
-                          <div className="municipality-empty">No location access assignments are visible yet.</div>
-                        )}
-                        <p className="municipality-note">New account creation and invite flow will plug into this area next. This section is now ready for access review.</p>
-                      </>
-                    ) : null}
-                  </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </aside>
 
-                  <div
-                    id={getSettingsSectionId("roles")}
-                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "roles" ? " is-active" : ""}`}
-                  >
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Roles + Permissions</h4>
-                        <p className="municipality-note">Use this role matrix to confirm who can access reports, users, communications, and other location admin tools.</p>
-                      </div>
-                      <div className="municipality-actions">
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
-                          Export Roles CSV
-                        </button>
-                      </div>
-                    </div>
-                    {settingsSectionStatus.roles ? <p className="municipality-inline-status is-error">{settingsSectionStatus.roles}</p> : null}
-                    {!settingsSectionStatus.roles ? (
-                      roleDefinitions.length ? (
-                        <div className="municipality-settings-list">
-                          {roleDefinitions.map((roleRow) => {
-                            const allowedPermissions = permissionsByRole[roleRow.role] || [];
-                            return (
-                              <div key={roleRow.role} className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>{trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role)}</strong>
-                                  <p className="municipality-note">
-                                    {roleRow?.is_system ? "System role" : "Custom role"}
-                                    {" • "}
-                                    {roleRow?.active ? "Active" : "Inactive"}
-                                  </p>
-                                </div>
-                                <div className="municipality-chip-row">
-                                  {allowedPermissions.length ? (
-                                    allowedPermissions.map((permissionRow) => (
-                                      <span key={`${roleRow.role}-${permissionRow.permission_key}`} className="municipality-chip">
-                                        {permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="municipality-note">No permissions enabled for this role.</span>
-                                  )}
-                                </div>
+                  <div className="municipality-settings-content">
+                    {settingsStatus ? <p className="municipality-inline-status">{settingsStatus}</p> : null}
+                    {settingsLoading ? <p className="municipality-inline-status">Loading location settings…</p> : null}
+
+                    {activeSettingsItemKey === "account-info" ? (
+                      <div className="municipality-topic-row">
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Account Info</h4>
+                              <p className="municipality-note">Review your account details and update your name or phone when needed.</p>
+                            </div>
+                            {accountSectionEdit.profile ? (
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--ghost"
+                                  onClick={() => {
+                                    setAccountProfileDraft({
+                                      full_name: trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name),
+                                      phone: trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone),
+                                      email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+                                    });
+                                    setSectionEditing("profile", false);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveAccountProfile()} disabled={savingSection.profile || loadingProfile || !authReady}>
+                                  {savingSection.profile ? "Saving…" : "Save"}
+                                </button>
                               </div>
+                            ) : (
+                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("profile", true)}>
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                          {accountSectionEdit.profile ? (
+                            <div className="municipality-form-grid">
+                              <div className="municipality-field">
+                                <label htmlFor="account-full-name">Name</label>
+                                <input id="account-full-name" value={accountProfileDraft.full_name} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, full_name: event.target.value }))} />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="account-email-readonly">Email</label>
+                                <input id="account-email-readonly" value={trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email)} readOnly />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="account-phone">Phone</label>
+                                <input id="account-phone" value={accountProfileDraft.phone} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, phone: event.target.value }))} placeholder="(000) 000-0000" />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="municipality-detail-grid">
+                              <div className="municipality-detail-item">
+                                <span>Name</span>
+                                <strong>{trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name) || "Not provided"}</strong>
+                              </div>
+                              <div className="municipality-detail-item">
+                                <span>Email</span>
+                                <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
+                              </div>
+                              <div className="municipality-detail-item">
+                                <span>Phone</span>
+                                <strong>{trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone) || "Not provided"}</strong>
+                              </div>
+                              <div className="municipality-detail-item">
+                                <span>PIN</span>
+                                <strong>Security checkpoint setup coming next</strong>
+                              </div>
+                            </div>
+                          )}
+                          {accountSectionStatus.profile ? <p className={`municipality-inline-status${accountSectionStatus.profile.toLowerCase().includes("could not") || accountSectionStatus.profile.toLowerCase().includes("please") ? " is-error" : ""}`}>{accountSectionStatus.profile}</p> : null}
+                        </div>
+
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Locations</h4>
+                              <p className="municipality-note">Choose which locations appear in your switcher.</p>
+                            </div>
+                            {accountSectionEdit.cities ? (
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--ghost"
+                                  onClick={() => {
+                                    setInterestedTenantKeys(savedInterestedTenantKeys);
+                                    setCitySearchQuery("");
+                                    setSectionEditing("cities", false);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveInterestedCities()} disabled={savingSection.cities}>
+                                  {savingSection.cities ? "Saving…" : "Save"}
+                                </button>
+                              </div>
+                            ) : (
+                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("cities", true)}>
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                          {accountSectionEdit.cities ? (
+                            <>
+                              <div className="municipality-field">
+                                <label htmlFor="city-search">Search locations</label>
+                                <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by location name or cityreport key" />
+                              </div>
+                              {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).length ? (
+                                <div className="municipality-detail-grid">
+                                  {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).map((city) => (
+                                    <div key={trimOrEmpty(city?.tenant_key)} className="municipality-detail-item">
+                                      <span>Following</span>
+                                      <strong>{trimOrEmpty(city?.name) || trimOrEmpty(city?.tenant_key)}</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="municipality-note">You are not following any locations yet.</p>
+                              )}
+                              {trimOrEmpty(citySearchQuery) ? searchedTenants.length ? (
+                                <div className="municipality-topic-row" style={{ marginTop: 12 }}>
+                                  {searchedTenants.map((city) => {
+                                    const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                                    const checked = interestedTenantKeys.includes(cityKey);
+                                    return (
+                                      <label key={cityKey} className="municipality-checkbox">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
+                                        />
+                                        {trimOrEmpty(city?.name) || cityKey}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="municipality-note" style={{ marginTop: 12 }}>
+                                  No locations matched that search yet.
+                                </p>
+                              ) : (
+                                <p className="municipality-note" style={{ marginTop: 12 }}>
+                                  Search for a location to add it to your list.
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            (switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).length ? (
+                              <div className="municipality-detail-grid">
+                                {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).map((city) => (
+                                  <div key={trimOrEmpty(city?.tenant_key)} className="municipality-detail-item">
+                                    <span>Following</span>
+                                    <strong>{trimOrEmpty(city?.name) || trimOrEmpty(city?.tenant_key)}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="municipality-note">Search for locations to build your followed list.</p>
+                            )
+                          )}
+                          {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {activeSettingsItemKey === "account-notifications" ? (
+                      <div className="municipality-account-card municipality-account-card--section">
+                        <div className="municipality-settings-header">
+                          <div>
+                            <h4>Notification Preferences</h4>
+                            <p className="municipality-note">Manage all update categories in one place. In-app and email are live now; web push is next.</p>
+                          </div>
+                          {accountSectionEdit.notifications ? (
+                            <div className="municipality-actions">
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setPreferencesByTopic(savedPreferencesByTopic);
+                                  setSectionEditing("notifications", false);
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveNotificationPreferences()} disabled={savingSection.notifications}>
+                                {savingSection.notifications ? "Saving…" : "Save"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("notifications", true)}>
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                        <div className="municipality-topic-row municipality-topic-row--stacked">
+                          {Object.values(topicLookup).map((topic) => {
+                            const current = preferencesByTopic?.[topic.topic_key] || {
+                              in_app_enabled: Boolean(topic.default_enabled),
+                              email_enabled: false,
+                              web_push_enabled: false,
+                            };
+                            return (
+                              <article key={topic.topic_key} className="municipality-topic-card municipality-topic-card--row">
+                                <div className="municipality-topic-copy">
+                                  <h4>{topic.label}</h4>
+                                  <p className="municipality-note">{topic.description}</p>
+                                </div>
+                                <div className={`municipality-checkbox-row${accountSectionEdit.notifications ? "" : " municipality-checkbox-row--readonly"}`} style={{ marginTop: 12 }}>
+                                  <label className="municipality-checkbox">
+                                    <input type="checkbox" checked={Boolean(current.in_app_enabled)} disabled={!accountSectionEdit.notifications} readOnly={!accountSectionEdit.notifications} onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)} />
+                                    In-app
+                                  </label>
+                                  <label className="municipality-checkbox">
+                                    <input type="checkbox" checked={Boolean(current.email_enabled)} disabled={!accountSectionEdit.notifications} readOnly={!accountSectionEdit.notifications} onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)} />
+                                    Email
+                                  </label>
+                                  <label className="municipality-checkbox">
+                                    <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled readOnly />
+                                    Web push (next)
+                                  </label>
+                                </div>
+                              </article>
                             );
                           })}
                         </div>
-                      ) : (
-                        <div className="municipality-empty">No role definitions are visible for this location yet.</div>
-                      )
+                        {accountSectionStatus.notifications ? <p className={`municipality-inline-status${accountSectionStatus.notifications.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.notifications}</p> : null}
+                      </div>
                     ) : null}
-                  </div>
 
-                  <div
-                    id={getSettingsSectionId("calendar")}
-                    className={`municipality-account-card municipality-account-card--section municipality-settings-section${activeSettingsSection === "calendar" ? " is-active" : ""}`}
-                  >
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Calendar Sync</h4>
-                        <p className="municipality-note">Download the live location calendar and review which event sources are currently driving the public schedule.</p>
-                      </div>
-                      <div className="municipality-actions">
-                        <button type="button" className="municipality-button municipality-button--primary" onClick={downloadLocationCalendar}>
-                          Download Calendar (.ics)
-                        </button>
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/events")}>
-                          Open Events
-                        </button>
-                      </div>
-                    </div>
-                    {settingsSectionStatus.calendar ? <p className="municipality-inline-status">{settingsSectionStatus.calendar}</p> : null}
-                    <div className="municipality-detail-grid">
-                      <div className="municipality-detail-item">
-                        <span>Published Events</span>
-                        <strong>{publishedEvents.length}</strong>
-                      </div>
-                      {Object.entries(eventSourceSummary).map(([sourceKey, count]) => (
-                        <div key={sourceKey} className="municipality-detail-item">
-                          <span>{summarizeSourceLabel(sourceKey)}</span>
-                          <strong>{count}</strong>
+                    {activeSettingsItemKey === "update-password" ? (
+                      <div className="municipality-account-card municipality-account-card--section">
+                        <div className="municipality-settings-header">
+                          <div>
+                            <h4>Update Password</h4>
+                            <p className="municipality-note">Change your email with verification, or update your password from this section.</p>
+                          </div>
+                          {accountSectionEdit.security ? (
+                            <div className="municipality-actions">
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setSecurityDraft({
+                                    next_email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
+                                    current_password: "",
+                                    new_password: "",
+                                    confirm_password: "",
+                                  });
+                                  setSectionEditing("security", false);
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveSecuritySettings()} disabled={savingSection.security}>
+                                {savingSection.security ? "Saving…" : "Save"}
+                              </button>
+                            </div>
+                          ) : (
+                            <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("security", true)}>
+                              Edit
+                            </button>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    <p className="municipality-note">External calendar sync is not wired yet, but this section is now the single place to review source mix and export the current public calendar.</p>
-                  </div>
-                </div>
-              )}
-            </HomeCard>
-          </section>
-        ) : null}
-
-        {routePath === ACCOUNT_PATH ? (
-          <section>
-            <HomeCard title="Account Settings" subtitle="Review your account information, update sign-in details, and manage the locations you follow.">
-              {!session?.user?.id ? (
-                <div className="municipality-auth-cta">
-                  <h4>Sign in to manage your account settings</h4>
-                  <p className="municipality-note">Use the resident login modal to access account information, location selections, and notification settings.</p>
-                  <div className="municipality-actions">
-                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
-                      Sign In
-                    </button>
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => openAuthModal("signup")}>
-                      Create Account
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="municipality-topic-row">
-                  <div className="municipality-account-card municipality-account-card--section">
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Account Information</h4>
-                        <p className="municipality-note">Review your resident profile and update your name or phone number when needed.</p>
-                      </div>
-                      {accountSectionEdit.profile ? (
-                        <div className="municipality-actions">
-                          <button
-                            type="button"
-                            className="municipality-button municipality-button--ghost"
-                            onClick={() => {
-                              setAccountProfileDraft({
-                                full_name: trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name),
-                                phone: trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone),
-                                email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
-                              });
-                              setSectionEditing("profile", false);
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveAccountProfile()} disabled={savingSection.profile || loadingProfile || !authReady}>
-                            {savingSection.profile ? "Saving…" : "Save"}
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("profile", true)}>
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                    {accountSectionEdit.profile ? (
-                      <div className="municipality-form-grid">
-                        <div className="municipality-field">
-                          <label htmlFor="account-full-name">Full name</label>
-                          <input id="account-full-name" value={accountProfileDraft.full_name} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, full_name: event.target.value }))} />
-                        </div>
-                        <div className="municipality-field">
-                          <label htmlFor="account-phone">Phone number</label>
-                          <input id="account-phone" value={accountProfileDraft.phone} onChange={(event) => setAccountProfileDraft((prev) => ({ ...prev, phone: event.target.value }))} placeholder="(000) 000-0000" />
-                        </div>
-                        <div className="municipality-field">
-                          <label htmlFor="account-email-readonly">Email</label>
-                          <input id="account-email-readonly" value={trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email)} readOnly />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="municipality-detail-grid">
-                        <div className="municipality-detail-item">
-                          <span>Name</span>
-                          <strong>{trimOrEmpty(profile?.full_name) || trimOrEmpty(session?.user?.user_metadata?.full_name) || "Not provided"}</strong>
-                        </div>
-                        <div className="municipality-detail-item">
-                          <span>Email</span>
-                          <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
-                        </div>
-                        <div className="municipality-detail-item">
-                          <span>Phone</span>
-                          <strong>{trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone) || "Not provided"}</strong>
-                        </div>
-                      </div>
-                    )}
-                    {accountSectionStatus.profile ? <p className={`municipality-inline-status${accountSectionStatus.profile.toLowerCase().includes("could not") || accountSectionStatus.profile.toLowerCase().includes("please") ? " is-error" : ""}`}>{accountSectionStatus.profile}</p> : null}
-                  </div>
-
-                  <div className="municipality-account-card municipality-account-card--section">
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>My Locations</h4>
-                        <p className="municipality-note">Choose which locations appear in your location switcher.</p>
-                      </div>
-                      {accountSectionEdit.cities ? (
-                        <div className="municipality-actions">
-                          <button
-                            type="button"
-                            className="municipality-button municipality-button--ghost"
-                            onClick={() => {
-                              setInterestedTenantKeys(savedInterestedTenantKeys);
-                              setCitySearchQuery("");
-                              setSectionEditing("cities", false);
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveInterestedCities()} disabled={savingSection.cities}>
-                            {savingSection.cities ? "Saving…" : "Save"}
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("cities", true)}>
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                    {accountSectionEdit.cities ? (
-                      <>
-                        <div className="municipality-field">
-                          <label htmlFor="city-search">Search locations</label>
-                          <input id="city-search" value={citySearchQuery} onChange={(event) => setCitySearchQuery(event.target.value)} placeholder="Search by location name or cityreport key" />
-                        </div>
-                        {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).length ? (
+                        {accountSectionEdit.security ? (
+                          <div className="municipality-form-grid">
+                            <div className="municipality-field">
+                              <label htmlFor="next-email">New email address</label>
+                              <input id="next-email" type="email" value={securityDraft.next_email} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, next_email: event.target.value }))} />
+                              <p className="municipality-note">If you change this, we will send a verification message before the new email becomes active.</p>
+                            </div>
+                            <div className="municipality-field">
+                              <label htmlFor="current-password">Current password</label>
+                              <input id="current-password" type="password" value={securityDraft.current_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, current_password: event.target.value }))} />
+                            </div>
+                            <div className="municipality-field">
+                              <label htmlFor="new-password">New password</label>
+                              <input id="new-password" type="password" value={securityDraft.new_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, new_password: event.target.value }))} placeholder="Leave blank to keep your current password" />
+                            </div>
+                            <div className="municipality-field">
+                              <label htmlFor="confirm-password">Confirm new password</label>
+                              <input id="confirm-password" type="password" value={securityDraft.confirm_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, confirm_password: event.target.value }))} />
+                            </div>
+                          </div>
+                        ) : (
                           <div className="municipality-detail-grid">
-                            {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).map((city) => (
-                              <div key={trimOrEmpty(city?.tenant_key)} className="municipality-detail-item">
-                                <span>Following</span>
-                                <strong>{trimOrEmpty(city?.name) || trimOrEmpty(city?.tenant_key)}</strong>
+                            <div className="municipality-detail-item">
+                              <span>Current email</span>
+                              <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
+                            </div>
+                            <div className="municipality-detail-item">
+                              <span>Password</span>
+                              <strong>Managed securely</strong>
+                            </div>
+                            <div className="municipality-detail-item">
+                              <span>PIN Checkpoint</span>
+                              <strong>Password challenge required when PIN management is introduced.</strong>
+                            </div>
+                          </div>
+                        )}
+                        {accountSectionStatus.security ? <p className={`municipality-inline-status${accountSectionStatus.security.toLowerCase().includes("could not") || accountSectionStatus.security.toLowerCase().includes("enter your current password") || accountSectionStatus.security.toLowerCase().includes("use 8+") ? " is-error" : ""}`}>{accountSectionStatus.security}</p> : null}
+                      </div>
+                    ) : null}
+
+                    {activeSettingsItemKey === "organization-general" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Organization information is limited to location staff</h4>
+                          <p className="municipality-note">This page is reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>General Settings</h4>
+                              <p className="municipality-note">These are the organization fields already collected for this location.</p>
+                            </div>
+                          </div>
+                          {settingsSectionStatus.organization ? <p className="municipality-inline-status is-error">{settingsSectionStatus.organization}</p> : null}
+                          <div className="municipality-detail-grid">
+                            {organizationGeneralFields.map((field) => (
+                              <div key={field.label} className="municipality-detail-item">
+                                <span>{field.label}</span>
+                                <strong>{field.value}</strong>
                               </div>
                             ))}
                           </div>
-                        ) : (
-                          <p className="municipality-note">You are not following any locations yet.</p>
-                        )}
-                        {trimOrEmpty(citySearchQuery) ? searchedTenants.length ? (
-                          <div className="municipality-topic-row" style={{ marginTop: 12 }}>
-                            {searchedTenants.map((city) => {
-                              const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                              const checked = interestedTenantKeys.includes(cityKey);
-                              return (
-                                <label key={cityKey} className="municipality-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(event) => updateTenantInterest(cityKey, event.target.checked)}
-                                  />
-                                  {trimOrEmpty(city?.name) || cityKey}
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <p className="municipality-note" style={{ marginTop: 12 }}>
-                            No locations matched that search yet.
-                          </p>
-                        ) : (
-                          <p className="municipality-note" style={{ marginTop: 12 }}>
-                            Search for a location to add it to your list.
-                          </p>
-                        )}
-                      </>
-                    ) : (
-                      (switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).length ? (
-                        <div className="municipality-detail-grid">
-                          {(switchableTenants.length ? switchableTenants : availableHubTenants.filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))).map((city) => (
-                            <div key={trimOrEmpty(city?.tenant_key)} className="municipality-detail-item">
-                              <span>Following</span>
-                              <strong>{trimOrEmpty(city?.name) || trimOrEmpty(city?.tenant_key)}</strong>
-                            </div>
-                          ))}
                         </div>
-                      ) : (
-                        <p className="municipality-note">Search for locations to build your followed list.</p>
                       )
-                    )}
-                    {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}
-                  </div>
+                    ) : null}
 
-                  <div className="municipality-account-card municipality-account-card--section">
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Sign-In & Security</h4>
-                        <p className="municipality-note">Change your email with verification, or update your password from this section.</p>
-                      </div>
-                      {accountSectionEdit.security ? (
-                        <div className="municipality-actions">
-                          <button
-                            type="button"
-                            className="municipality-button municipality-button--ghost"
-                            onClick={() => {
-                              setSecurityDraft({
-                                next_email: trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email),
-                                current_password: "",
-                                new_password: "",
-                                confirm_password: "",
-                              });
-                              setSectionEditing("security", false);
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveSecuritySettings()} disabled={savingSection.security}>
-                            {savingSection.security ? "Saving…" : "Save"}
-                          </button>
+                    {activeSettingsItemKey === "organization-assets" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Assets are limited to location staff</h4>
+                          <p className="municipality-note">Asset management is reserved for the tenant owner and permitted location staff.</p>
                         </div>
                       ) : (
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("security", true)}>
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                    {accountSectionEdit.security ? (
-                      <div className="municipality-form-grid">
-                        <div className="municipality-field">
-                          <label htmlFor="next-email">New email address</label>
-                          <input id="next-email" type="email" value={securityDraft.next_email} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, next_email: event.target.value }))} />
-                          <p className="municipality-note">If you change this, we will send a verification message before the new email becomes active.</p>
-                        </div>
-                        <div className="municipality-field">
-                          <label htmlFor="current-password">Current password</label>
-                          <input id="current-password" type="password" value={securityDraft.current_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, current_password: event.target.value }))} />
-                        </div>
-                        <div className="municipality-field">
-                          <label htmlFor="new-password">New password</label>
-                          <input id="new-password" type="password" value={securityDraft.new_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, new_password: event.target.value }))} placeholder="Leave blank to keep your current password" />
-                        </div>
-                        <div className="municipality-field">
-                          <label htmlFor="confirm-password">Confirm new password</label>
-                          <input id="confirm-password" type="password" value={securityDraft.confirm_password} onChange={(event) => setSecurityDraft((prev) => ({ ...prev, confirm_password: event.target.value }))} />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="municipality-detail-grid">
-                        <div className="municipality-detail-item">
-                          <span>Current email</span>
-                          <strong>{trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email) || "Email unavailable"}</strong>
-                        </div>
-                        <div className="municipality-detail-item">
-                          <span>Password</span>
-                          <strong>Managed securely</strong>
-                        </div>
-                      </div>
-                    )}
-                    {accountSectionStatus.security ? <p className={`municipality-inline-status${accountSectionStatus.security.toLowerCase().includes("could not") || accountSectionStatus.security.toLowerCase().includes("enter your current password") || accountSectionStatus.security.toLowerCase().includes("use 8+") ? " is-error" : ""}`}>{accountSectionStatus.security}</p> : null}
-                  </div>
-                </div>
-              )}
-            </HomeCard>
-          </section>
-        ) : null}
-
-        {routePath === NOTIFICATION_PATH ? (
-          <section>
-            <HomeCard title="Notification Preferences" subtitle="Choose which municipal updates you want to receive and how you want to receive them.">
-              {!session?.user?.id ? (
-                <div className="municipality-auth-cta">
-                  <h4>Sign in to manage your notification preferences</h4>
-                  <p className="municipality-note">Open the resident login modal to sign in or create an account before changing notification settings.</p>
-                  <div className="municipality-actions">
-                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
-                      Sign In
-                    </button>
-                    <button type="button" className="municipality-button municipality-button--ghost" onClick={() => openAuthModal("signup")}>
-                      Create Account
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="municipality-topic-row">
-                  <div className="municipality-account-card municipality-account-card--section">
-                    <div className="municipality-settings-header">
-                      <div>
-                        <h4>Notification Preferences</h4>
-                        <p className="municipality-note">Manage all of your update categories in one place. In-app and email are live now; web push is next.</p>
-                      </div>
-                      {accountSectionEdit.notifications ? (
-                        <div className="municipality-actions">
-                          <button
-                            type="button"
-                            className="municipality-button municipality-button--ghost"
-                            onClick={() => {
-                              setPreferencesByTopic(savedPreferencesByTopic);
-                              setSectionEditing("notifications", false);
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button type="button" className="municipality-button municipality-button--primary" onClick={() => void saveNotificationPreferences()} disabled={savingSection.notifications}>
-                            {savingSection.notifications ? "Saving…" : "Save"}
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("notifications", true)}>
-                          Edit
-                        </button>
-                      )}
-                    </div>
-                    <div className="municipality-topic-row municipality-topic-row--stacked">
-                      {Object.values(topicLookup).map((topic) => {
-                        const current = preferencesByTopic?.[topic.topic_key] || {
-                          in_app_enabled: Boolean(topic.default_enabled),
-                          email_enabled: false,
-                          web_push_enabled: false,
-                        };
-                        return (
-                          <article key={topic.topic_key} className="municipality-topic-card municipality-topic-card--row">
-                            <div className="municipality-topic-copy">
-                              <h4>{topic.label}</h4>
-                              <p className="municipality-note">{topic.description}</p>
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Assets</h4>
+                              <p className="municipality-note">This library is intentionally not limited to only a few file types. Current attached assets and future uploads will live here together.</p>
                             </div>
-                            {accountSectionEdit.notifications ? (
-                              <div className="municipality-checkbox-row" style={{ marginTop: 12 }}>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.in_app_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)} />
-                                  In-app
-                                </label>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.email_enabled)} onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)} />
-                                  Email
-                                </label>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled />
-                                  Web push (next)
-                                </label>
+                          </div>
+                          <div className="municipality-settings-list">
+                            {assetLibrary.map((asset) => (
+                              <div key={asset.key} className="municipality-settings-list-item">
+                                <div>
+                                  <strong>{asset.label}</strong>
+                                  <p className="municipality-note">{asset.description}</p>
+                                </div>
+                                <span className="municipality-chip">{asset.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {settingsSectionStatus.assets ? <p className="municipality-inline-status">{settingsSectionStatus.assets}</p> : null}
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "calendar" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Calendar controls are limited to location staff</h4>
+                          <p className="municipality-note">Calendar sync and export tools are reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Calendar</h4>
+                              <p className="municipality-note">Download the live location calendar and review which event sources are currently driving the public schedule.</p>
+                            </div>
+                            <div className="municipality-actions">
+                              <button type="button" className="municipality-button municipality-button--primary" onClick={downloadLocationCalendar}>
+                                Download Calendar (.ics)
+                              </button>
+                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => navigate("/events")}>
+                                Open Events
+                              </button>
+                            </div>
+                          </div>
+                          {settingsSectionStatus.calendar ? <p className="municipality-inline-status">{settingsSectionStatus.calendar}</p> : null}
+                          <div className="municipality-detail-grid">
+                            <div className="municipality-detail-item">
+                              <span>Published Events</span>
+                              <strong>{publishedEvents.length}</strong>
+                            </div>
+                            {Object.entries(eventSourceSummary).map(([sourceKey, count]) => (
+                              <div key={sourceKey} className="municipality-detail-item">
+                                <span>{summarizeSourceLabel(sourceKey)}</span>
+                                <strong>{count}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "manage-employees" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Team access is limited to location staff</h4>
+                          <p className="municipality-note">Employee access is reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Manage Employees</h4>
+                              <p className="municipality-note">Review who currently has access to this location and which role each person is carrying.</p>
+                            </div>
+                          </div>
+                          {settingsSectionStatus.team ? <p className={`municipality-inline-status${settingsSectionStatus.team.toLowerCase().includes("requires") || settingsSectionStatus.team.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
+                          {!settingsSectionStatus.team ? (
+                            <>
+                              <div className="municipality-detail-grid">
+                                <div className="municipality-detail-item">
+                                  <span>Total Assignments</span>
+                                  <strong>{teamAssignments.length}</strong>
+                                </div>
+                                {Object.entries(teamAssignmentsByRole).map(([roleKey, count]) => (
+                                  <div key={roleKey} className="municipality-detail-item">
+                                    <span>{trimOrEmpty(roleDefinitions.find((row) => row.role === roleKey)?.role_label) || roleKey.replace(/_/g, " ")}</span>
+                                    <strong>{count}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                              {teamAssignments.length ? (
+                                <div className="municipality-settings-list">
+                                  {teamAssignments.map((assignment) => (
+                                    <div key={`${assignment.user_id}-${assignment.role}`} className="municipality-settings-list-item">
+                                      <div>
+                                        <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
+                                        <p className="municipality-note">
+                                          {trimOrEmpty(roleDefinitions.find((row) => row.role === assignment.role)?.role_label) || trimOrEmpty(assignment.role).replace(/_/g, " ")}
+                                          {" • "}
+                                          {trimOrEmpty(assignment.status) || "active"}
+                                        </p>
+                                      </div>
+                                      <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="municipality-empty">No location access assignments are visible yet.</div>
+                              )}
+                            </>
+                          ) : null}
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "roles-permissions" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Roles and permissions are limited to location staff</h4>
+                          <p className="municipality-note">Role management is reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Roles & Permissions</h4>
+                              <p className="municipality-note">Use this role matrix to confirm who can access reports, users, communications, and other location admin tools.</p>
+                            </div>
+                            <div className="municipality-actions">
+                              <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
+                                Export Roles CSV
+                              </button>
+                            </div>
+                          </div>
+                          {settingsSectionStatus.roles ? <p className="municipality-inline-status is-error">{settingsSectionStatus.roles}</p> : null}
+                          {!settingsSectionStatus.roles ? (
+                            roleDefinitions.length ? (
+                              <div className="municipality-settings-list">
+                                {roleDefinitions.map((roleRow) => {
+                                  const allowedPermissions = permissionsByRole[roleRow.role] || [];
+                                  return (
+                                    <div key={roleRow.role} className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                      <div>
+                                        <strong>{trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role)}</strong>
+                                        <p className="municipality-note">
+                                          {roleRow?.is_system ? "System role" : "Custom role"}
+                                          {" • "}
+                                          {roleRow?.active ? "Active" : "Inactive"}
+                                        </p>
+                                      </div>
+                                      <div className="municipality-chip-row">
+                                        {allowedPermissions.length ? (
+                                          allowedPermissions.map((permissionRow) => (
+                                            <span key={`${roleRow.role}-${permissionRow.permission_key}`} className="municipality-chip">
+                                              {permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="municipality-note">No permissions enabled for this role.</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ) : (
-                              <div className="municipality-checkbox-row municipality-checkbox-row--readonly" style={{ marginTop: 12 }}>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.in_app_enabled)} disabled readOnly />
-                                  In-app
-                                </label>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.email_enabled)} disabled readOnly />
-                                  Email
-                                </label>
-                                <label className="municipality-checkbox">
-                                  <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled readOnly />
-                                  Web push (next)
-                                </label>
+                              <div className="municipality-empty">No role definitions are visible for this location yet.</div>
+                            )
+                          ) : null}
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "security-checks" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Security checks are limited to location staff</h4>
+                          <p className="municipality-note">PIN-based checkpoint rules are reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Security Checks</h4>
+                              <p className="municipality-note">PIN-based security triggers will live here for fixed-status changes, account changes, and employee updates.</p>
+                            </div>
+                          </div>
+                          <div className="municipality-settings-list">
+                            <div className="municipality-settings-list-item">
+                              <div>
+                                <strong>Require PIN for report status changes</strong>
+                                <p className="municipality-note">Recommended before staff begin closing reports in volume.</p>
                               </div>
-                            )}
-                          </article>
-                        );
-                      })}
-                    </div>
-                    {accountSectionStatus.notifications ? <p className={`municipality-inline-status${accountSectionStatus.notifications.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.notifications}</p> : null}
+                              <span className="municipality-chip">Next</span>
+                            </div>
+                            <div className="municipality-settings-list-item">
+                              <div>
+                                <strong>Require PIN for employee access changes</strong>
+                                <p className="municipality-note">Protect team-access edits and sensitive organization changes.</p>
+                              </div>
+                              <span className="municipality-chip">Next</span>
+                            </div>
+                            <div className="municipality-settings-list-item">
+                              <div>
+                                <strong>Require PIN for organization setting changes</strong>
+                                <p className="municipality-note">Adds a checkpoint when sensitive organization details are edited.</p>
+                              </div>
+                              <span className="municipality-chip">Next</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "visual-appearance" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Map settings are limited to location staff</h4>
+                          <p className="municipality-note">Visual appearance is reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Visual Appearance</h4>
+                              <p className="municipality-note">Visual appearance is the current map-settings surface for this location.</p>
+                            </div>
+                          </div>
+                          {settingsSectionStatus.map ? <p className="municipality-inline-status is-error">{settingsSectionStatus.map}</p> : null}
+                          <div className="municipality-detail-grid">
+                            {mapAppearanceFields.map((field) => (
+                              <div key={field.label} className="municipality-detail-item">
+                                <span>{field.label}</span>
+                                <strong>{field.value}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                 </div>
               )}
