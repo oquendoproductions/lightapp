@@ -91,7 +91,7 @@ function toUserSummary(user: any) {
   };
 }
 
-async function requirePlatformOwner(req: Request, admin: ReturnType<typeof createClient>) {
+async function resolveSessionUser(req: Request, admin: ReturnType<typeof createClient>) {
   const authHeader = String(req.headers.get("authorization") || "").trim();
   if (!authHeader.toLowerCase().startsWith("bearer ")) {
     return { ok: false, response: json({ ok: false, error: "Missing bearer token." }, 401) };
@@ -107,7 +107,13 @@ async function requirePlatformOwner(req: Request, admin: ReturnType<typeof creat
     return { ok: false, response: json({ ok: false, error: "Invalid session." }, 401) };
   }
 
-  const userId = String(userResult.user.id || "").trim();
+  return {
+    ok: true,
+    userId: String(userResult.user.id || "").trim(),
+  };
+}
+
+async function isPlatformOwner(userId: string, admin: ReturnType<typeof createClient>) {
   const [rolesResult, legacyAdminResult] = await Promise.all([
     admin
       .from("platform_user_roles")
@@ -126,13 +132,153 @@ async function requirePlatformOwner(req: Request, admin: ReturnType<typeof creat
   }
 
   const roles = Array.isArray(rolesResult.data) ? rolesResult.data : [];
-  const isOwner = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_owner");
+  const hasOwnerRole = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_owner");
   const isLegacyAdmin = Boolean(legacyAdminResult?.data?.user_id);
-  if (!isOwner && !isLegacyAdmin) {
-    return { ok: false, response: json({ ok: false, error: "Only Platform Owner can manage tenant users here." }, 403) };
+  return {
+    ok: true,
+    allowed: hasOwnerRole || isLegacyAdmin,
+  };
+}
+
+async function resolveTenantAccess(
+  admin: ReturnType<typeof createClient>,
+  userId: string,
+  tenantKey: string,
+) {
+  const [legacyAdminResult, activeAssignmentsResult] = await Promise.all([
+    admin
+      .from("tenant_admins")
+      .select("user_id")
+      .eq("tenant_key", tenantKey)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    admin
+      .from("tenant_user_roles")
+      .select("role,status")
+      .eq("tenant_key", tenantKey)
+      .eq("user_id", userId)
+      .eq("status", "active"),
+  ]);
+
+  if (legacyAdminResult.error || activeAssignmentsResult.error) {
+    return { ok: false, response: json({ ok: false, error: "Unable to verify tenant access." }, 403) };
   }
 
-  return { ok: true, userId };
+  const isLegacyTenantAdmin = Boolean(legacyAdminResult?.data?.user_id);
+  const activeRoles = [...new Set(
+    (Array.isArray(activeAssignmentsResult.data) ? activeAssignmentsResult.data : [])
+      .map((row) => normalizeRoleKey(row?.role))
+      .filter(Boolean),
+  )];
+  if (isLegacyTenantAdmin || activeRoles.includes("tenant_admin")) {
+    return {
+      ok: true,
+      permissions: {
+        usersAccess: true,
+        usersEdit: true,
+        usersDelete: true,
+      },
+    };
+  }
+
+  if (!activeRoles.length) {
+    return {
+      ok: true,
+      permissions: {
+        usersAccess: false,
+        usersEdit: false,
+        usersDelete: false,
+      },
+    };
+  }
+
+  const [roleDefinitionsResult, rolePermissionsResult] = await Promise.all([
+    admin
+      .from("tenant_role_definitions")
+      .select("role,active")
+      .eq("tenant_key", tenantKey)
+      .in("role", activeRoles),
+    admin
+      .from("tenant_role_permissions")
+      .select("role,permission_key,allowed")
+      .eq("tenant_key", tenantKey)
+      .eq("allowed", true)
+      .in("role", activeRoles),
+  ]);
+
+  if (roleDefinitionsResult.error || rolePermissionsResult.error) {
+    return { ok: false, response: json({ ok: false, error: "Unable to verify tenant permissions." }, 403) };
+  }
+
+  const activeRoleSet = new Set(
+    (Array.isArray(roleDefinitionsResult.data) ? roleDefinitionsResult.data : [])
+      .filter((row) => row?.active !== false)
+      .map((row) => normalizeRoleKey(row?.role))
+      .filter(Boolean),
+  );
+  const permissionSet = new Set(
+    (Array.isArray(rolePermissionsResult.data) ? rolePermissionsResult.data : [])
+      .filter((row) => activeRoleSet.has(normalizeRoleKey(row?.role)))
+      .map((row) => String(row?.permission_key || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  return {
+    ok: true,
+    permissions: {
+      usersAccess: permissionSet.has("users.access") || permissionSet.has("users.edit") || permissionSet.has("users.delete"),
+      usersEdit: permissionSet.has("users.edit"),
+      usersDelete: permissionSet.has("users.delete"),
+    },
+  };
+}
+
+async function requireActorAccess(
+  req: Request,
+  admin: ReturnType<typeof createClient>,
+  tenantKey: string,
+) {
+  const sessionUserResult = await resolveSessionUser(req, admin);
+  if (!sessionUserResult.ok) {
+    return sessionUserResult;
+  }
+
+  const platformOwnerResult = await isPlatformOwner(sessionUserResult.userId, admin);
+  if (!platformOwnerResult.ok) {
+    return platformOwnerResult;
+  }
+  if (platformOwnerResult.allowed) {
+    return {
+      ok: true,
+      actor: {
+        userId: sessionUserResult.userId,
+        platformOwner: true,
+        permissions: {
+          usersAccess: true,
+          usersEdit: true,
+          usersDelete: true,
+        },
+      },
+    };
+  }
+
+  if (!tenantKey) {
+    return { ok: false, response: json({ ok: false, error: "tenant_key is required for hub access." }, 400) };
+  }
+
+  const tenantAccessResult = await resolveTenantAccess(admin, sessionUserResult.userId, tenantKey);
+  if (!tenantAccessResult.ok) {
+    return tenantAccessResult;
+  }
+
+  return {
+    ok: true,
+    actor: {
+      userId: sessionUserResult.userId,
+      platformOwner: false,
+      permissions: tenantAccessResult.permissions,
+    },
+  };
 }
 
 async function collectUsers(
@@ -182,6 +328,28 @@ function looksLikeEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+async function resolveAssignableRole(
+  admin: ReturnType<typeof createClient>,
+  tenantKey: string,
+  role: string,
+) {
+  const { data, error } = await admin
+    .from("tenant_role_definitions")
+    .select("role,role_label,is_system,active")
+    .eq("tenant_key", tenantKey)
+    .eq("role", role)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, response: json({ ok: false, error: "Unable to verify requested role." }, 500) };
+  }
+  if (!data?.role) {
+    return { ok: false, response: json({ ok: false, error: "Requested role is not available for this organization." }, 400) };
+  }
+
+  return { ok: true, roleDefinition: data };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
@@ -200,11 +368,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-  const authCheck = await requirePlatformOwner(req, admin);
-  if (!authCheck.ok) {
-    return authCheck.response;
-  }
-
   let body: any;
   try {
     body = await req.json();
@@ -213,8 +376,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body?.action || "").trim().toLowerCase();
+  const tenantKey = normalizeTenantKey(body?.tenant_key || req.headers.get("x-tenant-key"));
+  const actorResult = await requireActorAccess(req, admin, tenantKey);
+  if (!actorResult.ok) {
+    return actorResult.response;
+  }
+  const actor = actorResult.actor;
 
   if (action === "search") {
+    if (!actor.permissions.usersEdit) {
+      return json({ ok: false, error: "You need the users.edit permission to search assignable accounts for this organization." }, 403);
+    }
+
     const rawQuery = normalizeText(body?.query);
     const query = rawQuery.toLowerCase();
     const phoneDigits = normalizePhoneDigits(body?.query);
@@ -246,6 +419,10 @@ Deno.serve(async (req: Request) => {
   }
 
   if (action === "lookup_users") {
+    if (!actor.permissions.usersAccess) {
+      return json({ ok: false, error: "You need the users.access permission to view organization account details." }, 403);
+    }
+
     const requestedUserIds = Array.isArray(body?.user_ids)
       ? body.user_ids.map((value: unknown) => String(value || "").trim()).filter(Boolean)
       : [];
@@ -269,15 +446,58 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  if (action === "invite_and_assign") {
-    const tenantKey = normalizeTenantKey(body?.tenant_key);
+  if (action === "assign_existing" || action === "invite_and_assign") {
+    if (!actor.permissions.usersEdit) {
+      return json({ ok: false, error: "You need the users.edit permission to manage organization employees." }, 403);
+    }
+
     const role = normalizeRoleKey(body?.role);
+    if (!tenantKey || !role) {
+      return json({ ok: false, error: "tenant_key and role are required." }, 400);
+    }
+
+    const roleCheck = await resolveAssignableRole(admin, tenantKey, role);
+    if (!roleCheck.ok) {
+      return roleCheck.response;
+    }
+
+    const roleDefinition = roleCheck.roleDefinition;
+    if (roleDefinition?.active === false) {
+      return json({ ok: false, error: "Requested role is inactive for this organization." }, 400);
+    }
+    if (!actor.platformOwner && (roleDefinition?.role === "tenant_admin" || (roleDefinition?.is_system === true && roleDefinition?.role !== "tenant_employee"))) {
+      return json({ ok: false, error: "Hub staff can assign Employee or active custom roles only." }, 403);
+    }
+
+    if (action === "assign_existing") {
+      const userId = String(body?.user_id || "").trim();
+      if (!userId) {
+        return json({ ok: false, error: "tenant_key, user_id, and role are required." }, 400);
+      }
+
+      const { error: roleError } = await admin
+        .from("tenant_user_roles")
+        .upsert([{ tenant_key: tenantKey, user_id: userId, role, status: "active" }], {
+          onConflict: "tenant_key,user_id,role",
+        });
+      if (roleError) {
+        return json({ ok: false, error: String(roleError.message || roleError) }, 500);
+      }
+
+      return json({
+        ok: true,
+        user: {
+          id: userId,
+        },
+      });
+    }
+
     const firstName = normalizeText(body?.first_name);
     const lastName = normalizeText(body?.last_name);
     const email = normalizeEmail(body?.email);
     const phone = normalizeText(body?.phone);
 
-    if (!tenantKey || !role || !firstName || !lastName || !email) {
+    if (!firstName || !lastName || !email) {
       return json({ ok: false, error: "tenant_key, role, first_name, last_name, and email are required." }, 400);
     }
 

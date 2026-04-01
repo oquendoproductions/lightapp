@@ -1,4 +1,4 @@
-import { lazy, Suspense, useContext, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { TenantContext } from "./tenant/contextObject";
 import {
@@ -477,6 +477,12 @@ function shortUserId(value) {
   return `${normalized.slice(0, 8)}…${normalized.slice(-4)}`;
 }
 
+function roleKeyToLabel(roleKey) {
+  return trimOrEmpty(roleKey)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase()) || "Employee";
+}
+
 function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackSubdomain) {
   const tenantKey = trimOrEmpty(row?.tenant_key).toLowerCase() || trimOrEmpty(fallbackTenantKey).toLowerCase();
   if (!tenantKey) return null;
@@ -905,6 +911,15 @@ export default function MunicipalityApp() {
     assets: false,
   });
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
+  const [teamAssignmentMode, setTeamAssignmentMode] = useState("existing");
+  const [teamSearchQuery, setTeamSearchQuery] = useState("");
+  const [teamSearchResults, setTeamSearchResults] = useState([]);
+  const [teamSearchLoading, setTeamSearchLoading] = useState(false);
+  const [teamAssignLoading, setTeamAssignLoading] = useState(false);
+  const [teamInviteLoading, setTeamInviteLoading] = useState(false);
+  const [teamAssignForm, setTeamAssignForm] = useState({ user_id: "", role: "tenant_employee" });
+  const [teamInviteForm, setTeamInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
+  const [teamUserSummariesById, setTeamUserSummariesById] = useState({});
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
     organization: "",
     assets: "",
@@ -944,6 +959,31 @@ export default function MunicipalityApp() {
   const settingsMeta = useMemo(() => getSettingsPageMeta(routePath), [routePath]);
   const activeSettingsCategoryKey = settingsMeta.category.key;
   const activeSettingsItemKey = settingsMeta.item.key;
+  const invokeTeamUserAdmin = useCallback(async (body) => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      return { data: null, error: sessionError };
+    }
+
+    const accessToken = trimOrEmpty(sessionData?.session?.access_token);
+    if (!accessToken) {
+      return {
+        data: null,
+        error: new Error("Your session expired. Sign in again and retry."),
+      };
+    }
+
+    const requestTenantKey = trimOrEmpty(body?.tenant_key).toLowerCase() || tenantKey;
+    const requestBody = requestTenantKey ? { ...body, tenant_key: requestTenantKey } : { ...body };
+
+    return supabase.functions.invoke("platform-user-admin", {
+      body: requestBody,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(requestTenantKey ? { "x-tenant-key": requestTenantKey } : {}),
+      },
+    });
+  }, [tenantKey]);
 
   function openAuthModal(nextMode = "login") {
     setAuthMode(nextMode);
@@ -1169,6 +1209,24 @@ export default function MunicipalityApp() {
     () => Object.fromEntries((roleDefinitions || []).map((row) => [trimOrEmpty(row?.role), row])),
     [roleDefinitions]
   );
+  const assignableTeamRoles = useMemo(
+    () => (roleDefinitions || []).filter((row) => row?.active !== false && (row?.is_system !== true || trimOrEmpty(row?.role) === "tenant_employee")),
+    [roleDefinitions]
+  );
+  const teamSearchResultById = useMemo(
+    () => Object.fromEntries((teamSearchResults || []).map((row) => [trimOrEmpty(row?.id), row]).filter(([key]) => key)),
+    [teamSearchResults]
+  );
+  const selectedTeamSearchAccount = teamAssignForm.user_id ? teamSearchResultById?.[teamAssignForm.user_id] || null : null;
+  const resolveKnownTeamUserSummary = useCallback((userId) => {
+    const key = trimOrEmpty(userId);
+    if (!key) return null;
+    return teamUserSummariesById?.[key] || teamSearchResultById?.[key] || null;
+  }, [teamSearchResultById, teamUserSummariesById]);
+  const formatKnownTeamUserLabel = useCallback((userId) => {
+    const summary = resolveKnownTeamUserSummary(userId);
+    return trimOrEmpty(summary?.display_name) || trimOrEmpty(summary?.email) || shortUserId(userId);
+  }, [resolveKnownTeamUserSummary]);
   const permissionsByRole = useMemo(() => {
     const lookup = {};
     for (const row of rolePermissions || []) {
@@ -1198,6 +1256,51 @@ export default function MunicipalityApp() {
 
   const homeAlerts = useMemo(() => publishedAlerts.slice(0, 3), [publishedAlerts]);
   const homeEvents = useMemo(() => publishedEvents.slice(0, 4), [publishedEvents]);
+  const teamSectionBlocked = /could not load team access/i.test(trimOrEmpty(settingsSectionStatus.team).toLowerCase());
+  const teamSectionStatusIsError = /requires|could not|invalid|unable|only|select|need/i.test(trimOrEmpty(settingsSectionStatus.team));
+  const loadTeamUserSummaries = useCallback(async () => {
+    if (!session?.user?.id) {
+      setTeamUserSummariesById({});
+      return;
+    }
+
+    const userIds = [...new Set((teamAssignments || []).map((row) => trimOrEmpty(row?.user_id)).filter(Boolean))];
+    if (!userIds.length) {
+      setTeamUserSummariesById({});
+      return;
+    }
+
+    const { data, error } = await invokeTeamUserAdmin({
+      action: "lookup_users",
+      user_ids: userIds,
+    });
+
+    if (error) return;
+
+    const nextLookup = {};
+    for (const row of Array.isArray(data?.results) ? data.results : []) {
+      const key = trimOrEmpty(row?.id);
+      if (!key) continue;
+      nextLookup[key] = row;
+    }
+    setTeamUserSummariesById(nextLookup);
+  }, [invokeTeamUserAdmin, session?.user?.id, teamAssignments]);
+
+  useEffect(() => {
+    void loadTeamUserSummaries();
+  }, [loadTeamUserSummaries]);
+
+  useEffect(() => {
+    if (!assignableTeamRoles.length) {
+      if (trimOrEmpty(teamAssignForm.role) !== "tenant_employee") {
+        setTeamAssignForm((prev) => ({ ...prev, role: "tenant_employee" }));
+      }
+      return;
+    }
+    if (!assignableTeamRoles.some((row) => trimOrEmpty(row?.role) === trimOrEmpty(teamAssignForm.role))) {
+      setTeamAssignForm((prev) => ({ ...prev, role: trimOrEmpty(assignableTeamRoles[0]?.role) || "tenant_employee" }));
+    }
+  }, [assignableTeamRoles, teamAssignForm.role]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1416,44 +1519,58 @@ export default function MunicipalityApp() {
         map: "",
       });
 
-      const locationQueries = manageAccess ? Promise.all([
-        supabase
-          .from("tenant_profiles")
-          .select("*")
-          .eq("tenant_key", tenantKey)
-          .maybeSingle(),
-        supabase
-          .from("tenant_map_features")
-          .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
-          .eq("tenant_key", tenantKey)
-          .maybeSingle(),
-        supabase
-          .from("tenant_user_roles")
-          .select("user_id,role,status,created_at,updated_at")
-          .eq("tenant_key", tenantKey)
-          .order("updated_at", { ascending: false }),
-        supabase
-          .from("tenant_role_definitions")
-          .select("role,role_label,is_system,active,created_at,updated_at")
-          .eq("tenant_key", tenantKey)
-          .order("is_system", { ascending: false })
-          .order("role_label", { ascending: true }),
-        supabase
-          .from("tenant_role_permissions")
-          .select("role,permission_key,allowed")
-          .eq("tenant_key", tenantKey)
-          .eq("allowed", true)
-          .order("role", { ascending: true }),
-        supabase
-          .from("tenant_permissions_catalog")
-          .select("permission_key,module_key,action_key,label,sort_order")
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("tenant_files")
-          .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
-          .eq("tenant_key", tenantKey)
-          .order("uploaded_at", { ascending: false }),
-      ]) : Promise.resolve([null, null, null, null, null, null, null]);
+      const locationQueries = Promise.all([
+        manageAccess
+          ? supabase
+            .from("tenant_profiles")
+            .select("*")
+            .eq("tenant_key", tenantKey)
+            .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        manageAccess
+          ? supabase
+            .from("tenant_map_features")
+            .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
+            .eq("tenant_key", tenantKey)
+            .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        session?.user?.id
+          ? supabase
+            .from("tenant_user_roles")
+            .select("user_id,role,status,created_at,updated_at")
+            .eq("tenant_key", tenantKey)
+            .order("updated_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        session?.user?.id
+          ? supabase
+            .from("tenant_role_definitions")
+            .select("role,role_label,is_system,active,created_at,updated_at")
+            .eq("tenant_key", tenantKey)
+            .order("is_system", { ascending: false })
+            .order("role_label", { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        session?.user?.id
+          ? supabase
+            .from("tenant_role_permissions")
+            .select("role,permission_key,allowed")
+            .eq("tenant_key", tenantKey)
+            .eq("allowed", true)
+            .order("role", { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        session?.user?.id
+          ? supabase
+            .from("tenant_permissions_catalog")
+            .select("permission_key,module_key,action_key,label,sort_order")
+            .order("sort_order", { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        manageAccess
+          ? supabase
+            .from("tenant_files")
+            .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
+            .eq("tenant_key", tenantKey)
+            .order("uploaded_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+      ]);
 
       const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, filesRes] = await locationQueries;
 
@@ -1996,6 +2113,158 @@ export default function MunicipalityApp() {
     }
 
     setAssetFiles(Array.isArray(data) ? data : []);
+  }
+
+  async function reloadTeamAssignments() {
+    const { data, error } = await supabase
+      .from("tenant_user_roles")
+      .select("user_id,role,status,created_at,updated_at")
+      .eq("tenant_key", tenantKey)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: isPermissionError(error)
+          ? "Team access visibility requires the users.access permission for this location."
+          : (error.message || "Could not refresh team access."),
+      }));
+      return false;
+    }
+
+    setTeamAssignments(Array.isArray(data) ? data : []);
+    return true;
+  }
+
+  async function searchTeamAccounts(event) {
+    event.preventDefault();
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+    setTeamSearchLoading(true);
+
+    const { data, error } = await invokeTeamUserAdmin({
+      action: "search",
+      query: teamSearchQuery,
+    });
+
+    setTeamSearchLoading(false);
+
+    if (error) {
+      setTeamSearchResults([]);
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: String(error?.message || "Could not search existing accounts."),
+      }));
+      return;
+    }
+
+    const results = Array.isArray(data?.results) ? data.results : [];
+    setTeamSearchResults(results);
+    setTeamAssignForm((prev) => ({
+      ...prev,
+      user_id: results.some((row) => trimOrEmpty(row?.id) === trimOrEmpty(prev.user_id))
+        ? prev.user_id
+        : "",
+    }));
+    setSettingsSectionStatus((prev) => ({
+      ...prev,
+      team: results.length
+        ? `Found ${results.length} matching account${results.length === 1 ? "" : "s"}.`
+        : "No matching account was found. Try an exact email, exact phone number, or full name.",
+    }));
+  }
+
+  async function assignExistingTeamAccount(event) {
+    event?.preventDefault?.();
+    const userId = trimOrEmpty(teamAssignForm.user_id);
+    const role = trimOrEmpty(teamAssignForm.role).toLowerCase() || trimOrEmpty(assignableTeamRoles[0]?.role) || "tenant_employee";
+
+    if (!userId) {
+      setSettingsSectionStatus((prev) => ({ ...prev, team: "Select an account before assigning a role." }));
+      return;
+    }
+    if (!role) {
+      setSettingsSectionStatus((prev) => ({ ...prev, team: "Select a valid role before assigning access." }));
+      return;
+    }
+
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+    setTeamAssignLoading(true);
+
+    const { error } = await invokeTeamUserAdmin({
+      action: "assign_existing",
+      user_id: userId,
+      role,
+    });
+
+    setTeamAssignLoading(false);
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: String(error?.message || "Could not assign this employee role."),
+      }));
+      return;
+    }
+
+    await reloadTeamAssignments();
+    const personLabel = trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || shortUserId(userId);
+    setSettingsSectionStatus((prev) => ({
+      ...prev,
+      team: `Assigned ${roleDefinitionLookup[role]?.role_label || roleKeyToLabel(role)} to ${personLabel}.`,
+    }));
+    setTeamAssignForm((prev) => ({ ...prev, user_id: "", role }));
+  }
+
+  async function createAndAssignTeamUser(event) {
+    event.preventDefault();
+    const role = trimOrEmpty(teamAssignForm.role).toLowerCase() || trimOrEmpty(assignableTeamRoles[0]?.role) || "tenant_employee";
+    const firstName = trimOrEmpty(teamInviteForm.first_name);
+    const lastName = trimOrEmpty(teamInviteForm.last_name);
+    const email = trimOrEmpty(teamInviteForm.email).toLowerCase();
+    const phone = trimOrEmpty(teamInviteForm.phone);
+
+    if (!role || !firstName || !lastName || !email) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: "First name, last name, email, and role are required.",
+      }));
+      return;
+    }
+
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+    setTeamInviteLoading(true);
+
+    const { data, error } = await invokeTeamUserAdmin({
+      action: "invite_and_assign",
+      role,
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      phone,
+    });
+
+    setTeamInviteLoading(false);
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: String(error?.message || "Could not create or assign this employee account."),
+      }));
+      return;
+    }
+
+    await reloadTeamAssignments();
+    setTeamInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setTeamAssignForm((prev) => ({ ...prev, user_id: "", role }));
+    setTeamAssignmentMode("existing");
+    setTeamSearchQuery(email);
+    setTeamSearchResults([]);
+    setSettingsSectionStatus((prev) => ({
+      ...prev,
+      team: data?.inviteSent === true
+        ? `Created an invited account for ${email} and assigned ${roleDefinitionLookup[role]?.role_label || roleKeyToLabel(role)}.`
+        : `Assigned ${roleDefinitionLookup[role]?.role_label || roleKeyToLabel(role)} to existing account ${email}.`,
+    }));
   }
 
   async function uploadAssetFile(event) {
@@ -2957,10 +3226,10 @@ export default function MunicipalityApp() {
     { label: "Border Color", value: trimOrEmpty(mapAppearance?.boundary_border_color) || "#e53935" },
     { label: "Border Width", value: `${mapAppearance?.boundary_border_width || 4}px` },
   ];
-  const editableTeamAssignments = teamAssignments.filter((assignment) => {
+  const manageableTeamAssignments = teamAssignments.filter((assignment) => {
     const roleKey = trimOrEmpty(assignment?.role);
     const roleRow = roleDefinitionLookup[roleKey];
-    return Boolean(roleRow) && !roleRow?.is_system;
+    return Boolean(roleRow) && (roleRow?.is_system !== true || roleKey === "tenant_employee");
   });
   const groupedAssetFiles = useMemo(() => ({
     logo: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "logo"),
@@ -3980,22 +4249,22 @@ export default function MunicipalityApp() {
                     ) : null}
 
                     {activeSettingsItemKey === "manage-employees" ? (
-                      !manageAccess ? (
+                      !session?.user?.id ? (
                         <div className="municipality-auth-cta">
                           <h4>Team access is limited to location staff</h4>
-                          <p className="municipality-note">Employee access is reserved for the tenant owner and permitted location staff.</p>
+                          <p className="municipality-note">Sign in with a location-staff account to manage employee access.</p>
                         </div>
                       ) : (
                         <div className="municipality-account-card municipality-account-card--section">
                           <div className="municipality-settings-header">
                             <div>
                               <h4>Manage Employees</h4>
-                              <p className="municipality-note">Review who currently has access to this location and which role each person is carrying.</p>
+                              <p className="municipality-note">Find an existing account or create a new one, then assign one allowed organization role for this location.</p>
                             </div>
                           </div>
-                          {settingsSectionStatus.team ? <p className={`municipality-inline-status${settingsSectionStatus.team.toLowerCase().includes("requires") || settingsSectionStatus.team.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
-                          {!settingsSectionStatus.team ? (
-                            <>
+                          {settingsSectionStatus.team ? <p className={`municipality-inline-status${teamSectionStatusIsError ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
+                          {!teamSectionBlocked ? (
+                          <>
                               <div className="municipality-detail-grid">
                                 <div className="municipality-detail-item">
                                   <span>Total Assignments</span>
@@ -4009,8 +4278,175 @@ export default function MunicipalityApp() {
                                 ))}
                               </div>
                               <p className="municipality-note">
-                                System roles remain controlled from the developer dashboard. Custom employee assignments that already exist for this location can be updated here now.
+                                Employee and active custom roles can be assigned here. Tenant admin stays controlled from the developer dashboard.
                               </p>
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className={`municipality-button${teamAssignmentMode === "existing" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                                  onClick={() => setTeamAssignmentMode("existing")}
+                                >
+                                  Find Existing Account
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`municipality-button${teamAssignmentMode === "invite" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                                  onClick={() => setTeamAssignmentMode("invite")}
+                                >
+                                  Create Account
+                                </button>
+                              </div>
+                              {teamAssignmentMode === "existing" ? (
+                                <>
+                                  <form className="municipality-form-grid" onSubmit={searchTeamAccounts}>
+                                    <div className="municipality-field">
+                                      <label htmlFor="team-search-query">Find Person</label>
+                                      <input
+                                        id="team-search-query"
+                                        value={teamSearchQuery}
+                                        onChange={(event) => setTeamSearchQuery(event.target.value)}
+                                        placeholder="Exact email, exact phone, or full name"
+                                      />
+                                    </div>
+                                    <div className="municipality-actions">
+                                      <button type="submit" className="municipality-button municipality-button--primary" disabled={teamSearchLoading}>
+                                        {teamSearchLoading ? "Searching…" : "Search Accounts"}
+                                      </button>
+                                    </div>
+                                  </form>
+                                  {teamSearchResults.length ? (
+                                    <div className="municipality-settings-list">
+                                      {teamSearchResults.map((row) => {
+                                        const userId = trimOrEmpty(row?.id);
+                                        const isSelected = userId === trimOrEmpty(teamAssignForm.user_id);
+                                        return (
+                                          <button
+                                            key={userId}
+                                            type="button"
+                                            className="municipality-settings-list-item municipality-settings-list-item--stacked"
+                                            onClick={() => setTeamAssignForm((prev) => ({ ...prev, user_id: userId }))}
+                                            style={{
+                                              width: "100%",
+                                              textAlign: "left",
+                                              cursor: "pointer",
+                                              borderColor: isSelected ? "rgba(23, 109, 120, 0.55)" : undefined,
+                                              background: isSelected ? "rgba(23, 109, 120, 0.08)" : undefined,
+                                            }}
+                                          >
+                                            <strong>{trimOrEmpty(row?.display_name) || trimOrEmpty(row?.email) || shortUserId(userId)}</strong>
+                                            <p className="municipality-note">
+                                              {[trimOrEmpty(row?.email), trimOrEmpty(row?.phone)].filter(Boolean).join(" • ") || "No email or phone on file"}
+                                            </p>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null}
+                                  <div className="municipality-form-grid">
+                                    <div className="municipality-field">
+                                      <label htmlFor="team-role-select-existing">Organization Role</label>
+                                      <select
+                                        id="team-role-select-existing"
+                                        value={teamAssignForm.role}
+                                        onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                      >
+                                        {assignableTeamRoles.map((row) => {
+                                          const roleKey = trimOrEmpty(row?.role);
+                                          if (!roleKey) return null;
+                                          return (
+                                            <option key={roleKey} value={roleKey}>
+                                              {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                            </option>
+                                          );
+                                        })}
+                                        {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="municipality-actions">
+                                    <button
+                                      type="button"
+                                      className="municipality-button municipality-button--primary"
+                                      onClick={() => void assignExistingTeamAccount()}
+                                      disabled={teamAssignLoading || !trimOrEmpty(teamAssignForm.user_id)}
+                                      title={trimOrEmpty(teamAssignForm.user_id) ? "Assign organization role" : "Select an account first"}
+                                    >
+                                      {teamAssignLoading ? "Assigning…" : "Assign Role"}
+                                    </button>
+                                    {trimOrEmpty(teamAssignForm.user_id) ? (
+                                      <p className="municipality-note">
+                                        Selected account: <strong>{trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || "Account selected"}</strong>
+                                      </p>
+                                    ) : (
+                                      <p className="municipality-note">For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.</p>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <form className="municipality-form-grid" onSubmit={createAndAssignTeamUser}>
+                                  <div className="municipality-field">
+                                    <label htmlFor="team-invite-first-name">First Name</label>
+                                    <input
+                                      id="team-invite-first-name"
+                                      value={teamInviteForm.first_name}
+                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, first_name: event.target.value }))}
+                                      placeholder="Jordan"
+                                    />
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="team-invite-last-name">Last Name</label>
+                                    <input
+                                      id="team-invite-last-name"
+                                      value={teamInviteForm.last_name}
+                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, last_name: event.target.value }))}
+                                      placeholder="Rivera"
+                                    />
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="team-invite-email">Email</label>
+                                    <input
+                                      id="team-invite-email"
+                                      type="email"
+                                      value={teamInviteForm.email}
+                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, email: event.target.value }))}
+                                      placeholder="jordan.rivera@example.gov"
+                                    />
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="team-invite-phone">Phone Number</label>
+                                    <input
+                                      id="team-invite-phone"
+                                      value={teamInviteForm.phone}
+                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, phone: event.target.value }))}
+                                      placeholder="(555) 555-0101"
+                                    />
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="team-role-select-invite">Organization Role</label>
+                                    <select
+                                      id="team-role-select-invite"
+                                      value={teamAssignForm.role}
+                                      onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                    >
+                                      {assignableTeamRoles.map((row) => {
+                                        const roleKey = trimOrEmpty(row?.role);
+                                        if (!roleKey) return null;
+                                        return (
+                                          <option key={roleKey} value={roleKey}>
+                                            {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                          </option>
+                                        );
+                                      })}
+                                      {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                    </select>
+                                  </div>
+                                  <div className="municipality-actions">
+                                    <button type="submit" className="municipality-button municipality-button--primary" disabled={teamInviteLoading}>
+                                      {teamInviteLoading ? "Creating…" : "Create Account + Assign Role"}
+                                    </button>
+                                  </div>
+                                </form>
+                              )}
                               {teamAssignments.length ? (
                                 <div className="municipality-settings-list">
                                   {teamAssignments.map((assignment) => (
@@ -4018,25 +4454,31 @@ export default function MunicipalityApp() {
                                       const roleKey = trimOrEmpty(assignment?.role);
                                       const assignmentKey = `${assignment.user_id}-${roleKey}`;
                                       const roleRow = roleDefinitionLookup[roleKey];
-                                      const isCustomRole = Boolean(roleRow) && !roleRow?.is_system;
+                                      const isManageableRole = Boolean(roleRow) && (roleRow?.is_system !== true || roleKey === "tenant_employee");
                                       const isBusy = Boolean(teamAssignmentBusy[assignmentKey]);
                                       const nextStatus = trimOrEmpty(assignment?.status) === "inactive" ? "active" : "inactive";
+                                      const userSummary = resolveKnownTeamUserSummary(assignment.user_id);
                                       return (
                                         <div key={assignmentKey} className="municipality-settings-list-item">
                                           <div>
-                                            <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
+                                            <strong>{formatKnownTeamUserLabel(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
+                                            {trimOrEmpty(userSummary?.email) || trimOrEmpty(userSummary?.phone) ? (
+                                              <p className="municipality-note">
+                                                {[trimOrEmpty(userSummary?.email), trimOrEmpty(userSummary?.phone)].filter(Boolean).join(" • ")}
+                                              </p>
+                                            ) : null}
                                             <p className="municipality-note">
-                                              {trimOrEmpty(roleRow?.role_label) || roleKey.replace(/_/g, " ")}
+                                              {trimOrEmpty(roleRow?.role_label) || roleKeyToLabel(roleKey)}
                                               {" • "}
                                               {trimOrEmpty(assignment.status) || "active"}
                                             </p>
-                                            {!isCustomRole ? (
-                                              <p className="municipality-note">This is a system-managed assignment and still needs PCP control.</p>
+                                            {!isManageableRole ? (
+                                              <p className="municipality-note">This system role still needs PCP control.</p>
                                             ) : null}
                                           </div>
                                           <div className="municipality-settings-item-actions">
                                             <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
-                                            {isCustomRole ? (
+                                            {isManageableRole ? (
                                               <div className="municipality-actions municipality-actions--compact">
                                                 <button
                                                   type="button"
@@ -4065,10 +4507,10 @@ export default function MunicipalityApp() {
                               ) : (
                                 <div className="municipality-empty">No location access assignments are visible yet.</div>
                               )}
-                              {!editableTeamAssignments.length ? (
-                                <p className="municipality-note">No editable custom employee assignments are available yet. Add or change system-level access from the developer dashboard for now.</p>
+                              {!manageableTeamAssignments.length ? (
+                                <p className="municipality-note">No hub-manageable employee assignments are visible yet. Tenant admin is still managed from the developer dashboard.</p>
                               ) : null}
-                            </>
+                          </>
                           ) : null}
                         </div>
                       )
