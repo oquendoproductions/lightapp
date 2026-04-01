@@ -327,22 +327,22 @@ const tabSelectBase = {
   background: "#ffffff",
 };
 
-const pageNavCard = {
-  ...card,
-  display: "grid",
-  gap: 10,
-  paddingTop: 12,
-  paddingBottom: 12,
-};
-
 const fullWidthSection = {
   width: "100%",
   margin: "0 auto",
 };
 
+const controlPlaneTabsRail = {
+  position: "sticky",
+  top: FIXED_BANNER_HEIGHT,
+  zIndex: 25,
+  padding: "8px 0 10px",
+  background: "transparent",
+};
+
 const controlPlaneTabsShell = {
   width: "100%",
-  padding: 8,
+  padding: "8px 10px",
   border: "1px solid rgba(23, 49, 79, 0.08)",
   borderRadius: 22,
   background: "rgba(255, 255, 255, 0.92)",
@@ -351,7 +351,10 @@ const controlPlaneTabsShell = {
 
 const controlPlaneTabsBar = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
+  gridAutoFlow: "column",
+  gridAutoColumns: "minmax(0, 1fr)",
+  minWidth: 0,
+  width: "100%",
   gap: 12,
   alignItems: "stretch",
 };
@@ -3217,8 +3220,15 @@ export default function PlatformAdminApp() {
 
   const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
     <section style={{ ...fullWidthSection, display: "grid", gap: 12 }}>
-      <div style={pageNavCard}>
-        <div ref={controlPlaneNavRef} style={controlPlaneTabsShell}>
+      <div
+        ref={controlPlaneNavRef}
+        style={
+          isCompactViewport
+            ? { ...fullWidthSection, display: "grid", gap: 10 }
+            : { ...controlPlaneTabsRail }
+        }
+      >
+        <div style={controlPlaneTabsShell}>
           <nav style={controlPlaneTabsBar} aria-label="Platform Control Plane navigation">
             {CONTROL_PLANE_SECTIONS.map((section) => {
               const visiblePages = visibleControlPlanePagesBySection[section.key] || [];
