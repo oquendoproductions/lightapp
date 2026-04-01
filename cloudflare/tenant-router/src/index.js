@@ -2,12 +2,12 @@ import { buildUnknownTenantSlugEvent, resolveTenantRequest } from "./router.js";
 
 const DEFAULT_ORIGIN = "lightapp-ak2.pages.dev";
 const DEFAULT_TENANT_KEYS_SYNC_TTL_SEC = 30;
-let tenantKeysCache = {
+let tenantRoutesCache = {
   expiresAt: 0,
-  keys: null,
+  routes: null,
   signature: "",
 };
-let tenantKeysInflight = {
+let tenantRoutesInflight = {
   signature: "",
   promise: null,
 };
@@ -19,21 +19,21 @@ function sanitizeTenantKey(raw) {
     .replace(/[^a-z0-9-]/g, "");
 }
 
-function parseKnownTenantKeys(raw, fallbackTenant) {
-  const keys = new Set();
+function parseKnownTenantRoutes(raw, fallbackTenant) {
+  const routes = new Map();
 
   const value = String(raw || "").trim();
   if (value) {
     for (const entry of value.split(",")) {
       const slug = sanitizeTenantKey(entry);
-      if (slug) keys.add(slug);
+      if (slug) routes.set(slug, slug);
     }
   }
 
   const fallback = sanitizeTenantKey(fallbackTenant);
-  if (fallback) keys.add(fallback);
+  if (fallback) routes.set(fallback, fallback);
 
-  return keys;
+  return routes;
 }
 
 function parsePositiveInt(raw, fallback) {
@@ -42,21 +42,23 @@ function parsePositiveInt(raw, fallback) {
   return Math.trunc(n);
 }
 
-async function fetchActiveTenantKeysFromSupabase(env) {
+async function fetchActiveTenantRoutesFromSupabase(env) {
   const supabaseUrl = String(env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const supabaseAnonKey = String(env.SUPABASE_ANON_KEY || "").trim();
   if (!supabaseUrl || !supabaseAnonKey) return null;
 
-  const endpoint = `${supabaseUrl}/rest/v1/tenants?select=tenant_key&active=eq.true`;
+  const endpoint = `${supabaseUrl}/rest/v1/rpc/list_active_tenant_routes`;
   let response;
   try {
     response = await fetch(endpoint, {
-      method: "GET",
+      method: "POST",
       headers: {
         apikey: supabaseAnonKey,
         Authorization: `Bearer ${supabaseAnonKey}`,
         Accept: "application/json",
+        "content-type": "application/json",
       },
+      body: JSON.stringify({}),
       cf: {
         cacheTtl: 0,
         cacheEverything: false,
@@ -78,36 +80,37 @@ async function fetchActiveTenantKeysFromSupabase(env) {
     return null;
   }
 
-  const keys = new Set();
+  const routes = new Map();
   for (const row of payload) {
-    const slug = sanitizeTenantKey(row?.tenant_key);
-    if (slug) keys.add(slug);
+    const tenantKey = sanitizeTenantKey(row?.tenant_key);
+    const routeSlug = sanitizeTenantKey(row?.route_slug);
+    if (tenantKey) routes.set(tenantKey, tenantKey);
+    if (routeSlug) routes.set(routeSlug, tenantKey || routeSlug);
   }
-  return keys;
+  return routes;
 }
 
-async function isTenantActiveInSupabase(env, tenantKey) {
-  const slug = sanitizeTenantKey(tenantKey);
-  if (!slug) return false;
+async function resolveTenantRouteInSupabase(env, tenantRoute) {
+  const slug = sanitizeTenantKey(tenantRoute);
+  if (!slug) return null;
 
   const supabaseUrl = String(env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const supabaseAnonKey = String(env.SUPABASE_ANON_KEY || "").trim();
-  if (!supabaseUrl || !supabaseAnonKey) return false;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
 
-  const endpoint =
-    `${supabaseUrl}/rest/v1/tenants` +
-    `?select=tenant_key&tenant_key=eq.${encodeURIComponent(slug)}&active=eq.true&limit=1`;
+  const endpoint = `${supabaseUrl}/rest/v1/rpc/resolve_tenant_route`;
 
   let response;
   try {
     response = await fetch(endpoint, {
-      method: "GET",
+      method: "POST",
       headers: {
         apikey: supabaseAnonKey,
         Authorization: `Bearer ${supabaseAnonKey}`,
-        "x-tenant-key": slug,
         Accept: "application/json",
+        "content-type": "application/json",
       },
+      body: JSON.stringify({ route_input: slug }),
       cf: {
         cacheTtl: 0,
         cacheEverything: false,
@@ -115,21 +118,30 @@ async function isTenantActiveInSupabase(env, tenantKey) {
     });
   } catch (error) {
     console.warn("[tenant-router][tenant-probe-fetch-error]", slug, String(error?.message || error));
-    return false;
+    return null;
   }
 
   if (!response.ok) {
     console.warn("[tenant-router][tenant-probe-http-error]", slug, response.status);
-    return false;
+    return null;
   }
 
   const payload = await response.json().catch(() => null);
-  if (!Array.isArray(payload)) return false;
-  return payload.some((row) => sanitizeTenantKey(row?.tenant_key) === slug);
+  if (!Array.isArray(payload)) return null;
+  const match = payload[0] || null;
+  if (!match) return null;
+  const tenantKey = sanitizeTenantKey(match?.tenant_key);
+  const primarySubdomain = String(match?.primary_subdomain || "").trim().toLowerCase();
+  const routeSlug = sanitizeTenantKey(primarySubdomain.split(".")[0]);
+  if (!tenantKey) return null;
+  return {
+    tenantKey,
+    routeSlug: routeSlug || slug,
+  };
 }
 
-async function resolveKnownTenantKeys(env, defaultTenant) {
-  const fallbackKeys = parseKnownTenantKeys(env.KNOWN_TENANT_KEYS, defaultTenant);
+async function resolveKnownTenantRoutes(env, defaultTenant) {
+  const fallbackRoutes = parseKnownTenantRoutes(env.KNOWN_TENANT_KEYS, defaultTenant);
   const ttlSec = parsePositiveInt(env.TENANT_KEYS_SYNC_TTL_SEC, DEFAULT_TENANT_KEYS_SYNC_TTL_SEC);
   const signature = [
     String(env.KNOWN_TENANT_KEYS || "").trim(),
@@ -141,43 +153,45 @@ async function resolveKnownTenantKeys(env, defaultTenant) {
   const now = Date.now();
 
   if (
-    tenantKeysCache.signature === signature &&
-    tenantKeysCache.keys instanceof Set &&
-    tenantKeysCache.expiresAt > now
+    tenantRoutesCache.signature === signature &&
+    tenantRoutesCache.routes instanceof Map &&
+    tenantRoutesCache.expiresAt > now
   ) {
-    return new Set(tenantKeysCache.keys);
+    return new Map(tenantRoutesCache.routes);
   }
 
-  if (tenantKeysInflight.signature === signature && tenantKeysInflight.promise) {
-    const inflight = await tenantKeysInflight.promise;
-    return new Set(inflight);
+  if (tenantRoutesInflight.signature === signature && tenantRoutesInflight.promise) {
+    const inflight = await tenantRoutesInflight.promise;
+    return new Map(inflight);
   }
 
-  tenantKeysInflight = {
+  tenantRoutesInflight = {
     signature,
     promise: (async () => {
-    const synced = await fetchActiveTenantKeysFromSupabase(env);
-    const merged = new Set(fallbackKeys);
-    if (synced instanceof Set) {
-      for (const key of synced.values()) merged.add(key);
-    }
-    const fallback = sanitizeTenantKey(defaultTenant);
-    if (fallback) merged.add(fallback);
+      const synced = await fetchActiveTenantRoutesFromSupabase(env);
+      const merged = new Map(fallbackRoutes);
+      if (synced instanceof Map) {
+        for (const [routeSlug, tenantKey] of synced.entries()) {
+          merged.set(routeSlug, tenantKey);
+        }
+      }
+      const fallback = sanitizeTenantKey(defaultTenant);
+      if (fallback) merged.set(fallback, fallback);
 
-    tenantKeysCache = {
-      keys: merged,
-      expiresAt: Date.now() + (ttlSec * 1000),
-      signature,
-    };
-    return merged;
-  })(),
+      tenantRoutesCache = {
+        routes: merged,
+        expiresAt: Date.now() + (ttlSec * 1000),
+        signature,
+      };
+      return merged;
+    })(),
   };
 
   try {
-    const keys = await tenantKeysInflight.promise;
-    return new Set(keys);
+    const routes = await tenantRoutesInflight.promise;
+    return new Map(routes);
   } finally {
-    tenantKeysInflight = {
+    tenantRoutesInflight = {
       signature: "",
       promise: null,
     };
@@ -381,7 +395,8 @@ export default {
     const defaultTenant = String(env.DEFAULT_TENANT_KEY || "ashtabulacity")
       .trim()
       .toLowerCase();
-    const knownTenantKeys = await resolveKnownTenantKeys(env, defaultTenant);
+    const tenantRoutes = await resolveKnownTenantRoutes(env, defaultTenant);
+    const knownTenantKeys = new Set(tenantRoutes.keys());
 
     let resolution = resolveTenantRequest(
       {
@@ -398,14 +413,17 @@ export default {
     // Auto-promote newly added active tenants without manual allowlist edits.
     if (resolution.mode === "not_found") {
       const slug = sanitizeTenantKey(resolution.unknownSlug);
-      if (slug && !knownTenantKeys.has(slug)) {
-        const activeTenant = await isTenantActiveInSupabase(env, slug);
-        if (activeTenant) {
-          knownTenantKeys.add(slug);
-          tenantKeysCache = {
-            signature: tenantKeysCache.signature,
-            keys: new Set([...(tenantKeysCache.keys || []), slug]),
-            expiresAt: tenantKeysCache.expiresAt || (Date.now() + 30_000),
+      if (slug && !tenantRoutes.has(slug)) {
+        const activeTenant = await resolveTenantRouteInSupabase(env, slug);
+        if (activeTenant?.tenantKey) {
+          tenantRoutes.set(slug, activeTenant.tenantKey);
+          if (activeTenant.routeSlug) {
+            tenantRoutes.set(activeTenant.routeSlug, activeTenant.tenantKey);
+          }
+          tenantRoutesCache = {
+            signature: tenantRoutesCache.signature,
+            routes: new Map(tenantRoutes),
+            expiresAt: tenantRoutesCache.expiresAt || (Date.now() + 30_000),
           };
           resolution = resolveTenantRequest(
             {
@@ -415,10 +433,20 @@ export default {
             },
             {
               defaultTenant,
-              knownTenantKeys,
+              knownTenantKeys: new Set(tenantRoutes.keys()),
             },
           );
         }
+      }
+    }
+
+    if (resolution.tenantKey) {
+      const actualTenantKey = tenantRoutes.get(sanitizeTenantKey(resolution.tenantKey));
+      if (actualTenantKey) {
+        resolution = {
+          ...resolution,
+          tenantKey: actualTenantKey,
+        };
       }
     }
 

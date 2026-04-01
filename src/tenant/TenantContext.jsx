@@ -30,6 +30,33 @@ function isMissingColumnError(error) {
   return code === "42703" || msg.includes("column") || msg.includes("schema cache");
 }
 
+function isMissingFunctionError(error) {
+  const code = String(error?.code || "").trim();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42883" || code === "PGRST202" || (msg.includes("function") && msg.includes("exist"));
+}
+
+function normalizeTenantRouteInput(raw) {
+  const stripped = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .split("/")[0]
+    .split(":")[0];
+  return stripped.replace(/[^a-z0-9.-]/g, "");
+}
+
+async function resolveTenantConfigByRoute(routeInput) {
+  const normalized = normalizeTenantRouteInput(routeInput);
+  if (!normalized) return null;
+  const { data, error } = await supabase.rpc("resolve_tenant_route", {
+    route_input: normalized,
+  });
+  if (error) throw error;
+  if (Array.isArray(data)) return data[0] || null;
+  return data || null;
+}
+
 function isAllowDefaultTenantFallback() {
   const raw = String(import.meta.env.VITE_ALLOW_DEFAULT_TENANT_FALLBACK ?? "true").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
@@ -38,6 +65,13 @@ function isAllowDefaultTenantFallback() {
 async function fetchTenantConfigFromDb(tenantKey) {
   const selectBase =
     "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active";
+  try {
+    const resolved = await resolveTenantConfigByRoute(tenantKey);
+    if (resolved) return resolved;
+  } catch (error) {
+    if (!isMissingFunctionError(error)) throw error;
+  }
+
   const preferred = await supabase
     .from("tenants")
     .select(`${selectBase},resident_portal_enabled`)
@@ -60,19 +94,31 @@ export function TenantProvider({ resolution, children }) {
   const mode = String(resolution?.mode || "marketing_home");
   const env = String(resolution?.env || "prod");
   const resolvedTenant = String(resolution?.tenantKey || "").trim().toLowerCase();
-  const tenantKey = resolvedTenant || getDefaultTenantKey();
+  const requestedTenantRoute = resolvedTenant || getDefaultTenantKey();
   const municipalityMode = mode === "municipality_app";
   const [state, setState] = useState({
     loading: municipalityMode,
     ready: !municipalityMode,
-    tenantConfig: municipalityMode ? null : fallbackTenantConfig(tenantKey),
+    tenantConfig: municipalityMode ? null : fallbackTenantConfig(requestedTenantRoute),
     error: "",
   });
+  const tenantKey = String(state.tenantConfig?.tenant_key || requestedTenantRoute || getDefaultTenantKey())
+    .trim()
+    .toLowerCase();
 
   useEffect(() => {
+    if (municipalityMode) {
+      const requestKey = String(state.tenantConfig?.tenant_key || requestedTenantRoute || "").trim().toLowerCase();
+      setSupabaseTenantKey(requestKey);
+      if (state.tenantConfig?.tenant_key) {
+        setRuntimeTenantKey(requestKey);
+      }
+      return;
+    }
+
     const appliedKey = setRuntimeTenantKey(tenantKey);
     setSupabaseTenantKey(appliedKey);
-  }, [tenantKey]);
+  }, [municipalityMode, requestedTenantRoute, state.tenantConfig?.tenant_key, tenantKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,18 +130,18 @@ export function TenantProvider({ resolution, children }) {
     }
 
     loadTenantConfigCached(
-      tenantKey,
+      requestedTenantRoute,
       async () => {
         try {
-          const fromDb = await fetchTenantConfigFromDb(tenantKey);
+          const fromDb = await fetchTenantConfigFromDb(requestedTenantRoute);
           return fromDb;
         } catch (error) {
           if (
-            tenantKey === getDefaultTenantKey() &&
+            requestedTenantRoute === getDefaultTenantKey() &&
             isAllowDefaultTenantFallback() &&
             isMissingRelationError(error)
           ) {
-            return fallbackTenantConfig(tenantKey);
+            return fallbackTenantConfig(requestedTenantRoute);
           }
           throw error;
         }
@@ -133,7 +179,7 @@ export function TenantProvider({ resolution, children }) {
     return () => {
       cancelled = true;
     };
-  }, [municipalityMode, tenantKey]);
+  }, [municipalityMode, requestedTenantRoute]);
 
   const value = useMemo(
     () => ({
