@@ -335,6 +335,83 @@ const pageNavCard = {
   paddingBottom: 12,
 };
 
+const fullWidthSection = {
+  width: "100%",
+  margin: "0 auto",
+};
+
+const controlPlaneTabsShell = {
+  width: "100%",
+  padding: 8,
+  border: "1px solid rgba(23, 49, 79, 0.08)",
+  borderRadius: 22,
+  background: "rgba(255, 255, 255, 0.92)",
+  boxShadow: "0 10px 24px rgba(17, 49, 79, 0.06)",
+};
+
+const controlPlaneTabsBar = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
+  gap: 12,
+  alignItems: "stretch",
+};
+
+const controlPlaneTabButton = {
+  width: "100%",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  border: "1px solid rgba(23, 49, 79, 0.15)",
+  borderRadius: 999,
+  background: "rgba(255, 255, 255, 0.92)",
+  color: palette.text,
+  padding: "10px 16px",
+  fontSize: 14,
+  fontWeight: 700,
+  cursor: "pointer",
+  transition: "transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease",
+};
+
+const controlPlaneTabButtonActive = {
+  ...controlPlaneTabButton,
+  background: "linear-gradient(135deg, #113d5f 0%, #176d78 100%)",
+  border: "1px solid transparent",
+  color: "#f7fbff",
+  textShadow: "0 1px 0 rgba(9, 31, 48, 0.22)",
+};
+
+const controlPlaneSubmenu = {
+  position: "absolute",
+  top: "calc(100% + 8px)",
+  right: 0,
+  left: 0,
+  minWidth: 220,
+  padding: 8,
+  borderRadius: 18,
+  border: "1px solid rgba(23, 49, 79, 0.12)",
+  background: "rgba(255, 255, 255, 0.98)",
+  boxShadow: "0 18px 36px rgba(17, 49, 79, 0.14)",
+  display: "grid",
+  gap: 6,
+  zIndex: 30,
+};
+
+const controlPlaneSubmenuItem = {
+  display: "grid",
+  width: "100%",
+  border: "1px solid rgba(23, 49, 79, 0.08)",
+  borderRadius: 14,
+  background: "rgba(246, 250, 255, 0.96)",
+  color: palette.text,
+  padding: "10px 12px",
+  font: "inherit",
+  fontWeight: 700,
+  textAlign: "left",
+  cursor: "pointer",
+  gap: 2,
+};
+
 const metricCard = {
   ...subPanel,
   display: "grid",
@@ -760,7 +837,9 @@ export default function PlatformAdminApp() {
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const bannerMenuRef = useRef(null);
+  const controlPlaneNavRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
@@ -1029,9 +1108,18 @@ export default function PlatformAdminApp() {
     const allowedRoles = CONTROL_PLANE_PAGE_ACCESS[pageKey] || [];
     return allowedRoles.includes(currentPlatformRoleKey);
   }, [currentPlatformRoleKey]);
+  const visibleControlPlanePagesBySection = useMemo(
+    () => Object.fromEntries(
+      CONTROL_PLANE_SECTIONS.map((section) => [
+        section.key,
+        CONTROL_PLANE_PAGES.filter((page) => page.section === section.key && canAccessControlPlanePage(page.key)),
+      ])
+    ),
+    [canAccessControlPlanePage]
+  );
   const currentSectionPages = useMemo(
-    () => CONTROL_PLANE_PAGES.filter((page) => page.section === controlPlaneSection && canAccessControlPlanePage(page.key)),
-    [controlPlaneSection, canAccessControlPlanePage]
+    () => visibleControlPlanePagesBySection[controlPlaneSection] || [],
+    [controlPlaneSection, visibleControlPlanePagesBySection]
   );
   const controlPlanePageLabel = useMemo(
     () => CONTROL_PLANE_PAGES.find((page) => page.key === controlPlanePage)?.label || "",
@@ -1485,6 +1573,16 @@ export default function PlatformAdminApp() {
   }, [menuOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !openControlPlaneDropdown) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (controlPlaneNavRef.current?.contains(event.target)) return;
+      setOpenControlPlaneDropdown("");
+    };
+    window.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => window.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [openControlPlaneDropdown]);
+
+  useEffect(() => {
     let mounted = true;
     const syncSession = (session) => {
       if (!mounted) return;
@@ -1573,6 +1671,7 @@ export default function PlatformAdminApp() {
   const signOutPlatformAdmin = useCallback(async () => {
     await supabase.auth.signOut();
     setMenuOpen(false);
+    setOpenControlPlaneDropdown("");
     setIsPlatformAdmin(false);
     setPlatformAccessRole("");
     setLoginPassword("");
@@ -1588,6 +1687,7 @@ export default function PlatformAdminApp() {
     }
     setControlPlaneSection("organizations");
     setControlPlanePage("manage-organizations");
+    setOpenControlPlaneDropdown("");
     setEntryStep("add");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
     setActiveTab("tenants");
@@ -1611,6 +1711,7 @@ export default function PlatformAdminApp() {
     }
     setControlPlaneSection("organizations");
     setControlPlanePage("manage-organizations");
+    setOpenControlPlaneDropdown("");
     setSelectedTenantKey(key);
     setEntryStep("tenant");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
@@ -1628,6 +1729,7 @@ export default function PlatformAdminApp() {
   const returnToStart = useCallback(() => {
     setControlPlaneSection("reports");
     setControlPlanePage(DEFAULT_CONTROL_PLANE_PAGE);
+    setOpenControlPlaneDropdown("");
     setEntryStep("start");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
     setTenantSearch("");
@@ -1643,19 +1745,17 @@ export default function PlatformAdminApp() {
   const openControlPlaneSection = useCallback((sectionKey) => {
     const nextSection = String(sectionKey || "").trim();
     if (!nextSection) return;
-    const nextPage = CONTROL_PLANE_PAGES.find(
-      (page) => page.section === nextSection && canAccessControlPlanePage(page.key)
-    )?.key;
-    if (!nextPage) return;
-    setControlPlaneSection(nextSection);
-    setControlPlanePage(nextPage);
-  }, [canAccessControlPlanePage]);
+    const nextPages = visibleControlPlanePagesBySection[nextSection] || [];
+    if (!nextPages.length) return;
+    setOpenControlPlaneDropdown((prev) => (prev === nextSection ? "" : nextSection));
+  }, [visibleControlPlanePagesBySection]);
 
   const openControlPlanePage = useCallback((pageKey) => {
     const nextPage = CONTROL_PLANE_PAGES.find((page) => page.key === pageKey);
     if (!nextPage || !canAccessControlPlanePage(nextPage.key)) return;
     setControlPlaneSection(nextPage.section);
     setControlPlanePage(nextPage.key);
+    setOpenControlPlaneDropdown("");
   }, [canAccessControlPlanePage]);
 
   const searchPlatformUsers = useCallback(async (event) => {
@@ -3116,41 +3216,61 @@ export default function PlatformAdminApp() {
   );
 
   const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
-    <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 12 }}>
+    <section style={{ ...fullWidthSection, display: "grid", gap: 12 }}>
       <div style={pageNavCard}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {CONTROL_PLANE_SECTIONS.map((section) => {
-            const hasVisiblePages = CONTROL_PLANE_PAGES.some(
-              (page) => page.section === section.key && canAccessControlPlanePage(page.key)
-            );
-            if (!hasVisiblePages) return null;
-            const active = section.key === controlPlaneSection;
-            return (
-              <button
-                key={section.key}
-                type="button"
-                onClick={() => openControlPlaneSection(section.key)}
-                style={active ? buttonBase : buttonAlt}
-              >
-                {section.label}
-              </button>
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {currentSectionPages.map((page) => {
-            const active = page.key === controlPlanePage;
-            return (
-              <button
-                key={page.key}
-                type="button"
-                onClick={() => openControlPlanePage(page.key)}
-                style={active ? buttonBase : buttonAlt}
-              >
-                {page.label}
-              </button>
-            );
-          })}
+        <div ref={controlPlaneNavRef} style={controlPlaneTabsShell}>
+          <nav style={controlPlaneTabsBar} aria-label="Platform Control Plane navigation">
+            {CONTROL_PLANE_SECTIONS.map((section) => {
+              const visiblePages = visibleControlPlanePagesBySection[section.key] || [];
+              if (!visiblePages.length) return null;
+              const active = section.key === controlPlaneSection;
+              const isOpen = section.key === openControlPlaneDropdown;
+              return (
+                <div key={section.key} style={{ position: "relative", minWidth: 0 }} onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => openControlPlaneSection(section.key)}
+                    style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                  >
+                    <span>{section.label}</span>
+                    <span aria-hidden="true" style={{ fontSize: 12, opacity: active || isOpen ? 0.92 : 0.64 }}>
+                      {isOpen ? "▲" : "▼"}
+                    </span>
+                  </button>
+                  {isOpen ? (
+                    <div style={controlPlaneSubmenu}>
+                      {visiblePages.map((page) => {
+                        const pageActive = page.key === controlPlanePage;
+                        return (
+                          <button
+                            key={page.key}
+                            type="button"
+                            onClick={() => openControlPlanePage(page.key)}
+                            style={{
+                              ...controlPlaneSubmenuItem,
+                              ...(pageActive
+                                ? {
+                                    border: "1px solid rgba(18, 128, 106, 0.28)",
+                                    background: "rgba(229, 247, 243, 0.98)",
+                                  }
+                                : null),
+                            }}
+                          >
+                            <span>{page.label}</span>
+                            {pageActive ? (
+                              <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                Current page
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </nav>
         </div>
       </div>
       <div style={{ ...card, display: "grid", gap: 6 }}>
@@ -3168,7 +3288,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
-        <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
+        <section style={{ ...fullWidthSection, ...card }}>
           <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>Loading Session</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>Loading session...</p>
         </section>
@@ -3180,7 +3300,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
-        <section style={{ maxWidth: 1180, margin: "0 auto", ...card, display: "grid", gap: 10 }}>
+        <section style={{ ...fullWidthSection, ...card, display: "grid", gap: 10 }}>
           <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>Sign In</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>
             Sign in with your platform admin account to manage municipalities and operational settings.
@@ -3294,7 +3414,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
-        <section style={{ maxWidth: 1180, margin: "0 auto", ...card }}>
+        <section style={{ ...fullWidthSection, ...card }}>
           <h1 style={{ marginTop: 0, color: palette.navy900 }}>Access Denied</h1>
           <p style={{ marginBottom: 0 }}>
             Access denied. This route is restricted to platform users with `platform_owner` or `platform_staff` role.
@@ -3317,7 +3437,7 @@ export default function PlatformAdminApp() {
       {fixedBanner}
       {controlPlaneNavigation}
       {controlPlanePage === "organization-reports" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
             <div style={{ fontSize: 13.5, color: palette.textMuted }}>
               Platform-wide organization coverage, access footprint, and launch readiness.
@@ -3360,7 +3480,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "domain-reports" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <div style={{ fontSize: 13.5, color: palette.textMuted }}>
               Domain readiness by visibility footprint across all organizations.
@@ -3389,7 +3509,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "leads-reports" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
             <div style={{ fontSize: 13.5, color: palette.textMuted }}>
               Lead pipeline counts across the homepage intake funnel.
@@ -3429,7 +3549,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "finance-reports" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Finance Reports Foundation</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
@@ -3439,7 +3559,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "account-info" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
             <div style={responsiveTwoColGrid}>
@@ -3476,7 +3596,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-team" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Team</h2>
             <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
@@ -3579,7 +3699,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "roles-permissions" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Roles & Permissions</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
@@ -3609,7 +3729,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "security-checks" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
@@ -3619,7 +3739,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-leads" ? (
-        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
@@ -3681,7 +3801,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-organizations" ? (
-      <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+      <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
         <header style={{ ...card, display: "grid", gap: 12 }}>
           {inEntryPrompt ? (
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>

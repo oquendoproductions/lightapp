@@ -21737,7 +21737,7 @@ async function insertReportWithFallback(payload) {
             <div
               style={{
                 position: "relative",
-                width: "min(720px, calc(100vw - 32px))",
+                width: "calc(100vw - 32px)",
                 marginLeft: 0,
               }}
             >
@@ -21803,7 +21803,7 @@ async function insertReportWithFallback(payload) {
                   border: "1px solid var(--sl-ui-surface-border)",
                   borderRadius: 14,
                   boxShadow: "var(--sl-ui-surface-shadow)",
-                  padding: "15px 14px",
+                  padding: "18px 76px",
                   display: "grid",
                   gap: 6,
                   position: "relative",
@@ -21832,6 +21832,33 @@ async function insertReportWithFallback(payload) {
 	                  Back to Hub
 	                </button>
 	              ) : null}
+                <button
+                  type="button"
+                  aria-label="Open map menu"
+                  title="Open map menu"
+                  style={{
+                    position: "absolute",
+                    top: 10,
+                    right: 10,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 999,
+                    border: "1px solid rgba(23, 49, 79, 0.14)",
+                    background: "rgba(255,255,255,0.94)",
+                    color: "var(--sl-ui-text)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "default",
+                    boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+                  }}
+                >
+                  <span style={{ display: "grid", gap: 4 }}>
+                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                  </span>
+                </button>
 	              {titleLogoError ? (
 	                <>
                   <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
@@ -21865,7 +21892,7 @@ async function insertReportWithFallback(payload) {
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
-                width: "min(720px, calc(100vw - 100px))",
+                width: "calc(100vw - 32px)",
                 pointerEvents: "auto",
               }}
             >
@@ -22282,7 +22309,7 @@ async function insertReportWithFallback(payload) {
           </div>
           <div
               style={{
-                width: "min(720px, calc(100vw - 32px))",
+                width: "calc(100vw - 32px)",
                 margin: "0 auto",
                 background: "var(--sl-ui-surface-bg)",
                 border: "1px solid var(--sl-ui-surface-border)",
@@ -22413,7 +22440,7 @@ async function insertReportWithFallback(payload) {
                   border: "1px solid var(--sl-ui-surface-border)",
                   borderRadius: 12,
                   boxShadow: "var(--sl-ui-surface-shadow)",
-                  padding: typeof onBackToHub === "function" ? "12px 12px 12px 52px" : "12px 12px",
+                  padding: typeof onBackToHub === "function" ? "12px 52px 12px 52px" : "12px 52px 12px 12px",
                   display: "grid",
                   gap: 5,
                   position: "relative",
@@ -22443,6 +22470,34 @@ async function insertReportWithFallback(payload) {
                 setAccountMenuOpen(false);
               }}
             />
+            <button
+              type="button"
+              aria-label="Open map menu"
+              title="Open map menu"
+              style={{
+                position: "absolute",
+                top: "50%",
+                right: 9,
+                transform: "translateY(-50%)",
+                width: 32,
+                height: 32,
+                border: "1px solid rgba(23, 49, 79, 0.14)",
+                background: "rgba(255,255,255,0.94)",
+                color: "var(--sl-ui-text)",
+                borderRadius: 999,
+                padding: 0,
+                display: "grid",
+                placeItems: "center",
+                cursor: "default",
+                boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+              }}
+            >
+              <span style={{ display: "grid", gap: 3 }}>
+                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+              </span>
+            </button>
 
 	              {titleLogoError ? (
 	                <>
