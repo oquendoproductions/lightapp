@@ -29,6 +29,45 @@ const TAB_OPTIONS = [
   { key: "audit", label: "Audit" },
 ];
 
+const CONTROL_PLANE_SECTIONS = [
+  { key: "organizations", label: "Organizations" },
+  { key: "settings", label: "Settings" },
+  { key: "reports", label: "Reports" },
+];
+
+const CONTROL_PLANE_PAGES = [
+  { key: "manage-organizations", section: "organizations", label: "Manage Organizations" },
+  { key: "manage-leads", section: "organizations", label: "Manage Leads" },
+  { key: "account-info", section: "settings", label: "Account Info" },
+  { key: "manage-team", section: "settings", label: "Manage Team" },
+  { key: "roles-permissions", section: "settings", label: "Roles & Permissions" },
+  { key: "security-checks", section: "settings", label: "Security Checks" },
+  { key: "organization-reports", section: "reports", label: "Organization Reports" },
+  { key: "domain-reports", section: "reports", label: "Domain Reports" },
+  { key: "leads-reports", section: "reports", label: "Leads Reports" },
+  { key: "finance-reports", section: "reports", label: "Finance Reports" },
+];
+
+const DEFAULT_CONTROL_PLANE_PAGE = "organization-reports";
+
+const PLATFORM_ROLE_OPTIONS = [
+  { key: "platform_owner", label: "Platform Owner" },
+  { key: "platform_staff", label: "Platform Staff" },
+];
+
+const CONTROL_PLANE_PAGE_ACCESS = {
+  "manage-organizations": ["platform_owner", "legacy_admin", "platform_staff"],
+  "manage-leads": ["platform_owner", "legacy_admin", "platform_staff"],
+  "account-info": ["platform_owner", "legacy_admin", "platform_staff"],
+  "manage-team": ["platform_owner", "legacy_admin"],
+  "roles-permissions": ["platform_owner", "legacy_admin"],
+  "security-checks": ["platform_owner", "legacy_admin"],
+  "organization-reports": ["platform_owner", "legacy_admin", "platform_staff"],
+  "domain-reports": ["platform_owner", "legacy_admin", "platform_staff"],
+  "leads-reports": ["platform_owner", "legacy_admin", "platform_staff"],
+  "finance-reports": ["platform_owner", "legacy_admin"],
+};
+
 const ROLE_PERMISSION_ACTIONS = [
   { key: "access", label: "Access" },
   { key: "edit", label: "Edit" },
@@ -286,6 +325,22 @@ const tabSelectBase = {
   minWidth: 220,
   fontWeight: 700,
   background: "#ffffff",
+};
+
+const pageNavCard = {
+  ...card,
+  display: "grid",
+  gap: 10,
+  paddingTop: 12,
+  paddingBottom: 12,
+};
+
+const metricCard = {
+  ...subPanel,
+  display: "grid",
+  gap: 4,
+  alignContent: "start",
+  minHeight: 96,
 };
 
 const ADD_TENANT_STEPS = [
@@ -695,9 +750,22 @@ export default function PlatformAdminApp() {
   const [authResetLoading, setAuthResetLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState("tenants");
+  const [controlPlaneSection, setControlPlaneSection] = useState("reports");
+  const [controlPlanePage, setControlPlanePage] = useState(DEFAULT_CONTROL_PLANE_PAGE);
 
   const [tenants, setTenants] = useState([]);
   const [tenantAdmins, setTenantAdmins] = useState([]);
+  const [platformTeamAssignments, setPlatformTeamAssignments] = useState([]);
+  const [platformTeamUserSummariesById, setPlatformTeamUserSummariesById] = useState({});
+  const [platformUserSearchQuery, setPlatformUserSearchQuery] = useState("");
+  const [platformUserSearchResults, setPlatformUserSearchResults] = useState([]);
+  const [platformTeamForm, setPlatformTeamForm] = useState({ user_id: "", role: "platform_staff" });
+  const [platformTeamStatus, setPlatformTeamStatus] = useState("");
+  const [platformUserSearchLoading, setPlatformUserSearchLoading] = useState(false);
+  const [leadRows, setLeadRows] = useState([]);
+  const [leadDraftById, setLeadDraftById] = useState({});
+  const [leadStatus, setLeadStatus] = useState("");
+  const [leadLoading, setLeadLoading] = useState(false);
   const [tenantRoleDefinitions, setTenantRoleDefinitions] = useState([]);
   const [tenantRolePermissions, setTenantRolePermissions] = useState([]);
   const [selectedRoleKey, setSelectedRoleKey] = useState("");
@@ -843,6 +911,58 @@ export default function PlatformAdminApp() {
     () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
     [tenantAdmins, selectedTenantKey]
   );
+  const tenantAdminAssignments = useMemo(
+    () => (tenantAdmins || []).filter((row) => String(row?.role || "").trim() === "tenant_admin"),
+    [tenantAdmins]
+  );
+  const tenantEmployeeAssignments = useMemo(
+    () => (tenantAdmins || []).filter((row) => String(row?.role || "").trim() === "tenant_employee"),
+    [tenantAdmins]
+  );
+  const residentPortalCount = useMemo(
+    () => (tenants || []).filter((row) => Boolean(row?.resident_portal_enabled)).length,
+    [tenants]
+  );
+  const activeOrganizationCount = useMemo(
+    () => (tenants || []).filter((row) => row?.active !== false).length,
+    [tenants]
+  );
+  const pilotOrganizationCount = useMemo(
+    () => (tenants || []).filter((row) => Boolean(row?.is_pilot)).length,
+    [tenants]
+  );
+  const leadStatusCounts = useMemo(() => {
+    const counts = {};
+    for (const row of leadRows || []) {
+      const key = String(row?.status || "new").trim().toLowerCase() || "new";
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [leadRows]);
+  const leadDomainCounts = useMemo(() => {
+    const counts = {};
+    for (const row of leadRows || []) {
+      const key = String(row?.priority_domain || "other").trim().toLowerCase() || "other";
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [leadRows]);
+  const domainReportRows = useMemo(() => (
+    DOMAIN_OPTIONS.map((domain) => {
+      let publicCount = 0;
+      let restrictedCount = 0;
+      for (const tenantKey of Object.keys(tenantVisibilityByTenant || {})) {
+        const visibility = String(tenantVisibilityByTenant?.[tenantKey]?.[domain.key] || "public").trim().toLowerCase();
+        if (visibility === "private" || visibility === "disabled" || visibility === "hidden") restrictedCount += 1;
+        else publicCount += 1;
+      }
+      return {
+        ...domain,
+        publicCount,
+        restrictedCount,
+      };
+    })
+  ), [tenantVisibilityByTenant]);
 
   const tenantRoleAssignmentCounts = useMemo(() => {
     const counts = {};
@@ -876,8 +996,21 @@ export default function PlatformAdminApp() {
   const isPlatformStaff = platformAccessRole === "platform_staff";
   const canEditTenantCore = isPlatformOwner;
   const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
+  const currentPlatformRoleKey = platformAccessRole || (isPlatformOwner ? "platform_owner" : isPlatformStaff ? "platform_staff" : "");
   const platformRoleLabel = platformRoleToLabel(platformAccessRole);
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
+  const canAccessControlPlanePage = useCallback((pageKey) => {
+    const allowedRoles = CONTROL_PLANE_PAGE_ACCESS[pageKey] || [];
+    return allowedRoles.includes(currentPlatformRoleKey);
+  }, [currentPlatformRoleKey]);
+  const currentSectionPages = useMemo(
+    () => CONTROL_PLANE_PAGES.filter((page) => page.section === controlPlaneSection && canAccessControlPlanePage(page.key)),
+    [controlPlaneSection, canAccessControlPlanePage]
+  );
+  const controlPlanePageLabel = useMemo(
+    () => CONTROL_PLANE_PAGES.find((page) => page.key === controlPlanePage)?.label || "",
+    [controlPlanePage]
+  );
   const addTenantStepIndex = Math.max(0, ADD_TENANT_STEPS.findIndex((step) => step.key === addTenantStep));
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
@@ -890,6 +1023,12 @@ export default function PlatformAdminApp() {
     const summary = resolveKnownUserSummary(userId);
     return String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "Selected account";
   }, [resolveKnownUserSummary]);
+  const formatPlatformUserLabel = useCallback((userId) => {
+    const key = String(userId || "").trim();
+    if (!key) return "Selected account";
+    const summary = platformTeamUserSummariesById?.[key];
+    return String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "Selected account";
+  }, [platformTeamUserSummariesById]);
 
   const updateAdditionalContact = useCallback((index, field, value) => {
     setProfileForm((prev) => ({
@@ -979,6 +1118,50 @@ export default function PlatformAdminApp() {
       .order("created_at", { ascending: false });
     if (error) throw error;
     setTenantAdmins(Array.isArray(data) ? data : []);
+  }, []);
+
+  const loadPlatformTeamAssignments = useCallback(async () => {
+    if (!isPlatformOwner) {
+      setPlatformTeamAssignments([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("platform_user_roles")
+      .select("user_id,role,status,created_at,updated_at")
+      .eq("status", "active")
+      .order("role", { ascending: true })
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    setPlatformTeamAssignments(Array.isArray(data) ? data : []);
+  }, [isPlatformOwner]);
+
+  const loadClientLeads = useCallback(async () => {
+    let result = await supabase
+      .from("client_leads")
+      .select("id,created_at,full_name,work_email,city_agency,role_title,priority_domain,notes,status,internal_notes,follow_up_on,last_follow_up_at,updated_at")
+      .order("created_at", { ascending: false });
+
+    if (result.error && isMissingColumnError(result.error)) {
+      result = await supabase
+        .from("client_leads")
+        .select("id,created_at,full_name,work_email,city_agency,role_title,priority_domain,notes,status")
+        .order("created_at", { ascending: false });
+      if (result.error) throw result.error;
+      const fallbackRows = Array.isArray(result.data)
+        ? result.data.map((row) => ({
+          ...row,
+          internal_notes: "",
+          follow_up_on: null,
+          last_follow_up_at: null,
+          updated_at: row?.created_at || null,
+        }))
+        : [];
+      setLeadRows(fallbackRows);
+      return;
+    }
+
+    if (result.error) throw result.error;
+    setLeadRows(Array.isArray(result.data) ? result.data : []);
   }, []);
 
   const loadTenantRoleConfig = useCallback(async (tenantKeyInput = selectedTenantKey) => {
@@ -1181,6 +1364,8 @@ export default function PlatformAdminApp() {
       await Promise.all([
         loadTenants(),
         loadTenantAdmins(),
+        loadPlatformTeamAssignments(),
+        loadClientLeads(),
         loadTenantRoleConfig(),
         loadTenantProfiles(),
         loadTenantVisibility(),
@@ -1191,7 +1376,7 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canEditTenantCore) {
@@ -1222,6 +1407,34 @@ export default function PlatformAdminApp() {
     }
     setAssignmentUserSummariesById(next);
   }, [canEditTenantCore, invokePlatformUserAdmin, selectedTenantRoleAssignments]);
+
+  const loadPlatformTeamUserSummaries = useCallback(async () => {
+    if (!isPlatformOwner) {
+      setPlatformTeamUserSummariesById({});
+      return;
+    }
+
+    const userIds = [...new Set(platformTeamAssignments.map((row) => String(row?.user_id || "").trim()).filter(Boolean))];
+    if (!userIds.length) {
+      setPlatformTeamUserSummariesById({});
+      return;
+    }
+
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "lookup_users",
+      user_ids: userIds,
+    });
+
+    if (error) return;
+
+    const next = {};
+    for (const row of Array.isArray(data?.results) ? data.results : []) {
+      const key = String(row?.id || "").trim();
+      if (!key) continue;
+      next[key] = row;
+    }
+    setPlatformTeamUserSummariesById(next);
+  }, [invokePlatformUserAdmin, isPlatformOwner, platformTeamAssignments]);
 
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
@@ -1337,6 +1550,8 @@ export default function PlatformAdminApp() {
     setIsPlatformAdmin(false);
     setPlatformAccessRole("");
     setLoginPassword("");
+    setControlPlaneSection("reports");
+    setControlPlanePage(DEFAULT_CONTROL_PLANE_PAGE);
     setEntryStep("start");
   }, []);
 
@@ -1345,6 +1560,8 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can create a tenant." }));
       return;
     }
+    setControlPlaneSection("organizations");
+    setControlPlanePage("manage-organizations");
     setEntryStep("add");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
     setActiveTab("tenants");
@@ -1366,6 +1583,8 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, hydrate: "No tenants found yet. Use Add Tenant to create one." }));
       return;
     }
+    setControlPlaneSection("organizations");
+    setControlPlanePage("manage-organizations");
     setSelectedTenantKey(key);
     setEntryStep("tenant");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
@@ -1381,6 +1600,8 @@ export default function PlatformAdminApp() {
   }, []);
 
   const returnToStart = useCallback(() => {
+    setControlPlaneSection("reports");
+    setControlPlanePage(DEFAULT_CONTROL_PLANE_PAGE);
     setEntryStep("start");
     setAddTenantStep(ADD_TENANT_STEPS[0].key);
     setTenantSearch("");
@@ -1392,6 +1613,24 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     setStatus((prev) => ({ ...prev, users: "", hydrate: "" }));
   }, []);
+
+  const openControlPlaneSection = useCallback((sectionKey) => {
+    const nextSection = String(sectionKey || "").trim();
+    if (!nextSection) return;
+    const nextPage = CONTROL_PLANE_PAGES.find(
+      (page) => page.section === nextSection && canAccessControlPlanePage(page.key)
+    )?.key;
+    if (!nextPage) return;
+    setControlPlaneSection(nextSection);
+    setControlPlanePage(nextPage);
+  }, [canAccessControlPlanePage]);
+
+  const openControlPlanePage = useCallback((pageKey) => {
+    const nextPage = CONTROL_PLANE_PAGES.find((page) => page.key === pageKey);
+    if (!nextPage || !canAccessControlPlanePage(nextPage.key)) return;
+    setControlPlaneSection(nextPage.section);
+    setControlPlanePage(nextPage.key);
+  }, [canAccessControlPlanePage]);
 
   const searchPlatformUsers = useCallback(async (event) => {
     event.preventDefault();
@@ -1432,6 +1671,141 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, users: `Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.` }));
   }, [canEditTenantCore, invokePlatformUserAdmin, userSearchQuery]);
+
+  const searchPlatformTeamUsers = useCallback(async (event) => {
+    event.preventDefault();
+    if (!isPlatformOwner) {
+      setPlatformTeamStatus("Only Platform Owner can manage the internal team.");
+      return;
+    }
+
+    const query = String(platformUserSearchQuery || "").trim();
+    if (query.length < 2) {
+      setPlatformUserSearchResults([]);
+      setPlatformTeamForm((prev) => ({ ...prev, user_id: "" }));
+      setPlatformTeamStatus("Enter an exact email, exact phone number, or full name to find a platform team member.");
+      return;
+    }
+
+    setPlatformUserSearchLoading(true);
+    setPlatformTeamStatus("");
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "search",
+      query,
+    });
+    setPlatformUserSearchLoading(false);
+
+    if (error) {
+      setPlatformUserSearchResults([]);
+      setPlatformTeamStatus(statusText(error, ""));
+      return;
+    }
+
+    const rows = Array.isArray(data?.results) ? data.results : [];
+    setPlatformUserSearchResults(rows);
+    if (!rows.length) {
+      setPlatformTeamForm((prev) => ({ ...prev, user_id: "" }));
+      setPlatformTeamStatus("No matching internal account was found.");
+      return;
+    }
+
+    setPlatformTeamStatus(`Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.`);
+  }, [invokePlatformUserAdmin, isPlatformOwner, platformUserSearchQuery]);
+
+  const assignPlatformRole = useCallback(async () => {
+    if (!isPlatformOwner) {
+      setPlatformTeamStatus("Only Platform Owner can assign platform roles.");
+      return;
+    }
+    const userId = String(platformTeamForm.user_id || "").trim();
+    const role = String(platformTeamForm.role || "").trim();
+    if (!userId || !role) {
+      setPlatformTeamStatus("Select an account and choose a platform role.");
+      return;
+    }
+    const { error } = await supabase
+      .from("platform_user_roles")
+      .upsert([{ user_id: userId, role, status: "active", assigned_by: sessionUserId }], { onConflict: "user_id,role" });
+    if (error) {
+      setPlatformTeamStatus(statusText(error, ""));
+      return;
+    }
+    setPlatformTeamStatus("Platform role assigned.");
+    setPlatformTeamForm({ user_id: "", role });
+    setPlatformUserSearchQuery("");
+    setPlatformUserSearchResults([]);
+    await loadPlatformTeamAssignments();
+  }, [isPlatformOwner, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, sessionUserId]);
+
+  const removePlatformRole = useCallback(async (row) => {
+    if (!isPlatformOwner) {
+      setPlatformTeamStatus("Only Platform Owner can remove platform roles.");
+      return;
+    }
+    const userId = String(row?.user_id || "").trim();
+    const role = String(row?.role || "").trim();
+    if (!userId || !role) return;
+    if (role === "platform_owner" && String(userId) === String(sessionUserId)) {
+      setPlatformTeamStatus("You cannot remove your own Platform Owner role from this screen.");
+      return;
+    }
+    const { error } = await supabase
+      .from("platform_user_roles")
+      .delete()
+      .eq("user_id", userId)
+      .eq("role", role);
+    if (error) {
+      setPlatformTeamStatus(statusText(error, ""));
+      return;
+    }
+    setPlatformTeamStatus("Platform role removed.");
+    await loadPlatformTeamAssignments();
+  }, [isPlatformOwner, loadPlatformTeamAssignments, sessionUserId]);
+
+  const updateLeadDraft = useCallback((leadId, field, value) => {
+    const key = String(leadId || "").trim();
+    if (!key) return;
+    setLeadDraftById((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        [field]: value,
+      },
+    }));
+  }, []);
+
+  const saveLeadUpdate = useCallback(async (leadRow) => {
+    if (!canEditTenantOperational) {
+      setLeadStatus("Your platform role does not allow lead updates.");
+      return;
+    }
+    const leadId = String(leadRow?.id || "").trim();
+    if (!leadId) return;
+    const draft = leadDraftById[leadId] || {};
+    const payload = {
+      status: String(draft.status ?? leadRow?.status ?? "new").trim() || "new",
+      internal_notes: String(draft.internal_notes ?? leadRow?.internal_notes ?? "").trim() || null,
+      follow_up_on: String(draft.follow_up_on ?? leadRow?.follow_up_on ?? "").trim() || null,
+      last_follow_up_at: draft.mark_follow_up ? new Date().toISOString() : (leadRow?.last_follow_up_at || null),
+    };
+    setLeadLoading(true);
+    const { error } = await supabase
+      .from("client_leads")
+      .update(payload)
+      .eq("id", leadId);
+    setLeadLoading(false);
+    if (error) {
+      setLeadStatus(statusText(error, ""));
+      return;
+    }
+    setLeadStatus(`Saved lead updates for ${String(leadRow?.full_name || "").trim() || leadId}.`);
+    setLeadDraftById((prev) => {
+      const next = { ...prev };
+      delete next[leadId];
+      return next;
+    });
+    await loadClientLeads();
+  }, [canEditTenantOperational, leadDraftById, loadClientLeads]);
 
   const createAndAssignTenantUser = useCallback(async (event) => {
     event.preventDefault();
@@ -1570,6 +1944,31 @@ export default function PlatformAdminApp() {
   }, [isPlatformAdmin, refreshControlPlaneData]);
 
   useEffect(() => {
+    if (!currentPlatformRoleKey) return;
+    const currentPageAllowed = canAccessControlPlanePage(controlPlanePage);
+    const currentSectionAllowedPages = CONTROL_PLANE_PAGES.filter(
+      (page) => page.section === controlPlaneSection && canAccessControlPlanePage(page.key)
+    );
+
+    if (!currentPageAllowed) {
+      const fallbackPage = currentSectionAllowedPages[0]?.key
+        || CONTROL_PLANE_PAGES.find((page) => canAccessControlPlanePage(page.key))?.key
+        || DEFAULT_CONTROL_PLANE_PAGE;
+      const fallbackSection = CONTROL_PLANE_PAGES.find((page) => page.key === fallbackPage)?.section || "reports";
+      if (fallbackSection !== controlPlaneSection) setControlPlaneSection(fallbackSection);
+      if (fallbackPage !== controlPlanePage) setControlPlanePage(fallbackPage);
+      return;
+    }
+
+    if (!currentSectionAllowedPages.some((page) => page.key === controlPlanePage)) {
+      const nextPage = currentSectionAllowedPages[0]?.key;
+      if (nextPage && nextPage !== controlPlanePage) {
+        setControlPlanePage(nextPage);
+      }
+    }
+  }, [canAccessControlPlanePage, controlPlanePage, controlPlaneSection, currentPlatformRoleKey]);
+
+  useEffect(() => {
     if (!tenantOptions.length) return;
     if (!tenantOptions.includes(selectedTenantKey)) {
       setSelectedTenantKey(tenantOptions[0]);
@@ -1651,6 +2050,10 @@ export default function PlatformAdminApp() {
   useEffect(() => {
     void loadAssignmentUserSummaries();
   }, [loadAssignmentUserSummaries]);
+
+  useEffect(() => {
+    void loadPlatformTeamUserSummaries();
+  }, [loadPlatformTeamUserSummaries]);
 
   useEffect(() => {
     if (!assignableTenantRoles.length) return;
@@ -2686,6 +3089,55 @@ export default function PlatformAdminApp() {
     </div>
   );
 
+  const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
+    <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 12 }}>
+      <div style={pageNavCard}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {CONTROL_PLANE_SECTIONS.map((section) => {
+            const hasVisiblePages = CONTROL_PLANE_PAGES.some(
+              (page) => page.section === section.key && canAccessControlPlanePage(page.key)
+            );
+            if (!hasVisiblePages) return null;
+            const active = section.key === controlPlaneSection;
+            return (
+              <button
+                key={section.key}
+                type="button"
+                onClick={() => openControlPlaneSection(section.key)}
+                style={active ? buttonBase : buttonAlt}
+              >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {currentSectionPages.map((page) => {
+            const active = page.key === controlPlanePage;
+            return (
+              <button
+                key={page.key}
+                type="button"
+                onClick={() => openControlPlanePage(page.key)}
+                style={active ? buttonBase : buttonAlt}
+              >
+                {page.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ ...card, display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+          Current Page
+        </div>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
+          {controlPlanePageLabel}
+        </h1>
+      </div>
+    </section>
+  ) : null;
+
   if (!authReady) {
     return (
       <main style={shellStyle}>
@@ -2837,6 +3289,372 @@ export default function PlatformAdminApp() {
   return (
     <main style={shellStyle}>
       {fixedBanner}
+      {controlPlaneNavigation}
+      {controlPlanePage === "organization-reports" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 13.5, color: palette.textMuted }}>
+              Platform-wide organization coverage, access footprint, and launch readiness.
+            </div>
+            <div style={responsiveTwoColGrid}>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organizations</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenants.length}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Configured across the platform.</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Active Organizations</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{activeOrganizationCount}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Live and available in production.</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organization Admins</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenantAdminAssignments.length}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Primary location operators currently assigned.</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organization Employees</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenantEmployeeAssignments.length}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Scoped staff assignments across all organizations.</div>
+              </div>
+            </div>
+            <div style={responsiveTwoColGrid}>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Resident Hubs Enabled</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{residentPortalCount}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Organizations using the resident updates homepage.</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Pilot Organizations</div>
+                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{pilotOrganizationCount}</div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Currently flagged for pilot operations.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "domain-reports" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ fontSize: 13.5, color: palette.textMuted }}>
+              Domain readiness by visibility footprint across all organizations.
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeadCell}>Domain</th>
+                    <th style={tableHeadCell}>Public / Enabled</th>
+                    <th style={tableHeadCell}>Restricted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {domainReportRows.map((row) => (
+                    <tr key={row.key}>
+                      <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{row.label}</td>
+                      <td style={{ padding: "10px 0" }}>{row.publicCount}</td>
+                      <td style={{ padding: "10px 0" }}>{row.restrictedCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "leads-reports" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 13.5, color: palette.textMuted }}>
+              Lead pipeline counts across the homepage intake funnel.
+            </div>
+            <div style={responsiveTwoColGrid}>
+              {["new", "reviewed", "contacted", "closed"].map((statusKey) => (
+                <div key={statusKey} style={metricCard}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{statusKey}</div>
+                  <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{leadStatusCounts[statusKey] || 0}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeadCell}>Priority Domain</th>
+                    <th style={tableHeadCell}>Lead Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(leadDomainCounts).map(([domainKey, count]) => (
+                    <tr key={domainKey}>
+                      <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{roleKeyToLabel(domainKey)}</td>
+                      <td style={{ padding: "10px 0" }}>{count}</td>
+                    </tr>
+                  ))}
+                  {!Object.keys(leadDomainCounts).length ? (
+                    <tr>
+                      <td colSpan={2} style={{ padding: "10px 0", color: palette.textMuted }}>No leads captured yet.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "finance-reports" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Finance Reports Foundation</h2>
+            <p style={{ margin: 0, color: palette.textMuted }}>
+              Finance reporting is scaffolded into the PCP structure now. Billing, contract value, collections, and pilot revenue metrics can plug into this page next without reshaping the control plane.
+            </p>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "account-info" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 12 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
+            <div style={responsiveTwoColGrid}>
+              <div style={metricCard}>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
+              </div>
+              <div style={metricCard}>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={buttonBase}
+                onClick={() => {
+                  setForgotPasswordEmail(sessionEmail);
+                  setForgotPasswordOpen(true);
+                }}
+              >
+                Update Password
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "manage-team" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Team</h2>
+            <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+              Assign internal platform roles from the PCP. Platform Owner can grant or remove internal access here.
+            </p>
+            <form onSubmit={searchPlatformTeamUsers} style={responsiveActionGrid}>
+              <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <span>Find Internal Account</span>
+                <input
+                  value={platformUserSearchQuery}
+                  onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
+                  placeholder="Exact email, exact phone, or full name"
+                  style={inputBase}
+                  disabled={!isPlatformOwner}
+                />
+              </label>
+              <button type="submit" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner || platformUserSearchLoading}>
+                {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
+              </button>
+            </form>
+            {platformUserSearchResults.length ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                {platformUserSearchResults.map((row) => {
+                  const userId = String(row?.id || "").trim();
+                  const selected = userId === platformTeamForm.user_id;
+                  return (
+                    <button
+                      key={userId}
+                      type="button"
+                      onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
+                      style={{
+                        ...listActionButton,
+                        border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                        background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                      }}
+                    >
+                      <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
+                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                        {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
+              <label style={{ fontSize: 12.5, display: "grid", gap: 4, minWidth: 220 }}>
+                <span>Platform Role</span>
+                <select
+                  value={platformTeamForm.role}
+                  onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
+                  style={inputBase}
+                  disabled={!isPlatformOwner}
+                >
+                  {PLATFORM_ROLE_OPTIONS.map((row) => (
+                    <option key={row.key} value={row.key}>{row.label}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!isPlatformOwner || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
+                Assign Platform Role
+              </button>
+            </div>
+            {platformTeamStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformTeamStatus}</div> : null}
+          </div>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeadCell}>Team Member</th>
+                    <th style={tableHeadCell}>Role</th>
+                    <th style={tableHeadCell}>Updated</th>
+                    <th style={tableHeadCell}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {platformTeamAssignments.map((row) => (
+                    <tr key={`${row.user_id}:${row.role}`}>
+                      <td style={{ padding: "10px 0" }}>{formatPlatformUserLabel(row.user_id)}</td>
+                      <td style={{ padding: "10px 0" }}>{platformRoleToLabel(row.role)}</td>
+                      <td style={{ padding: "10px 0" }}>{row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</td>
+                      <td style={{ padding: "10px 0" }}>
+                        <button type="button" style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void removePlatformRole(row)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!platformTeamAssignments.length ? (
+                    <tr>
+                      <td colSpan={4} style={{ padding: "10px 0", color: palette.textMuted }}>No platform roles have been assigned yet.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "roles-permissions" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Roles & Permissions</h2>
+            <p style={{ margin: 0, color: palette.textMuted }}>
+              PCP access is now page-based. This foundation page defines which internal roles can access each control-plane page.
+            </p>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeadCell}>Page</th>
+                    <th style={tableHeadCell}>Platform Owner</th>
+                    <th style={tableHeadCell}>Platform Staff</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {CONTROL_PLANE_PAGES.map((page) => (
+                    <tr key={page.key}>
+                      <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{page.label}</td>
+                      <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_owner") || CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("legacy_admin") ? "Yes" : "No"}</td>
+                      <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_staff") ? "Yes" : "No"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "security-checks" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
+            <p style={{ margin: 0, color: palette.textMuted }}>
+              PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
+            </p>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "manage-leads" ? (
+        <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+          <div style={{ ...card, display: "grid", gap: 10 }}>
+            <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
+            <p style={{ margin: 0, color: palette.textMuted }}>
+              Track municipal leads captured from CityReport.io, update status, set follow-ups, and keep internal notes in one place.
+            </p>
+            {leadStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{leadStatus}</div> : null}
+            <div style={{ display: "grid", gap: 12 }}>
+              {leadRows.map((lead) => {
+                const draft = leadDraftById[String(lead.id)] || {};
+                return (
+                  <div key={lead.id} style={{ ...subPanel, display: "grid", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 2 }}>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>{lead.full_name}</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        {[lead.work_email, lead.city_agency, lead.role_title].filter(Boolean).join(" • ")}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Submitted {lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"} • Priority domain: {roleKeyToLabel(lead.priority_domain)}
+                      </div>
+                    </div>
+                    <div style={responsiveTwoColGrid}>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Lead Status</span>
+                        <select value={draft.status ?? lead.status ?? "new"} onChange={(e) => updateLeadDraft(lead.id, "status", e.target.value)} style={inputBase}>
+                          <option value="new">New</option>
+                          <option value="reviewed">Reviewed</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Follow-up Date</span>
+                        <input type="date" value={draft.follow_up_on ?? String(lead.follow_up_on || "").slice(0, 10)} onChange={(e) => updateLeadDraft(lead.id, "follow_up_on", e.target.value)} style={inputBase} />
+                      </label>
+                    </div>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Internal Notes</span>
+                      <textarea value={draft.internal_notes ?? lead.internal_notes ?? lead.notes ?? ""} onChange={(e) => updateLeadDraft(lead.id, "internal_notes", e.target.value)} style={{ ...inputBase, minHeight: 88 }} />
+                    </label>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <button type="button" style={buttonBase} disabled={leadLoading} onClick={() => void saveLeadUpdate(lead)}>
+                        {leadLoading ? "Saving..." : "Save Lead"}
+                      </button>
+                      <button type="button" style={buttonAlt} onClick={() => updateLeadDraft(lead.id, "mark_follow_up", true)}>
+                        Mark Follow-up Done On Save
+                      </button>
+                      {lead.last_follow_up_at ? (
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>Last follow-up: {new Date(lead.last_follow_up_at).toLocaleString()}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+              {!leadRows.length ? (
+                <div style={{ ...subPanel, color: palette.textMuted }}>No leads have been captured yet.</div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "manage-organizations" ? (
       <section style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         <header style={{ ...card, display: "grid", gap: 12 }}>
           {inEntryPrompt ? (
@@ -4155,6 +4973,59 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
       </section>
+      ) : null}
+      {forgotPasswordOpen ? (
+        <div style={authModalBackdrop} onClick={closeForgotPasswordModal}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Reset Password</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Enter your account email and we&apos;ll send a password reset link.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeForgotPasswordModal}
+                style={{
+                  ...buttonAlt,
+                  minWidth: 0,
+                  width: 34,
+                  height: 34,
+                  padding: 0,
+                  borderRadius: 10,
+                  fontSize: 18,
+                  lineHeight: 1,
+                }}
+                aria-label="Close password reset dialog"
+              >
+                ×
+              </button>
+            </div>
+            <input
+              {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+              value={forgotPasswordEmail}
+              onChange={(event) => setForgotPasswordEmail(event.target.value)}
+              style={inputBase}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !authResetLoading) {
+                  event.preventDefault();
+                  void sendPasswordReset();
+                }
+              }}
+            />
+            {forgotPasswordError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{forgotPasswordError}</p> : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={{ ...buttonBase, minWidth: 160 }} disabled={authResetLoading} onClick={() => void sendPasswordReset()}>
+                {authResetLoading ? "Sending reset..." : "Send Reset Email"}
+              </button>
+              <button type="button" style={{ ...buttonAlt, minWidth: 120 }} onClick={closeForgotPasswordModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

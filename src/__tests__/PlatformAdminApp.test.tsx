@@ -336,6 +336,9 @@ describe("PlatformAdminApp", () => {
     const user = userEvent.setup();
     const { container } = render(<PlatformAdminApp />);
 
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /^organizations$/i }));
+    await user.click(screen.getByRole("button", { name: /manage organizations/i }));
     await screen.findByRole("heading", { name: /start here/i });
 
     await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
@@ -378,8 +381,8 @@ describe("PlatformAdminApp", () => {
 
     await user.click(screen.getByLabelText(/return to start here/i));
 
-    await screen.findByRole("heading", { name: /start here/i });
-    expect(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i)).toBeInTheDocument();
+    await screen.findByRole("heading", { name: /organization reports/i });
+    expect(screen.getByText(/platform-wide organization coverage/i)).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {
@@ -409,6 +412,9 @@ describe("PlatformAdminApp", () => {
     const user = userEvent.setup();
     render(<PlatformAdminApp />);
 
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /^organizations$/i }));
+    await user.click(screen.getByRole("button", { name: /manage organizations/i }));
     await screen.findByRole("heading", { name: /start here/i });
     await user.click(screen.getByRole("button", { name: /^add organization$/i }));
 
