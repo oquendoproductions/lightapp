@@ -114,12 +114,16 @@ const EMPTY_EVENT_FORM = {
 const LOCATION_ASSET_CATEGORIES = [
   { key: "logo", label: "Logo" },
   { key: "boundary_geojson", label: "Boundary" },
-  { key: "streetlight_inventory", label: "Streetlight Inventory" },
   { key: "calendar_source", label: "Calendar Source" },
-  { key: "asset_coordinates", label: "Coordinate File" },
+  { key: "asset", label: "Asset" },
   { key: "contract", label: "Contract" },
-  { key: "general_asset", label: "General Asset" },
   { key: "other", label: "Other" },
+];
+
+const LOCATION_ASSET_OWNERSHIP_OPTIONS = [
+  { key: "organization_owned", label: "Organization-Owned" },
+  { key: "utility_owned", label: "Utility-Owned" },
+  { key: "third_party", label: "Third-Party" },
 ];
 
 function isMissingRelationError(error) {
@@ -216,6 +220,24 @@ function formatBytes(bytes) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function summarizeAssetCategory(categoryKey) {
+  const key = trimOrEmpty(categoryKey).toLowerCase();
+  if (!key) return "Asset";
+  const standard = LOCATION_ASSET_CATEGORIES.find((row) => row.key === key);
+  if (standard) return standard.label;
+  if (key === "general_asset") return "Asset";
+  if (key === "streetlight_inventory") return "Asset";
+  if (key === "asset_coordinates") return "Coordinate File";
+  return key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function summarizeAssetOwnership(ownerType) {
+  const key = trimOrEmpty(ownerType).toLowerCase();
+  if (!key) return "";
+  return LOCATION_ASSET_OWNERSHIP_OPTIONS.find((row) => row.key === key)?.label
+    || key.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function validateStrongPassword(value) {
@@ -861,13 +883,16 @@ export default function MunicipalityApp() {
   const [assetLibrary, setAssetLibrary] = useState([]);
   const [assetFiles, setAssetFiles] = useState([]);
   const [assetUploadDraft, setAssetUploadDraft] = useState({
-    category: "general_asset",
+    category: "asset",
+    asset_subtype: "",
+    asset_owner_type: "organization_owned",
     notes: "",
     file: null,
   });
   const [settingsSectionEdit, setSettingsSectionEdit] = useState({
     organization: false,
     map: false,
+    assets: false,
   });
   const [settingsSectionSaving, setSettingsSectionSaving] = useState({
     organization: false,
@@ -1420,7 +1445,7 @@ export default function MunicipalityApp() {
           .order("sort_order", { ascending: true }),
         supabase
           .from("tenant_files")
-          .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active")
+          .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
           .eq("tenant_key", tenantKey)
           .order("uploaded_at", { ascending: false }),
       ]) : Promise.resolve([null, null, null, null, null, null, null]);
@@ -1451,9 +1476,9 @@ export default function MunicipalityApp() {
           status: "Attached",
         } : null,
         {
-          key: "streetlight-inventory",
-          label: "Streetlight Inventory",
-          description: "Streetlight files and exports are managed as shared location assets.",
+          key: "asset-library",
+          label: "Asset Library",
+          description: "Physical infrastructure files can be tracked here as assets with subcategories like streetlights, hydrants, or other inventory.",
           status: "Available",
         },
         {
@@ -1951,7 +1976,7 @@ export default function MunicipalityApp() {
   async function reloadAssetFiles() {
     const { data, error } = await supabase
       .from("tenant_files")
-      .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active")
+      .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
       .eq("tenant_key", tenantKey)
       .order("uploaded_at", { ascending: false });
 
@@ -1978,9 +2003,19 @@ export default function MunicipalityApp() {
     setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
 
-    const category = trimOrEmpty(assetUploadDraft.category).toLowerCase() || "general_asset";
+    const category = trimOrEmpty(assetUploadDraft.category).toLowerCase() || "asset";
+    const assetSubtype = trimOrEmpty(assetUploadDraft.asset_subtype);
+    const assetOwnerType = category === "asset"
+      ? (trimOrEmpty(assetUploadDraft.asset_owner_type).toLowerCase() || "organization_owned")
+      : null;
+    if (category === "asset" && !assetSubtype) {
+      setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+      setSettingsSectionStatus((prev) => ({ ...prev, assets: "Enter an asset subtype like streetlights or fire hydrants." }));
+      return;
+    }
     const now = Date.now();
-    const path = `${tenantKey}/${category}/${toDatePath(new Date())}/${now}_${sanitizeFileNameSegment(file.name)}`;
+    const subtypeSegment = category === "asset" ? `/${sanitizeFileNameSegment(assetSubtype.toLowerCase())}` : "";
+    const path = `${tenantKey}/${category}${subtypeSegment}/${toDatePath(new Date())}/${now}_${sanitizeFileNameSegment(file.name)}`;
     const contentType = String(file.type || "application/octet-stream");
 
     const { error: uploadError } = await supabase
@@ -2003,6 +2038,8 @@ export default function MunicipalityApp() {
       mime_type: contentType,
       size_bytes: Number(file.size || 0),
       uploaded_by: session?.user?.id || null,
+      asset_subtype: category === "asset" ? assetSubtype : null,
+      asset_owner_type: assetOwnerType,
       notes: trimOrEmpty(assetUploadDraft.notes) || null,
       active: true,
     };
@@ -2014,7 +2051,7 @@ export default function MunicipalityApp() {
       return;
     }
 
-    setAssetUploadDraft({ category: "general_asset", notes: "", file: null });
+    setAssetUploadDraft({ category: "asset", asset_subtype: "", asset_owner_type: "organization_owned", notes: "", file: null });
     setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
     setSettingsSectionStatus((prev) => ({ ...prev, assets: `Uploaded ${file.name}.` }));
     await reloadAssetFiles();
@@ -3657,49 +3694,34 @@ export default function MunicipalityApp() {
                           <div className="municipality-settings-header">
                             <div>
                               <h4>Assets</h4>
-                              <p className="municipality-note">This library is intentionally not limited to only a few file types. Current attached assets and future uploads will live here together.</p>
+                              <p className="municipality-note">Review the current location asset library first, then add new files as needed.</p>
                             </div>
+                            {settingsSectionEdit.assets ? (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setAssetUploadDraft({ category: "asset", asset_subtype: "", asset_owner_type: "organization_owned", notes: "", file: null });
+                                  setSettingsSectionEdit((prev) => ({ ...prev, assets: false }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
+                                }}
+                              >
+                                Back
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--primary"
+                                onClick={() => {
+                                  setSettingsSectionEdit((prev) => ({ ...prev, assets: true }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
+                                }}
+                              >
+                                Add New Asset
+                              </button>
+                            )}
                           </div>
                           {settingsSectionStatus.assets ? <p className={`municipality-inline-status${settingsSectionStatus.assets.toLowerCase().includes("could not") || settingsSectionStatus.assets.toLowerCase().includes("choose") ? " is-error" : ""}`}>{settingsSectionStatus.assets}</p> : null}
-                          <form className="municipality-form-grid" onSubmit={uploadAssetFile}>
-                            <div className="municipality-field">
-                              <label htmlFor="asset-category">Asset Type</label>
-                              <select
-                                id="asset-category"
-                                value={assetUploadDraft.category}
-                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, category: event.target.value }))}
-                              >
-                                {LOCATION_ASSET_CATEGORIES.map((category) => (
-                                  <option key={category.key} value={category.key}>{category.label}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="municipality-field">
-                              <label htmlFor="asset-notes">Notes</label>
-                              <input
-                                id="asset-notes"
-                                value={assetUploadDraft.notes}
-                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, notes: event.target.value }))}
-                                placeholder="What is this file for?"
-                              />
-                            </div>
-                            <div className="municipality-field municipality-field--file">
-                              <label htmlFor="asset-file">Select File</label>
-                              <input
-                                id="asset-file"
-                                type="file"
-                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, file: event.target.files?.[0] || null }))}
-                              />
-                              {assetUploadDraft.file ? (
-                                <p className="municipality-note">{assetUploadDraft.file.name} • {formatBytes(assetUploadDraft.file.size)}</p>
-                              ) : null}
-                            </div>
-                            <div className="municipality-actions">
-                              <button type="submit" className="municipality-button municipality-button--primary" disabled={settingsSectionSaving.assets}>
-                                {settingsSectionSaving.assets ? "Uploading…" : "Upload Asset"}
-                              </button>
-                            </div>
-                          </form>
                           <div className="municipality-settings-list">
                             {assetLibrary.map((asset) => (
                               <div key={asset.key} className="municipality-settings-list-item">
@@ -3711,6 +3733,77 @@ export default function MunicipalityApp() {
                               </div>
                             ))}
                           </div>
+                          {settingsSectionEdit.assets ? (
+                            <form className="municipality-form-grid municipality-form-grid--asset" onSubmit={uploadAssetFile}>
+                              <div className="municipality-field">
+                                <label htmlFor="asset-category">Category</label>
+                                <select
+                                  id="asset-category"
+                                  value={assetUploadDraft.category}
+                                  onChange={(event) => setAssetUploadDraft((prev) => ({
+                                    ...prev,
+                                    category: event.target.value,
+                                    asset_subtype: event.target.value === "asset" ? prev.asset_subtype : "",
+                                    asset_owner_type: event.target.value === "asset" ? prev.asset_owner_type : "organization_owned",
+                                  }))}
+                                >
+                                  {LOCATION_ASSET_CATEGORIES.map((category) => (
+                                    <option key={category.key} value={category.key}>{category.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {assetUploadDraft.category === "asset" ? (
+                                <>
+                                  <div className="municipality-field">
+                                    <label htmlFor="asset-subtype">Asset Subcategory</label>
+                                    <input
+                                      id="asset-subtype"
+                                      value={assetUploadDraft.asset_subtype}
+                                      onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, asset_subtype: event.target.value }))}
+                                      placeholder="Streetlights, fire hydrants, benches…"
+                                    />
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="asset-owner-type">Asset Ownership</label>
+                                    <select
+                                      id="asset-owner-type"
+                                      value={assetUploadDraft.asset_owner_type}
+                                      onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, asset_owner_type: event.target.value }))}
+                                    >
+                                      {LOCATION_ASSET_OWNERSHIP_OPTIONS.map((option) => (
+                                        <option key={option.key} value={option.key}>{option.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </>
+                              ) : null}
+                              <div className="municipality-field">
+                                <label htmlFor="asset-notes">Notes</label>
+                                <input
+                                  id="asset-notes"
+                                  value={assetUploadDraft.notes}
+                                  onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                                  placeholder="What is this file for?"
+                                />
+                              </div>
+                              <div className="municipality-field municipality-field--file">
+                                <label htmlFor="asset-file">Select File</label>
+                                <input
+                                  id="asset-file"
+                                  type="file"
+                                  onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, file: event.target.files?.[0] || null }))}
+                                />
+                                {assetUploadDraft.file ? (
+                                  <p className="municipality-note">{assetUploadDraft.file.name} • {formatBytes(assetUploadDraft.file.size)}</p>
+                                ) : null}
+                              </div>
+                              <div className="municipality-actions">
+                                <button type="submit" className="municipality-button municipality-button--primary" disabled={settingsSectionSaving.assets}>
+                                  {settingsSectionSaving.assets ? "Uploading…" : "Save Asset"}
+                                </button>
+                              </div>
+                            </form>
+                          ) : null}
                           {assetFiles.length ? (
                             <div className="municipality-settings-list">
                               {assetFiles.map((fileRow) => (
@@ -3718,7 +3811,9 @@ export default function MunicipalityApp() {
                                   <div>
                                     <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
                                     <p className="municipality-note">
-                                      {(LOCATION_ASSET_CATEGORIES.find((category) => category.key === trimOrEmpty(fileRow.file_category))?.label) || trimOrEmpty(fileRow.file_category) || "Asset"}
+                                      {summarizeAssetCategory(fileRow.file_category)}
+                                      {trimOrEmpty(fileRow.asset_subtype) ? ` • ${trimOrEmpty(fileRow.asset_subtype)}` : ""}
+                                      {trimOrEmpty(fileRow.asset_owner_type) ? ` • ${summarizeAssetOwnership(fileRow.asset_owner_type)}` : ""}
                                       {" • "}
                                       {formatBytes(fileRow.size_bytes)}
                                       {" • "}
