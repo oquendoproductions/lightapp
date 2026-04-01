@@ -649,12 +649,38 @@ function sanitizeHexColor(value, fallback = "#e53935") {
   return String(fallback || "#e53935").toLowerCase();
 }
 
+function normalizePrimarySubdomain(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+
+  const withoutProtocol = raw.replace(/^https?:\/\//, "");
+  const hostOnly = withoutProtocol.split("/")[0] || "";
+  if (!hostOnly) return "";
+
+  if (hostOnly.endsWith(".cityreport.io")) {
+    const prefix = sanitizeTenantKey(hostOnly.replace(/\.cityreport\.io$/, ""));
+    return prefix ? `${prefix}.cityreport.io` : "";
+  }
+
+  if (hostOnly.includes(".")) {
+    return hostOnly;
+  }
+
+  const prefix = sanitizeTenantKey(hostOnly);
+  return prefix ? `${prefix}.cityreport.io` : "";
+}
+
+function primarySubdomainPrefix(value) {
+  const normalized = normalizePrimarySubdomain(value);
+  if (normalized.endsWith(".cityreport.io")) {
+    return normalized.replace(/\.cityreport\.io$/, "");
+  }
+  return normalized;
+}
+
 function makeLiveUrl(primarySubdomain, tenantKey) {
-  const host = String(primarySubdomain || "").trim().toLowerCase();
+  const host = normalizePrimarySubdomain(primarySubdomain);
   if (host) {
-    if (host.startsWith("http://") || host.startsWith("https://")) {
-      return host;
-    }
     return `https://${host}/`;
   }
   return `https://${sanitizeTenantKey(tenantKey)}.cityreport.io/`;
@@ -2090,7 +2116,7 @@ export default function PlatformAdminApp() {
     const payload = {
       tenant_key: resolvedTenantKey,
       name: String(tenantForm.name || "").trim(),
-      primary_subdomain: String(tenantForm.primary_subdomain || "").trim().toLowerCase(),
+      primary_subdomain: normalizePrimarySubdomain(tenantForm.primary_subdomain),
       boundary_config_key: String(tenantForm.boundary_config_key || defaultBoundaryKey).trim() || defaultBoundaryKey,
       notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
       notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
@@ -3766,7 +3792,32 @@ export default function PlatformAdminApp() {
                     {selectedTenant?.name || selectedTenantKey}
                   </div>
                   <div style={{ fontSize: 13, color: palette.textMuted }}>
-                    {selectedTenant?.primary_subdomain || selectedTenantKey}
+                    {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
+                  </div>
+                </div>
+                <div style={{ ...subPanel, display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                    Primary URL Prefix
+                  </div>
+                  <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
+                    {primarySubdomainPrefix(selectedTenant?.primary_subdomain) || sanitizeTenantKey(selectedTenantKey)}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    This controls the live organization URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                      onClick={() => {
+                        setActiveTab("tenants");
+                        setIsEditingTenant(true);
+                      }}
+                      disabled={!canEditTenantCore}
+                      title={canEditTenantCore ? "Edit the cityreport.io URL prefix" : "Only Platform Owner can edit the URL prefix"}
+                    >
+                      Edit URL Prefix
+                    </button>
                   </div>
                 </div>
                 <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
@@ -3996,10 +4047,13 @@ export default function PlatformAdminApp() {
                       <span>Municipality Website URL</span>
                       <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>URL Extension (Alias)</span>
-                      <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                    </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>URL Extension (Profile Alias)</span>
+                    <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                      Stored in the organization profile for reference and future alias use. It does not currently change live cityreport.io routing.
+                    </span>
+                  </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Billing Email</span>
                       <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
@@ -4194,8 +4248,11 @@ export default function PlatformAdminApp() {
                     <input readOnly={tenantReadOnly} value={tenantForm.name} onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Primary Organization URL</span>
-                    <input readOnly={tenantReadOnly} value={tenantForm.primary_subdomain} onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))} placeholder="examplemunicipality.cityreport.io" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
+                    <span>Primary URL Prefix</span>
+                    <input readOnly={tenantReadOnly} value={primarySubdomainPrefix(tenantForm.primary_subdomain)} onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
+                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                      Saves as {normalizePrimarySubdomain(tenantForm.primary_subdomain) || "examplemunicipality.cityreport.io"} and controls the live organization subdomain.
+                    </span>
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                     <span>Boundary Dataset Key (auto-managed)</span>
