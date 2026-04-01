@@ -877,6 +877,7 @@ export default function MunicipalityApp() {
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState("");
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
   const [openSettingsGroups, setOpenSettingsGroups] = useState({
     account: true,
     organization: true,
@@ -1133,6 +1134,19 @@ export default function MunicipalityApp() {
       })),
     [routePath, tenantKey]
   );
+  const filteredSettingsNav = useMemo(() => {
+    const query = trimOrEmpty(settingsSearchQuery).toLowerCase();
+    if (!query) return SETTINGS_NAV;
+    return SETTINGS_NAV
+      .map((category) => {
+        const categoryMatches = trimOrEmpty(category.label).toLowerCase().includes(query);
+        if (categoryMatches) return category;
+        const filteredItems = category.items.filter((item) => trimOrEmpty(item.label).toLowerCase().includes(query));
+        if (!filteredItems.length) return null;
+        return { ...category, items: filteredItems };
+      })
+      .filter(Boolean);
+  }, [settingsSearchQuery]);
 
   const switchableTenants = useMemo(() => {
     const lookup = new Map();
@@ -3481,32 +3495,55 @@ export default function MunicipalityApp() {
               ) : (
                 <div className="municipality-settings-layout">
                   <aside className="municipality-settings-sidebar">
-                    {SETTINGS_NAV.map((category) => (
-                      <div key={category.key} className="municipality-settings-group">
-                        <button
-                          type="button"
-                          className={`municipality-settings-group-toggle${activeSettingsCategoryKey === category.key ? " is-active" : ""}`}
-                          onClick={() => setOpenSettingsGroups((prev) => ({ ...prev, [category.key]: !prev[category.key] }))}
-                        >
-                          <span>{category.label}</span>
-                          <span>{openSettingsGroups[category.key] ? "−" : "+"}</span>
-                        </button>
-                        {openSettingsGroups[category.key] ? (
-                          <div className="municipality-settings-group-items">
-                            {category.items.map((item) => (
+                    <div className="municipality-settings-sidebar-shell">
+                      <div className="municipality-settings-sidebar-header">
+                        <h3>Settings</h3>
+                        <p>Browse account, organization, team, and map categories.</p>
+                      </div>
+                      <div className="municipality-settings-search">
+                        <input
+                          type="search"
+                          value={settingsSearchQuery}
+                          onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                          placeholder="Search settings"
+                          aria-label="Search settings"
+                        />
+                      </div>
+                      <div className="municipality-settings-sidebar-groups">
+                        {filteredSettingsNav.map((category) => {
+                          const isExpanded = trimOrEmpty(settingsSearchQuery) ? true : Boolean(openSettingsGroups[category.key]);
+                          return (
+                            <div key={category.key} className="municipality-settings-group">
                               <button
-                                key={item.key}
                                 type="button"
-                                className={`municipality-settings-link${activeSettingsItemKey === item.key ? " is-active" : ""}`}
-                                onClick={() => navigate(item.path)}
+                                className={`municipality-settings-group-toggle${activeSettingsCategoryKey === category.key ? " is-active" : ""}`}
+                                onClick={() => setOpenSettingsGroups((prev) => ({ ...prev, [category.key]: !prev[category.key] }))}
                               >
-                                {item.label}
+                                <span>{category.label}</span>
+                                <span className="municipality-settings-group-caret">{isExpanded ? "v" : ">"}</span>
                               </button>
-                            ))}
-                          </div>
+                              {isExpanded ? (
+                                <div className="municipality-settings-group-items">
+                                  {category.items.map((item) => (
+                                    <button
+                                      key={item.key}
+                                      type="button"
+                                      className={`municipality-settings-link${activeSettingsItemKey === item.key ? " is-active" : ""}`}
+                                      onClick={() => navigate(item.path)}
+                                    >
+                                      {item.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {!filteredSettingsNav.length ? (
+                          <div className="municipality-settings-sidebar-empty">No settings matched your search.</div>
                         ) : null}
                       </div>
-                    ))}
+                    </div>
                   </aside>
 
                   <div className="municipality-settings-content">
