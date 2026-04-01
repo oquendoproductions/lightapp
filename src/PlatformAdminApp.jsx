@@ -35,6 +35,8 @@ const CONTROL_PLANE_SECTIONS = [
   { key: "reports", label: "Reports" },
 ];
 
+const CONTROL_PLANE_TAB_SECTIONS = CONTROL_PLANE_SECTIONS.filter((section) => section.key !== "settings");
+
 const CONTROL_PLANE_PAGES = [
   { key: "manage-organizations", section: "organizations", label: "Manage Organizations" },
   { key: "manage-leads", section: "organizations", label: "Manage Leads" },
@@ -49,6 +51,26 @@ const CONTROL_PLANE_PAGES = [
 ];
 
 const DEFAULT_CONTROL_PLANE_PAGE = "organization-reports";
+const DEFAULT_SETTINGS_CONTROL_PLANE_PAGE = "account-info";
+
+const CONTROL_PLANE_SETTINGS_NAV = [
+  {
+    key: "account",
+    label: "Account",
+    items: [
+      { key: "account-info", label: "Account Info" },
+    ],
+  },
+  {
+    key: "team",
+    label: "Team Access",
+    items: [
+      { key: "manage-team", label: "Manage Team" },
+      { key: "roles-permissions", label: "Roles & Permissions" },
+      { key: "security-checks", label: "Security Checks" },
+    ],
+  },
+];
 
 const PLATFORM_ROLE_OPTIONS = [
   { key: "platform_owner", label: "Platform Owner" },
@@ -336,7 +358,7 @@ const controlPlaneTabsRail = {
   position: "sticky",
   top: FIXED_BANNER_HEIGHT,
   zIndex: 25,
-  padding: "8px 0 10px",
+  padding: "0 0 10px",
   background: "transparent",
 };
 
@@ -344,7 +366,8 @@ const controlPlaneTabsShell = {
   width: "100%",
   padding: "8px 10px",
   border: "1px solid rgba(23, 49, 79, 0.08)",
-  borderRadius: 22,
+  borderTop: 0,
+  borderRadius: "0 0 22px 22px",
   background: "rgba(255, 255, 255, 0.92)",
   boxShadow: "0 10px 24px rgba(17, 49, 79, 0.06)",
 };
@@ -413,6 +436,60 @@ const controlPlaneSubmenuItem = {
   textAlign: "left",
   cursor: "pointer",
   gap: 2,
+};
+
+const controlPlaneSettingsLayout = {
+  display: "grid",
+  gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
+  gap: 18,
+  alignItems: "start",
+};
+
+const controlPlaneSettingsSidebar = {
+  position: "sticky",
+  top: "calc(var(--desktop-header-height) + 74px)",
+  display: "grid",
+  gap: 14,
+};
+
+const controlPlaneSettingsSidebarShell = {
+  display: "grid",
+  gap: 16,
+  padding: "18px 14px 16px",
+  borderRadius: 24,
+  background: "linear-gradient(180deg, #155e59 0%, #154f4b 100%)",
+  boxShadow: "0 24px 44px rgba(10, 34, 42, 0.18)",
+};
+
+const controlPlaneSettingsGroupButton = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "10px 12px",
+  border: 0,
+  borderRadius: 14,
+  background: "transparent",
+  color: "rgba(239, 250, 248, 0.92)",
+  font: "inherit",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const controlPlaneSettingsItemButton = {
+  width: "100%",
+  display: "block",
+  padding: "10px 12px",
+  border: "1px solid transparent",
+  borderRadius: 14,
+  background: "transparent",
+  color: "rgba(227, 245, 242, 0.92)",
+  font: "inherit",
+  fontSize: 13,
+  fontWeight: 600,
+  textAlign: "left",
+  cursor: "pointer",
 };
 
 const metricCard = {
@@ -880,10 +957,14 @@ export default function PlatformAdminApp() {
   const [platformUserSearchQuery, setPlatformUserSearchQuery] = useState("");
   const [platformUserSearchResults, setPlatformUserSearchResults] = useState([]);
   const [platformTeamForm, setPlatformTeamForm] = useState({ user_id: "", role: "platform_staff" });
+  const [platformTeamManagementView, setPlatformTeamManagementView] = useState("list");
+  const [editingPlatformAssignmentKey, setEditingPlatformAssignmentKey] = useState("");
+  const [editingPlatformAssignmentRole, setEditingPlatformAssignmentRole] = useState("");
   const [platformTeamStatus, setPlatformTeamStatus] = useState("");
   const [platformUserSearchLoading, setPlatformUserSearchLoading] = useState(false);
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
+  const [selectedLeadId, setSelectedLeadId] = useState("");
   const [leadStatus, setLeadStatus] = useState("");
   const [leadLoading, setLeadLoading] = useState(false);
   const [tenantRoleDefinitions, setTenantRoleDefinitions] = useState([]);
@@ -933,6 +1014,11 @@ export default function PlatformAdminApp() {
     files: "",
     audit: "",
     hydrate: "",
+  });
+  const [controlPlaneSettingsSearch, setControlPlaneSettingsSearch] = useState("");
+  const [openControlPlaneSettingsGroups, setOpenControlPlaneSettingsGroups] = useState({
+    account: true,
+    team: true,
   });
 
   const invokePlatformUserAdmin = useCallback(async (body) => {
@@ -1128,6 +1214,23 @@ export default function PlatformAdminApp() {
     () => sortedTenantRoleDefinitions.find((row) => String(row?.role || "") === String(selectedRoleKey || "")) || null,
     [sortedTenantRoleDefinitions, selectedRoleKey]
   );
+  const activeSettingsGroupKey = useMemo(
+    () => CONTROL_PLANE_SETTINGS_NAV.find((group) => group.items.some((item) => item.key === controlPlanePage))?.key || "",
+    [controlPlanePage]
+  );
+  const filteredControlPlaneSettingsNav = useMemo(() => {
+    const query = String(controlPlaneSettingsSearch || "").trim().toLowerCase();
+    if (!query) return CONTROL_PLANE_SETTINGS_NAV;
+    return CONTROL_PLANE_SETTINGS_NAV
+      .map((group) => {
+        const groupMatches = String(group.label || "").trim().toLowerCase().includes(query);
+        if (groupMatches) return group;
+        const nextItems = group.items.filter((item) => String(item.label || "").trim().toLowerCase().includes(query));
+        if (!nextItems.length) return null;
+        return { ...group, items: nextItems };
+      })
+      .filter(Boolean);
+  }, [controlPlaneSettingsSearch]);
 
   const tenantSearchQuery = String(tenantSearch || "").trim();
   const hasTenantSearchQuery = tenantSearchQuery.length > 0;
@@ -1137,6 +1240,10 @@ export default function PlatformAdminApp() {
   const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
   const currentPlatformRoleKey = platformAccessRole || (isPlatformOwner ? "platform_owner" : isPlatformStaff ? "platform_staff" : "");
   const platformRoleLabel = platformRoleToLabel(platformAccessRole);
+  const selectedLead = useMemo(
+    () => (leadRows || []).find((row) => String(row?.id || "") === String(selectedLeadId || "")) || leadRows?.[0] || null,
+    [leadRows, selectedLeadId]
+  );
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
   const canAccessControlPlanePage = useCallback((pageKey) => {
     const allowedRoles = CONTROL_PLANE_PAGE_ACCESS[pageKey] || [];
@@ -1922,6 +2029,52 @@ export default function PlatformAdminApp() {
     await loadPlatformTeamAssignments();
   }, [isPlatformOwner, loadPlatformTeamAssignments, sessionUserId]);
 
+  const savePlatformRoleEdit = useCallback(async (row) => {
+    if (!isPlatformOwner) {
+      setPlatformTeamStatus("Only Platform Owner can edit platform roles.");
+      return;
+    }
+    const userId = String(row?.user_id || "").trim();
+    const previousRole = String(row?.role || "").trim();
+    const nextRole = String(editingPlatformAssignmentRole || "").trim();
+    if (!userId || !previousRole || !nextRole) {
+      setPlatformTeamStatus("Select a valid platform role.");
+      return;
+    }
+    if (previousRole === nextRole) {
+      setEditingPlatformAssignmentKey("");
+      setEditingPlatformAssignmentRole("");
+      return;
+    }
+    if (previousRole === "platform_owner" && String(userId) === String(sessionUserId)) {
+      setPlatformTeamStatus("You cannot edit your own Platform Owner role from this screen.");
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("platform_user_roles")
+      .delete()
+      .eq("user_id", userId)
+      .eq("role", previousRole);
+    if (deleteError) {
+      setPlatformTeamStatus(statusText(deleteError, ""));
+      return;
+    }
+
+    const { error: insertError } = await supabase
+      .from("platform_user_roles")
+      .upsert([{ user_id: userId, role: nextRole, status: "active", assigned_by: sessionUserId }], { onConflict: "user_id,role" });
+    if (insertError) {
+      setPlatformTeamStatus(statusText(insertError, ""));
+      return;
+    }
+
+    setEditingPlatformAssignmentKey("");
+    setEditingPlatformAssignmentRole("");
+    setPlatformTeamStatus("Platform role updated.");
+    await loadPlatformTeamAssignments();
+  }, [editingPlatformAssignmentRole, isPlatformOwner, loadPlatformTeamAssignments, sessionUserId]);
+
   const updateLeadDraft = useCallback((leadId, field, value) => {
     const key = String(leadId || "").trim();
     if (!key) return;
@@ -2235,6 +2388,27 @@ export default function PlatformAdminApp() {
     setRolePermissionDraft(nextDraft);
     setRolePermissionDirty(false);
   }, [selectedRoleKey, rolePermissionMap]);
+
+  useEffect(() => {
+    if (!selectedLeadId && leadRows?.length) {
+      setSelectedLeadId(String(leadRows[0]?.id || ""));
+      return;
+    }
+    if (selectedLeadId && !leadRows.some((row) => String(row?.id || "") === String(selectedLeadId))) {
+      setSelectedLeadId(String(leadRows?.[0]?.id || ""));
+    }
+  }, [leadRows, selectedLeadId]);
+
+  useEffect(() => {
+    if (!activeSettingsGroupKey) return;
+    setOpenControlPlaneSettingsGroups((prev) => ({ ...prev, [activeSettingsGroupKey]: true }));
+  }, [activeSettingsGroupKey]);
+
+  useEffect(() => {
+    if (controlPlanePage === "manage-team") {
+      setPlatformTeamManagementView("list");
+    }
+  }, [controlPlanePage]);
 
   const persistTenantRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
     if (!canEditTenantCore) {
@@ -3239,6 +3413,16 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : null}
               </div>
+              <button
+                type="button"
+                style={{ ...buttonAlt, width: "fit-content" }}
+                onClick={() => {
+                  setMenuOpen(false);
+                  openControlPlanePage(DEFAULT_SETTINGS_CONTROL_PLANE_PAGE);
+                }}
+              >
+                Settings
+              </button>
               <button type="button" style={{ ...signOutButton, width: "fit-content" }} onClick={() => void signOutPlatformAdmin()}>
                 Sign out
               </button>
@@ -3248,6 +3432,106 @@ export default function PlatformAdminApp() {
       ) : null}
     </div>
   );
+
+  const settingsPageActive = controlPlaneSection === "settings";
+  const controlPlaneSettingsLayoutStyle = isCompactViewport ? { display: "grid", gap: 14 } : controlPlaneSettingsLayout;
+  const currentPageActions = controlPlanePage === "manage-team" ? (
+    <button
+      type="button"
+      style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }}
+      disabled={!isPlatformOwner}
+      onClick={() => setPlatformTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
+    >
+      {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
+    </button>
+  ) : controlPlanePage === "manage-organizations" && inTenantWorkspace ? (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Organization</button>
+      <button
+        type="button"
+        style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+        onClick={openAddTenantStep}
+        disabled={!canEditTenantCore}
+        title={canEditTenantCore ? "Create organization" : "Only Platform Owner can create organizations"}
+      >
+        Add Organization
+      </button>
+    </div>
+  ) : null;
+  const controlPlaneSettingsSidebarContent = settingsPageActive && !isCompactViewport ? (
+    <aside style={controlPlaneSettingsSidebar}>
+      <div style={controlPlaneSettingsSidebarShell}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <h3 style={{ margin: 0, color: "#f4fbfa", fontSize: 24 }}>Settings</h3>
+          <p style={{ margin: 0, color: "rgba(221, 242, 239, 0.86)", fontSize: 12.5, lineHeight: 1.45 }}>
+            Platform settings now follow the same left-rail pattern as the hub.
+          </p>
+        </div>
+        <input
+          value={controlPlaneSettingsSearch}
+          onChange={(event) => setControlPlaneSettingsSearch(event.target.value)}
+          placeholder="Search settings"
+          style={{
+            width: "100%",
+            padding: "11px 13px",
+            border: "1px solid rgba(212, 236, 232, 0.12)",
+            borderRadius: 14,
+            background: "rgba(255, 255, 255, 0.08)",
+            color: "#effaf8",
+            font: "inherit",
+          }}
+        />
+        <div style={{ display: "grid", gap: 8 }}>
+          {filteredControlPlaneSettingsNav.map((group) => {
+            const open = Boolean(openControlPlaneSettingsGroups?.[group.key]);
+            const active = activeSettingsGroupKey === group.key;
+            return (
+              <div key={group.key} style={{ padding: "4px 0", borderBottom: "1px solid rgba(221, 242, 239, 0.12)" }}>
+                <button
+                  type="button"
+                  onClick={() => setOpenControlPlaneSettingsGroups((prev) => ({ ...prev, [group.key]: !open }))}
+                  style={{
+                    ...controlPlaneSettingsGroupButton,
+                    ...(active ? { background: "rgba(255, 255, 255, 0.08)", color: "#ffffff" } : null),
+                  }}
+                >
+                  <span>{group.label}</span>
+                  <span style={{ color: "rgba(221, 242, 239, 0.68)", fontSize: 12 }}>{open ? "−" : "+"}</span>
+                </button>
+                {open ? (
+                  <div style={{ display: "grid", gap: 6, marginTop: 4, paddingLeft: 14 }}>
+                    {group.items.map((item) => {
+                      const activeItem = item.key === controlPlanePage;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => openControlPlanePage(item.key)}
+                          style={{
+                            ...controlPlaneSettingsItemButton,
+                            ...(activeItem
+                              ? {
+                                  background: "rgba(33, 141, 132, 0.9)",
+                                  borderColor: "rgba(255, 255, 255, 0.08)",
+                                  color: "#ffffff",
+                                  boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.04)",
+                                }
+                              : null),
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </aside>
+  ) : null;
 
   const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
     <section style={{ ...fullWidthSection, display: "grid", gap: 12 }}>
@@ -3261,7 +3545,7 @@ export default function PlatformAdminApp() {
       >
         <div style={controlPlaneTabsShell}>
           <nav style={controlPlaneTabsBar} aria-label="Platform Control Plane navigation">
-            {CONTROL_PLANE_SECTIONS.map((section) => {
+            {CONTROL_PLANE_TAB_SECTIONS.map((section) => {
               const visiblePages = visibleControlPlanePagesBySection[section.key] || [];
               if (!visiblePages.length) return null;
               const active = section.key === controlPlaneSection;
@@ -3274,9 +3558,6 @@ export default function PlatformAdminApp() {
                     style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
                   >
                     <span>{section.label}</span>
-                    <span aria-hidden="true" style={{ fontSize: 12, opacity: active || isOpen ? 0.92 : 0.64 }}>
-                      {isOpen ? "▲" : "▼"}
-                    </span>
                   </button>
                   {isOpen ? (
                     <div style={controlPlaneSubmenu}>
@@ -3315,12 +3596,17 @@ export default function PlatformAdminApp() {
         </div>
       </div>
       <div style={{ ...card, display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-          Current Page
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+              Current Page
+            </div>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
+              {controlPlanePageLabel}
+            </h1>
+          </div>
+          {currentPageActions}
         </div>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
-          {controlPlanePageLabel}
-        </h1>
       </div>
     </section>
   ) : null;
@@ -3601,181 +3887,242 @@ export default function PlatformAdminApp() {
       ) : null}
       {controlPlanePage === "account-info" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
-          <div style={{ ...card, display: "grid", gap: 12 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
-            <div style={responsiveTwoColGrid}>
-              <div style={metricCard}>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
-                <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={{ ...card, display: "grid", gap: 12 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
+              <div style={responsiveTwoColGrid}>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+                </div>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+                </div>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
+                </div>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
+                </div>
               </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  style={buttonBase}
+                  onClick={() => {
+                    setForgotPasswordEmail(sessionEmail);
+                    setForgotPasswordOpen(true);
+                  }}
+                >
+                  Update Password
+                </button>
               </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
-              </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                style={buttonBase}
-                onClick={() => {
-                  setForgotPasswordEmail(sessionEmail);
-                  setForgotPasswordOpen(true);
-                }}
-              >
-                Update Password
-              </button>
             </div>
           </div>
         </section>
       ) : null}
       {controlPlanePage === "manage-team" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
-          <div style={{ ...card, display: "grid", gap: 10 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Team</h2>
-            <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-              Assign internal platform roles from the PCP. Platform Owner can grant or remove internal access here.
-            </p>
-            <form onSubmit={searchPlatformTeamUsers} style={responsiveActionGrid}>
-              <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                <span>Find Internal Account</span>
-                <input
-                  value={platformUserSearchQuery}
-                  onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
-                  placeholder="Exact email, exact phone, or full name"
-                  style={inputBase}
-                  disabled={!isPlatformOwner}
-                />
-              </label>
-              <button type="submit" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner || platformUserSearchLoading}>
-                {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
-              </button>
-            </form>
-            {platformUserSearchResults.length ? (
-              <div style={{ display: "grid", gap: 8 }}>
-                {platformUserSearchResults.map((row) => {
-                  const userId = String(row?.id || "").trim();
-                  const selected = userId === platformTeamForm.user_id;
-                  return (
-                    <button
-                      key={userId}
-                      type="button"
-                      onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
-                      style={{
-                        ...listActionButton,
-                        border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
-                        background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
-                      }}
-                    >
-                      <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
-                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                        {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
-                      </span>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={{ display: "grid", gap: 14 }}>
+              {platformTeamStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformTeamStatus}</div> : null}
+              {platformTeamManagementView === "add" ? (
+                <div style={{ ...card, display: "grid", gap: 10 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Add Platform Team Member</h2>
+                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                    Find the internal account first, then assign the correct platform role.
+                  </p>
+                  <form onSubmit={searchPlatformTeamUsers} style={responsiveActionGrid}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Find Internal Account</span>
+                      <input
+                        value={platformUserSearchQuery}
+                        onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
+                        placeholder="Exact email, exact phone, or full name"
+                        style={inputBase}
+                        disabled={!isPlatformOwner}
+                      />
+                    </label>
+                    <button type="submit" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner || platformUserSearchLoading}>
+                      {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
                     </button>
-                  );
-                })}
-              </div>
-            ) : null}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
-              <label style={{ fontSize: 12.5, display: "grid", gap: 4, minWidth: 220 }}>
-                <span>Platform Role</span>
-                <select
-                  value={platformTeamForm.role}
-                  onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
-                  style={inputBase}
-                  disabled={!isPlatformOwner}
-                >
-                  {PLATFORM_ROLE_OPTIONS.map((row) => (
-                    <option key={row.key} value={row.key}>{row.label}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!isPlatformOwner || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
-                Assign Platform Role
-              </button>
-            </div>
-            {platformTeamStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformTeamStatus}</div> : null}
-          </div>
-          <div style={{ ...card, display: "grid", gap: 10 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr>
-                    <th style={tableHeadCell}>Team Member</th>
-                    <th style={tableHeadCell}>Role</th>
-                    <th style={tableHeadCell}>Updated</th>
-                    <th style={tableHeadCell}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {platformTeamAssignments.map((row) => (
-                    <tr key={`${row.user_id}:${row.role}`}>
-                      <td style={{ padding: "10px 0" }}>{formatPlatformUserLabel(row.user_id)}</td>
-                      <td style={{ padding: "10px 0" }}>{platformRoleToLabel(row.role)}</td>
-                      <td style={{ padding: "10px 0" }}>{row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</td>
-                      <td style={{ padding: "10px 0" }}>
-                        <button type="button" style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void removePlatformRole(row)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!platformTeamAssignments.length ? (
-                    <tr>
-                      <td colSpan={4} style={{ padding: "10px 0", color: palette.textMuted }}>No platform roles have been assigned yet.</td>
-                    </tr>
+                  </form>
+                  {platformUserSearchResults.length ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {platformUserSearchResults.map((row) => {
+                        const userId = String(row?.id || "").trim();
+                        const selected = userId === platformTeamForm.user_id;
+                        return (
+                          <button
+                            key={userId}
+                            type="button"
+                            onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
+                            style={{
+                              ...listActionButton,
+                              border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                              background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                            }}
+                          >
+                            <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   ) : null}
-                </tbody>
-              </table>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4, minWidth: 220 }}>
+                      <span>Platform Role</span>
+                      <select
+                        value={platformTeamForm.role}
+                        onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
+                        style={inputBase}
+                        disabled={!isPlatformOwner}
+                      >
+                        {PLATFORM_ROLE_OPTIONS.map((row) => (
+                          <option key={row.key} value={row.key}>{row.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!isPlatformOwner || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
+                      Assign Platform Role
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div style={{ ...card, display: "grid", gap: 10 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeadCell}>Team Member</th>
+                        <th style={tableHeadCell}>Role</th>
+                        <th style={tableHeadCell}>Updated</th>
+                        <th style={tableHeadCell}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {platformTeamAssignments.map((row) => {
+                        const rowKey = `${row.user_id}:${row.role}`;
+                        const isEditingRole = editingPlatformAssignmentKey === rowKey;
+                        return (
+                          <tr key={rowKey}>
+                            <td style={{ padding: "10px 0" }}>{formatPlatformUserLabel(row.user_id)}</td>
+                            <td style={{ padding: "10px 0" }}>
+                              {isEditingRole ? (
+                                <select value={editingPlatformAssignmentRole} onChange={(event) => setEditingPlatformAssignmentRole(event.target.value)} style={{ ...inputBase, minWidth: 180 }}>
+                                  {PLATFORM_ROLE_OPTIONS.map((option) => (
+                                    <option key={option.key} value={option.key}>{option.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                platformRoleToLabel(row.role)
+                              )}
+                            </td>
+                            <td style={{ padding: "10px 0" }}>{row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</td>
+                            <td style={{ padding: "10px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              {isEditingRole ? (
+                                <>
+                                  <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void savePlatformRoleEdit(row)}>
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={buttonAlt}
+                                    onClick={() => {
+                                      setEditingPlatformAssignmentKey("");
+                                      setEditingPlatformAssignmentRole("");
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }}
+                                    disabled={!isPlatformOwner}
+                                    onClick={() => {
+                                      setEditingPlatformAssignmentKey(rowKey);
+                                      setEditingPlatformAssignmentRole(String(row?.role || "").trim());
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button type="button" style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void removePlatformRole(row)}>
+                                    Remove
+                                  </button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {!platformTeamAssignments.length ? (
+                        <tr>
+                          <td colSpan={4} style={{ padding: "10px 0", color: palette.textMuted }}>No platform roles have been assigned yet.</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         </section>
       ) : null}
       {controlPlanePage === "roles-permissions" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
-          <div style={{ ...card, display: "grid", gap: 10 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Roles & Permissions</h2>
-            <p style={{ margin: 0, color: palette.textMuted }}>
-              PCP access is now page-based. This foundation page defines which internal roles can access each control-plane page.
-            </p>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr>
-                    <th style={tableHeadCell}>Page</th>
-                    <th style={tableHeadCell}>Platform Owner</th>
-                    <th style={tableHeadCell}>Platform Staff</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {CONTROL_PLANE_PAGES.map((page) => (
-                    <tr key={page.key}>
-                      <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{page.label}</td>
-                      <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_owner") || CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("legacy_admin") ? "Yes" : "No"}</td>
-                      <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_staff") ? "Yes" : "No"}</td>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={{ ...card, display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Roles & Permissions</h2>
+              <p style={{ margin: 0, color: palette.textMuted }}>
+                PCP access is page-based. This matrix shows how the current internal platform roles map to the control plane.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeadCell}>Page</th>
+                      <th style={tableHeadCell}>Platform Owner</th>
+                      <th style={tableHeadCell}>Platform Staff</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {CONTROL_PLANE_PAGES.map((page) => (
+                      <tr key={page.key}>
+                        <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{page.label}</td>
+                        <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_owner") || CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("legacy_admin") ? "Yes" : "No"}</td>
+                        <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_staff") ? "Yes" : "No"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </section>
       ) : null}
       {controlPlanePage === "security-checks" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
-          <div style={{ ...card, display: "grid", gap: 10 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
-            <p style={{ margin: 0, color: palette.textMuted }}>
-              PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
-            </p>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={{ ...card, display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
+              <p style={{ margin: 0, color: palette.textMuted }}>
+                PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
+              </p>
+            </div>
           </div>
         </section>
       ) : null}
@@ -3784,60 +4131,124 @@ export default function PlatformAdminApp() {
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
-              Track municipal leads captured from CityReport.io, update status, set follow-ups, and keep internal notes in one place.
+              Review the lead pipeline as a table first, then open an individual lead to manage notes, follow-ups, and status.
             </p>
             {leadStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{leadStatus}</div> : null}
-            <div style={{ display: "grid", gap: 12 }}>
-              {leadRows.map((lead) => {
-                const draft = leadDraftById[String(lead.id)] || {};
-                return (
-                  <div key={lead.id} style={{ ...subPanel, display: "grid", gap: 10 }}>
-                    <div style={{ display: "grid", gap: 2 }}>
-                      <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>{lead.full_name}</div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        {[lead.work_email, lead.city_agency, lead.role_title].filter(Boolean).join(" • ")}
+            {leadRows.length ? (
+              <>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeadCell}>Lead #</th>
+                        <th style={tableHeadCell}>Organization</th>
+                        <th style={tableHeadCell}>POC Info</th>
+                        <th style={tableHeadCell}>Lead Status</th>
+                        <th style={tableHeadCell}>Date Submitted</th>
+                        <th style={tableHeadCell}>Last Modified</th>
+                        <th style={tableHeadCell}>Notes</th>
+                        <th style={tableHeadCell}>Priority Domain</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leadRows.map((lead, index) => {
+                        const leadKey = String(lead?.id || "");
+                        const selected = leadKey === String(selectedLead?.id || "");
+                        const leadNumber = `LD-${String(index + 1).padStart(4, "0")}`;
+                        return (
+                          <tr key={leadKey} style={{ background: selected ? "rgba(18,128,106,0.08)" : "transparent" }}>
+                            <td style={{ padding: "10px 0" }}>
+                              <button
+                                type="button"
+                                style={{ border: 0, background: "transparent", color: palette.mint700, font: "inherit", fontWeight: 800, cursor: "pointer", padding: 0 }}
+                                onClick={() => setSelectedLeadId(leadKey)}
+                              >
+                                {leadNumber}
+                              </button>
+                            </td>
+                            <td style={{ padding: "10px 0", color: palette.navy900, fontWeight: 800 }}>{lead.city_agency || "Not provided"}</td>
+                            <td style={{ padding: "10px 0" }}>
+                              {[lead.full_name, lead.work_email, lead.role_title].filter(Boolean).join(" • ") || "Not provided"}
+                            </td>
+                            <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.status || "new")}</td>
+                            <td style={{ padding: "10px 0" }}>{lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"}</td>
+                            <td style={{ padding: "10px 0" }}>{lead.updated_at ? new Date(lead.updated_at).toLocaleString() : "-"}</td>
+                            <td style={{ padding: "10px 0" }}>{String(lead.internal_notes || lead.notes || "").trim() || "—"}</td>
+                            <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.priority_domain)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {selectedLead ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 12 }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                        Lead Detail
+                      </div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: palette.navy900 }}>
+                        {selectedLead.city_agency || "Unnamed organization"}
                       </div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Submitted {lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"} • Priority domain: {roleKeyToLabel(lead.priority_domain)}
+                        {[selectedLead.full_name, selectedLead.role_title, selectedLead.work_email].filter(Boolean).join(" • ")}
                       </div>
                     </div>
                     <div style={responsiveTwoColGrid}>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Lead Status</span>
-                        <select value={draft.status ?? lead.status ?? "new"} onChange={(e) => updateLeadDraft(lead.id, "status", e.target.value)} style={inputBase}>
-                          <option value="new">New</option>
-                          <option value="reviewed">Reviewed</option>
-                          <option value="contacted">Contacted</option>
-                          <option value="closed">Closed</option>
-                        </select>
-                      </label>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Follow-up Date</span>
-                        <input type="date" value={draft.follow_up_on ?? String(lead.follow_up_on || "").slice(0, 10)} onChange={(e) => updateLeadDraft(lead.id, "follow_up_on", e.target.value)} style={inputBase} />
-                      </label>
+                      <div style={metricCard}>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>POC</div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{selectedLead.full_name || "Not provided"}</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>{selectedLead.work_email || "No email on file"}</div>
+                      </div>
+                      <div style={metricCard}>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>Submitted</div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{selectedLead.created_at ? new Date(selectedLead.created_at).toLocaleString() : "-"}</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>Priority domain: {roleKeyToLabel(selectedLead.priority_domain)}</div>
+                      </div>
                     </div>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Internal Notes</span>
-                      <textarea value={draft.internal_notes ?? lead.internal_notes ?? lead.notes ?? ""} onChange={(e) => updateLeadDraft(lead.id, "internal_notes", e.target.value)} style={{ ...inputBase, minHeight: 88 }} />
-                    </label>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                      <button type="button" style={buttonBase} disabled={leadLoading} onClick={() => void saveLeadUpdate(lead)}>
-                        {leadLoading ? "Saving..." : "Save Lead"}
-                      </button>
-                      <button type="button" style={buttonAlt} onClick={() => updateLeadDraft(lead.id, "mark_follow_up", true)}>
-                        Mark Follow-up Done On Save
-                      </button>
-                      {lead.last_follow_up_at ? (
-                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>Last follow-up: {new Date(lead.last_follow_up_at).toLocaleString()}</span>
-                      ) : null}
-                    </div>
+                    {(() => {
+                      const draft = leadDraftById[String(selectedLead.id)] || {};
+                      return (
+                        <>
+                          <div style={responsiveTwoColGrid}>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Lead Status</span>
+                              <select value={draft.status ?? selectedLead.status ?? "new"} onChange={(e) => updateLeadDraft(selectedLead.id, "status", e.target.value)} style={inputBase}>
+                                <option value="new">New</option>
+                                <option value="reviewed">Reviewed</option>
+                                <option value="contacted">Contacted</option>
+                                <option value="closed">Closed</option>
+                              </select>
+                            </label>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Follow-up Date</span>
+                              <input type="date" value={draft.follow_up_on ?? String(selectedLead.follow_up_on || "").slice(0, 10)} onChange={(e) => updateLeadDraft(selectedLead.id, "follow_up_on", e.target.value)} style={inputBase} />
+                            </label>
+                          </div>
+                          <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                            <span>Internal Notes</span>
+                            <textarea value={draft.internal_notes ?? selectedLead.internal_notes ?? selectedLead.notes ?? ""} onChange={(e) => updateLeadDraft(selectedLead.id, "internal_notes", e.target.value)} style={{ ...inputBase, minHeight: 88 }} />
+                          </label>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                            <button type="button" style={buttonBase} disabled={leadLoading} onClick={() => void saveLeadUpdate(selectedLead)}>
+                              {leadLoading ? "Saving..." : "Save Lead"}
+                            </button>
+                            <button type="button" style={buttonAlt} onClick={() => updateLeadDraft(selectedLead.id, "mark_follow_up", true)}>
+                              Mark Follow-up Done On Save
+                            </button>
+                            {selectedLead.last_follow_up_at ? (
+                              <span style={{ fontSize: 12.5, color: palette.textMuted }}>Last follow-up: {new Date(selectedLead.last_follow_up_at).toLocaleString()}</span>
+                            ) : null}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
-                );
-              })}
-              {!leadRows.length ? (
-                <div style={{ ...subPanel, color: palette.textMuted }}>No leads have been captured yet.</div>
-              ) : null}
-            </div>
+                ) : null}
+              </>
+            ) : (
+              <div style={{ ...subPanel, color: palette.textMuted }}>No leads have been captured yet.</div>
+            )}
           </div>
         </section>
       ) : null}
@@ -3936,23 +4347,6 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <>
-              <div style={{ ...subPanel, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 13.5, color: palette.textMuted }}>
-                  Switch workspaces, start a new organization, or save organization setup changes from here.
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Organization</button>
-                  <button
-                    type="button"
-                    style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    onClick={openAddTenantStep}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create organization" : "Only Platform Owner can create organizations"}
-                  >
-                    Add Organization
-                  </button>
-                </div>
-              </div>
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                 <div style={{ display: "grid", gap: 2 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
@@ -3975,29 +4369,52 @@ export default function PlatformAdminApp() {
                     {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                   </div>
                 </div>
-                <div style={{ ...subPanel, display: "grid", gap: 6 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                    Primary URL Prefix
+                <div style={responsiveTwoColGrid}>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Primary URL</div>
+                    <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
+                      {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Prefix: {primarySubdomainPrefix(selectedTenant?.primary_subdomain) || sanitizeTenantKey(selectedTenantKey)}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        onClick={() => {
+                          setActiveTab("tenants");
+                          setIsEditingTenant(true);
+                        }}
+                        disabled={!canEditTenantCore}
+                        title={canEditTenantCore ? "Edit the cityreport.io URL prefix" : "Only Platform Owner can edit the URL prefix"}
+                      >
+                        Edit URL Prefix
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
-                    {primarySubdomainPrefix(selectedTenant?.primary_subdomain) || sanitizeTenantKey(selectedTenantKey)}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    This controls the live organization URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
-                      onClick={() => {
-                        setActiveTab("tenants");
-                        setIsEditingTenant(true);
-                      }}
-                      disabled={!canEditTenantCore}
-                      title={canEditTenantCore ? "Edit the cityreport.io URL prefix" : "Only Platform Owner can edit the URL prefix"}
-                    >
-                      Edit URL Prefix
-                    </button>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Workspace Section</div>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
+                      <span>Workspace Section</span>
+                      <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
+                        {TAB_OPTIONS.map((tab) => (
+                          <option key={tab.key} value={tab.key}>{tab.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                      {selectedTenantLiveUrl ? (
+                        <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                          Open Organization Hub
+                        </a>
+                      ) : null}
+                      {selectedTenantDevUrl ? (
+                        <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                          Open Dev Organization Hub
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
@@ -4136,28 +4553,6 @@ export default function PlatformAdminApp() {
                     </div>
                   </div>
                 ) : null}
-              </div>
-              <div style={{ ...subPanel, borderRadius: 10, padding: "10px 12px", display: "grid", gap: 8 }}>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 360 }}>
-                  <span>Workspace Section</span>
-                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                    {TAB_OPTIONS.map((tab) => (
-                      <option key={tab.key} value={tab.key}>{tab.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {selectedTenantLiveUrl ? (
-                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Organization Hub
-                    </a>
-                  ) : null}
-                  {selectedTenantDevUrl ? (
-                    <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Dev Organization Hub
-                    </a>
-                  ) : null}
-                </div>
               </div>
             </>
           ) : null}

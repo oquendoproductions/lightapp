@@ -487,6 +487,13 @@ function roleKeyToLabel(roleKey) {
     .replace(/\b\w/g, (ch) => ch.toUpperCase()) || "Employee";
 }
 
+function sanitizeRoleKey(roleKey) {
+  return trimOrEmpty(roleKey)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 function buildTenantOption(row, fallbackTenantKey, fallbackTenantName, fallbackSubdomain) {
   const tenantKey = trimOrEmpty(row?.tenant_key).toLowerCase() || trimOrEmpty(fallbackTenantKey).toLowerCase();
   if (!tenantKey) return null;
@@ -918,6 +925,8 @@ export default function MunicipalityApp() {
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
   const [teamManagementView, setTeamManagementView] = useState("list");
   const [teamAssignmentMode, setTeamAssignmentMode] = useState("existing");
+  const [editingTeamAssignmentKey, setEditingTeamAssignmentKey] = useState("");
+  const [editingTeamAssignmentRole, setEditingTeamAssignmentRole] = useState("");
   const [teamSearchQuery, setTeamSearchQuery] = useState("");
   const [teamSearchResults, setTeamSearchResults] = useState([]);
   const [teamSearchLoading, setTeamSearchLoading] = useState(false);
@@ -926,6 +935,11 @@ export default function MunicipalityApp() {
   const [teamAssignForm, setTeamAssignForm] = useState({ user_id: "", role: "tenant_employee" });
   const [teamInviteForm, setTeamInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
   const [teamUserSummariesById, setTeamUserSummariesById] = useState({});
+  const [selectedSettingsRoleKey, setSelectedSettingsRoleKey] = useState("");
+  const [settingsRolePermissionDraft, setSettingsRolePermissionDraft] = useState({});
+  const [settingsRolePermissionDirty, setSettingsRolePermissionDirty] = useState(false);
+  const [settingsRoleFormOpen, setSettingsRoleFormOpen] = useState(false);
+  const [settingsRoleForm, setSettingsRoleForm] = useState({ role: "", role_label: "" });
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
     organization: "",
     assets: "",
@@ -1256,6 +1270,35 @@ export default function MunicipalityApp() {
     }
     return lookup;
   }, [rolePermissions]);
+  const rolePermissionMap = useMemo(() => {
+    const lookup = {};
+    for (const row of rolePermissions || []) {
+      const roleKey = trimOrEmpty(row?.role);
+      const permissionKey = trimOrEmpty(row?.permission_key);
+      if (!roleKey || !permissionKey) continue;
+      lookup[`${roleKey}:${permissionKey}`] = Boolean(row?.allowed);
+    }
+    return lookup;
+  }, [rolePermissions]);
+  const editableRoleDefinitions = useMemo(
+    () => (roleDefinitions || []).filter((row) => row?.active !== false),
+    [roleDefinitions]
+  );
+  const permissionModules = useMemo(() => {
+    const groups = new Map();
+    for (const row of permissionCatalog || []) {
+      const moduleKey = trimOrEmpty(row?.module_key) || "general";
+      const current = groups.get(moduleKey) || {
+        key: moduleKey,
+        label: roleKeyToLabel(moduleKey),
+        permissions: [],
+      };
+      current.label = trimOrEmpty(row?.module_key).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()) || current.label;
+      current.permissions.push(row);
+      groups.set(moduleKey, current);
+    }
+    return [...groups.values()];
+  }, [permissionCatalog]);
   const teamAssignmentsByRole = useMemo(() => {
     const lookup = {};
     for (const row of teamAssignments || []) {
@@ -1320,6 +1363,32 @@ export default function MunicipalityApp() {
       setTeamAssignForm((prev) => ({ ...prev, role: trimOrEmpty(assignableTeamRoles[0]?.role) || "tenant_employee" }));
     }
   }, [assignableTeamRoles, teamAssignForm.role]);
+
+  useEffect(() => {
+    if (!editableRoleDefinitions.length) {
+      setSelectedSettingsRoleKey("");
+      return;
+    }
+    if (!editableRoleDefinitions.some((row) => trimOrEmpty(row?.role) === trimOrEmpty(selectedSettingsRoleKey))) {
+      setSelectedSettingsRoleKey(trimOrEmpty(editableRoleDefinitions[0]?.role));
+    }
+  }, [editableRoleDefinitions, selectedSettingsRoleKey]);
+
+  useEffect(() => {
+    if (!selectedSettingsRoleKey) {
+      setSettingsRolePermissionDraft({});
+      setSettingsRolePermissionDirty(false);
+      return;
+    }
+    const nextDraft = {};
+    for (const permissionRow of permissionCatalog || []) {
+      const permissionKey = trimOrEmpty(permissionRow?.permission_key);
+      if (!permissionKey) continue;
+      nextDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedSettingsRoleKey}:${permissionKey}`]);
+    }
+    setSettingsRolePermissionDraft(nextDraft);
+    setSettingsRolePermissionDirty(false);
+  }, [permissionCatalog, rolePermissionMap, selectedSettingsRoleKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2459,6 +2528,159 @@ export default function MunicipalityApp() {
     setSettingsSectionStatus((prev) => ({ ...prev, team: "Employee assignment removed." }));
   }
 
+  async function saveTeamAssignmentRoleEdit(assignment) {
+    const previousRole = trimOrEmpty(assignment?.role);
+    const nextRole = trimOrEmpty(editingTeamAssignmentRole).toLowerCase();
+    const assignmentKey = `${assignment.user_id}-${previousRole}`;
+    if (!previousRole || !nextRole) {
+      setSettingsSectionStatus((prev) => ({ ...prev, team: "Select a valid organization role before saving." }));
+      return;
+    }
+    if (previousRole === nextRole) {
+      setEditingTeamAssignmentKey("");
+      setEditingTeamAssignmentRole("");
+      return;
+    }
+
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+
+    const { error: deleteError } = await supabase
+      .from("tenant_user_roles")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("user_id", assignment.user_id)
+      .eq("role", previousRole);
+
+    if (deleteError) {
+      setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: false }));
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: deleteError.message || "Could not update this employee role.",
+      }));
+      return;
+    }
+
+    const { data, error: insertError } = await supabase
+      .from("tenant_user_roles")
+      .upsert([{ tenant_key: tenantKey, user_id: assignment.user_id, role: nextRole, status: trimOrEmpty(assignment?.status) || "active" }], { onConflict: "tenant_key,user_id,role" })
+      .select("user_id,role,status,created_at,updated_at")
+      .maybeSingle();
+
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: false }));
+
+    if (insertError) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: insertError.message || "Could not update this employee role.",
+      }));
+      return;
+    }
+
+    setTeamAssignments((prev) => prev.map((row) => (
+      row.user_id === assignment.user_id && row.role === previousRole
+        ? { ...(data || row), role: nextRole, status: trimOrEmpty(data?.status) || trimOrEmpty(assignment?.status) || "active" }
+        : row
+    )));
+    setEditingTeamAssignmentKey("");
+    setEditingTeamAssignmentRole("");
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "Employee role updated." }));
+  }
+
+  async function createLocationRole() {
+    if (!manageAccess) return;
+    const role = sanitizeRoleKey(settingsRoleForm.role);
+    const roleLabel = trimOrEmpty(settingsRoleForm.role_label) || roleKeyToLabel(role);
+    if (!role) {
+      setSettingsSectionStatus((prev) => ({ ...prev, roles: "Enter a role key before creating a role." }));
+      return;
+    }
+    if ((roleDefinitions || []).some((row) => trimOrEmpty(row?.role) === role)) {
+      setSettingsSectionStatus((prev) => ({ ...prev, roles: `The role ${role} already exists for this organization.` }));
+      return;
+    }
+
+    setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
+    const { error: roleInsertError } = await supabase
+      .from("tenant_role_definitions")
+      .insert([{
+        tenant_key: tenantKey,
+        role,
+        role_label: roleLabel,
+        is_system: false,
+        active: true,
+      }]);
+    if (roleInsertError) {
+      setSettingsSectionStatus((prev) => ({ ...prev, roles: roleInsertError.message || "Could not create this role." }));
+      return;
+    }
+
+    const permissionRows = (permissionCatalog || []).map((row) => ({
+      tenant_key: tenantKey,
+      role,
+      permission_key: trimOrEmpty(row?.permission_key),
+      allowed: false,
+    })).filter((row) => row.permission_key);
+
+    if (permissionRows.length) {
+      const { error: permissionSeedError } = await supabase
+        .from("tenant_role_permissions")
+        .upsert(permissionRows, { onConflict: "tenant_key,role,permission_key" });
+      if (permissionSeedError) {
+        setSettingsSectionStatus((prev) => ({ ...prev, roles: permissionSeedError.message || "Role created, but permission setup could not be initialized." }));
+        return;
+      }
+    }
+
+    const nextRoleRow = {
+      tenant_key: tenantKey,
+      role,
+      role_label: roleLabel,
+      is_system: false,
+      active: true,
+    };
+    setRoleDefinitions((prev) => [...prev, nextRoleRow].sort((a, b) => trimOrEmpty(a?.role_label || a?.role).localeCompare(trimOrEmpty(b?.role_label || b?.role))));
+    setSelectedSettingsRoleKey(role);
+    setSettingsRoleForm({ role: "", role_label: "" });
+    setSettingsRoleFormOpen(false);
+    setSettingsSectionStatus((prev) => ({ ...prev, roles: `Created ${roleLabel}.` }));
+  }
+
+  async function saveLocationRolePermissions() {
+    if (!manageAccess) return;
+    const role = trimOrEmpty(selectedSettingsRoleKey);
+    if (!role) {
+      setSettingsSectionStatus((prev) => ({ ...prev, roles: "Select a role before saving permission changes." }));
+      return;
+    }
+
+    const rows = (permissionCatalog || []).map((row) => {
+      const permissionKey = trimOrEmpty(row?.permission_key);
+      return {
+        tenant_key: tenantKey,
+        role,
+        permission_key: permissionKey,
+        allowed: Boolean(settingsRolePermissionDraft?.[permissionKey]),
+      };
+    }).filter((row) => row.permission_key);
+
+    const { error } = await supabase
+      .from("tenant_role_permissions")
+      .upsert(rows, { onConflict: "tenant_key,role,permission_key" });
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({ ...prev, roles: error.message || "Could not save permission changes." }));
+      return;
+    }
+
+    setRolePermissions((prev) => [
+      ...(prev || []).filter((row) => trimOrEmpty(row?.role) !== role),
+      ...rows,
+    ]);
+    setSettingsRolePermissionDirty(false);
+    setSettingsSectionStatus((prev) => ({ ...prev, roles: "Role permissions saved." }));
+  }
+
   function focusSettingsSection(routeTarget) {
     if (!routeTarget) return;
     navigate(routeTarget);
@@ -2860,8 +3082,7 @@ export default function MunicipalityApp() {
                               type="button"
                               className="municipality-nav-menu-item"
                               onClick={() => {
-                                setAccountMenuOpen(false);
-                                setOpenNavMenu("tenants");
+                                setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
                               }}
                             >
                               Locations
@@ -2888,6 +3109,30 @@ export default function MunicipalityApp() {
                             Sign Out
                           </button>
                         </div>
+                        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
+                          <div className="municipality-account-submenu">
+                            <div className="municipality-account-menu-eyebrow">Switch Location</div>
+                            <div className="municipality-account-submenu-list">
+                              {switchableTenants.map((city) => {
+                                const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+                                const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
+                                return (
+                                  <a
+                                    key={cityKey}
+                                    href={targetHref}
+                                    className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                                    onClick={() => {
+                                      setOpenNavMenu("");
+                                      setAccountMenuOpen(false);
+                                    }}
+                                  >
+                                    {trimOrEmpty(city?.name) || cityKey}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -2997,18 +3242,6 @@ export default function MunicipalityApp() {
               {item.label}
             </button>
           ))}
-          {session?.user?.id && switchableTenants.length ? (
-            <button
-              type="button"
-              className={`municipality-mobile-nav-link${openNavMenu === "tenants" ? " is-active" : ""}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
-              }}
-            >
-              Locations
-            </button>
-          ) : null}
           <button
             type="button"
             className={`municipality-mobile-nav-link${reportNavItem.path === routePath ? " is-active" : ""}${reportNavItem.primary ? " municipality-mobile-nav-link--primary" : ""}`}
@@ -3017,34 +3250,6 @@ export default function MunicipalityApp() {
             {reportNavItem.label}
           </button>
         </nav>
-        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
-          <div className="municipality-mobile-sheet-backdrop" onClick={() => setOpenNavMenu("")}>
-            <div className="municipality-mobile-sheet" onClick={(event) => event.stopPropagation()}>
-              <div className="municipality-mobile-sheet-header">
-                <strong>Switch Location</strong>
-                <button type="button" className="municipality-mobile-sheet-close" onClick={() => setOpenNavMenu("")}>
-                  Close
-                </button>
-              </div>
-              <div className="municipality-mobile-sheet-list">
-                {switchableTenants.map((city) => {
-                  const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                  const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
-                  return (
-                    <a
-                      key={cityKey}
-                      href={targetHref}
-                      className="municipality-nav-menu-item municipality-nav-menu-item--link"
-                      onClick={() => setOpenNavMenu("")}
-                    >
-                      {trimOrEmpty(city?.name) || cityKey}
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        ) : null}
         {authModalOpen && !session?.user?.id ? (
           <div className="municipality-auth-modal-backdrop" onClick={closeAuthModal}>
             <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
@@ -3222,7 +3427,6 @@ export default function MunicipalityApp() {
     { label: "Organization Name", value: tenantName },
     { label: "Public Display Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
     { label: "Email", value: trimOrEmpty(organizationInfo.contact_primary_email) || "Not provided" },
-    { label: "Legal Organization Name", value: trimOrEmpty(organizationInfo.legal_name) || "Not provided" },
     { label: "Phone", value: trimOrEmpty(organizationInfo.contact_primary_phone) || "Not provided" },
     { label: "Website", value: trimOrEmpty(organizationInfo.website_url) || "Not provided" },
     {
@@ -3926,15 +4130,6 @@ export default function MunicipalityApp() {
                                 />
                               </div>
                               <div className="municipality-field">
-                                <label htmlFor="organization-legal-name">Legal Organization Name</label>
-                                <input
-                                  id="organization-legal-name"
-                                  value={organizationProfileDraft.legal_name}
-                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, legal_name: event.target.value }))}
-                                />
-                                <small>Formal entity name used for contracts, billing, and official records.</small>
-                              </div>
-                              <div className="municipality-field">
                                 <label htmlFor="organization-phone">Phone</label>
                                 <input
                                   id="organization-phone"
@@ -4525,8 +4720,8 @@ export default function MunicipalityApp() {
                                       const roleRow = roleDefinitionLookup[roleKey];
                                       const isManageableRole = Boolean(roleRow) && (roleRow?.is_system !== true || roleKey === "tenant_employee");
                                       const isBusy = Boolean(teamAssignmentBusy[assignmentKey]);
-                                      const nextStatus = trimOrEmpty(assignment?.status) === "inactive" ? "active" : "inactive";
                                       const userSummary = resolveKnownTeamUserSummary(assignment.user_id);
+                                      const isEditingRole = editingTeamAssignmentKey === assignmentKey;
                                       return (
                                         <div key={assignmentKey} className="municipality-settings-list-item">
                                           <div>
@@ -4549,22 +4744,65 @@ export default function MunicipalityApp() {
                                             <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
                                             {isManageableRole ? (
                                               <div className="municipality-actions municipality-actions--compact">
-                                                <button
-                                                  type="button"
-                                                  className="municipality-button municipality-button--ghost"
-                                                  onClick={() => void updateTeamAssignmentStatus(assignment, nextStatus)}
-                                                  disabled={isBusy}
-                                                >
-                                                  {isBusy ? "Saving…" : nextStatus === "active" ? "Reactivate" : "Deactivate"}
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  className="municipality-button municipality-button--ghost municipality-button--danger"
-                                                  onClick={() => void removeTeamAssignment(assignment)}
-                                                  disabled={isBusy}
-                                                >
-                                                  Remove
-                                                </button>
+                                                {isEditingRole ? (
+                                                  <>
+                                                    <select
+                                                      value={editingTeamAssignmentRole}
+                                                      onChange={(event) => setEditingTeamAssignmentRole(event.target.value)}
+                                                    >
+                                                      {assignableTeamRoles.map((row) => {
+                                                        const nextRoleKey = trimOrEmpty(row?.role);
+                                                        if (!nextRoleKey) return null;
+                                                        return (
+                                                          <option key={nextRoleKey} value={nextRoleKey}>
+                                                            {trimOrEmpty(row?.role_label) || roleKeyToLabel(nextRoleKey)}
+                                                          </option>
+                                                        );
+                                                      })}
+                                                    </select>
+                                                    <button
+                                                      type="button"
+                                                      className="municipality-button municipality-button--primary"
+                                                      onClick={() => void saveTeamAssignmentRoleEdit(assignment)}
+                                                      disabled={isBusy}
+                                                    >
+                                                      {isBusy ? "Saving…" : "Save"}
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      className="municipality-button municipality-button--ghost"
+                                                      onClick={() => {
+                                                        setEditingTeamAssignmentKey("");
+                                                        setEditingTeamAssignmentRole("");
+                                                      }}
+                                                      disabled={isBusy}
+                                                    >
+                                                      Cancel
+                                                    </button>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <button
+                                                      type="button"
+                                                      className="municipality-button municipality-button--ghost"
+                                                      onClick={() => {
+                                                        setEditingTeamAssignmentKey(assignmentKey);
+                                                        setEditingTeamAssignmentRole(roleKey);
+                                                      }}
+                                                      disabled={isBusy}
+                                                    >
+                                                      Edit
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      className="municipality-button municipality-button--ghost municipality-button--danger"
+                                                      onClick={() => void removeTeamAssignment(assignment)}
+                                                      disabled={isBusy}
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  </>
+                                                )}
                                               </div>
                                             ) : null}
                                           </div>
@@ -4596,44 +4834,142 @@ export default function MunicipalityApp() {
                           <div className="municipality-settings-header">
                             <div>
                               <h4>Roles & Permissions</h4>
-                              <p className="municipality-note">Use this role matrix to confirm who can access reports, users, communications, and other location admin tools.</p>
+                              <p className="municipality-note">Choose a role, adjust permissions, then save the updated access profile for this location.</p>
                             </div>
                             <div className="municipality-actions">
-                              <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
-                                Export Roles CSV
+                              <button
+                                type="button"
+                                className={`municipality-button${settingsRoleFormOpen ? " municipality-button--ghost" : " municipality-button--primary"}`}
+                                onClick={() => {
+                                  setSettingsRoleFormOpen((prev) => !prev);
+                                  setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
+                                }}
+                              >
+                                {settingsRoleFormOpen ? "Hide Add Role" : "Add Role"}
                               </button>
                             </div>
                           </div>
-                          {settingsSectionStatus.roles ? <p className="municipality-inline-status is-error">{settingsSectionStatus.roles}</p> : null}
+                          {settingsSectionStatus.roles ? <p className={`municipality-inline-status${/could not|select|enter|already exists/i.test(settingsSectionStatus.roles) ? " is-error" : ""}`}>{settingsSectionStatus.roles}</p> : null}
                           {!settingsSectionStatus.roles ? (
                             roleDefinitions.length ? (
                               <div className="municipality-settings-list">
-                                {roleDefinitions.map((roleRow) => {
-                                  const allowedPermissions = permissionsByRole[roleRow.role] || [];
-                                  return (
-                                    <div key={roleRow.role} className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                {settingsRoleFormOpen ? (
+                                  <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                    <div className="municipality-settings-item-actions-row">
                                       <div>
-                                        <strong>{trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role)}</strong>
-                                        <p className="municipality-note">
-                                          {roleRow?.is_system ? "System role" : "Custom role"}
-                                          {" • "}
-                                          {roleRow?.active ? "Active" : "Inactive"}
-                                        </p>
-                                      </div>
-                                      <div className="municipality-chip-row">
-                                        {allowedPermissions.length ? (
-                                          allowedPermissions.map((permissionRow) => (
-                                            <span key={`${roleRow.role}-${permissionRow.permission_key}`} className="municipality-chip">
-                                              {permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key}
-                                            </span>
-                                          ))
-                                        ) : (
-                                          <span className="municipality-note">No permissions enabled for this role.</span>
-                                        )}
+                                        <strong>Add Custom Role</strong>
+                                        <p className="municipality-note">Create a new organization role, then assign its permissions below.</p>
                                       </div>
                                     </div>
-                                  );
-                                })}
+                                    <div className="municipality-form-grid">
+                                      <div className="municipality-field">
+                                        <label htmlFor="settings-role-key">Role Key</label>
+                                        <input
+                                          id="settings-role-key"
+                                          value={settingsRoleForm.role}
+                                          onChange={(event) => setSettingsRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(event.target.value) }))}
+                                          placeholder="field_supervisor"
+                                        />
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="settings-role-label">Role Label</label>
+                                        <input
+                                          id="settings-role-label"
+                                          value={settingsRoleForm.role_label}
+                                          onChange={(event) => setSettingsRoleForm((prev) => ({ ...prev, role_label: event.target.value }))}
+                                          placeholder="Field Supervisor"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="municipality-actions">
+                                      <button type="button" className="municipality-button municipality-button--primary" onClick={() => void createLocationRole()}>
+                                        Create Role
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div className="municipality-form-grid">
+                                    <div className="municipality-field">
+                                      <label htmlFor="settings-role-select">Select Role</label>
+                                      <select
+                                        id="settings-role-select"
+                                        value={selectedSettingsRoleKey}
+                                        onChange={(event) => setSelectedSettingsRoleKey(event.target.value)}
+                                      >
+                                        {editableRoleDefinitions.map((roleRow) => {
+                                          const roleKey = trimOrEmpty(roleRow?.role);
+                                          if (!roleKey) return null;
+                                          return (
+                                            <option key={roleKey} value={roleKey}>
+                                              {trimOrEmpty(roleRow?.role_label) || roleKeyToLabel(roleKey)}
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    </div>
+                                  </div>
+                                  {selectedSettingsRoleKey ? (
+                                    <>
+                                      {permissionModules.map((moduleRow) => (
+                                        <div key={moduleRow.key} className="municipality-settings-sublist-item">
+                                          <div>
+                                            <strong>{moduleRow.label}</strong>
+                                            <p className="municipality-note">Choose which actions this role can perform in {moduleRow.label.toLowerCase()}.</p>
+                                          </div>
+                                          <div className="municipality-chip-row">
+                                            {moduleRow.permissions.map((permissionRow) => {
+                                              const permissionKey = trimOrEmpty(permissionRow?.permission_key);
+                                              return (
+                                                <label key={permissionKey} className="municipality-chip" style={{ gap: 8, cursor: "pointer" }}>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={Boolean(settingsRolePermissionDraft?.[permissionKey])}
+                                                    onChange={(event) => {
+                                                      const nextChecked = event.target.checked;
+                                                      setSettingsRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextChecked }));
+                                                      setSettingsRolePermissionDirty(true);
+                                                    }}
+                                                  />
+                                                  {permissionLabelLookup[permissionKey] || permissionKey}
+                                                </label>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      ))}
+                                      <div className="municipality-actions">
+                                        <button
+                                          type="button"
+                                          className="municipality-button municipality-button--ghost"
+                                          onClick={() => {
+                                            const resetDraft = {};
+                                            for (const permissionRow of permissionCatalog || []) {
+                                              const permissionKey = trimOrEmpty(permissionRow?.permission_key);
+                                              if (!permissionKey) continue;
+                                              resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedSettingsRoleKey}:${permissionKey}`]);
+                                            }
+                                            setSettingsRolePermissionDraft(resetDraft);
+                                            setSettingsRolePermissionDirty(false);
+                                          }}
+                                          disabled={!settingsRolePermissionDirty}
+                                        >
+                                          Reset
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="municipality-button municipality-button--primary"
+                                          onClick={() => void saveLocationRolePermissions()}
+                                          disabled={!settingsRolePermissionDirty}
+                                        >
+                                          Save Changes
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <p className="municipality-note">Select a role to edit its permissions.</p>
+                                  )}
+                                </div>
                               </div>
                             ) : (
                               <div className="municipality-empty">No role definitions are visible for this location yet.</div>

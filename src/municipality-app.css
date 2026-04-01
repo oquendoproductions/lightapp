@@ -479,6 +479,18 @@
   padding-inline: 12px;
 }
 
+.municipality-account-submenu {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(23, 49, 79, 0.08);
+}
+
+.municipality-account-submenu-list {
+  display: grid;
+  gap: 6px;
+}
+
 .municipality-side-panel p,
 .municipality-section-subtitle {
   margin: 10px 0 0;
@@ -858,10 +870,11 @@
 }
 
 .municipality-settings-list-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 14px;
+  width: 100%;
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(23, 49, 79, 0.08);
@@ -870,6 +883,13 @@
 
 .municipality-settings-list-item--stacked {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.municipality-settings-list-item > :first-child,
+.municipality-settings-sublist-item > :first-child,
+.municipality-settings-item-actions-row > :first-child {
+  min-width: 0;
 }
 
 .municipality-settings-item-actions {
@@ -891,10 +911,11 @@
 }
 
 .municipality-settings-sublist-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 14px;
+  width: 100%;
   padding: 12px 14px;
   border-radius: 16px;
   border: 1px solid rgba(23, 49, 79, 0.08);
@@ -916,6 +937,10 @@
   color: #176d78;
   font-size: 12px;
   font-weight: 700;
+}
+
+.municipality-chip input {
+  margin: 0;
 }
 
 .municipality-detail-item {
