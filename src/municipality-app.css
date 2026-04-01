@@ -245,7 +245,7 @@
 }
 
 .municipality-main {
-  width: min(1180px, calc(100vw - 32px));
+  width: calc(100vw - 32px);
   margin: 0 auto;
   padding: 28px 0 56px;
   min-width: 0;
@@ -1301,7 +1301,7 @@
   }
 
   .municipality-main {
-    width: min(1180px, calc(100vw - 20px));
+    width: calc(100vw - 20px);
     padding-top: calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 28px);
     padding-bottom: 108px;
   }

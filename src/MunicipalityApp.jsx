@@ -849,7 +849,6 @@ export default function MunicipalityApp() {
   const [events, setEvents] = useState([]);
   const [preferencesByTopic, setPreferencesByTopic] = useState({});
   const [savedPreferencesByTopic, setSavedPreferencesByTopic] = useState({});
-  const [featureStatus, setFeatureStatus] = useState({ ready: true, message: "" });
   const [dataLoading, setDataLoading] = useState(true);
   const [manageAccess, setManageAccess] = useState(false);
   const [manageLoading, setManageLoading] = useState(false);
@@ -1442,7 +1441,6 @@ export default function MunicipalityApp() {
 
     async function loadContent() {
       setDataLoading(true);
-      setFeatureStatus({ ready: true, message: "" });
 
       const topicQuery = supabase
         .from("notification_topics")
@@ -1469,17 +1467,15 @@ export default function MunicipalityApp() {
       const firstError = topicRes.error || alertRes.error || eventRes.error;
       if (firstError) {
         if (isMissingRelationError(firstError)) {
-          setFeatureStatus({
-            ready: false,
-            message: "This location updates feature is ready in code, but the database migration has not been applied yet.",
-          });
           setTopics([]);
           setAlerts([]);
           setEvents([]);
           setDataLoading(false);
           return;
         }
-        setFeatureStatus({ ready: false, message: firstError.message || "Unable to load municipality updates." });
+        setTopics([]);
+        setAlerts([]);
+        setEvents([]);
         setDataLoading(false);
         return;
       }
@@ -1689,10 +1685,8 @@ export default function MunicipalityApp() {
       if (cancelled) return;
       if (error) {
         if (isMissingRelationError(error)) {
-          setFeatureStatus({
-            ready: false,
-            message: "Resident notification preferences are waiting on the latest database migration.",
-          });
+          setPreferencesByTopic({});
+          setSavedPreferencesByTopic({});
           return;
         }
         setAccountSectionStatus((prev) => ({ ...prev, notifications: error.message || "Could not load your notification preferences." }));
@@ -3264,13 +3258,6 @@ export default function MunicipalityApp() {
     <div className="municipality-shell">
       {renderHeader(false)}
       <main className="municipality-main">
-        {!featureStatus.ready ? (
-          <section className="municipality-card municipality-section">
-            <h3>Updates Feature Status</h3>
-            <p className="municipality-section-subtitle">{featureStatus.message}</p>
-          </section>
-        ) : null}
-
         {routePath === "/" ? (
           <>
             <section className="municipality-hero municipality-hero--single">
