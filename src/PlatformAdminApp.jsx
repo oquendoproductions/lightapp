@@ -695,6 +695,18 @@ function composeMailingAddress(parts) {
   return [address1, address2, locality].filter(Boolean).join(", ");
 }
 
+function resolveOrganizationName(row) {
+  return String(row?.name || "").trim() || String(row?.tenant_key || "").trim();
+}
+
+function resolvePublicDisplayName(row, profile) {
+  return String(profile?.display_name || "").trim() || resolveOrganizationName(row);
+}
+
+function resolveLegalOrganizationName(profile) {
+  return String(profile?.legal_name || "").trim();
+}
+
 function buildDefaultBoundaryKey(tenantKey) {
   const key = sanitizeTenantKey(tenantKey);
   return key ? `${key}_city_geojson` : "";
@@ -955,6 +967,22 @@ export default function PlatformAdminApp() {
     () => (tenants || []).find((t) => String(t?.tenant_key || "") === String(selectedTenantKey || "")) || null,
     [tenants, selectedTenantKey]
   );
+  const selectedTenantProfile = useMemo(
+    () => tenantProfilesByTenant?.[sanitizeTenantKey(selectedTenantKey)] || null,
+    [selectedTenantKey, tenantProfilesByTenant]
+  );
+  const selectedTenantOrganizationName = useMemo(
+    () => resolveOrganizationName(selectedTenant),
+    [selectedTenant]
+  );
+  const selectedTenantPublicDisplayName = useMemo(
+    () => resolvePublicDisplayName(selectedTenant, selectedTenantProfile),
+    [selectedTenant, selectedTenantProfile]
+  );
+  const selectedTenantLegalOrganizationName = useMemo(
+    () => resolveLegalOrganizationName(selectedTenantProfile),
+    [selectedTenantProfile]
+  );
   const selectedTenantDeletionScheduledFor = String(selectedTenant?.deletion_scheduled_for || "").trim();
   const selectedTenantPendingDeletion = Boolean(selectedTenantDeletionScheduledFor);
 
@@ -965,9 +993,12 @@ export default function PlatformAdminApp() {
       const key = String(row?.tenant_key || "").trim().toLowerCase();
       const name = String(row?.name || "").trim().toLowerCase();
       const sub = String(row?.primary_subdomain || "").trim().toLowerCase();
-      return key.includes(q) || name.includes(q) || sub.includes(q);
+      const profile = tenantProfilesByTenant?.[sanitizeTenantKey(row?.tenant_key)] || null;
+      const displayName = String(profile?.display_name || "").trim().toLowerCase();
+      const legalName = String(profile?.legal_name || "").trim().toLowerCase();
+      return key.includes(q) || name.includes(q) || sub.includes(q) || displayName.includes(q) || legalName.includes(q);
     });
-  }, [tenants, tenantSearch]);
+  }, [tenantProfilesByTenant, tenantSearch, tenants]);
 
   const selectedTenantLiveUrl = useMemo(
     () => (selectedTenant ? makeLiveUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
@@ -3832,7 +3863,10 @@ export default function PlatformAdminApp() {
                 {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
                   const key = String(row?.tenant_key || "").trim();
                   if (!key) return null;
-                  const name = String(row?.name || "").trim() || key;
+                  const profile = tenantProfilesByTenant?.[sanitizeTenantKey(key)] || null;
+                  const publicDisplayName = resolvePublicDisplayName(row, profile);
+                  const organizationName = resolveOrganizationName(row);
+                  const legalName = resolveLegalOrganizationName(profile);
                   const subdomain = String(row?.primary_subdomain || "").trim();
                   return (
                     <button
@@ -3841,7 +3875,13 @@ export default function PlatformAdminApp() {
                       onClick={() => openTenantWorkspace(key)}
                       style={listActionButton}
                     >
-                      <span>{name}</span>
+                      <span>{publicDisplayName}</span>
+                      {publicDisplayName !== organizationName ? (
+                        <span style={{ fontSize: 11.5, opacity: 0.82 }}>Organization name: {organizationName}</span>
+                      ) : null}
+                      {legalName ? (
+                        <span style={{ fontSize: 11.5, opacity: 0.82 }}>Legal name: {legalName}</span>
+                      ) : null}
                       <span style={{ fontSize: 11.5, opacity: 0.8 }}>{key}{subdomain ? ` • ${subdomain}` : ""}</span>
                     </button>
                   );
@@ -3919,8 +3959,18 @@ export default function PlatformAdminApp() {
                     Organization
                   </div>
                   <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
-                    {selectedTenant?.name || selectedTenantKey}
+                    {selectedTenantPublicDisplayName || selectedTenantKey}
                   </div>
+                  {selectedTenantPublicDisplayName !== selectedTenantOrganizationName ? (
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Organization Name: {selectedTenantOrganizationName}
+                    </div>
+                  ) : null}
+                  {selectedTenantLegalOrganizationName ? (
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Legal Organization Name: {selectedTenantLegalOrganizationName}
+                    </div>
+                  ) : null}
                   <div style={{ fontSize: 13, color: palette.textMuted }}>
                     {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                   </div>
@@ -4148,10 +4198,16 @@ export default function PlatformAdminApp() {
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Legal Organization Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                        Formal entity name used for contracts, billing, and official documentation.
+                      </span>
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Public Display Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                        Preferred outward-facing label. Falls back to Organization Name anywhere a public label is needed.
+                      </span>
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Address 1</span>
@@ -4376,6 +4432,9 @@ export default function PlatformAdminApp() {
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                     <span>Organization Name</span>
                     <input readOnly={tenantReadOnly} value={tenantForm.name} onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
+                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                      Primary platform organization name used for tenant records and internal administration.
+                    </span>
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                     <span>Primary URL Prefix</span>

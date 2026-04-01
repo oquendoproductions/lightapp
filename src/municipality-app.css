@@ -992,6 +992,12 @@
   resize: vertical;
 }
 
+.municipality-field small {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #667d94;
+}
+
 .municipality-field--file input[type="file"] {
   padding: 10px 12px;
 }

@@ -187,6 +187,10 @@ function buildOrganizationProfileDraft(profile, fallbackName = "") {
   };
 }
 
+function resolveOrganizationDisplayName(profile, fallbackName = "") {
+  return trimOrEmpty(profile?.display_name) || trimOrEmpty(fallbackName);
+}
+
 function buildMapAppearanceDraft(row) {
   return {
     show_boundary_border: row?.show_boundary_border !== false,
@@ -888,6 +892,7 @@ export default function MunicipalityApp() {
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
   const [organizationProfile, setOrganizationProfile] = useState(null);
+  const organizationDisplayName = resolveOrganizationDisplayName(organizationProfile, tenantName) || tenantName;
   const [organizationProfileDraft, setOrganizationProfileDraft] = useState(() => buildOrganizationProfileDraft(null, tenantName));
   const [mapAppearance, setMapAppearance] = useState(null);
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));
@@ -2523,7 +2528,7 @@ export default function MunicipalityApp() {
     }
     downloadTextFile(
       `${tenantKey || "location"}-events.ics`,
-      buildIcsFile(publishedEvents, tenantName),
+      buildIcsFile(publishedEvents, organizationDisplayName),
       "text/calendar;charset=utf-8"
     );
     setSettingsStatus("Location calendar downloaded.");
@@ -2818,7 +2823,7 @@ export default function MunicipalityApp() {
             </button>
             <div className="municipality-brand-copy">
               <span className="municipality-brand-eyebrow app-header-eyebrow">Municipality Hub</span>
-              <h1>{tenantName}</h1>
+              <h1>{organizationDisplayName}</h1>
             </div>
             <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
               {!session?.user?.id ? (
@@ -3214,9 +3219,10 @@ export default function MunicipalityApp() {
   const settingsRouteActive = String(routePath || "").startsWith("/settings");
   const organizationInfo = organizationProfile || {};
   const organizationGeneralFields = [
-    { label: "Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
+    { label: "Organization Name", value: tenantName },
+    { label: "Public Display Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
     { label: "Email", value: trimOrEmpty(organizationInfo.contact_primary_email) || "Not provided" },
-    { label: "Alternate Name", value: trimOrEmpty(organizationInfo.legal_name) || "Not provided" },
+    { label: "Legal Organization Name", value: trimOrEmpty(organizationInfo.legal_name) || "Not provided" },
     { label: "Phone", value: trimOrEmpty(organizationInfo.contact_primary_phone) || "Not provided" },
     { label: "Website", value: trimOrEmpty(organizationInfo.website_url) || "Not provided" },
     {
@@ -3389,7 +3395,7 @@ export default function MunicipalityApp() {
                     if (!publishedEvents.length) return;
                     downloadTextFile(
                       `${tenantKey || "location"}-events.ics`,
-                      buildIcsFile(publishedEvents, tenantName),
+                      buildIcsFile(publishedEvents, organizationDisplayName),
                       "text/calendar;charset=utf-8"
                     );
                   }}
@@ -3893,12 +3899,22 @@ export default function MunicipalityApp() {
                           {settingsSectionEdit.organization ? (
                             <div className="municipality-form-grid">
                               <div className="municipality-field">
-                                <label htmlFor="organization-display-name">Name</label>
+                                <label htmlFor="organization-name-readonly">Organization Name</label>
+                                <input
+                                  id="organization-name-readonly"
+                                  value={tenantName}
+                                  readOnly
+                                  style={{ background: "#eef4fb", cursor: "not-allowed" }}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-display-name">Public Display Name</label>
                                 <input
                                   id="organization-display-name"
                                   value={organizationProfileDraft.display_name}
                                   onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, display_name: event.target.value }))}
                                 />
+                                <small>Preferred outward-facing label. Falls back to Organization Name when blank.</small>
                               </div>
                               <div className="municipality-field">
                                 <label htmlFor="organization-email">Email</label>
@@ -3910,12 +3926,13 @@ export default function MunicipalityApp() {
                                 />
                               </div>
                               <div className="municipality-field">
-                                <label htmlFor="organization-legal-name">Alternate Name</label>
+                                <label htmlFor="organization-legal-name">Legal Organization Name</label>
                                 <input
                                   id="organization-legal-name"
                                   value={organizationProfileDraft.legal_name}
                                   onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, legal_name: event.target.value }))}
                                 />
+                                <small>Formal entity name used for contracts, billing, and official records.</small>
                               </div>
                               <div className="municipality-field">
                                 <label htmlFor="organization-phone">Phone</label>
