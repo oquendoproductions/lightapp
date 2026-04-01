@@ -129,8 +129,57 @@ function isPermissionError(error) {
   return code === "42501" || msg.includes("permission") || msg.includes("policy") || msg.includes("row level");
 }
 
+function sanitizeHexColor(value, fallback = "#e53935") {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  return String(fallback || "#e53935").toLowerCase();
+}
+
+function normalizeBoundedDecimalInput(value, { min = 0, max = 1 } = {}) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (!/^-?\d*\.?\d*$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return String(Math.max(min, Math.min(max, parsed)));
+}
+
+function normalizeHexDraft(value, fallback = "#e53935") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.startsWith("#") && raw.length <= 7 && /^#[0-9a-f]*$/i.test(raw)) return raw;
+  if (!raw.startsWith("#") && raw.length <= 6 && /^[0-9a-f]*$/i.test(raw)) return `#${raw}`;
+  return sanitizeHexColor(fallback, "#e53935");
+}
+
 function trimOrEmpty(value) {
   return String(value || "").trim();
+}
+
+function buildOrganizationProfileDraft(profile, fallbackName = "") {
+  return {
+    display_name: trimOrEmpty(profile?.display_name) || trimOrEmpty(fallbackName),
+    contact_primary_email: trimOrEmpty(profile?.contact_primary_email),
+    legal_name: trimOrEmpty(profile?.legal_name),
+    contact_primary_phone: trimOrEmpty(profile?.contact_primary_phone),
+    website_url: trimOrEmpty(profile?.website_url),
+    mailing_address_1: trimOrEmpty(profile?.mailing_address_1),
+    mailing_address_2: trimOrEmpty(profile?.mailing_address_2),
+    mailing_city: trimOrEmpty(profile?.mailing_city),
+    mailing_state: trimOrEmpty(profile?.mailing_state),
+    mailing_zip: trimOrEmpty(profile?.mailing_zip),
+    timezone: trimOrEmpty(profile?.timezone) || "America/New_York",
+  };
+}
+
+function buildMapAppearanceDraft(row) {
+  return {
+    show_boundary_border: row?.show_boundary_border !== false,
+    shade_outside_boundary: row?.shade_outside_boundary !== false,
+    outside_shade_opacity: String(Number.isFinite(Number(row?.outside_shade_opacity)) ? Number(row.outside_shade_opacity) : 0.42),
+    boundary_border_color: sanitizeHexColor(row?.boundary_border_color, "#e53935"),
+    boundary_border_width: String(Number.isFinite(Number(row?.boundary_border_width)) ? Number(row.boundary_border_width) : 4),
+  };
 }
 
 function validateStrongPassword(value) {
@@ -770,8 +819,19 @@ export default function MunicipalityApp() {
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
   const [organizationProfile, setOrganizationProfile] = useState(null);
+  const [organizationProfileDraft, setOrganizationProfileDraft] = useState(() => buildOrganizationProfileDraft(null, tenantName));
   const [mapAppearance, setMapAppearance] = useState(null);
+  const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));
   const [assetLibrary, setAssetLibrary] = useState([]);
+  const [settingsSectionEdit, setSettingsSectionEdit] = useState({
+    organization: false,
+    map: false,
+  });
+  const [settingsSectionSaving, setSettingsSectionSaving] = useState({
+    organization: false,
+    map: false,
+  });
+  const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
     organization: "",
     assets: "",
@@ -915,6 +975,14 @@ export default function MunicipalityApp() {
     }));
   }, [profile?.email, session?.user?.email]);
 
+  useEffect(() => {
+    setOrganizationProfileDraft(buildOrganizationProfileDraft(organizationProfile, tenantName));
+  }, [organizationProfile, tenantName]);
+
+  useEffect(() => {
+    setMapAppearanceDraft(buildMapAppearanceDraft(mapAppearance));
+  }, [mapAppearance]);
+
   if (!residentPortalEnabled) {
     return (
       <Suspense fallback={<div className="municipality-empty" style={{ margin: 16 }}>Loading reporting workspace…</div>}>
@@ -1023,6 +1091,10 @@ export default function MunicipalityApp() {
   const permissionLabelLookup = useMemo(
     () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
     [permissionCatalog]
+  );
+  const roleDefinitionLookup = useMemo(
+    () => Object.fromEntries((roleDefinitions || []).map((row) => [trimOrEmpty(row?.role), row])),
+    [roleDefinitions]
   );
   const permissionsByRole = useMemo(() => {
     const lookup = {};
@@ -1354,7 +1426,7 @@ export default function MunicipalityApp() {
       setSettingsSectionStatus({
         organization: profileRes?.error
           ? ((isPermissionError(profileRes.error)
-            ? "Organization information requires organization.access for this location."
+            ? "Organization information is not available to this account yet."
             : profileRes.error.message) || "Could not load organization information.")
           : "",
         assets: "",
@@ -1370,7 +1442,7 @@ export default function MunicipalityApp() {
         calendar: "",
         map: mapRes?.error
           ? ((isPermissionError(mapRes.error)
-            ? "Map settings require map.access for this location."
+            ? "Map appearance settings are not available to this account yet."
             : mapRes.error.message) || "Could not load map settings.")
           : "",
       });
@@ -1731,6 +1803,152 @@ export default function MunicipalityApp() {
     setSavingSection((prev) => ({ ...prev, security: false }));
     setAccountSectionStatus((prev) => ({ ...prev, security: nextStatus.length ? nextStatus.join(" ") : "Security settings saved." }));
     setSectionEditing("security", false);
+  }
+
+  async function saveOrganizationGeneralSettings() {
+    if (!manageAccess) return;
+    const displayName = trimOrEmpty(organizationProfileDraft.display_name) || tenantName;
+    if (!displayName) {
+      setSettingsSectionStatus((prev) => ({ ...prev, organization: "Enter the organization name before saving." }));
+      return;
+    }
+
+    setSettingsSectionSaving((prev) => ({ ...prev, organization: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, organization: "" }));
+
+    const payload = {
+      tenant_key: tenantKey,
+      display_name: displayName,
+      contact_primary_email: trimOrEmpty(organizationProfileDraft.contact_primary_email) || null,
+      legal_name: trimOrEmpty(organizationProfileDraft.legal_name) || null,
+      contact_primary_phone: trimOrEmpty(organizationProfileDraft.contact_primary_phone) || null,
+      website_url: trimOrEmpty(organizationProfileDraft.website_url) || null,
+      mailing_address_1: trimOrEmpty(organizationProfileDraft.mailing_address_1) || null,
+      mailing_address_2: trimOrEmpty(organizationProfileDraft.mailing_address_2) || null,
+      mailing_city: trimOrEmpty(organizationProfileDraft.mailing_city) || null,
+      mailing_state: trimOrEmpty(organizationProfileDraft.mailing_state) || null,
+      mailing_zip: trimOrEmpty(organizationProfileDraft.mailing_zip) || null,
+      timezone: trimOrEmpty(organizationProfileDraft.timezone) || "America/New_York",
+    };
+
+    const { data, error } = await supabase
+      .from("tenant_profiles")
+      .upsert([payload], { onConflict: "tenant_key" })
+      .select("*")
+      .maybeSingle();
+
+    setSettingsSectionSaving((prev) => ({ ...prev, organization: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        organization: error.message || "Could not save the organization settings.",
+      }));
+      return;
+    }
+
+    setOrganizationProfile(data || { ...(organizationProfile || {}), ...payload });
+    setSettingsSectionEdit((prev) => ({ ...prev, organization: false }));
+    setSettingsSectionStatus((prev) => ({ ...prev, organization: "Organization settings saved." }));
+  }
+
+  async function saveMapAppearanceSettings() {
+    if (!manageAccess) return;
+
+    const opacityRaw = Number(mapAppearanceDraft?.outside_shade_opacity);
+    const opacity = Number.isFinite(opacityRaw) ? Math.max(0, Math.min(1, opacityRaw)) : 0.42;
+    const borderColor = sanitizeHexColor(mapAppearanceDraft?.boundary_border_color, "#e53935");
+    const borderWidthRaw = Number(mapAppearanceDraft?.boundary_border_width);
+    const borderWidth = Number.isFinite(borderWidthRaw) ? Math.max(0.5, Math.min(8, borderWidthRaw)) : 4;
+    const payload = {
+      tenant_key: tenantKey,
+      show_boundary_border: Boolean(mapAppearanceDraft?.show_boundary_border),
+      shade_outside_boundary: Boolean(mapAppearanceDraft?.shade_outside_boundary),
+      outside_shade_opacity: opacity,
+      boundary_border_color: borderColor,
+      boundary_border_width: borderWidth,
+    };
+
+    setSettingsSectionSaving((prev) => ({ ...prev, map: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, map: "" }));
+
+    const { data, error } = await supabase
+      .from("tenant_map_features")
+      .upsert([payload], { onConflict: "tenant_key" })
+      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
+      .maybeSingle();
+
+    setSettingsSectionSaving((prev) => ({ ...prev, map: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        map: error.message || "Could not save the map appearance settings.",
+      }));
+      return;
+    }
+
+    const nextMapAppearance = data || payload;
+    setMapAppearance(nextMapAppearance);
+    setMapAppearanceDraft(buildMapAppearanceDraft(nextMapAppearance));
+    setSettingsSectionEdit((prev) => ({ ...prev, map: false }));
+    setSettingsSectionStatus((prev) => ({ ...prev, map: "Map appearance settings saved." }));
+  }
+
+  async function updateTeamAssignmentStatus(assignment, nextStatus) {
+    const assignmentKey = `${assignment.user_id}-${assignment.role}`;
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+
+    const { error } = await supabase
+      .from("tenant_user_roles")
+      .update({ status: nextStatus })
+      .eq("tenant_key", tenantKey)
+      .eq("user_id", assignment.user_id)
+      .eq("role", assignment.role);
+
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: error.message || "Could not update this employee assignment.",
+      }));
+      return;
+    }
+
+    setTeamAssignments((prev) =>
+      prev.map((row) => ((row.user_id === assignment.user_id && row.role === assignment.role)
+        ? { ...row, status: nextStatus }
+        : row))
+    );
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "Employee access updated." }));
+  }
+
+  async function removeTeamAssignment(assignment) {
+    const assignmentKey = `${assignment.user_id}-${assignment.role}`;
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
+
+    const { error } = await supabase
+      .from("tenant_user_roles")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("user_id", assignment.user_id)
+      .eq("role", assignment.role);
+
+    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        team: error.message || "Could not remove this employee assignment.",
+      }));
+      return;
+    }
+
+    setTeamAssignments((prev) => prev.filter((row) => !(row.user_id === assignment.user_id && row.role === assignment.role)));
+    setSettingsSectionStatus((prev) => ({ ...prev, team: "Employee assignment removed." }));
   }
 
   function focusSettingsSection(routeTarget) {
@@ -2509,7 +2727,6 @@ export default function MunicipalityApp() {
       ].filter(Boolean).join(", ") || trimOrEmpty(organizationInfo.mailing_address) || "Not provided",
     },
     { label: "Time Zone", value: trimOrEmpty(organizationInfo.timezone) || "America/New_York" },
-    { label: "Time Format", value: "12-hour" },
   ];
   const mapAppearanceFields = [
     { label: "Boundary Border", value: mapAppearance?.show_boundary_border === false ? "Hidden" : "Visible" },
@@ -2517,6 +2734,11 @@ export default function MunicipalityApp() {
     { label: "Border Color", value: trimOrEmpty(mapAppearance?.boundary_border_color) || "#e53935" },
     { label: "Border Width", value: `${mapAppearance?.boundary_border_width || 4}px` },
   ];
+  const editableTeamAssignments = teamAssignments.filter((assignment) => {
+    const roleKey = trimOrEmpty(assignment?.role);
+    const roleRow = roleDefinitionLookup[roleKey];
+    return Boolean(roleRow) && !roleRow?.is_system;
+  });
 
   return (
     <div className="municipality-shell">
@@ -3101,16 +3323,146 @@ export default function MunicipalityApp() {
                               <h4>General Settings</h4>
                               <p className="municipality-note">These are the organization fields already collected for this location.</p>
                             </div>
-                          </div>
-                          {settingsSectionStatus.organization ? <p className="municipality-inline-status is-error">{settingsSectionStatus.organization}</p> : null}
-                          <div className="municipality-detail-grid">
-                            {organizationGeneralFields.map((field) => (
-                              <div key={field.label} className="municipality-detail-item">
-                                <span>{field.label}</span>
-                                <strong>{field.value}</strong>
+                            {settingsSectionEdit.organization ? (
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--ghost"
+                                  onClick={() => {
+                                    setOrganizationProfileDraft(buildOrganizationProfileDraft(organizationProfile, tenantName));
+                                    setSettingsSectionEdit((prev) => ({ ...prev, organization: false }));
+                                    setSettingsSectionStatus((prev) => ({ ...prev, organization: "" }));
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--primary"
+                                  onClick={() => void saveOrganizationGeneralSettings()}
+                                  disabled={settingsSectionSaving.organization}
+                                >
+                                  {settingsSectionSaving.organization ? "Saving…" : "Save"}
+                                </button>
                               </div>
-                            ))}
+                            ) : (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setOrganizationProfileDraft(buildOrganizationProfileDraft(organizationProfile, tenantName));
+                                  setSettingsSectionEdit((prev) => ({ ...prev, organization: true }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, organization: "" }));
+                                }}
+                              >
+                                Edit
+                              </button>
+                            )}
                           </div>
+                          {settingsSectionStatus.organization ? <p className={`municipality-inline-status${settingsSectionStatus.organization.toLowerCase().includes("could not") || settingsSectionStatus.organization.toLowerCase().includes("enter") ? " is-error" : ""}`}>{settingsSectionStatus.organization}</p> : null}
+                          {settingsSectionEdit.organization ? (
+                            <div className="municipality-form-grid">
+                              <div className="municipality-field">
+                                <label htmlFor="organization-display-name">Name</label>
+                                <input
+                                  id="organization-display-name"
+                                  value={organizationProfileDraft.display_name}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, display_name: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-email">Email</label>
+                                <input
+                                  id="organization-email"
+                                  type="email"
+                                  value={organizationProfileDraft.contact_primary_email}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, contact_primary_email: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-legal-name">Alternate Name</label>
+                                <input
+                                  id="organization-legal-name"
+                                  value={organizationProfileDraft.legal_name}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, legal_name: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-phone">Phone</label>
+                                <input
+                                  id="organization-phone"
+                                  value={organizationProfileDraft.contact_primary_phone}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, contact_primary_phone: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-website">Website</label>
+                                <input
+                                  id="organization-website"
+                                  type="url"
+                                  value={organizationProfileDraft.website_url}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, website_url: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-timezone">Time Zone</label>
+                                <input
+                                  id="organization-timezone"
+                                  value={organizationProfileDraft.timezone}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, timezone: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-address-1">Address Line 1</label>
+                                <input
+                                  id="organization-address-1"
+                                  value={organizationProfileDraft.mailing_address_1}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, mailing_address_1: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-address-2">Address Line 2</label>
+                                <input
+                                  id="organization-address-2"
+                                  value={organizationProfileDraft.mailing_address_2}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, mailing_address_2: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-city">City</label>
+                                <input
+                                  id="organization-city"
+                                  value={organizationProfileDraft.mailing_city}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, mailing_city: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-state">State</label>
+                                <input
+                                  id="organization-state"
+                                  value={organizationProfileDraft.mailing_state}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, mailing_state: event.target.value }))}
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="organization-zip">ZIP</label>
+                                <input
+                                  id="organization-zip"
+                                  value={organizationProfileDraft.mailing_zip}
+                                  onChange={(event) => setOrganizationProfileDraft((prev) => ({ ...prev, mailing_zip: event.target.value }))}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="municipality-detail-grid">
+                              {organizationGeneralFields.map((field) => (
+                                <div key={field.label} className="municipality-detail-item">
+                                  <span>{field.label}</span>
+                                  <strong>{field.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )
                     ) : null}
@@ -3213,25 +3565,66 @@ export default function MunicipalityApp() {
                                   </div>
                                 ))}
                               </div>
+                              <p className="municipality-note">
+                                System roles remain controlled from the developer dashboard. Custom employee assignments that already exist for this location can be updated here now.
+                              </p>
                               {teamAssignments.length ? (
                                 <div className="municipality-settings-list">
                                   {teamAssignments.map((assignment) => (
-                                    <div key={`${assignment.user_id}-${assignment.role}`} className="municipality-settings-list-item">
-                                      <div>
-                                        <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
-                                        <p className="municipality-note">
-                                          {trimOrEmpty(roleDefinitions.find((row) => row.role === assignment.role)?.role_label) || trimOrEmpty(assignment.role).replace(/_/g, " ")}
-                                          {" • "}
-                                          {trimOrEmpty(assignment.status) || "active"}
-                                        </p>
-                                      </div>
-                                      <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
-                                    </div>
+                                    (() => {
+                                      const roleKey = trimOrEmpty(assignment?.role);
+                                      const assignmentKey = `${assignment.user_id}-${roleKey}`;
+                                      const roleRow = roleDefinitionLookup[roleKey];
+                                      const isCustomRole = Boolean(roleRow) && !roleRow?.is_system;
+                                      const isBusy = Boolean(teamAssignmentBusy[assignmentKey]);
+                                      const nextStatus = trimOrEmpty(assignment?.status) === "inactive" ? "active" : "inactive";
+                                      return (
+                                        <div key={assignmentKey} className="municipality-settings-list-item">
+                                          <div>
+                                            <strong>{shortUserId(assignment.user_id)}{assignment.user_id === session?.user?.id ? " · You" : ""}</strong>
+                                            <p className="municipality-note">
+                                              {trimOrEmpty(roleRow?.role_label) || roleKey.replace(/_/g, " ")}
+                                              {" • "}
+                                              {trimOrEmpty(assignment.status) || "active"}
+                                            </p>
+                                            {!isCustomRole ? (
+                                              <p className="municipality-note">This is a system-managed assignment and still needs PCP control.</p>
+                                            ) : null}
+                                          </div>
+                                          <div className="municipality-settings-item-actions">
+                                            <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
+                                            {isCustomRole ? (
+                                              <div className="municipality-actions municipality-actions--compact">
+                                                <button
+                                                  type="button"
+                                                  className="municipality-button municipality-button--ghost"
+                                                  onClick={() => void updateTeamAssignmentStatus(assignment, nextStatus)}
+                                                  disabled={isBusy}
+                                                >
+                                                  {isBusy ? "Saving…" : nextStatus === "active" ? "Reactivate" : "Deactivate"}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="municipality-button municipality-button--ghost municipality-button--danger"
+                                                  onClick={() => void removeTeamAssignment(assignment)}
+                                                  disabled={isBusy}
+                                                >
+                                                  Remove
+                                                </button>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()
                                   ))}
                                 </div>
                               ) : (
                                 <div className="municipality-empty">No location access assignments are visible yet.</div>
                               )}
+                              {!editableTeamAssignments.length ? (
+                                <p className="municipality-note">No editable custom employee assignments are available yet. Add or change system-level access from the developer dashboard for now.</p>
+                              ) : null}
                             </>
                           ) : null}
                         </div>
@@ -3350,16 +3743,138 @@ export default function MunicipalityApp() {
                               <h4>Visual Appearance</h4>
                               <p className="municipality-note">Visual appearance is the current map-settings surface for this location.</p>
                             </div>
-                          </div>
-                          {settingsSectionStatus.map ? <p className="municipality-inline-status is-error">{settingsSectionStatus.map}</p> : null}
-                          <div className="municipality-detail-grid">
-                            {mapAppearanceFields.map((field) => (
-                              <div key={field.label} className="municipality-detail-item">
-                                <span>{field.label}</span>
-                                <strong>{field.value}</strong>
+                            {settingsSectionEdit.map ? (
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--ghost"
+                                  onClick={() => {
+                                    setMapAppearanceDraft(buildMapAppearanceDraft(mapAppearance));
+                                    setSettingsSectionEdit((prev) => ({ ...prev, map: false }));
+                                    setSettingsSectionStatus((prev) => ({ ...prev, map: "" }));
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--primary"
+                                  onClick={() => void saveMapAppearanceSettings()}
+                                  disabled={settingsSectionSaving.map}
+                                >
+                                  {settingsSectionSaving.map ? "Saving…" : "Save"}
+                                </button>
                               </div>
-                            ))}
+                            ) : (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setMapAppearanceDraft(buildMapAppearanceDraft(mapAppearance));
+                                  setSettingsSectionEdit((prev) => ({ ...prev, map: true }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, map: "" }));
+                                }}
+                              >
+                                Edit
+                              </button>
+                            )}
                           </div>
+                          {settingsSectionStatus.map ? <p className={`municipality-inline-status${settingsSectionStatus.map.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.map}</p> : null}
+                          {settingsSectionEdit.map ? (
+                            <div className="municipality-form-grid">
+                              <label className="municipality-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(mapAppearanceDraft.show_boundary_border)}
+                                  onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, show_boundary_border: event.target.checked }))}
+                                />
+                                <span>Show boundary border</span>
+                              </label>
+                              <label className="municipality-checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(mapAppearanceDraft.shade_outside_boundary)}
+                                  onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, shade_outside_boundary: event.target.checked }))}
+                                />
+                                <span>Shade outside boundary</span>
+                              </label>
+                              <div className="municipality-field">
+                                <label htmlFor="map-border-color">Boundary Border Color</label>
+                                <div className="municipality-inline-field-row">
+                                  <input
+                                    id="map-border-color"
+                                    type="color"
+                                    value={sanitizeHexColor(mapAppearanceDraft.boundary_border_color, "#e53935")}
+                                    disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                    onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_color: event.target.value }))}
+                                  />
+                                  <input
+                                    type="text"
+                                    inputMode="text"
+                                    value={mapAppearanceDraft.boundary_border_color}
+                                    disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                    onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_color: event.target.value }))}
+                                    onBlur={(event) => setMapAppearanceDraft((prev) => ({
+                                      ...prev,
+                                      boundary_border_color: sanitizeHexColor(normalizeHexDraft(event.target.value, prev.boundary_border_color), "#e53935"),
+                                    }))}
+                                    placeholder="#e53935"
+                                  />
+                                </div>
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="map-border-width">Boundary Border Width (0.5 - 8)</label>
+                                <input
+                                  id="map-border-width"
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={mapAppearanceDraft.boundary_border_width}
+                                  disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                                      setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_width: nextValue }));
+                                    }
+                                  }}
+                                  onBlur={(event) => {
+                                    const normalized = normalizeBoundedDecimalInput(event.target.value, { min: 0.5, max: 8 });
+                                    setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_width: normalized || "4" }));
+                                  }}
+                                  placeholder="4"
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="map-shade-opacity">Outside Shade Opacity (0 - 1)</label>
+                                <input
+                                  id="map-shade-opacity"
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={mapAppearanceDraft.outside_shade_opacity}
+                                  disabled={!Boolean(mapAppearanceDraft.shade_outside_boundary)}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                                      setMapAppearanceDraft((prev) => ({ ...prev, outside_shade_opacity: nextValue }));
+                                    }
+                                  }}
+                                  onBlur={(event) => {
+                                    const normalized = normalizeBoundedDecimalInput(event.target.value, { min: 0, max: 1 });
+                                    setMapAppearanceDraft((prev) => ({ ...prev, outside_shade_opacity: normalized || "0.42" }));
+                                  }}
+                                  placeholder="0.42"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="municipality-detail-grid">
+                              {mapAppearanceFields.map((field) => (
+                                <div key={field.label} className="municipality-detail-item">
+                                  <span>{field.label}</span>
+                                  <strong>{field.value}</strong>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )
                     ) : null}

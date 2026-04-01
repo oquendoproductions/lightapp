@@ -816,6 +816,12 @@
   display: grid;
 }
 
+.municipality-settings-item-actions {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
 .municipality-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -907,6 +913,18 @@
   resize: vertical;
 }
 
+.municipality-inline-field-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.municipality-inline-field-row input[type="color"] {
+  padding: 4px;
+  min-height: 42px;
+}
+
 .municipality-password-row {
   position: relative;
 }
@@ -955,8 +973,17 @@
   gap: 10px;
 }
 
+.municipality-actions--compact {
+  justify-content: flex-end;
+}
+
 .municipality-actions--toolbar {
   align-items: center;
+}
+
+.municipality-button--danger {
+  color: #a12626;
+  border-color: rgba(161, 38, 38, 0.28);
 }
 
 .municipality-admin-panel {
