@@ -1136,6 +1136,45 @@ export default function PlatformAdminApp() {
     setAuditRows(fallbackRows);
   }, [selectedTenantKey]);
 
+  const purgeExpiredOrganizationDeletions = useCallback(async () => {
+    if (!canEditTenantCore) return;
+    const { data, error } = await supabase
+      .from("tenants")
+      .select("tenant_key,name,deletion_requested_at,deletion_scheduled_for,deletion_requested_by");
+    if (error) {
+      if (isMissingColumnError(error)) return;
+      throw error;
+    }
+    const now = Date.now();
+    const dueRows = (Array.isArray(data) ? data : []).filter((row) => {
+      const scheduled = String(row?.deletion_scheduled_for || "").trim();
+      if (!scheduled) return false;
+      const scheduledMs = new Date(scheduled).getTime();
+      return Number.isFinite(scheduledMs) && scheduledMs <= now;
+    });
+    for (const row of dueRows) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      if (!tenantKey) continue;
+      await logAudit({
+        tenant_key: tenantKey,
+        action: "tenant_deleted",
+        entity_type: "tenant",
+        entity_id: tenantKey,
+        details: {
+          scheduled_for: cleanOptional(row?.deletion_scheduled_for),
+          requested_at: cleanOptional(row?.deletion_requested_at),
+          requested_by: cleanOptional(row?.deletion_requested_by),
+          deleted_by: cleanOptional(sessionUserId),
+        },
+      });
+      const { error: deleteError } = await supabase
+        .from("tenants")
+        .delete()
+        .eq("tenant_key", tenantKey);
+      if (deleteError) throw deleteError;
+    }
+  }, [canEditTenantCore, logAudit, sessionUserId]);
+
   const refreshControlPlaneData = useCallback(async () => {
     try {
       await purgeExpiredOrganizationDeletions();
@@ -1822,45 +1861,6 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     await refreshControlPlaneData();
   }, [persistTenantProfileRecord, persistTenantRecord, refreshControlPlaneData, tenantForm.tenant_key]);
-
-  async function purgeExpiredOrganizationDeletions() {
-    if (!canEditTenantCore) return;
-    const { data, error } = await supabase
-      .from("tenants")
-      .select("tenant_key,name,deletion_requested_at,deletion_scheduled_for,deletion_requested_by");
-    if (error) {
-      if (isMissingColumnError(error)) return;
-      throw error;
-    }
-    const now = Date.now();
-    const dueRows = (Array.isArray(data) ? data : []).filter((row) => {
-      const scheduled = String(row?.deletion_scheduled_for || "").trim();
-      if (!scheduled) return false;
-      const scheduledMs = new Date(scheduled).getTime();
-      return Number.isFinite(scheduledMs) && scheduledMs <= now;
-    });
-    for (const row of dueRows) {
-      const tenantKey = sanitizeTenantKey(row?.tenant_key);
-      if (!tenantKey) continue;
-      await logAudit({
-        tenant_key: tenantKey,
-        action: "tenant_deleted",
-        entity_type: "tenant",
-        entity_id: tenantKey,
-        details: {
-          scheduled_for: cleanOptional(row?.deletion_scheduled_for),
-          requested_at: cleanOptional(row?.deletion_requested_at),
-          requested_by: cleanOptional(row?.deletion_requested_by),
-          deleted_by: cleanOptional(sessionUserId),
-        },
-      });
-      const { error: deleteError } = await supabase
-        .from("tenants")
-        .delete()
-        .eq("tenant_key", tenantKey);
-      if (deleteError) throw deleteError;
-    }
-  }
 
   const scheduleOrganizationDeletion = useCallback(async () => {
     if (!canEditTenantCore) {
