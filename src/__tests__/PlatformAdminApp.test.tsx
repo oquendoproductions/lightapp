@@ -17,6 +17,29 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../supabaseClient", () => {
+  const platformPermissionKeys = [
+    "account.access",
+    "organizations.access",
+    "organizations.edit",
+    "organizations.delete",
+    "leads.access",
+    "leads.edit",
+    "users.access",
+    "users.edit",
+    "users.delete",
+    "roles.access",
+    "roles.edit",
+    "roles.delete",
+    "security.access",
+    "reports.access",
+    "finance.access",
+    "domains.access",
+    "domains.edit",
+    "files.access",
+    "files.edit",
+    "audit.access",
+  ];
+
   const defaultData = () => ({
     tenants: [
       {
@@ -69,6 +92,53 @@ vi.mock("../supabaseClient", () => {
         status: "active",
       },
     ],
+    platform_role_definitions: [
+      {
+        role: "platform_owner",
+        role_label: "Platform Owner",
+        is_system: true,
+        active: true,
+      },
+      {
+        role: "platform_staff",
+        role_label: "Platform Staff",
+        is_system: true,
+        active: true,
+      },
+    ],
+    platform_role_permissions: platformPermissionKeys.flatMap((permission_key) => ([
+      {
+        role: "platform_owner",
+        permission_key,
+        allowed: true,
+      },
+      {
+        role: "platform_staff",
+        permission_key,
+        allowed: [
+          "account.access",
+          "leads.access",
+          "leads.edit",
+          "organizations.access",
+          "reports.access",
+          "domains.access",
+          "domains.edit",
+          "files.access",
+          "files.edit",
+          "audit.access",
+        ].includes(permission_key),
+      },
+    ])),
+    platform_permissions_catalog: platformPermissionKeys.map((permission_key, index) => {
+      const [module_key, action_key] = permission_key.split(".");
+      return {
+        permission_key,
+        module_key,
+        action_key,
+        label: permission_key,
+        sort_order: index + 1,
+      };
+    }),
     admins: [],
   });
 
@@ -122,7 +192,7 @@ vi.mock("../supabaseClient", () => {
   class QueryBuilder {
     table: string;
     action: "select" | "delete";
-    filters: Array<{ column: string; value: unknown }>;
+    filters: Array<{ column: string; value: unknown; op?: "eq" | "in" }>;
     maybeSingleResult: boolean;
     limitCount: number | null;
 
@@ -140,7 +210,12 @@ vi.mock("../supabaseClient", () => {
     }
 
     eq(column: string, value: unknown) {
-      this.filters.push({ column, value });
+      this.filters.push({ column, value, op: "eq" });
+      return this;
+    }
+
+    in(column: string, values: unknown[]) {
+      this.filters.push({ column, value: values, op: "in" });
       return this;
     }
 
@@ -210,7 +285,13 @@ vi.mock("../supabaseClient", () => {
       }
 
       let rows = tableRows.filter((row) =>
-        this.filters.every(({ column, value }) => String(row?.[column] ?? "") === String(value ?? ""))
+        this.filters.every(({ column, value, op }) => {
+          if (op === "in") {
+            const allowed = Array.isArray(value) ? value.map((entry) => String(entry ?? "")) : [];
+            return allowed.includes(String(row?.[column] ?? ""));
+          }
+          return String(row?.[column] ?? "") === String(value ?? "");
+        })
       );
 
       if (typeof this.limitCount === "number") {

@@ -45,6 +45,12 @@ function normalizeRoleKey(value: unknown) {
     .replace(/^_+|_+$/g, "");
 }
 
+function isMissingRelationError(error: any) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+}
+
 function titleCaseWords(value: unknown) {
   return normalizeText(value)
     .split(/\s+/)
@@ -113,7 +119,7 @@ async function resolveSessionUser(req: Request, admin: ReturnType<typeof createC
   };
 }
 
-async function isPlatformOwner(userId: string, admin: ReturnType<typeof createClient>) {
+async function resolvePlatformAccess(userId: string, admin: ReturnType<typeof createClient>) {
   const [rolesResult, legacyAdminResult] = await Promise.all([
     admin
       .from("platform_user_roles")
@@ -127,16 +133,113 @@ async function isPlatformOwner(userId: string, admin: ReturnType<typeof createCl
       .maybeSingle(),
   ]);
 
-  if (rolesResult.error || legacyAdminResult.error) {
+  if (legacyAdminResult.error) {
     return { ok: false, response: json({ ok: false, error: "Unable to verify platform role." }, 403) };
   }
 
+  if (rolesResult.error) {
+    if (!isMissingRelationError(rolesResult.error)) {
+      return { ok: false, response: json({ ok: false, error: "Unable to verify platform role." }, 403) };
+    }
+
+    const isLegacyAdmin = Boolean(legacyAdminResult?.data?.user_id);
+    return {
+      ok: true,
+      roleKeys: [],
+      legacyAdmin: isLegacyAdmin,
+      permissions: {
+        usersAccess: isLegacyAdmin,
+        usersEdit: isLegacyAdmin,
+        usersDelete: isLegacyAdmin,
+      },
+    };
+  }
+
   const roles = Array.isArray(rolesResult.data) ? rolesResult.data : [];
-  const hasOwnerRole = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_owner");
+  const roleKeys = [...new Set(
+    roles
+      .map((row) => normalizeRoleKey(row?.role))
+      .filter(Boolean),
+  )];
   const isLegacyAdmin = Boolean(legacyAdminResult?.data?.user_id);
+
+  if (isLegacyAdmin || roleKeys.includes("platform_owner")) {
+    return {
+      ok: true,
+      roleKeys,
+      legacyAdmin: isLegacyAdmin,
+      permissions: {
+        usersAccess: true,
+        usersEdit: true,
+        usersDelete: true,
+      },
+    };
+  }
+
+  if (!roleKeys.length) {
+    return {
+      ok: true,
+      roleKeys,
+      legacyAdmin: false,
+      permissions: {
+        usersAccess: false,
+        usersEdit: false,
+        usersDelete: false,
+      },
+    };
+  }
+
+  const [roleDefinitionsResult, rolePermissionsResult] = await Promise.all([
+    admin
+      .from("platform_role_definitions")
+      .select("role,active")
+      .in("role", roleKeys),
+    admin
+      .from("platform_role_permissions")
+      .select("role,permission_key,allowed")
+      .eq("allowed", true)
+      .in("role", roleKeys),
+  ]);
+
+  if (roleDefinitionsResult.error || rolePermissionsResult.error) {
+    const firstError = roleDefinitionsResult.error || rolePermissionsResult.error;
+    if (isMissingRelationError(firstError)) {
+      return {
+        ok: true,
+        roleKeys,
+        legacyAdmin: false,
+        permissions: {
+          usersAccess: false,
+          usersEdit: false,
+          usersDelete: false,
+        },
+      };
+    }
+    return { ok: false, response: json({ ok: false, error: "Unable to verify platform permissions." }, 403) };
+  }
+
+  const activeRoleSet = new Set(
+    (Array.isArray(roleDefinitionsResult.data) ? roleDefinitionsResult.data : [])
+      .filter((row) => row?.active !== false)
+      .map((row) => normalizeRoleKey(row?.role))
+      .filter(Boolean),
+  );
+  const permissionSet = new Set(
+    (Array.isArray(rolePermissionsResult.data) ? rolePermissionsResult.data : [])
+      .filter((row) => activeRoleSet.has(normalizeRoleKey(row?.role)))
+      .map((row) => String(row?.permission_key || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+
   return {
     ok: true,
-    allowed: hasOwnerRole || isLegacyAdmin,
+    roleKeys,
+    legacyAdmin: false,
+    permissions: {
+      usersAccess: permissionSet.has("users.access") || permissionSet.has("users.edit") || permissionSet.has("users.delete"),
+      usersEdit: permissionSet.has("users.edit"),
+      usersDelete: permissionSet.has("users.delete"),
+    },
   };
 }
 
@@ -243,16 +346,17 @@ async function requireActorAccess(
     return sessionUserResult;
   }
 
-  const platformOwnerResult = await isPlatformOwner(sessionUserResult.userId, admin);
-  if (!platformOwnerResult.ok) {
-    return platformOwnerResult;
+  const platformAccessResult = await resolvePlatformAccess(sessionUserResult.userId, admin);
+  if (!platformAccessResult.ok) {
+    return platformAccessResult;
   }
-  if (platformOwnerResult.allowed) {
+  if (platformAccessResult.legacyAdmin || platformAccessResult.roleKeys.includes("platform_owner")) {
     return {
       ok: true,
       actor: {
         userId: sessionUserResult.userId,
         platformOwner: true,
+        platformRoles: platformAccessResult.roleKeys,
         permissions: {
           usersAccess: true,
           usersEdit: true,
@@ -276,6 +380,7 @@ async function requireActorAccess(
     actor: {
       userId: sessionUserResult.userId,
       platformOwner: false,
+      platformRoles: platformAccessResult.roleKeys,
       permissions: tenantAccessResult.permissions,
     },
   };

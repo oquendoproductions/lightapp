@@ -72,31 +72,33 @@ const CONTROL_PLANE_SETTINGS_NAV = [
   },
 ];
 
-const PLATFORM_ROLE_OPTIONS = [
-  { key: "platform_owner", label: "Platform Owner" },
-  { key: "platform_staff", label: "Platform Staff" },
-];
-
-const CONTROL_PLANE_PAGE_ACCESS = {
-  "manage-organizations": ["platform_owner", "legacy_admin", "platform_staff"],
-  "manage-leads": ["platform_owner", "legacy_admin", "platform_staff"],
-  "account-info": ["platform_owner", "legacy_admin", "platform_staff"],
-  "manage-team": ["platform_owner", "legacy_admin"],
-  "roles-permissions": ["platform_owner", "legacy_admin"],
-  "security-checks": ["platform_owner", "legacy_admin"],
-  "organization-reports": ["platform_owner", "legacy_admin", "platform_staff"],
-  "domain-reports": ["platform_owner", "legacy_admin", "platform_staff"],
-  "leads-reports": ["platform_owner", "legacy_admin", "platform_staff"],
-  "finance-reports": ["platform_owner", "legacy_admin"],
-};
-
-const ROLE_PERMISSION_ACTIONS = [
+const PLATFORM_PERMISSION_ACTIONS = [
   { key: "access", label: "Access" },
   { key: "edit", label: "Edit" },
   { key: "delete", label: "Delete" },
 ];
 
-const ROLE_PERMISSION_MODULES = [
+const PLATFORM_PERMISSION_MODULES = [
+  { key: "account", label: "Account" },
+  { key: "organizations", label: "Organizations" },
+  { key: "leads", label: "Leads" },
+  { key: "users", label: "Users" },
+  { key: "roles", label: "Roles" },
+  { key: "security", label: "Security" },
+  { key: "reports", label: "Reports" },
+  { key: "finance", label: "Finance" },
+  { key: "domains", label: "Domains + Features" },
+  { key: "files", label: "Files" },
+  { key: "audit", label: "Audit" },
+];
+
+const TENANT_PERMISSION_ACTIONS = [
+  { key: "access", label: "Access" },
+  { key: "edit", label: "Edit" },
+  { key: "delete", label: "Delete" },
+];
+
+const TENANT_PERMISSION_MODULES = [
   { key: "reports", label: "Reports" },
   { key: "users", label: "Users" },
   { key: "domains", label: "Domains + Features" },
@@ -105,8 +107,60 @@ const ROLE_PERMISSION_MODULES = [
   { key: "roles", label: "Roles" },
 ];
 
-const DEFAULT_TENANT_PERMISSION_KEYS = ROLE_PERMISSION_MODULES.flatMap((module) =>
-  ROLE_PERMISSION_ACTIONS.map((action) => `${module.key}.${action.key}`)
+const DEFAULT_PLATFORM_PERMISSION_KEYS = PLATFORM_PERMISSION_MODULES.flatMap((module) =>
+  PLATFORM_PERMISSION_ACTIONS.map((action) => `${module.key}.${action.key}`)
+);
+
+const DEFAULT_PLATFORM_ROLE_DEFINITIONS = [
+  { role: "platform_owner", role_label: "Platform Owner", is_system: true, active: true },
+  { role: "platform_staff", role_label: "Platform Staff", is_system: true, active: true },
+];
+
+const DEFAULT_PLATFORM_ROLE_PERMISSIONS = DEFAULT_PLATFORM_PERMISSION_KEYS.flatMap((permissionKey) => (
+  DEFAULT_PLATFORM_ROLE_DEFINITIONS.map((role) => ({
+    role: role.role,
+    permission_key: permissionKey,
+    allowed: role.role === "platform_owner"
+      ? true
+      : [
+        "account.access",
+        "leads.access",
+        "leads.edit",
+        "organizations.access",
+        "reports.access",
+        "domains.access",
+        "domains.edit",
+        "files.access",
+        "files.edit",
+        "audit.access",
+      ].includes(permissionKey),
+  }))
+));
+
+const CONTROL_PLANE_PAGE_PERMISSIONS = {
+  "manage-organizations": "organizations.access",
+  "manage-leads": "leads.access",
+  "account-info": "account.access",
+  "manage-team": "users.access",
+  "roles-permissions": "roles.access",
+  "security-checks": "security.access",
+  "organization-reports": "reports.access",
+  "domain-reports": "reports.access",
+  "leads-reports": "reports.access",
+  "finance-reports": "finance.access",
+};
+
+const TENANT_WORKSPACE_TAB_PERMISSIONS = {
+  tenants: "organizations.access",
+  users: "users.access",
+  roles: "roles.access",
+  domains: "domains.access",
+  files: "files.access",
+  audit: "audit.access",
+};
+
+const DEFAULT_TENANT_PERMISSION_KEYS = TENANT_PERMISSION_MODULES.flatMap((module) =>
+  TENANT_PERMISSION_ACTIONS.map((action) => `${module.key}.${action.key}`)
 );
 
 const ORGANIZATION_DELETION_HOLD_DAYS = 30;
@@ -935,6 +989,8 @@ export default function PlatformAdminApp() {
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
+  const [platformAccessRoles, setPlatformAccessRoles] = useState([]);
+  const [platformAccessPermissionKeys, setPlatformAccessPermissionKeys] = useState([]);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -954,6 +1010,9 @@ export default function PlatformAdminApp() {
   const [tenantAdmins, setTenantAdmins] = useState([]);
   const [platformTeamAssignments, setPlatformTeamAssignments] = useState([]);
   const [platformTeamUserSummariesById, setPlatformTeamUserSummariesById] = useState({});
+  const [platformPermissionCatalog, setPlatformPermissionCatalog] = useState([]);
+  const [platformRoleDefinitions, setPlatformRoleDefinitions] = useState([]);
+  const [platformRolePermissions, setPlatformRolePermissions] = useState([]);
   const [platformUserSearchQuery, setPlatformUserSearchQuery] = useState("");
   const [platformUserSearchResults, setPlatformUserSearchResults] = useState([]);
   const [platformTeamForm, setPlatformTeamForm] = useState({ user_id: "", role: "platform_staff" });
@@ -962,6 +1021,11 @@ export default function PlatformAdminApp() {
   const [editingPlatformAssignmentRole, setEditingPlatformAssignmentRole] = useState("");
   const [platformTeamStatus, setPlatformTeamStatus] = useState("");
   const [platformUserSearchLoading, setPlatformUserSearchLoading] = useState(false);
+  const [selectedPlatformRoleKey, setSelectedPlatformRoleKey] = useState("platform_owner");
+  const [platformRoleForm, setPlatformRoleForm] = useState({ role: "", role_label: "" });
+  const [platformRolePermissionDraft, setPlatformRolePermissionDraft] = useState({});
+  const [platformRolePermissionDirty, setPlatformRolePermissionDirty] = useState(false);
+  const [platformRoleStatus, setPlatformRoleStatus] = useState("");
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
   const [selectedLeadId, setSelectedLeadId] = useState("");
@@ -1107,6 +1171,19 @@ export default function PlatformAdminApp() {
     return rows;
   }, [tenantRoleDefinitions]);
 
+  const sortedPlatformRoleDefinitions = useMemo(() => {
+    const rows = Array.isArray(platformRoleDefinitions) && platformRoleDefinitions.length
+      ? [...platformRoleDefinitions]
+      : [...DEFAULT_PLATFORM_ROLE_DEFINITIONS];
+    rows.sort((a, b) => {
+      const aSystem = a?.is_system === true ? 1 : 0;
+      const bSystem = b?.is_system === true ? 1 : 0;
+      if (aSystem !== bSystem) return bSystem - aSystem;
+      return String(a?.role || "").localeCompare(String(b?.role || ""));
+    });
+    return rows;
+  }, [platformRoleDefinitions]);
+
   const roleLabelByKey = useMemo(() => {
     const out = {};
     for (const row of tenantRoleDefinitions || []) {
@@ -1117,9 +1194,24 @@ export default function PlatformAdminApp() {
     return out;
   }, [tenantRoleDefinitions]);
 
+  const platformRoleLabelByKey = useMemo(() => {
+    const out = {};
+    for (const row of sortedPlatformRoleDefinitions) {
+      const key = String(row?.role || "").trim();
+      if (!key) continue;
+      out[key] = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
+    }
+    return out;
+  }, [sortedPlatformRoleDefinitions]);
+
   const assignableTenantRoles = useMemo(
     () => sortedTenantRoleDefinitions.filter((row) => row?.active !== false),
     [sortedTenantRoleDefinitions]
+  );
+
+  const assignablePlatformRoles = useMemo(
+    () => sortedPlatformRoleDefinitions.filter((row) => row?.active !== false),
+    [sortedPlatformRoleDefinitions]
   );
 
   const userSearchResultById = useMemo(() => {
@@ -1136,6 +1228,15 @@ export default function PlatformAdminApp() {
     () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
     [tenantAdmins, selectedTenantKey]
   );
+  const platformRoleAssignmentCounts = useMemo(() => {
+    const counts = {};
+    for (const row of platformTeamAssignments || []) {
+      const role = String(row?.role || "").trim();
+      if (!role) continue;
+      counts[role] = (counts[role] || 0) + 1;
+    }
+    return counts;
+  }, [platformTeamAssignments]);
   const tenantAdminAssignments = useMemo(
     () => (tenantAdmins || []).filter((row) => String(row?.role || "").trim() === "tenant_admin"),
     [tenantAdmins]
@@ -1210,9 +1311,27 @@ export default function PlatformAdminApp() {
     return out;
   }, [tenantRolePermissions]);
 
+  const platformRolePermissionMap = useMemo(() => {
+    const out = {};
+    const rows = Array.isArray(platformRolePermissions) && platformRolePermissions.length
+      ? platformRolePermissions
+      : DEFAULT_PLATFORM_ROLE_PERMISSIONS;
+    for (const row of rows) {
+      const role = String(row?.role || "").trim();
+      const permission = String(row?.permission_key || "").trim();
+      if (!role || !permission) continue;
+      out[`${role}:${permission}`] = Boolean(row?.allowed);
+    }
+    return out;
+  }, [platformRolePermissions]);
+
   const selectedRoleDefinition = useMemo(
     () => sortedTenantRoleDefinitions.find((row) => String(row?.role || "") === String(selectedRoleKey || "")) || null,
     [sortedTenantRoleDefinitions, selectedRoleKey]
+  );
+  const selectedPlatformRoleDefinition = useMemo(
+    () => sortedPlatformRoleDefinitions.find((row) => String(row?.role || "") === String(selectedPlatformRoleKey || "")) || null,
+    [sortedPlatformRoleDefinitions, selectedPlatformRoleKey]
   );
   const activeSettingsGroupKey = useMemo(
     () => CONTROL_PLANE_SETTINGS_NAV.find((group) => group.items.some((item) => item.key === controlPlanePage))?.key || "",
@@ -1234,21 +1353,53 @@ export default function PlatformAdminApp() {
 
   const tenantSearchQuery = String(tenantSearch || "").trim();
   const hasTenantSearchQuery = tenantSearchQuery.length > 0;
+  const platformPermissionSet = useMemo(
+    () => new Set(Array.isArray(platformAccessPermissionKeys) ? platformAccessPermissionKeys : []),
+    [platformAccessPermissionKeys]
+  );
+  const hasPlatformPermission = useCallback((permissionKey) => {
+    const key = String(permissionKey || "").trim().toLowerCase();
+    if (!key) return false;
+    return platformPermissionSet.has(key);
+  }, [platformPermissionSet]);
   const isPlatformOwner = platformAccessRole === "platform_owner" || platformAccessRole === "legacy_admin";
   const isPlatformStaff = platformAccessRole === "platform_staff";
-  const canEditTenantCore = isPlatformOwner;
-  const canEditTenantOperational = isPlatformOwner || isPlatformStaff;
+  const canViewPlatformUsers = hasPlatformPermission("users.access") || hasPlatformPermission("users.edit") || hasPlatformPermission("users.delete");
+  const canManagePlatformUsers = hasPlatformPermission("users.edit");
+  const canRemovePlatformUsers = hasPlatformPermission("users.delete");
+  const canViewPlatformRoles = hasPlatformPermission("roles.access") || hasPlatformPermission("roles.edit") || hasPlatformPermission("roles.delete");
+  const canManagePlatformRoles = hasPlatformPermission("roles.edit");
+  const canDeletePlatformRoles = hasPlatformPermission("roles.delete");
+  const canEditTenantSetup = hasPlatformPermission("organizations.edit");
+  const canDeleteTenant = hasPlatformPermission("organizations.delete");
+  const canViewTenantUsers = hasPlatformPermission("users.access") || hasPlatformPermission("users.edit") || hasPlatformPermission("users.delete");
+  const canManageTenantUsers = hasPlatformPermission("users.edit");
+  const canDeleteTenantUsers = hasPlatformPermission("users.delete");
+  const canViewTenantRoles = hasPlatformPermission("roles.access") || hasPlatformPermission("roles.edit") || hasPlatformPermission("roles.delete");
+  const canManageTenantRoles = hasPlatformPermission("roles.edit");
+  const canDeleteTenantRoles = hasPlatformPermission("roles.delete");
+  const canEditTenantDomains = hasPlatformPermission("domains.edit");
+  const canEditTenantFiles = hasPlatformPermission("files.edit");
+  const canViewTenantAudit = hasPlatformPermission("audit.access");
+  const canEditLead = hasPlatformPermission("leads.edit");
+  const canCreateOrganizations = canEditTenantSetup;
+  const canEditTenantCore = canEditTenantSetup;
+  const canEditTenantOperational = canEditTenantSetup || canEditTenantDomains || canEditTenantFiles;
   const currentPlatformRoleKey = platformAccessRole || (isPlatformOwner ? "platform_owner" : isPlatformStaff ? "platform_staff" : "");
-  const platformRoleLabel = platformRoleToLabel(platformAccessRole);
+  const platformRoleLabel = platformRoleLabelByKey[currentPlatformRoleKey] || platformRoleToLabel(platformAccessRole);
   const selectedLead = useMemo(
     () => (leadRows || []).find((row) => String(row?.id || "") === String(selectedLeadId || "")) || leadRows?.[0] || null,
     [leadRows, selectedLeadId]
   );
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
   const canAccessControlPlanePage = useCallback((pageKey) => {
-    const allowedRoles = CONTROL_PLANE_PAGE_ACCESS[pageKey] || [];
-    return allowedRoles.includes(currentPlatformRoleKey);
-  }, [currentPlatformRoleKey]);
+    const permissionKey = CONTROL_PLANE_PAGE_PERMISSIONS[pageKey];
+    return permissionKey ? hasPlatformPermission(permissionKey) : false;
+  }, [hasPlatformPermission]);
+  const availableTenantWorkspaceTabs = useMemo(
+    () => TAB_OPTIONS.filter((tab) => hasPlatformPermission(TENANT_WORKSPACE_TAB_PERMISSIONS[tab.key] || "")),
+    [hasPlatformPermission]
+  );
   const visibleControlPlanePagesBySection = useMemo(
     () => Object.fromEntries(
       CONTROL_PLANE_SECTIONS.map((section) => [
@@ -1333,6 +1484,10 @@ export default function PlatformAdminApp() {
   }, [sessionActorName, sessionEmail, sessionUserId]);
 
   const loadTenants = useCallback(async () => {
+    if (!hasPlatformPermission("organizations.access") && !hasPlatformPermission("organizations.edit") && !hasPlatformPermission("organizations.delete")) {
+      setTenants([]);
+      return;
+    }
     const baseSelect = "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active,updated_at";
     const deleteSelect = "deletion_requested_at,deletion_scheduled_for,deletion_requested_by,active_before_deletion";
     let result = await supabase
@@ -1362,9 +1517,13 @@ export default function PlatformAdminApp() {
 
     if (result.error) throw result.error;
     setTenants(Array.isArray(result.data) ? result.data : []);
-  }, []);
+  }, [hasPlatformPermission]);
 
   const loadTenantAdmins = useCallback(async () => {
+    if (!canViewTenantUsers) {
+      setTenantAdmins([]);
+      return;
+    }
     const { data, error } = await supabase
       .from("tenant_user_roles")
       .select("tenant_key,user_id,role,status,created_at")
@@ -1373,10 +1532,10 @@ export default function PlatformAdminApp() {
       .order("created_at", { ascending: false });
     if (error) throw error;
     setTenantAdmins(Array.isArray(data) ? data : []);
-  }, []);
+  }, [canViewTenantUsers]);
 
   const loadPlatformTeamAssignments = useCallback(async () => {
-    if (!isPlatformOwner) {
+    if (!canViewPlatformUsers) {
       setPlatformTeamAssignments([]);
       return;
     }
@@ -1388,9 +1547,61 @@ export default function PlatformAdminApp() {
       .order("updated_at", { ascending: false });
     if (error) throw error;
     setPlatformTeamAssignments(Array.isArray(data) ? data : []);
-  }, [isPlatformOwner]);
+  }, [canViewPlatformUsers]);
+
+  const loadPlatformRoleConfig = useCallback(async () => {
+    if (!canViewPlatformUsers && !canViewPlatformRoles) {
+      setPlatformPermissionCatalog([]);
+      setPlatformRoleDefinitions([]);
+      setPlatformRolePermissions([]);
+      return;
+    }
+    const [catalogResult, rolesResult, permsResult] = await Promise.all([
+      supabase
+        .from("platform_permissions_catalog")
+        .select("permission_key,module_key,action_key,label,sort_order")
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("platform_role_definitions")
+        .select("role,role_label,is_system,active,created_at,updated_at")
+        .order("is_system", { ascending: false })
+        .order("role", { ascending: true }),
+      supabase
+        .from("platform_role_permissions")
+        .select("role,permission_key,allowed"),
+    ]);
+
+    if (catalogResult.error || rolesResult.error || permsResult.error) {
+      const firstError = catalogResult.error || rolesResult.error || permsResult.error;
+      if (isMissingRelationError(firstError)) {
+        setPlatformPermissionCatalog(
+          PLATFORM_PERMISSION_MODULES.flatMap((module) => PLATFORM_PERMISSION_ACTIONS.map((action, actionIndex) => ({
+            permission_key: `${module.key}.${action.key}`,
+            module_key: module.key,
+            action_key: action.key,
+            label: `${module.label} ${action.label}`,
+            sort_order: (PLATFORM_PERMISSION_MODULES.findIndex((candidate) => candidate.key === module.key) + 1) * 10 + actionIndex,
+          })))
+        );
+        setPlatformRoleDefinitions(DEFAULT_PLATFORM_ROLE_DEFINITIONS);
+        setPlatformRolePermissions(DEFAULT_PLATFORM_ROLE_PERMISSIONS);
+        setPlatformRoleStatus("Platform RBAC tables are not available yet. Run the latest migrations to enable custom PCP roles.");
+        return;
+      }
+      throw firstError;
+    }
+
+    setPlatformPermissionCatalog(Array.isArray(catalogResult.data) ? catalogResult.data : []);
+    setPlatformRoleDefinitions(Array.isArray(rolesResult.data) ? rolesResult.data : []);
+    setPlatformRolePermissions(Array.isArray(permsResult.data) ? permsResult.data : []);
+    setPlatformRoleStatus("");
+  }, [canViewPlatformRoles, canViewPlatformUsers]);
 
   const loadClientLeads = useCallback(async () => {
+    if (!hasPlatformPermission("leads.access") && !hasPlatformPermission("leads.edit")) {
+      setLeadRows([]);
+      return;
+    }
     let result = await supabase
       .from("client_leads")
       .select("id,created_at,full_name,work_email,city_agency,role_title,priority_domain,notes,status,internal_notes,follow_up_on,last_follow_up_at,updated_at")
@@ -1417,9 +1628,14 @@ export default function PlatformAdminApp() {
 
     if (result.error) throw result.error;
     setLeadRows(Array.isArray(result.data) ? result.data : []);
-  }, []);
+  }, [hasPlatformPermission]);
 
   const loadTenantRoleConfig = useCallback(async (tenantKeyInput = selectedTenantKey) => {
+    if (!canViewTenantUsers && !canViewTenantRoles) {
+      setTenantRoleDefinitions([]);
+      setTenantRolePermissions([]);
+      return;
+    }
     const key = sanitizeTenantKey(tenantKeyInput);
     if (!key) {
       setTenantRoleDefinitions([]);
@@ -1470,9 +1686,13 @@ export default function PlatformAdminApp() {
     setTenantRoleDefinitions(Array.isArray(rolesResult.data) ? rolesResult.data : []);
     setTenantRolePermissions(Array.isArray(permsResult.data) ? permsResult.data : []);
     setStatus((prev) => ({ ...prev, roles: "" }));
-  }, [selectedTenantKey]);
+  }, [canViewTenantRoles, canViewTenantUsers, selectedTenantKey]);
 
   const loadTenantProfiles = useCallback(async () => {
+    if (!hasPlatformPermission("organizations.access") && !hasPlatformPermission("organizations.edit")) {
+      setTenantProfilesByTenant({});
+      return;
+    }
     const { data, error } = await supabase
       .from("tenant_profiles")
       .select("*");
@@ -1484,9 +1704,13 @@ export default function PlatformAdminApp() {
       next[key] = row;
     }
     setTenantProfilesByTenant(next);
-  }, []);
+  }, [hasPlatformPermission]);
 
   const loadTenantVisibility = useCallback(async () => {
+    if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
+      setTenantVisibilityByTenant({});
+      return;
+    }
     const { data, error } = await supabase
       .from("tenant_visibility_config")
       .select("tenant_key,domain,visibility");
@@ -1500,9 +1724,13 @@ export default function PlatformAdminApp() {
       next[tenantKey][domain] = String(row?.visibility || "public").trim().toLowerCase() || "public";
     }
     setTenantVisibilityByTenant(next);
-  }, []);
+  }, [hasPlatformPermission]);
 
   const loadTenantMapFeatures = useCallback(async () => {
+    if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
+      setTenantMapFeaturesByTenant({});
+      return;
+    }
     const { data, error } = await supabase
       .from("tenant_map_features")
       .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width");
@@ -1526,7 +1754,7 @@ export default function PlatformAdminApp() {
       };
     }
     setTenantMapFeaturesByTenant(next);
-  }, []);
+  }, [hasPlatformPermission]);
 
   const loadTenantFiles = useCallback(async (tenantKey) => {
     const key = sanitizeTenantKey(tenantKey);
@@ -1544,6 +1772,10 @@ export default function PlatformAdminApp() {
   }, []);
 
   const loadAudit = useCallback(async (tenantKeyInput = selectedTenantKey) => {
+    if (!canViewTenantAudit) {
+      setAuditRows([]);
+      return;
+    }
     const key = sanitizeTenantKey(tenantKeyInput);
     if (!key) {
       setAuditRows([]);
@@ -1572,10 +1804,10 @@ export default function PlatformAdminApp() {
       actor_name: String(row?.details?.actor_name || "").trim() || null,
     }));
     setAuditRows(fallbackRows);
-  }, [selectedTenantKey]);
+  }, [canViewTenantAudit, selectedTenantKey]);
 
   const purgeExpiredOrganizationDeletions = useCallback(async () => {
-    if (!canEditTenantCore) return;
+    if (!canDeleteTenant) return;
     const { data, error } = await supabase
       .from("tenants")
       .select("tenant_key,name,deletion_requested_at,deletion_scheduled_for,deletion_requested_by");
@@ -1611,7 +1843,7 @@ export default function PlatformAdminApp() {
         .eq("tenant_key", tenantKey);
       if (deleteError) throw deleteError;
     }
-  }, [canEditTenantCore, logAudit, sessionUserId]);
+  }, [canDeleteTenant, logAudit, sessionUserId]);
 
   const refreshControlPlaneData = useCallback(async () => {
     try {
@@ -1619,6 +1851,7 @@ export default function PlatformAdminApp() {
       await Promise.all([
         loadTenants(),
         loadTenantAdmins(),
+        loadPlatformRoleConfig(),
         loadPlatformTeamAssignments(),
         loadClientLeads(),
         loadTenantRoleConfig(),
@@ -1631,10 +1864,10 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
-    if (!canEditTenantCore) {
+    if (!canViewTenantUsers) {
       setAssignmentUserSummariesById({});
       return;
     }
@@ -1661,10 +1894,10 @@ export default function PlatformAdminApp() {
       next[key] = row;
     }
     setAssignmentUserSummariesById(next);
-  }, [canEditTenantCore, invokePlatformUserAdmin, selectedTenantRoleAssignments]);
+  }, [canViewTenantUsers, invokePlatformUserAdmin, selectedTenantRoleAssignments]);
 
   const loadPlatformTeamUserSummaries = useCallback(async () => {
-    if (!isPlatformOwner) {
+    if (!canViewPlatformUsers) {
       setPlatformTeamUserSummariesById({});
       return;
     }
@@ -1689,7 +1922,7 @@ export default function PlatformAdminApp() {
       next[key] = row;
     }
     setPlatformTeamUserSummariesById(next);
-  }, [invokePlatformUserAdmin, isPlatformOwner, platformTeamAssignments]);
+  }, [canViewPlatformUsers, invokePlatformUserAdmin, platformTeamAssignments]);
 
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
@@ -1815,6 +2048,8 @@ export default function PlatformAdminApp() {
     setOpenControlPlaneDropdown("");
     setIsPlatformAdmin(false);
     setPlatformAccessRole("");
+    setPlatformAccessRoles([]);
+    setPlatformAccessPermissionKeys([]);
     setLoginPassword("");
     setControlPlaneSection("reports");
     setControlPlanePage(DEFAULT_CONTROL_PLANE_PAGE);
@@ -1822,8 +2057,8 @@ export default function PlatformAdminApp() {
   }, []);
 
   const openAddTenantStep = useCallback(() => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can create a tenant." }));
+    if (!canCreateOrganizations) {
+      setStatus((prev) => ({ ...prev, tenant: "You need the Organizations edit permission to create an organization." }));
       return;
     }
     setControlPlaneSection("organizations");
@@ -1842,7 +2077,7 @@ export default function PlatformAdminApp() {
     setIsEditingTenant(true);
     setIsEditingProfile(true);
     setStatus((prev) => ({ ...prev, tenant: "", profile: "", users: "", hydrate: "" }));
-  }, [canEditTenantCore]);
+  }, [canCreateOrganizations]);
 
   const openTenantWorkspace = useCallback((tenantKey) => {
     const key = sanitizeTenantKey(tenantKey);
@@ -1901,8 +2136,8 @@ export default function PlatformAdminApp() {
 
   const searchPlatformUsers = useCallback(async (event) => {
     event.preventDefault();
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can search tenant users from this control plane." }));
+    if (!canManageTenantUsers) {
+      setStatus((prev) => ({ ...prev, users: "You need the Users edit permission to search organization accounts from this control plane." }));
       return;
     }
 
@@ -1937,12 +2172,12 @@ export default function PlatformAdminApp() {
     }
 
     setStatus((prev) => ({ ...prev, users: `Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.` }));
-  }, [canEditTenantCore, invokePlatformUserAdmin, userSearchQuery]);
+  }, [canManageTenantUsers, invokePlatformUserAdmin, userSearchQuery]);
 
   const searchPlatformTeamUsers = useCallback(async (event) => {
     event.preventDefault();
-    if (!isPlatformOwner) {
-      setPlatformTeamStatus("Only Platform Owner can manage the internal team.");
+    if (!canManagePlatformUsers) {
+      setPlatformTeamStatus("You need the Users edit permission to manage the internal platform team.");
       return;
     }
 
@@ -1977,11 +2212,11 @@ export default function PlatformAdminApp() {
     }
 
     setPlatformTeamStatus(`Found ${rows.length} matching account${rows.length === 1 ? "" : "s"}.`);
-  }, [invokePlatformUserAdmin, isPlatformOwner, platformUserSearchQuery]);
+  }, [canManagePlatformUsers, invokePlatformUserAdmin, platformUserSearchQuery]);
 
   const assignPlatformRole = useCallback(async () => {
-    if (!isPlatformOwner) {
-      setPlatformTeamStatus("Only Platform Owner can assign platform roles.");
+    if (!canManagePlatformUsers) {
+      setPlatformTeamStatus("You need the Users edit permission to assign platform roles.");
       return;
     }
     const userId = String(platformTeamForm.user_id || "").trim();
@@ -2002,11 +2237,11 @@ export default function PlatformAdminApp() {
     setPlatformUserSearchQuery("");
     setPlatformUserSearchResults([]);
     await loadPlatformTeamAssignments();
-  }, [isPlatformOwner, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, sessionUserId]);
+  }, [canManagePlatformUsers, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, sessionUserId]);
 
   const removePlatformRole = useCallback(async (row) => {
-    if (!isPlatformOwner) {
-      setPlatformTeamStatus("Only Platform Owner can remove platform roles.");
+    if (!canRemovePlatformUsers) {
+      setPlatformTeamStatus("You need the Users delete permission to remove platform roles.");
       return;
     }
     const userId = String(row?.user_id || "").trim();
@@ -2027,11 +2262,11 @@ export default function PlatformAdminApp() {
     }
     setPlatformTeamStatus("Platform role removed.");
     await loadPlatformTeamAssignments();
-  }, [isPlatformOwner, loadPlatformTeamAssignments, sessionUserId]);
+  }, [canRemovePlatformUsers, loadPlatformTeamAssignments, sessionUserId]);
 
   const savePlatformRoleEdit = useCallback(async (row) => {
-    if (!isPlatformOwner) {
-      setPlatformTeamStatus("Only Platform Owner can edit platform roles.");
+    if (!canManagePlatformUsers) {
+      setPlatformTeamStatus("You need the Users edit permission to change platform roles.");
       return;
     }
     const userId = String(row?.user_id || "").trim();
@@ -2073,7 +2308,122 @@ export default function PlatformAdminApp() {
     setEditingPlatformAssignmentRole("");
     setPlatformTeamStatus("Platform role updated.");
     await loadPlatformTeamAssignments();
-  }, [editingPlatformAssignmentRole, isPlatformOwner, loadPlatformTeamAssignments, sessionUserId]);
+  }, [canManagePlatformUsers, editingPlatformAssignmentRole, loadPlatformTeamAssignments, sessionUserId]);
+
+  const createPlatformRole = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canManagePlatformRoles) {
+      setPlatformRoleStatus("You need the Roles edit permission to create PCP roles.");
+      return;
+    }
+
+    const role = sanitizeRoleKey(platformRoleForm.role);
+    const role_label = toOrganizationLanguage(String(platformRoleForm.role_label || "").trim() || roleKeyToLabel(role));
+    if (!role) {
+      setPlatformRoleStatus("Role key is required (example: revenue_ops).");
+      return;
+    }
+    if (sortedPlatformRoleDefinitions.some((row) => String(row?.role || "") === role)) {
+      setPlatformRoleStatus(`Role ${role} already exists.`);
+      return;
+    }
+
+    const { error: roleInsertError } = await supabase
+      .from("platform_role_definitions")
+      .insert([{
+        role,
+        role_label,
+        is_system: false,
+        active: true,
+        created_by: cleanOptional(sessionUserId),
+      }]);
+    if (roleInsertError) {
+      setPlatformRoleStatus(statusText(roleInsertError, ""));
+      return;
+    }
+
+    const permissionRows = DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => ({
+      role,
+      permission_key,
+      allowed: false,
+      updated_by: cleanOptional(sessionUserId),
+    }));
+
+    const { error: permissionSeedError } = await supabase
+      .from("platform_role_permissions")
+      .upsert(permissionRows, { onConflict: "role,permission_key" });
+    if (permissionSeedError) {
+      setPlatformRoleStatus(statusText(permissionSeedError, ""));
+      return;
+    }
+
+    setPlatformRoleForm({ role: "", role_label: "" });
+    setSelectedPlatformRoleKey(role);
+    setPlatformRoleStatus(`Created PCP role ${role}.`);
+    await loadPlatformRoleConfig();
+  }, [canManagePlatformRoles, loadPlatformRoleConfig, platformRoleForm, sessionUserId, sortedPlatformRoleDefinitions]);
+
+  const removePlatformRoleDefinition = useCallback(async (row) => {
+    if (!canDeletePlatformRoles) {
+      setPlatformRoleStatus("You need the Roles delete permission to remove PCP roles.");
+      return;
+    }
+    const role = String(row?.role || "").trim().toLowerCase();
+    if (!role) return;
+    if (row?.is_system === true) {
+      setPlatformRoleStatus("System platform roles cannot be removed.");
+      return;
+    }
+    const assignmentCount = Number(platformRoleAssignmentCounts?.[role] || 0);
+    if (assignmentCount > 0) {
+      setPlatformRoleStatus(`Remove or reassign ${assignmentCount} platform assignment(s) for ${role} before deleting it.`);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("platform_role_definitions")
+      .delete()
+      .eq("role", role);
+    if (error) {
+      setPlatformRoleStatus(statusText(error, ""));
+      return;
+    }
+
+    setPlatformRoleStatus(`Removed PCP role ${role}.`);
+    await loadPlatformRoleConfig();
+    await loadPlatformTeamAssignments();
+  }, [canDeletePlatformRoles, loadPlatformRoleConfig, loadPlatformTeamAssignments, platformRoleAssignmentCounts]);
+
+  const savePlatformRolePermissions = useCallback(async () => {
+    if (!canManagePlatformRoles) {
+      setPlatformRoleStatus("You need the Roles edit permission to update PCP role permissions.");
+      return;
+    }
+    const role = String(selectedPlatformRoleKey || "").trim().toLowerCase();
+    if (!role) {
+      setPlatformRoleStatus("Select a PCP role first.");
+      return;
+    }
+
+    const rows = DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => ({
+      role,
+      permission_key,
+      allowed: Boolean(platformRolePermissionDraft?.[permission_key]),
+      updated_by: cleanOptional(sessionUserId),
+    }));
+
+    const { error } = await supabase
+      .from("platform_role_permissions")
+      .upsert(rows, { onConflict: "role,permission_key" });
+    if (error) {
+      setPlatformRoleStatus(statusText(error, ""));
+      return;
+    }
+
+    setPlatformRolePermissionDirty(false);
+    setPlatformRoleStatus(`Saved permissions for ${role}.`);
+    await loadPlatformRoleConfig();
+  }, [canManagePlatformRoles, loadPlatformRoleConfig, platformRolePermissionDraft, selectedPlatformRoleKey, sessionUserId]);
 
   const updateLeadDraft = useCallback((leadId, field, value) => {
     const key = String(leadId || "").trim();
@@ -2088,8 +2438,8 @@ export default function PlatformAdminApp() {
   }, []);
 
   const saveLeadUpdate = useCallback(async (leadRow) => {
-    if (!canEditTenantOperational) {
-      setLeadStatus("Your platform role does not allow lead updates.");
+    if (!canEditLead) {
+      setLeadStatus("You need the Leads edit permission to update leads.");
       return;
     }
     const leadId = String(leadRow?.id || "").trim();
@@ -2118,12 +2468,12 @@ export default function PlatformAdminApp() {
       return next;
     });
     await loadClientLeads();
-  }, [canEditTenantOperational, leadDraftById, loadClientLeads]);
+  }, [canEditLead, leadDraftById, loadClientLeads]);
 
   const createAndAssignTenantUser = useCallback(async (event) => {
     event.preventDefault();
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can create tenant users from this control plane." }));
+    if (!canManageTenantUsers) {
+      setStatus((prev) => ({ ...prev, users: "You need the Users edit permission to create organization users from this control plane." }));
       return;
     }
 
@@ -2181,7 +2531,7 @@ export default function PlatformAdminApp() {
         : `Assigned ${roleKeyToLabel(role)} to existing account ${email}.`,
     }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData]);
+  }, [canManageTenantUsers, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2189,6 +2539,8 @@ export default function PlatformAdminApp() {
       if (!authReady || !sessionUserId) {
         setIsPlatformAdmin(false);
         setPlatformAccessRole("");
+        setPlatformAccessRoles([]);
+        setPlatformAccessPermissionKeys([]);
         return;
       }
 
@@ -2218,32 +2570,101 @@ export default function PlatformAdminApp() {
       if (platformRoleError && !isMissingRoleTableError(platformRoleError)) {
         setIsPlatformAdmin(false);
         setPlatformAccessRole("");
+        setPlatformAccessRoles([]);
+        setPlatformAccessPermissionKeys([]);
         return;
       }
       if (legacyAdminError && !isMissingRoleTableError(legacyAdminError)) {
         setIsPlatformAdmin(false);
         setPlatformAccessRole("");
+        setPlatformAccessRoles([]);
+        setPlatformAccessPermissionKeys([]);
         return;
       }
 
       const roles = Array.isArray(platformRoleResult?.data) ? platformRoleResult.data : [];
-      const hasOwner = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_owner");
-      const hasStaff = roles.some((row) => String(row?.role || "").trim().toLowerCase() === "platform_staff");
+      const normalizedRoleKeys = [...new Set(
+        roles
+          .map((row) => String(row?.role || "").trim().toLowerCase())
+          .filter(Boolean),
+      )];
+      const hasOwner = normalizedRoleKeys.includes("platform_owner");
+      const hasStaff = normalizedRoleKeys.includes("platform_staff");
       const hasLegacyAdmin = Boolean(legacyAdminResult?.data?.user_id);
+      const primaryRole = hasOwner
+        ? "platform_owner"
+        : hasLegacyAdmin
+          ? "legacy_admin"
+          : hasStaff
+            ? "platform_staff"
+            : normalizedRoleKeys[0] || "";
 
-      if (hasOwner || hasLegacyAdmin) {
+      if (hasLegacyAdmin) {
         setIsPlatformAdmin(true);
-        setPlatformAccessRole(hasOwner ? "platform_owner" : "legacy_admin");
+        setPlatformAccessRole(primaryRole || "legacy_admin");
+        setPlatformAccessRoles(normalizedRoleKeys);
+        setPlatformAccessPermissionKeys(DEFAULT_PLATFORM_PERMISSION_KEYS);
         return;
       }
-      if (hasStaff) {
-        setIsPlatformAdmin(true);
-        setPlatformAccessRole("platform_staff");
+
+      if (!normalizedRoleKeys.length) {
+        setIsPlatformAdmin(false);
+        setPlatformAccessRole("");
+        setPlatformAccessRoles([]);
+        setPlatformAccessPermissionKeys([]);
         return;
       }
 
-      setIsPlatformAdmin(false);
-      setPlatformAccessRole("");
+      const [roleDefinitionsResult, rolePermissionsResult] = await Promise.all([
+        supabase
+          .from("platform_role_definitions")
+          .select("role,active")
+          .in("role", normalizedRoleKeys),
+        supabase
+          .from("platform_role_permissions")
+          .select("role,permission_key,allowed")
+          .eq("allowed", true)
+          .in("role", normalizedRoleKeys),
+      ]);
+
+      if (cancelled) return;
+
+      const roleConfigError = roleDefinitionsResult.error || rolePermissionsResult.error;
+      if (roleConfigError && !isMissingRoleTableError(roleConfigError)) {
+        setIsPlatformAdmin(false);
+        setPlatformAccessRole("");
+        setPlatformAccessRoles([]);
+        setPlatformAccessPermissionKeys([]);
+        return;
+      }
+
+      let permissionKeys = [];
+      if (roleConfigError && isMissingRoleTableError(roleConfigError)) {
+        if (hasOwner) permissionKeys = DEFAULT_PLATFORM_PERMISSION_KEYS;
+        else if (hasStaff) {
+          permissionKeys = DEFAULT_PLATFORM_ROLE_PERMISSIONS
+            .filter((row) => row.role === "platform_staff" && row.allowed)
+            .map((row) => row.permission_key);
+        }
+      } else {
+        const activeRoleSet = new Set(
+          (Array.isArray(roleDefinitionsResult.data) ? roleDefinitionsResult.data : [])
+            .filter((row) => row?.active !== false)
+            .map((row) => String(row?.role || "").trim().toLowerCase())
+            .filter(Boolean),
+        );
+        permissionKeys = [...new Set(
+          (Array.isArray(rolePermissionsResult.data) ? rolePermissionsResult.data : [])
+            .filter((row) => row?.allowed !== false && activeRoleSet.has(String(row?.role || "").trim().toLowerCase()))
+            .map((row) => String(row?.permission_key || "").trim().toLowerCase())
+            .filter(Boolean),
+        )];
+      }
+
+      setIsPlatformAdmin(permissionKeys.length > 0);
+      setPlatformAccessRole(primaryRole);
+      setPlatformAccessRoles(normalizedRoleKeys);
+      setPlatformAccessPermissionKeys(permissionKeys);
     }
     checkPlatformAdmin();
     return () => {
@@ -2257,7 +2678,7 @@ export default function PlatformAdminApp() {
   }, [isPlatformAdmin, refreshControlPlaneData]);
 
   useEffect(() => {
-    if (!currentPlatformRoleKey) return;
+    if (!isPlatformAdmin) return;
     const currentPageAllowed = canAccessControlPlanePage(controlPlanePage);
     const currentSectionAllowedPages = CONTROL_PLANE_PAGES.filter(
       (page) => page.section === controlPlaneSection && canAccessControlPlanePage(page.key)
@@ -2279,7 +2700,14 @@ export default function PlatformAdminApp() {
         setControlPlanePage(nextPage);
       }
     }
-  }, [canAccessControlPlanePage, controlPlanePage, controlPlaneSection, currentPlatformRoleKey]);
+  }, [canAccessControlPlanePage, controlPlanePage, controlPlaneSection, isPlatformAdmin]);
+
+  useEffect(() => {
+    if (!availableTenantWorkspaceTabs.length) return;
+    if (!availableTenantWorkspaceTabs.some((tab) => tab.key === activeTab)) {
+      setActiveTab(availableTenantWorkspaceTabs[0].key);
+    }
+  }, [activeTab, availableTenantWorkspaceTabs]);
 
   useEffect(() => {
     if (!tenantOptions.length) return;
@@ -2287,6 +2715,26 @@ export default function PlatformAdminApp() {
       setSelectedTenantKey(tenantOptions[0]);
     }
   }, [tenantOptions, selectedTenantKey]);
+
+  useEffect(() => {
+    if (!sortedPlatformRoleDefinitions.some((row) => String(row?.role || "") === String(selectedPlatformRoleKey || ""))) {
+      setSelectedPlatformRoleKey(String(sortedPlatformRoleDefinitions?.[0]?.role || "platform_owner"));
+    }
+  }, [sortedPlatformRoleDefinitions, selectedPlatformRoleKey]);
+
+  useEffect(() => {
+    if (!selectedPlatformRoleKey) {
+      setPlatformRolePermissionDraft({});
+      setPlatformRolePermissionDirty(false);
+      return;
+    }
+    const nextDraft = {};
+    for (const permissionKey of DEFAULT_PLATFORM_PERMISSION_KEYS) {
+      nextDraft[permissionKey] = Boolean(platformRolePermissionMap[`${selectedPlatformRoleKey}:${permissionKey}`]);
+    }
+    setPlatformRolePermissionDraft(nextDraft);
+    setPlatformRolePermissionDirty(false);
+  }, [selectedPlatformRoleKey, platformRolePermissionMap]);
 
   useEffect(() => {
     setDeleteConfirmOpen(false);
@@ -2411,8 +2859,8 @@ export default function PlatformAdminApp() {
   }, [controlPlanePage]);
 
   const persistTenantRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can create or modify core tenant records." }));
+    if (!canEditTenantSetup) {
+      setStatus((prev) => ({ ...prev, tenant: "You need the Organizations edit permission to create or modify organization records." }));
       return { ok: false, tenantKey: "" };
     }
     const resolvedTenantKey = tenantKeyOverride
@@ -2460,7 +2908,7 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, tenant: `Saved tenant ${payload.tenant_key}.` }));
     return { ok: true, tenantKey: payload.tenant_key };
-  }, [canEditTenantCore, entryStep, selectedTenantKey, tenantForm, logAudit]);
+  }, [canEditTenantSetup, entryStep, selectedTenantKey, tenantForm, logAudit]);
 
   const persistTenantProfileRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
     const key = tenantKeyOverride
@@ -2471,8 +2919,8 @@ export default function PlatformAdminApp() {
     if (entryStep === "add") {
       // onboarding saves the profile after the tenant record exists
     }
-    if (!canEditTenantOperational) {
-      setStatus((prev) => ({ ...prev, profile: "Your platform role does not permit tenant profile changes." }));
+    if (!canEditTenantSetup) {
+      setStatus((prev) => ({ ...prev, profile: "You need the Organizations edit permission to update organization profile details." }));
       return { ok: false };
     }
     if (!key) {
@@ -2545,7 +2993,7 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, profile: `Saved intake profile for ${key}.` }));
     return { ok: true, tenantKey: key };
-  }, [canEditTenantOperational, entryStep, profileForm, selectedTenantKey, tenantForm.tenant_key, logAudit]);
+  }, [canEditTenantSetup, entryStep, profileForm, selectedTenantKey, tenantForm.tenant_key, logAudit]);
 
   const saveTenant = useCallback(async (event) => {
     event.preventDefault();
@@ -2600,8 +3048,8 @@ export default function PlatformAdminApp() {
   }, [persistTenantProfileRecord, persistTenantRecord, refreshControlPlaneData, tenantForm.tenant_key]);
 
   const scheduleOrganizationDeletion = useCallback(async () => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can schedule organization deletion." }));
+    if (!canDeleteTenant) {
+      setStatus((prev) => ({ ...prev, tenant: "You need the Organizations delete permission to schedule organization deletion." }));
       return;
     }
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
@@ -2653,11 +3101,11 @@ export default function PlatformAdminApp() {
       tenant: `Scheduled ${tenantKey} for deletion on ${formatDateTimeDisplay(scheduledFor.toISOString())}. Organization data will be held for ${ORGANIZATION_DELETION_HOLD_DAYS} days before deletion.`,
     }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, deleteConfirmText, refreshControlPlaneData, selectedTenant, selectedTenantKey, sessionUserId, logAudit]);
+  }, [canDeleteTenant, deleteConfirmText, refreshControlPlaneData, selectedTenant, selectedTenantKey, sessionUserId, logAudit]);
 
   const cancelOrganizationDeletion = useCallback(async () => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, tenant: "Only Platform Owner can cancel organization deletion." }));
+    if (!canDeleteTenant) {
+      setStatus((prev) => ({ ...prev, tenant: "You need the Organizations delete permission to cancel organization deletion." }));
       return;
     }
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
@@ -2700,12 +3148,12 @@ export default function PlatformAdminApp() {
     setDeleteConfirmText("");
     setStatus((prev) => ({ ...prev, tenant: `Cancelled the scheduled deletion hold for ${tenantKey}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, logAudit, refreshControlPlaneData, selectedTenant, selectedTenantKey, selectedTenantPendingDeletion, sessionUserId]);
+  }, [canDeleteTenant, logAudit, refreshControlPlaneData, selectedTenant, selectedTenantKey, selectedTenantPendingDeletion, sessionUserId]);
 
   const saveDomainAndFeatureSettings = useCallback(async (event) => {
     event.preventDefault();
-    if (!canEditTenantOperational) {
-      setStatus((prev) => ({ ...prev, domains: "Your platform role does not permit domain/feature updates." }));
+    if (!canEditTenantDomains) {
+      setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update organization domains and map settings." }));
       return;
     }
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -2759,12 +3207,12 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, domains: `Saved domain + map settings for ${key}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantOperational, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event?.preventDefault?.();
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can assign tenant roles from this control plane." }));
+    if (!canManageTenantUsers) {
+      setStatus((prev) => ({ ...prev, users: "You need the Users edit permission to assign organization roles from this control plane." }));
       return;
     }
     const tenant_key = sanitizeTenantKey(selectedTenantKey);
@@ -2800,11 +3248,11 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, users: `Assigned ${roleKeyToLabel(role)} to ${personLabel}.` }));
     setAssignForm((prev) => ({ ...prev, tenant_key: "", user_id: "", role }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canManageTenantUsers, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const removeTenantAdmin = useCallback(async (row) => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can remove tenant roles from this control plane." }));
+    if (!canDeleteTenantUsers) {
+      setStatus((prev) => ({ ...prev, users: "You need the Users delete permission to remove organization roles from this control plane." }));
       return;
     }
     const tenant_key = sanitizeTenantKey(row?.tenant_key);
@@ -2834,11 +3282,11 @@ export default function PlatformAdminApp() {
     const personLabel = formatKnownUserLabel(user_id);
     setStatus((prev) => ({ ...prev, users: `Removed ${roleKeyToLabel(role)} from ${personLabel}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canDeleteTenantUsers, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const saveTenantAdminRoleEdit = useCallback(async (row) => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, users: "Only Platform Owner can edit tenant roles from this control plane." }));
+    if (!canManageTenantUsers) {
+      setStatus((prev) => ({ ...prev, users: "You need the Users edit permission to change organization roles from this control plane." }));
       return;
     }
 
@@ -2892,12 +3340,12 @@ export default function PlatformAdminApp() {
     setEditingAssignmentRole("");
     setStatus((prev) => ({ ...prev, users: `Updated ${personLabel} to ${roleKeyToLabel(nextRole)}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantCore, editingAssignmentRole, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canManageTenantUsers, editingAssignmentRole, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
   const createTenantRole = useCallback(async (event) => {
     event.preventDefault();
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can create roles." }));
+    if (!canManageTenantRoles) {
+      setStatus((prev) => ({ ...prev, roles: "You need the Roles edit permission to create organization roles." }));
       return;
     }
 
@@ -2960,11 +3408,11 @@ export default function PlatformAdminApp() {
     setSelectedRoleKey(role);
     setStatus((prev) => ({ ...prev, roles: `Created role ${role} for ${tenant_key}.` }));
     await loadTenantRoleConfig(tenant_key);
-  }, [canEditTenantCore, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig]);
+  }, [canManageTenantRoles, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig]);
 
   const removeTenantRole = useCallback(async (row) => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can remove roles." }));
+    if (!canDeleteTenantRoles) {
+      setStatus((prev) => ({ ...prev, roles: "You need the Roles delete permission to remove organization roles." }));
       return;
     }
     const tenant_key = sanitizeTenantKey(row?.tenant_key || selectedTenantKey);
@@ -3001,11 +3449,11 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, roles: `Removed role ${role} from ${tenant_key}.` }));
     await loadTenantRoleConfig(tenant_key);
     await loadTenantAdmins();
-  }, [canEditTenantCore, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
+  }, [canDeleteTenantRoles, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
 
   const saveRolePermissions = useCallback(async () => {
-    if (!canEditTenantCore) {
-      setStatus((prev) => ({ ...prev, roles: "Only Platform Owner can update role permissions." }));
+    if (!canManageTenantRoles) {
+      setStatus((prev) => ({ ...prev, roles: "You need the Roles edit permission to update organization role permissions." }));
       return;
     }
     const tenant_key = sanitizeTenantKey(selectedTenantKey);
@@ -3043,10 +3491,10 @@ export default function PlatformAdminApp() {
     setRolePermissionDirty(false);
     setStatus((prev) => ({ ...prev, roles: `Saved permissions for ${role}.` }));
     await loadTenantRoleConfig(tenant_key);
-  }, [canEditTenantCore, selectedTenantKey, selectedRoleKey, rolePermissionDraft, sessionUserId, logAudit, loadTenantRoleConfig]);
+  }, [canManageTenantRoles, selectedTenantKey, selectedRoleKey, rolePermissionDraft, sessionUserId, logAudit, loadTenantRoleConfig]);
 
   const applyBoundaryPayloadToTenant = useCallback(async ({ tenantKey, boundaryGeoJson, sourceLabel }) => {
-    if (!canEditTenantOperational) return { ok: false, error: "Your platform role does not permit boundary updates." };
+    if (!canEditTenantDomains) return { ok: false, error: "You need the Domains edit permission to update organization boundaries." };
     const key = sanitizeTenantKey(tenantKey);
     if (!key) return { ok: false, error: "Tenant key is required." };
     if (!boundaryGeoJson || typeof boundaryGeoJson !== "object") {
@@ -3081,12 +3529,12 @@ export default function PlatformAdminApp() {
     });
 
     return { ok: true, boundaryConfigKey };
-  }, [canEditTenantOperational, logAudit]);
+  }, [canEditTenantDomains, logAudit]);
 
   const uploadTenantFile = useCallback(async (event) => {
     event.preventDefault();
-    if (!canEditTenantOperational) {
-      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit file uploads." }));
+    if (!canEditTenantFiles) {
+      setStatus((prev) => ({ ...prev, files: "You need the Files edit permission to upload organization files." }));
       return;
     }
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
@@ -3191,7 +3639,7 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, files: `Uploaded ${file.name}.` }));
     await loadTenantFiles(tenantKey);
     await loadAudit();
-  }, [canEditTenantOperational, selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
+  }, [canEditTenantFiles, selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -3208,8 +3656,8 @@ export default function PlatformAdminApp() {
   }, []);
 
   const setBoundaryFromFile = useCallback(async (row) => {
-    if (!canEditTenantOperational) {
-      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit boundary updates." }));
+    if (!canEditTenantDomains) {
+      setStatus((prev) => ({ ...prev, files: "You need the Domains edit permission to update organization boundaries." }));
       return;
     }
     const tenantKey = sanitizeTenantKey(row?.tenant_key || selectedTenantKey);
@@ -3256,11 +3704,11 @@ export default function PlatformAdminApp() {
     setTenantForm((prev) => ({ ...prev, boundary_config_key: applied.boundaryConfigKey || prev.boundary_config_key }));
     setStatus((prev) => ({ ...prev, files: `Boundary set from ${fileName}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantOperational, selectedTenantKey, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
+  }, [canEditTenantDomains, selectedTenantKey, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
 
   const removeTenantFile = useCallback(async (row) => {
-    if (!canEditTenantOperational) {
-      setStatus((prev) => ({ ...prev, files: "Your platform role does not permit file removal." }));
+    if (!canEditTenantFiles) {
+      setStatus((prev) => ({ ...prev, files: "You need the Files edit permission to remove organization files." }));
       return;
     }
     const tenantKey = sanitizeTenantKey(row?.tenant_key);
@@ -3292,7 +3740,7 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, files: `Removed ${row?.file_name || path}.` }));
     await loadTenantFiles(tenantKey);
     await loadAudit();
-  }, [canEditTenantOperational, logAudit, loadTenantFiles, loadAudit]);
+  }, [canEditTenantFiles, logAudit, loadTenantFiles, loadAudit]);
 
   const inTenantWorkspace = entryStep === "tenant";
   const inAddTenantFlow = entryStep === "add";
@@ -3438,8 +3886,8 @@ export default function PlatformAdminApp() {
   const currentPageActions = controlPlanePage === "manage-team" ? (
     <button
       type="button"
-      style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }}
-      disabled={!isPlatformOwner}
+      style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }}
+      disabled={!canManagePlatformUsers}
       onClick={() => setPlatformTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
     >
       {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
@@ -3449,10 +3897,10 @@ export default function PlatformAdminApp() {
       <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Organization</button>
       <button
         type="button"
-        style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+        style={{ ...headerActionButton, opacity: canCreateOrganizations ? 1 : 0.55 }}
         onClick={openAddTenantStep}
-        disabled={!canEditTenantCore}
-        title={canEditTenantCore ? "Create organization" : "Only Platform Owner can create organizations"}
+        disabled={!canCreateOrganizations}
+        title={canCreateOrganizations ? "Create organization" : "You need the Organizations edit permission"}
       >
         Add Organization
       </button>
@@ -3945,10 +4393,10 @@ export default function PlatformAdminApp() {
                         onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
                         placeholder="Exact email, exact phone, or full name"
                         style={inputBase}
-                        disabled={!isPlatformOwner}
+                        disabled={!canManagePlatformUsers}
                       />
                     </label>
-                    <button type="submit" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner || platformUserSearchLoading}>
+                    <button type="submit" style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers || platformUserSearchLoading}>
                       {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
                     </button>
                   </form>
@@ -3984,14 +4432,16 @@ export default function PlatformAdminApp() {
                         value={platformTeamForm.role}
                         onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
                         style={inputBase}
-                        disabled={!isPlatformOwner}
+                        disabled={!canManagePlatformUsers}
                       >
-                        {PLATFORM_ROLE_OPTIONS.map((row) => (
-                          <option key={row.key} value={row.key}>{row.label}</option>
+                        {assignablePlatformRoles.map((row) => (
+                          <option key={row.role} value={row.role}>
+                            {platformRoleLabelByKey[String(row?.role || "").trim()] || platformRoleToLabel(row?.role)}
+                          </option>
                         ))}
                       </select>
                     </label>
-                    <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!isPlatformOwner || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
+                    <button type="button" style={{ ...buttonBase, opacity: canManagePlatformUsers && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!canManagePlatformUsers || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
                       Assign Platform Role
                     </button>
                   </div>
@@ -4019,19 +4469,21 @@ export default function PlatformAdminApp() {
                             <td style={{ padding: "10px 0" }}>
                               {isEditingRole ? (
                                 <select value={editingPlatformAssignmentRole} onChange={(event) => setEditingPlatformAssignmentRole(event.target.value)} style={{ ...inputBase, minWidth: 180 }}>
-                                  {PLATFORM_ROLE_OPTIONS.map((option) => (
-                                    <option key={option.key} value={option.key}>{option.label}</option>
+                                  {assignablePlatformRoles.map((option) => (
+                                    <option key={option.role} value={option.role}>
+                                      {platformRoleLabelByKey[String(option?.role || "").trim()] || platformRoleToLabel(option?.role)}
+                                    </option>
                                   ))}
                                 </select>
                               ) : (
-                                platformRoleToLabel(row.role)
+                                platformRoleLabelByKey[String(row?.role || "").trim()] || platformRoleToLabel(row.role)
                               )}
                             </td>
                             <td style={{ padding: "10px 0" }}>{row.updated_at ? new Date(row.updated_at).toLocaleString() : "-"}</td>
                             <td style={{ padding: "10px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
                               {isEditingRole ? (
                                 <>
-                                  <button type="button" style={{ ...buttonBase, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void savePlatformRoleEdit(row)}>
+                                  <button type="button" style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers} onClick={() => void savePlatformRoleEdit(row)}>
                                     Save
                                   </button>
                                   <button
@@ -4049,8 +4501,8 @@ export default function PlatformAdminApp() {
                                 <>
                                   <button
                                     type="button"
-                                    style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }}
-                                    disabled={!isPlatformOwner}
+                                    style={{ ...buttonAlt, opacity: canManagePlatformUsers ? 1 : 0.55 }}
+                                    disabled={!canManagePlatformUsers}
                                     onClick={() => {
                                       setEditingPlatformAssignmentKey(rowKey);
                                       setEditingPlatformAssignmentRole(String(row?.role || "").trim());
@@ -4058,7 +4510,7 @@ export default function PlatformAdminApp() {
                                   >
                                     Edit
                                   </button>
-                                  <button type="button" style={{ ...buttonAlt, opacity: isPlatformOwner ? 1 : 0.55 }} disabled={!isPlatformOwner} onClick={() => void removePlatformRole(row)}>
+                                  <button type="button" style={{ ...buttonAlt, opacity: canRemovePlatformUsers ? 1 : 0.55 }} disabled={!canRemovePlatformUsers} onClick={() => void removePlatformRole(row)}>
                                     Remove
                                   </button>
                                 </>
@@ -4084,30 +4536,175 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
-            <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Roles & Permissions</h2>
-              <p style={{ margin: 0, color: palette.textMuted }}>
-                PCP access is page-based. This matrix shows how the current internal platform roles map to the control plane.
-              </p>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={tableHeadCell}>Page</th>
-                      <th style={tableHeadCell}>Platform Owner</th>
-                      <th style={tableHeadCell}>Platform Staff</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {CONTROL_PLANE_PAGES.map((page) => (
-                      <tr key={page.key}>
-                        <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{page.label}</td>
-                        <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_owner") || CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("legacy_admin") ? "Yes" : "No"}</td>
-                        <td style={{ padding: "10px 0" }}>{CONTROL_PLANE_PAGE_ACCESS[page.key]?.includes("platform_staff") ? "Yes" : "No"}</td>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ ...card, display: "grid", gap: 10 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Add PCP Role</h2>
+                <p style={{ margin: 0, color: palette.textMuted }}>
+                  Create reusable platform roles, then assign the exact PCP permissions each role should receive.
+                </p>
+                <form onSubmit={createPlatformRole} style={responsiveActionGrid}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Role Key</span>
+                    <input
+                      value={platformRoleForm.role}
+                      onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role: e.target.value }))}
+                      placeholder="revenue_ops"
+                      style={inputBase}
+                      disabled={!canManagePlatformRoles}
+                    />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Role Label</span>
+                    <input
+                      value={platformRoleForm.role_label}
+                      onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
+                      placeholder="Revenue Operations"
+                      style={inputBase}
+                      disabled={!canManagePlatformRoles}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                    disabled={!canManagePlatformRoles}
+                    title={canManagePlatformRoles ? "Create role" : "You need the Roles edit permission"}
+                  >
+                    Create Role
+                  </button>
+                </form>
+                {platformRoleStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformRoleStatus}</div> : null}
+              </div>
+
+              <div style={{ ...card, display: "grid", gap: 8 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>PCP Roles</h2>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeadCell}>Role</th>
+                        <th style={tableHeadCell}>Assignments</th>
+                        <th style={tableHeadCell}>Type</th>
+                        <th style={tableHeadCell}>State</th>
+                        <th style={tableHeadCell}>Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {sortedPlatformRoleDefinitions.map((row) => {
+                        const role = String(row?.role || "").trim();
+                        if (!role) return null;
+                        const assignments = Number(platformRoleAssignmentCounts?.[role] || 0);
+                        const isSelected = role === selectedPlatformRoleKey;
+                        const canRemove = canDeletePlatformRoles && row?.is_system !== true && assignments === 0;
+                        return (
+                          <tr key={role} style={{ background: isSelected ? "rgba(18,128,106,0.08)" : "transparent" }}>
+                            <td style={{ padding: "8px 0" }}>
+                              {platformRoleLabelByKey[role] || platformRoleToLabel(role)}
+                              <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({role})</span>
+                            </td>
+                            <td style={{ padding: "8px 0" }}>{assignments}</td>
+                            <td style={{ padding: "8px 0" }}>{row?.is_system ? "System" : "Custom"}</td>
+                            <td style={{ padding: "8px 0" }}>{row?.active === false ? "Disabled" : "Active"}</td>
+                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <button type="button" style={buttonAlt} onClick={() => setSelectedPlatformRoleKey(role)}>
+                                Manage Permissions
+                              </button>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canRemove ? 1 : 0.55 }}
+                                disabled={!canRemove}
+                                title={
+                                  row?.is_system
+                                    ? "System roles cannot be removed."
+                                    : assignments > 0
+                                      ? "Remove assignments before deleting this role."
+                                      : "Remove role"
+                                }
+                                onClick={() => void removePlatformRoleDefinition(row)}
+                              >
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={{ ...card, display: "grid", gap: 8 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>
+                  Manage PCP Role Permissions {selectedPlatformRoleDefinition ? `(${platformRoleLabelByKey[String(selectedPlatformRoleDefinition?.role || "").trim()] || platformRoleToLabel(selectedPlatformRoleDefinition?.role)})` : ""}
+                </h2>
+                {selectedPlatformRoleDefinition ? (
+                  <>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr>
+                            <th style={tableHeadCell}>Module</th>
+                            {PLATFORM_PERMISSION_ACTIONS.map((action) => (
+                              <th key={action.key} style={tableHeadCell}>{action.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {PLATFORM_PERMISSION_MODULES.map((module) => (
+                            <tr key={module.key}>
+                              <td style={{ padding: "8px 0", fontWeight: 700 }}>{module.label}</td>
+                              {PLATFORM_PERMISSION_ACTIONS.map((action) => {
+                                const permissionKey = `${module.key}.${action.key}`;
+                                return (
+                                  <td key={permissionKey} style={{ padding: "8px 0" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(platformRolePermissionDraft?.[permissionKey])}
+                                      disabled={!canManagePlatformRoles}
+                                      onChange={(e) => {
+                                        const nextAllowed = e.target.checked;
+                                        setPlatformRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
+                                        setPlatformRolePermissionDirty(true);
+                                      }}
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                        disabled={!canManagePlatformRoles || !platformRolePermissionDirty}
+                        onClick={() => void savePlatformRolePermissions()}
+                      >
+                        Save Permission Changes
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={() => {
+                          const resetDraft = {};
+                          for (const permissionKey of DEFAULT_PLATFORM_PERMISSION_KEYS) {
+                            resetDraft[permissionKey] = Boolean(platformRolePermissionMap[`${selectedPlatformRoleKey}:${permissionKey}`]);
+                          }
+                          setPlatformRolePermissionDraft(resetDraft);
+                          setPlatformRolePermissionDirty(false);
+                        }}
+                        disabled={!platformRolePermissionDirty}
+                      >
+                        Reset Changes
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                    Select a PCP role above to edit permissions.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -4381,13 +4978,13 @@ export default function PlatformAdminApp() {
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                       <button
                         type="button"
-                        style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
                         onClick={() => {
                           setActiveTab("tenants");
                           setIsEditingTenant(true);
                         }}
-                        disabled={!canEditTenantCore}
-                        title={canEditTenantCore ? "Edit the cityreport.io URL prefix" : "Only Platform Owner can edit the URL prefix"}
+                        disabled={!canEditTenantSetup}
+                        title={canEditTenantSetup ? "Edit the cityreport.io URL prefix" : "You need the Organizations edit permission"}
                       >
                         Edit URL Prefix
                       </button>
@@ -4398,7 +4995,7 @@ export default function PlatformAdminApp() {
                     <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
                       <span>Workspace Section</span>
                       <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                        {TAB_OPTIONS.map((tab) => (
+                        {availableTenantWorkspaceTabs.map((tab) => (
                           <option key={tab.key} value={tab.key}>{tab.label}</option>
                         ))}
                       </select>
@@ -4422,7 +5019,7 @@ export default function PlatformAdminApp() {
                     <input
                       type="checkbox"
                       checked={tenantForm.resident_portal_enabled}
-                      disabled={!isEditingTenant || !canEditTenantCore}
+                      disabled={!isEditingTenant || !canEditTenantSetup}
                       onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))}
                     /> Resident Updates Homepage Enabled
                   </label>
@@ -4430,7 +5027,7 @@ export default function PlatformAdminApp() {
                     <input
                       type="checkbox"
                       checked={tenantForm.is_pilot}
-                      disabled={!isEditingTenant || !canEditTenantCore}
+                      disabled={!isEditingTenant || !canEditTenantSetup}
                       onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))}
                     /> Pilot Municipality
                   </label>
@@ -4438,7 +5035,7 @@ export default function PlatformAdminApp() {
                     <input
                       type="checkbox"
                       checked={tenantForm.active}
-                      disabled={!isEditingTenant || !canEditTenantCore}
+                      disabled={!isEditingTenant || !canEditTenantSetup}
                       onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))}
                     /> Active Organization
                   </label>
@@ -4453,10 +5050,10 @@ export default function PlatformAdminApp() {
                     <>
                       <button
                         type="button"
-                        style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
                         onClick={() => void saveTenant({ preventDefault() {} })}
-                        disabled={!canEditTenantCore}
-                        title={canEditTenantCore ? "Save organization setup" : "Only Platform Owner can save organization setup"}
+                        disabled={!canEditTenantSetup}
+                        title={canEditTenantSetup ? "Save organization setup" : "You need the Organizations edit permission"}
                       >
                         Save Organization Setup
                       </button>
@@ -4472,37 +5069,37 @@ export default function PlatformAdminApp() {
                     <>
                       <button
                         type="button"
-                        style={{ ...headerActionButton, opacity: canEditTenantCore ? 1 : 0.55 }}
+                        style={{ ...headerActionButton, opacity: canEditTenantSetup ? 1 : 0.55 }}
                         onClick={() => {
                           setActiveTab("tenants");
                           setIsEditingTenant(true);
                         }}
-                        disabled={!canEditTenantCore}
-                        title={canEditTenantCore ? "Edit organization setup" : "Only Platform Owner can edit organization setup"}
+                        disabled={!canEditTenantSetup}
+                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
                       >
                         Edit Organization Setup
                       </button>
                       {selectedTenantPendingDeletion ? (
                         <button
                           type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantCore ? 1 : 0.55 }}
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
                           onClick={() => void cancelOrganizationDeletion()}
-                          disabled={!canEditTenantCore || deleteLoading}
-                          title={canEditTenantCore ? "Cancel scheduled organization deletion" : "Only Platform Owner can cancel organization deletion"}
+                          disabled={!canDeleteTenant || deleteLoading}
+                          title={canDeleteTenant ? "Cancel scheduled organization deletion" : "You need the Organizations delete permission"}
                         >
                           {deleteLoading ? "Saving..." : "Cancel Deletion"}
                         </button>
                       ) : (
                         <button
                           type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantCore ? 1 : 0.55 }}
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
                           onClick={() => {
                             setDeleteConfirmOpen((prev) => !prev);
                             setDeleteConfirmText("");
                             setStatus((prev) => ({ ...prev, tenant: "" }));
                           }}
-                          disabled={!canEditTenantCore}
-                          title={canEditTenantCore ? "Schedule organization deletion" : "Only Platform Owner can schedule organization deletion"}
+                          disabled={!canDeleteTenant}
+                          title={canDeleteTenant ? "Schedule organization deletion" : "You need the Organizations delete permission"}
                         >
                           Schedule Deletion
                         </button>
@@ -4569,7 +5166,7 @@ export default function PlatformAdminApp() {
                   </h2>
                   {!inAddTenantFlow ? (
                     profileReadOnly ? (
-                      <button type="button" style={buttonAlt} onClick={() => setIsEditingProfile(true)}>
+                      <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} onClick={() => setIsEditingProfile(true)} disabled={!canEditTenantSetup}>
                         Edit Contact Information
                       </button>
                     ) : (
@@ -4679,7 +5276,7 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : !profileReadOnly ? (
                   <form onSubmit={saveTenantProfile} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={buttonBase}>Save Contact Information</button>
+                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>Save Contact Information</button>
                   </form>
                 ) : null}
                 {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
@@ -4693,7 +5290,7 @@ export default function PlatformAdminApp() {
                     {inAddTenantFlow ? "Primary + Additional Contacts" : "Primary + Additional Contacts"}
                   </h2>
                   {!inAddTenantFlow && profileReadOnly ? (
-                    <button type="button" style={buttonAlt} onClick={() => setIsEditingProfile(true)}>
+                    <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} onClick={() => setIsEditingProfile(true)} disabled={!canEditTenantSetup}>
                       Edit Contacts
                     </button>
                   ) : null}
@@ -4778,7 +5375,7 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : !profileReadOnly ? (
                   <form onSubmit={saveTenantProfile} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={buttonBase}>Save Contact Information</button>
+                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>Save Contact Information</button>
                   </form>
                 ) : null}
                 {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
@@ -4877,7 +5474,7 @@ export default function PlatformAdminApp() {
                         </button>
                       </>
                     ) : (
-                      <button type="submit" style={buttonBase}>
+                      <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
                         Save Organization Setup
                       </button>
                     )}
@@ -4923,13 +5520,13 @@ export default function PlatformAdminApp() {
                         onChange={(e) => setUserSearchQuery(e.target.value)}
                         placeholder="Exact email, exact phone, or full name"
                         style={{ ...inputBase, fontSize: 16 }}
-                        disabled={!canEditTenantCore}
+                        disabled={!canManageTenantUsers}
                       />
                     </label>
                     <button
                       type="submit"
-                      style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
-                      disabled={!canEditTenantCore || userSearchLoading}
+                      style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                      disabled={!canManageTenantUsers || userSearchLoading}
                     >
                       {userSearchLoading ? "Searching..." : "Search Accounts"}
                     </button>
@@ -4969,7 +5566,7 @@ export default function PlatformAdminApp() {
                         value={assignForm.role}
                         onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
                         style={inputBase}
-                        disabled={!canEditTenantCore}
+                        disabled={!canManageTenantUsers}
                       >
                         {assignableTenantRoles.map((row) => {
                           const key = String(row?.role || "");
@@ -4993,8 +5590,8 @@ export default function PlatformAdminApp() {
                     <button
                       type="button"
                       onClick={() => void assignTenantAdmin({ preventDefault() {} })}
-                      style={{ ...buttonBase, opacity: canEditTenantCore && assignForm.user_id ? 1 : 0.55 }}
-                      disabled={!canEditTenantCore || !assignForm.user_id}
+                      style={{ ...buttonBase, opacity: canManageTenantUsers && assignForm.user_id ? 1 : 0.55 }}
+                      disabled={!canManageTenantUsers || !assignForm.user_id}
                       title={assignForm.user_id ? "Assign organization role" : "Select an account first"}
                     >
                       Assign Role
@@ -5019,7 +5616,7 @@ export default function PlatformAdminApp() {
                       onChange={(e) => setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
                       placeholder="Jordan"
                       style={inputBase}
-                      disabled={!canEditTenantCore}
+                      disabled={!canManageTenantUsers}
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -5029,7 +5626,7 @@ export default function PlatformAdminApp() {
                       onChange={(e) => setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
                       placeholder="Rivera"
                       style={inputBase}
-                      disabled={!canEditTenantCore}
+                      disabled={!canManageTenantUsers}
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -5040,7 +5637,7 @@ export default function PlatformAdminApp() {
                       onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
                       placeholder="jordan.rivera@example.gov"
                       style={inputBase}
-                      disabled={!canEditTenantCore}
+                      disabled={!canManageTenantUsers}
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -5050,7 +5647,7 @@ export default function PlatformAdminApp() {
                       onChange={(e) => setInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
                       placeholder="(555) 555-0101"
                       style={inputBase}
-                      disabled={!canEditTenantCore}
+                      disabled={!canManageTenantUsers}
                     />
                   </label>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -5059,7 +5656,7 @@ export default function PlatformAdminApp() {
                       value={assignForm.role}
                       onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
                       style={inputBase}
-                      disabled={!canEditTenantCore}
+                      disabled={!canManageTenantUsers}
                     >
                       {assignableTenantRoles.map((row) => {
                         const key = String(row?.role || "");
@@ -5079,9 +5676,9 @@ export default function PlatformAdminApp() {
                   </label>
                   <button
                     type="submit"
-                    style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
-                    disabled={!canEditTenantCore}
-                    title={canEditTenantCore ? "Create account and assign organization role" : "Only Platform Owner can create organization users here"}
+                    style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                    disabled={!canManageTenantUsers}
+                    title={canManageTenantUsers ? "Create account and assign organization role" : "You need the Users edit permission"}
                   >
                     Create Account + Assign Role
                   </button>
@@ -5116,7 +5713,7 @@ export default function PlatformAdminApp() {
                               value={editingAssignmentRole}
                               onChange={(e) => setEditingAssignmentRole(e.target.value)}
                               style={{ ...inputBase, minWidth: 180 }}
-                              disabled={!canEditTenantCore}
+                              disabled={!canManageTenantUsers}
                             >
                               {assignableTenantRoles.map((roleRow) => {
                                 const key = String(roleRow?.role || "").trim();
@@ -5143,10 +5740,10 @@ export default function PlatformAdminApp() {
                             <>
                               <button
                                 type="button"
-                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                style={{ ...buttonAlt, opacity: canManageTenantUsers ? 1 : 0.55 }}
                                 onClick={() => void saveTenantAdminRoleEdit(row)}
-                                disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Save role change" : "Only Platform Owner can edit organization roles here"}
+                                disabled={!canManageTenantUsers}
+                                title={canManageTenantUsers ? "Save role change" : "You need the Users edit permission"}
                               >
                                 Save
                               </button>
@@ -5165,22 +5762,22 @@ export default function PlatformAdminApp() {
                             <>
                               <button
                                 type="button"
-                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                style={{ ...buttonAlt, opacity: canManageTenantUsers ? 1 : 0.55 }}
                                 onClick={() => {
                                   setEditingAssignmentKey(rowKey);
                                   setEditingAssignmentRole(String(row?.role || "").trim());
                                 }}
-                                disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Edit role" : "Only Platform Owner can edit organization roles here"}
+                                disabled={!canManageTenantUsers}
+                                title={canManageTenantUsers ? "Edit role" : "You need the Users edit permission"}
                               >
                                 Edit
                               </button>
                               <button
                                 type="button"
-                                style={{ ...buttonAlt, opacity: canEditTenantCore ? 1 : 0.55 }}
+                                style={{ ...buttonAlt, opacity: canDeleteTenantUsers ? 1 : 0.55 }}
                                 onClick={() => void removeTenantAdmin(row)}
-                                disabled={!canEditTenantCore}
-                                title={canEditTenantCore ? "Remove role" : "Only Platform Owner can remove organization roles here"}
+                                disabled={!canDeleteTenantUsers}
+                                title={canDeleteTenantUsers ? "Remove role" : "You need the Users delete permission"}
                               >
                                 Remove
                               </button>
@@ -5216,7 +5813,7 @@ export default function PlatformAdminApp() {
                     onChange={(e) => setRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
                     placeholder="field_supervisor"
                     style={inputBase}
-                    disabled={!canEditTenantCore}
+                    disabled={!canManageTenantRoles}
                   />
                 </label>
                 <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -5226,14 +5823,14 @@ export default function PlatformAdminApp() {
                     onChange={(e) => setRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
                     placeholder="Field Supervisor"
                     style={inputBase}
-                    disabled={!canEditTenantCore}
+                    disabled={!canManageTenantRoles}
                   />
                 </label>
                 <button
                   type="submit"
-                  style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
-                  disabled={!canEditTenantCore}
-                  title={canEditTenantCore ? "Create role" : "Only Platform Owner can create roles"}
+                  style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                  disabled={!canManageTenantRoles}
+                  title={canManageTenantRoles ? "Create role" : "You need the Roles edit permission"}
                 >
                   Create Role
                 </button>
@@ -5261,7 +5858,7 @@ export default function PlatformAdminApp() {
                       const roleLabel = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role));
                       const assignments = Number(tenantRoleAssignmentCounts?.[role] || 0);
                       const isSelected = role === selectedRoleKey;
-                      const canRemove = canEditTenantCore && row?.is_system !== true && assignments === 0;
+                      const canRemove = canDeleteTenantRoles && row?.is_system !== true && assignments === 0;
                       return (
                         <tr key={role} style={{ background: isSelected ? "rgba(18,128,106,0.08)" : "transparent" }}>
                           <td style={{ padding: "8px 0" }}>
@@ -5315,23 +5912,23 @@ export default function PlatformAdminApp() {
                       <thead>
                         <tr>
                           <th style={tableHeadCell}>Module</th>
-                          {ROLE_PERMISSION_ACTIONS.map((action) => (
+                          {TENANT_PERMISSION_ACTIONS.map((action) => (
                             <th key={action.key} style={tableHeadCell}>{action.label}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {ROLE_PERMISSION_MODULES.map((module) => (
+                        {TENANT_PERMISSION_MODULES.map((module) => (
                           <tr key={module.key}>
                             <td style={{ padding: "8px 0", fontWeight: 700 }}>{module.label}</td>
-                            {ROLE_PERMISSION_ACTIONS.map((action) => {
+                            {TENANT_PERMISSION_ACTIONS.map((action) => {
                               const permissionKey = `${module.key}.${action.key}`;
                               return (
                                 <td key={permissionKey} style={{ padding: "8px 0" }}>
                                   <input
                                     type="checkbox"
                                     checked={Boolean(rolePermissionDraft?.[permissionKey])}
-                                    disabled={!canEditTenantCore}
+                                    disabled={!canManageTenantRoles}
                                     onChange={(e) => {
                                       const nextAllowed = e.target.checked;
                                       setRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
@@ -5349,8 +5946,8 @@ export default function PlatformAdminApp() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       type="button"
-                      style={{ ...buttonBase, opacity: canEditTenantCore ? 1 : 0.55 }}
-                      disabled={!canEditTenantCore || !rolePermissionDirty}
+                      style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                      disabled={!canManageTenantRoles || !rolePermissionDirty}
                       onClick={() => void saveRolePermissions()}
                     >
                       Save Permission Changes
