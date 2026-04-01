@@ -111,6 +111,17 @@ const EMPTY_EVENT_FORM = {
   status: "published",
 };
 
+const LOCATION_ASSET_CATEGORIES = [
+  { key: "logo", label: "Logo" },
+  { key: "boundary_geojson", label: "Boundary" },
+  { key: "streetlight_inventory", label: "Streetlight Inventory" },
+  { key: "calendar_source", label: "Calendar Source" },
+  { key: "asset_coordinates", label: "Coordinate File" },
+  { key: "contract", label: "Contract" },
+  { key: "general_asset", label: "General Asset" },
+  { key: "other", label: "Other" },
+];
+
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
@@ -180,6 +191,31 @@ function buildMapAppearanceDraft(row) {
     boundary_border_color: sanitizeHexColor(row?.boundary_border_color, "#e53935"),
     boundary_border_width: String(Number.isFinite(Number(row?.boundary_border_width)) ? Number(row.boundary_border_width) : 4),
   };
+}
+
+function sanitizeFileNameSegment(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9_.-]/g, "")
+    .slice(0, 120);
+  return normalized || "file";
+}
+
+function toDatePath(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (!Number.isFinite(n) || n <= 0) return "-";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function validateStrongPassword(value) {
@@ -823,6 +859,12 @@ export default function MunicipalityApp() {
   const [mapAppearance, setMapAppearance] = useState(null);
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));
   const [assetLibrary, setAssetLibrary] = useState([]);
+  const [assetFiles, setAssetFiles] = useState([]);
+  const [assetUploadDraft, setAssetUploadDraft] = useState({
+    category: "general_asset",
+    notes: "",
+    file: null,
+  });
   const [settingsSectionEdit, setSettingsSectionEdit] = useState({
     organization: false,
     map: false,
@@ -830,6 +872,7 @@ export default function MunicipalityApp() {
   const [settingsSectionSaving, setSettingsSectionSaving] = useState({
     organization: false,
     map: false,
+    assets: false,
   });
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
@@ -1375,9 +1418,14 @@ export default function MunicipalityApp() {
           .from("tenant_permissions_catalog")
           .select("permission_key,module_key,action_key,label,sort_order")
           .order("sort_order", { ascending: true }),
-      ]) : Promise.resolve([null, null, null, null, null, null]);
+        supabase
+          .from("tenant_files")
+          .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active")
+          .eq("tenant_key", tenantKey)
+          .order("uploaded_at", { ascending: false }),
+      ]) : Promise.resolve([null, null, null, null, null, null, null]);
 
-      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes] = await locationQueries;
+      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, filesRes] = await locationQueries;
 
       if (cancelled) return;
 
@@ -1419,6 +1467,7 @@ export default function MunicipalityApp() {
       setOrganizationProfile(nextProfile);
       setMapAppearance(nextMapAppearance);
       setAssetLibrary(nextAssetLibrary);
+      setAssetFiles(filesRes?.error ? [] : (filesRes?.data || []));
       setTeamAssignments(teamRes?.error ? [] : (teamRes?.data || []));
       setRoleDefinitions(rolesRes?.error ? [] : (rolesRes?.data || []));
       setRolePermissions(permissionsRes?.error ? [] : (permissionsRes?.data || []));
@@ -1429,7 +1478,11 @@ export default function MunicipalityApp() {
             ? "Organization information is not available to this account yet."
             : profileRes.error.message) || "Could not load organization information.")
           : "",
-        assets: "",
+        assets: filesRes?.error
+          ? ((isPermissionError(filesRes.error)
+            ? "Asset files are not available to this account yet."
+            : filesRes.error.message) || "Could not load location assets.")
+          : "",
         reports: "",
         team: teamRes?.error
           ? (isPermissionError(teamRes.error) ? "Team access visibility requires the users.access permission for this location." : teamRes.error.message || "Could not load team access.")
@@ -1893,6 +1946,132 @@ export default function MunicipalityApp() {
     setMapAppearanceDraft(buildMapAppearanceDraft(nextMapAppearance));
     setSettingsSectionEdit((prev) => ({ ...prev, map: false }));
     setSettingsSectionStatus((prev) => ({ ...prev, map: "Map appearance settings saved." }));
+  }
+
+  async function reloadAssetFiles() {
+    const { data, error } = await supabase
+      .from("tenant_files")
+      .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active")
+      .eq("tenant_key", tenantKey)
+      .order("uploaded_at", { ascending: false });
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        assets: error.message || "Could not refresh the asset library.",
+      }));
+      return;
+    }
+
+    setAssetFiles(Array.isArray(data) ? data : []);
+  }
+
+  async function uploadAssetFile(event) {
+    event.preventDefault();
+    if (!manageAccess) return;
+    const file = assetUploadDraft.file;
+    if (!file) {
+      setSettingsSectionStatus((prev) => ({ ...prev, assets: "Choose a file to upload first." }));
+      return;
+    }
+
+    setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
+
+    const category = trimOrEmpty(assetUploadDraft.category).toLowerCase() || "general_asset";
+    const now = Date.now();
+    const path = `${tenantKey}/${category}/${toDatePath(new Date())}/${now}_${sanitizeFileNameSegment(file.name)}`;
+    const contentType = String(file.type || "application/octet-stream");
+
+    const { error: uploadError } = await supabase
+      .storage
+      .from("tenant-files")
+      .upload(path, file, { upsert: false, contentType });
+
+    if (uploadError) {
+      setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+      setSettingsSectionStatus((prev) => ({ ...prev, assets: uploadError.message || "Could not upload the asset file." }));
+      return;
+    }
+
+    const metadataPayload = {
+      tenant_key: tenantKey,
+      file_category: category,
+      file_name: file.name,
+      storage_bucket: "tenant-files",
+      storage_path: path,
+      mime_type: contentType,
+      size_bytes: Number(file.size || 0),
+      uploaded_by: session?.user?.id || null,
+      notes: trimOrEmpty(assetUploadDraft.notes) || null,
+      active: true,
+    };
+
+    const { error: metaError } = await supabase.from("tenant_files").insert([metadataPayload]);
+    if (metaError) {
+      setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+      setSettingsSectionStatus((prev) => ({ ...prev, assets: metaError.message || "Could not save the asset record." }));
+      return;
+    }
+
+    setAssetUploadDraft({ category: "general_asset", notes: "", file: null });
+    setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+    setSettingsSectionStatus((prev) => ({ ...prev, assets: `Uploaded ${file.name}.` }));
+    await reloadAssetFiles();
+  }
+
+  async function openAssetFile(row) {
+    const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
+    const path = String(row?.storage_path || "").trim();
+    if (!path) return;
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60);
+    if (error || !data?.signedUrl) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        assets: String(error?.message || "Could not open the asset file."),
+      }));
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  async function removeAssetFile(row) {
+    const fileId = Number(row?.id || 0);
+    const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
+    const path = String(row?.storage_path || "").trim();
+    if (!fileId || !path) return;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
+
+    const { error: removeStorageError } = await supabase.storage.from(bucket).remove([path]);
+    if (removeStorageError) {
+      setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        assets: removeStorageError.message || "Could not remove the asset file.",
+      }));
+      return;
+    }
+
+    const { error: removeMetaError } = await supabase.from("tenant_files").delete().eq("id", fileId);
+    setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
+
+    if (removeMetaError) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        assets: removeMetaError.message || "Could not remove the asset record.",
+      }));
+      return;
+    }
+
+    setSettingsSectionStatus((prev) => ({
+      ...prev,
+      assets: `Removed ${trimOrEmpty(row?.file_name) || "asset file"}.`,
+    }));
+    await reloadAssetFiles();
   }
 
   async function updateTeamAssignmentStatus(assignment, nextStatus) {
@@ -3481,6 +3660,46 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">This library is intentionally not limited to only a few file types. Current attached assets and future uploads will live here together.</p>
                             </div>
                           </div>
+                          {settingsSectionStatus.assets ? <p className={`municipality-inline-status${settingsSectionStatus.assets.toLowerCase().includes("could not") || settingsSectionStatus.assets.toLowerCase().includes("choose") ? " is-error" : ""}`}>{settingsSectionStatus.assets}</p> : null}
+                          <form className="municipality-form-grid" onSubmit={uploadAssetFile}>
+                            <div className="municipality-field">
+                              <label htmlFor="asset-category">Asset Type</label>
+                              <select
+                                id="asset-category"
+                                value={assetUploadDraft.category}
+                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, category: event.target.value }))}
+                              >
+                                {LOCATION_ASSET_CATEGORIES.map((category) => (
+                                  <option key={category.key} value={category.key}>{category.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="municipality-field">
+                              <label htmlFor="asset-notes">Notes</label>
+                              <input
+                                id="asset-notes"
+                                value={assetUploadDraft.notes}
+                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                                placeholder="What is this file for?"
+                              />
+                            </div>
+                            <div className="municipality-field municipality-field--file">
+                              <label htmlFor="asset-file">Select File</label>
+                              <input
+                                id="asset-file"
+                                type="file"
+                                onChange={(event) => setAssetUploadDraft((prev) => ({ ...prev, file: event.target.files?.[0] || null }))}
+                              />
+                              {assetUploadDraft.file ? (
+                                <p className="municipality-note">{assetUploadDraft.file.name} • {formatBytes(assetUploadDraft.file.size)}</p>
+                              ) : null}
+                            </div>
+                            <div className="municipality-actions">
+                              <button type="submit" className="municipality-button municipality-button--primary" disabled={settingsSectionSaving.assets}>
+                                {settingsSectionSaving.assets ? "Uploading…" : "Upload Asset"}
+                              </button>
+                            </div>
+                          </form>
                           <div className="municipality-settings-list">
                             {assetLibrary.map((asset) => (
                               <div key={asset.key} className="municipality-settings-list-item">
@@ -3492,7 +3711,47 @@ export default function MunicipalityApp() {
                               </div>
                             ))}
                           </div>
-                          {settingsSectionStatus.assets ? <p className="municipality-inline-status">{settingsSectionStatus.assets}</p> : null}
+                          {assetFiles.length ? (
+                            <div className="municipality-settings-list">
+                              {assetFiles.map((fileRow) => (
+                                <div key={fileRow.id} className="municipality-settings-list-item">
+                                  <div>
+                                    <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
+                                    <p className="municipality-note">
+                                      {(LOCATION_ASSET_CATEGORIES.find((category) => category.key === trimOrEmpty(fileRow.file_category))?.label) || trimOrEmpty(fileRow.file_category) || "Asset"}
+                                      {" • "}
+                                      {formatBytes(fileRow.size_bytes)}
+                                      {" • "}
+                                      {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
+                                    </p>
+                                    {trimOrEmpty(fileRow.notes) ? <p className="municipality-note">{trimOrEmpty(fileRow.notes)}</p> : null}
+                                  </div>
+                                  <div className="municipality-settings-item-actions">
+                                    <span className="municipality-chip">{fileRow.active === false ? "Inactive" : "Active"}</span>
+                                    <div className="municipality-actions municipality-actions--compact">
+                                      <button
+                                        type="button"
+                                        className="municipality-button municipality-button--ghost"
+                                        onClick={() => void openAssetFile(fileRow)}
+                                      >
+                                        Open
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="municipality-button municipality-button--ghost municipality-button--danger"
+                                        onClick={() => void removeAssetFile(fileRow)}
+                                        disabled={settingsSectionSaving.assets}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="municipality-empty">No uploaded asset files are attached to this location yet.</div>
+                          )}
                         </div>
                       )
                     ) : null}
