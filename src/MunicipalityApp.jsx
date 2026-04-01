@@ -911,6 +911,7 @@ export default function MunicipalityApp() {
     assets: false,
   });
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
+  const [teamManagementView, setTeamManagementView] = useState("list");
   const [teamAssignmentMode, setTeamAssignmentMode] = useState("existing");
   const [teamSearchQuery, setTeamSearchQuery] = useState("");
   const [teamSearchResults, setTeamSearchResults] = useState([]);
@@ -2212,6 +2213,7 @@ export default function MunicipalityApp() {
       ...prev,
       team: `Assigned ${roleDefinitionLookup[role]?.role_label || roleKeyToLabel(role)} to ${personLabel}.`,
     }));
+    setTeamManagementView("list");
     setTeamAssignForm((prev) => ({ ...prev, user_id: "", role }));
   }
 
@@ -2256,6 +2258,7 @@ export default function MunicipalityApp() {
     await reloadTeamAssignments();
     setTeamInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
     setTeamAssignForm((prev) => ({ ...prev, user_id: "", role }));
+    setTeamManagementView("list");
     setTeamAssignmentMode("existing");
     setTeamSearchQuery(email);
     setTeamSearchResults([]);
@@ -4259,7 +4262,16 @@ export default function MunicipalityApp() {
                           <div className="municipality-settings-header">
                             <div>
                               <h4>Manage Employees</h4>
-                              <p className="municipality-note">Find an existing account or create a new one, then assign one allowed organization role for this location.</p>
+                              <p className="municipality-note">Review the employees who currently have access to this location, then add a new employee when needed.</p>
+                            </div>
+                            <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className={`municipality-button${teamManagementView === "add" ? " municipality-button--ghost" : " municipality-button--primary"}`}
+                                  onClick={() => setTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                                >
+                                  {teamManagementView === "add" ? "Hide Add Employee" : "Add Employee"}
+                                </button>
                             </div>
                           </div>
                           {settingsSectionStatus.team ? <p className={`municipality-inline-status${teamSectionStatusIsError ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
@@ -4280,173 +4292,189 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">
                                 Employee and active custom roles can be assigned here. Tenant admin stays controlled from the developer dashboard.
                               </p>
-                              <div className="municipality-actions">
-                                <button
-                                  type="button"
-                                  className={`municipality-button${teamAssignmentMode === "existing" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                                  onClick={() => setTeamAssignmentMode("existing")}
-                                >
-                                  Find Existing Account
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`municipality-button${teamAssignmentMode === "invite" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                                  onClick={() => setTeamAssignmentMode("invite")}
-                                >
-                                  Create Account
-                                </button>
-                              </div>
-                              {teamAssignmentMode === "existing" ? (
-                                <>
-                                  <form className="municipality-form-grid" onSubmit={searchTeamAccounts}>
-                                    <div className="municipality-field">
-                                      <label htmlFor="team-search-query">Find Person</label>
-                                      <input
-                                        id="team-search-query"
-                                        value={teamSearchQuery}
-                                        onChange={(event) => setTeamSearchQuery(event.target.value)}
-                                        placeholder="Exact email, exact phone, or full name"
-                                      />
-                                    </div>
-                                    <div className="municipality-actions">
-                                      <button type="submit" className="municipality-button municipality-button--primary" disabled={teamSearchLoading}>
-                                        {teamSearchLoading ? "Searching…" : "Search Accounts"}
-                                      </button>
-                                    </div>
-                                  </form>
-                                  {teamSearchResults.length ? (
-                                    <div className="municipality-settings-list">
-                                      {teamSearchResults.map((row) => {
-                                        const userId = trimOrEmpty(row?.id);
-                                        const isSelected = userId === trimOrEmpty(teamAssignForm.user_id);
-                                        return (
-                                          <button
-                                            key={userId}
-                                            type="button"
-                                            className="municipality-settings-list-item municipality-settings-list-item--stacked"
-                                            onClick={() => setTeamAssignForm((prev) => ({ ...prev, user_id: userId }))}
-                                            style={{
-                                              width: "100%",
-                                              textAlign: "left",
-                                              cursor: "pointer",
-                                              borderColor: isSelected ? "rgba(23, 109, 120, 0.55)" : undefined,
-                                              background: isSelected ? "rgba(23, 109, 120, 0.08)" : undefined,
-                                            }}
-                                          >
-                                            <strong>{trimOrEmpty(row?.display_name) || trimOrEmpty(row?.email) || shortUserId(userId)}</strong>
-                                            <p className="municipality-note">
-                                              {[trimOrEmpty(row?.email), trimOrEmpty(row?.phone)].filter(Boolean).join(" • ") || "No email or phone on file"}
-                                            </p>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null}
-                                  <div className="municipality-form-grid">
-                                    <div className="municipality-field">
-                                      <label htmlFor="team-role-select-existing">Organization Role</label>
-                                      <select
-                                        id="team-role-select-existing"
-                                        value={teamAssignForm.role}
-                                        onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
-                                      >
-                                        {assignableTeamRoles.map((row) => {
-                                          const roleKey = trimOrEmpty(row?.role);
-                                          if (!roleKey) return null;
-                                          return (
-                                            <option key={roleKey} value={roleKey}>
-                                              {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
-                                            </option>
-                                          );
-                                        })}
-                                        {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
-                                      </select>
+                              {teamManagementView === "add" ? (
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked municipality-settings-sublist">
+                                  <div className="municipality-settings-item-actions-row">
+                                    <div>
+                                      <strong>Add New Employee</strong>
+                                      <p className="municipality-note">Choose whether you are assigning an existing account or creating a new invited account.</p>
                                     </div>
                                   </div>
                                   <div className="municipality-actions">
                                     <button
                                       type="button"
-                                      className="municipality-button municipality-button--primary"
-                                      onClick={() => void assignExistingTeamAccount()}
-                                      disabled={teamAssignLoading || !trimOrEmpty(teamAssignForm.user_id)}
-                                      title={trimOrEmpty(teamAssignForm.user_id) ? "Assign organization role" : "Select an account first"}
+                                      className={`municipality-button${teamAssignmentMode === "existing" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                                      onClick={() => setTeamAssignmentMode("existing")}
                                     >
-                                      {teamAssignLoading ? "Assigning…" : "Assign Role"}
+                                      Find Existing Account
                                     </button>
-                                    {trimOrEmpty(teamAssignForm.user_id) ? (
-                                      <p className="municipality-note">
-                                        Selected account: <strong>{trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || "Account selected"}</strong>
-                                      </p>
-                                    ) : (
-                                      <p className="municipality-note">For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.</p>
-                                    )}
-                                  </div>
-                                </>
-                              ) : (
-                                <form className="municipality-form-grid" onSubmit={createAndAssignTeamUser}>
-                                  <div className="municipality-field">
-                                    <label htmlFor="team-invite-first-name">First Name</label>
-                                    <input
-                                      id="team-invite-first-name"
-                                      value={teamInviteForm.first_name}
-                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, first_name: event.target.value }))}
-                                      placeholder="Jordan"
-                                    />
-                                  </div>
-                                  <div className="municipality-field">
-                                    <label htmlFor="team-invite-last-name">Last Name</label>
-                                    <input
-                                      id="team-invite-last-name"
-                                      value={teamInviteForm.last_name}
-                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, last_name: event.target.value }))}
-                                      placeholder="Rivera"
-                                    />
-                                  </div>
-                                  <div className="municipality-field">
-                                    <label htmlFor="team-invite-email">Email</label>
-                                    <input
-                                      id="team-invite-email"
-                                      type="email"
-                                      value={teamInviteForm.email}
-                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, email: event.target.value }))}
-                                      placeholder="jordan.rivera@example.gov"
-                                    />
-                                  </div>
-                                  <div className="municipality-field">
-                                    <label htmlFor="team-invite-phone">Phone Number</label>
-                                    <input
-                                      id="team-invite-phone"
-                                      value={teamInviteForm.phone}
-                                      onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, phone: event.target.value }))}
-                                      placeholder="(555) 555-0101"
-                                    />
-                                  </div>
-                                  <div className="municipality-field">
-                                    <label htmlFor="team-role-select-invite">Organization Role</label>
-                                    <select
-                                      id="team-role-select-invite"
-                                      value={teamAssignForm.role}
-                                      onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                    <button
+                                      type="button"
+                                      className={`municipality-button${teamAssignmentMode === "invite" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                                      onClick={() => setTeamAssignmentMode("invite")}
                                     >
-                                      {assignableTeamRoles.map((row) => {
-                                        const roleKey = trimOrEmpty(row?.role);
-                                        if (!roleKey) return null;
-                                        return (
-                                          <option key={roleKey} value={roleKey}>
-                                            {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
-                                          </option>
-                                        );
-                                      })}
-                                      {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
-                                    </select>
-                                  </div>
-                                  <div className="municipality-actions">
-                                    <button type="submit" className="municipality-button municipality-button--primary" disabled={teamInviteLoading}>
-                                      {teamInviteLoading ? "Creating…" : "Create Account + Assign Role"}
+                                      Create Account
                                     </button>
                                   </div>
-                                </form>
-                              )}
+                                  {teamAssignmentMode === "existing" ? (
+                                    <>
+                                      <form className="municipality-form-grid" onSubmit={searchTeamAccounts}>
+                                        <div className="municipality-field">
+                                          <label htmlFor="team-search-query">Find Person</label>
+                                          <input
+                                            id="team-search-query"
+                                            value={teamSearchQuery}
+                                            onChange={(event) => setTeamSearchQuery(event.target.value)}
+                                            placeholder="Exact email, exact phone, or full name"
+                                          />
+                                        </div>
+                                        <div className="municipality-actions">
+                                          <button type="submit" className="municipality-button municipality-button--primary" disabled={teamSearchLoading}>
+                                            {teamSearchLoading ? "Searching…" : "Search Accounts"}
+                                          </button>
+                                        </div>
+                                      </form>
+                                      {teamSearchResults.length ? (
+                                        <div className="municipality-settings-list">
+                                          {teamSearchResults.map((row) => {
+                                            const userId = trimOrEmpty(row?.id);
+                                            const isSelected = userId === trimOrEmpty(teamAssignForm.user_id);
+                                            return (
+                                              <button
+                                                key={userId}
+                                                type="button"
+                                                className="municipality-settings-list-item municipality-settings-list-item--stacked"
+                                                onClick={() => setTeamAssignForm((prev) => ({ ...prev, user_id: userId }))}
+                                                style={{
+                                                  width: "100%",
+                                                  textAlign: "left",
+                                                  cursor: "pointer",
+                                                  borderColor: isSelected ? "rgba(23, 109, 120, 0.55)" : undefined,
+                                                  background: isSelected ? "rgba(23, 109, 120, 0.08)" : undefined,
+                                                }}
+                                              >
+                                                <strong>{trimOrEmpty(row?.display_name) || trimOrEmpty(row?.email) || shortUserId(userId)}</strong>
+                                                <p className="municipality-note">
+                                                  {[trimOrEmpty(row?.email), trimOrEmpty(row?.phone)].filter(Boolean).join(" • ") || "No email or phone on file"}
+                                                </p>
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : null}
+                                      <div className="municipality-form-grid">
+                                        <div className="municipality-field">
+                                          <label htmlFor="team-role-select-existing">Organization Role</label>
+                                          <select
+                                            id="team-role-select-existing"
+                                            value={teamAssignForm.role}
+                                            onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                          >
+                                            {assignableTeamRoles.map((row) => {
+                                              const roleKey = trimOrEmpty(row?.role);
+                                              if (!roleKey) return null;
+                                              return (
+                                                <option key={roleKey} value={roleKey}>
+                                                  {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                                </option>
+                                              );
+                                            })}
+                                            {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                          </select>
+                                        </div>
+                                      </div>
+                                      <div className="municipality-actions">
+                                        <button
+                                          type="button"
+                                          className="municipality-button municipality-button--primary"
+                                          onClick={() => void assignExistingTeamAccount()}
+                                          disabled={teamAssignLoading || !trimOrEmpty(teamAssignForm.user_id)}
+                                          title={trimOrEmpty(teamAssignForm.user_id) ? "Assign organization role" : "Select an account first"}
+                                        >
+                                          {teamAssignLoading ? "Assigning…" : "Assign Role"}
+                                        </button>
+                                        {trimOrEmpty(teamAssignForm.user_id) ? (
+                                          <p className="municipality-note">
+                                            Selected account: <strong>{trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || "Account selected"}</strong>
+                                          </p>
+                                        ) : (
+                                          <p className="municipality-note">For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.</p>
+                                        )}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <form className="municipality-form-grid" onSubmit={createAndAssignTeamUser}>
+                                      <div className="municipality-field">
+                                        <label htmlFor="team-invite-first-name">First Name</label>
+                                        <input
+                                          id="team-invite-first-name"
+                                          value={teamInviteForm.first_name}
+                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, first_name: event.target.value }))}
+                                          placeholder="Jordan"
+                                        />
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="team-invite-last-name">Last Name</label>
+                                        <input
+                                          id="team-invite-last-name"
+                                          value={teamInviteForm.last_name}
+                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, last_name: event.target.value }))}
+                                          placeholder="Rivera"
+                                        />
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="team-invite-email">Email</label>
+                                        <input
+                                          id="team-invite-email"
+                                          type="email"
+                                          value={teamInviteForm.email}
+                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, email: event.target.value }))}
+                                          placeholder="jordan.rivera@example.gov"
+                                        />
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="team-invite-phone">Phone Number</label>
+                                        <input
+                                          id="team-invite-phone"
+                                          value={teamInviteForm.phone}
+                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, phone: event.target.value }))}
+                                          placeholder="(555) 555-0101"
+                                        />
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="team-role-select-invite">Organization Role</label>
+                                        <select
+                                          id="team-role-select-invite"
+                                          value={teamAssignForm.role}
+                                          onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                        >
+                                          {assignableTeamRoles.map((row) => {
+                                            const roleKey = trimOrEmpty(row?.role);
+                                            if (!roleKey) return null;
+                                            return (
+                                              <option key={roleKey} value={roleKey}>
+                                                {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                              </option>
+                                            );
+                                          })}
+                                          {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                        </select>
+                                      </div>
+                                      <div className="municipality-actions">
+                                        <button type="submit" className="municipality-button municipality-button--primary" disabled={teamInviteLoading}>
+                                          {teamInviteLoading ? "Creating…" : "Create Account + Assign Role"}
+                                        </button>
+                                      </div>
+                                    </form>
+                                  )}
+                                </div>
+                              ) : null}
+                              <div className="municipality-settings-header">
+                                <div>
+                                  <h4>Current Employees</h4>
+                                  <p className="municipality-note">The current access list stays visible here even while you are adding a new employee.</p>
+                                </div>
+                              </div>
                               {teamAssignments.length ? (
                                 <div className="municipality-settings-list">
                                   {teamAssignments.map((assignment) => (
