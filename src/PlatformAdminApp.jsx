@@ -1455,6 +1455,10 @@ export default function PlatformAdminApp() {
     () => sortedTenantRoleDefinitions.find((row) => String(row?.role || "") === String(selectedRoleKey || "")) || null,
     [sortedTenantRoleDefinitions, selectedRoleKey]
   );
+  const selectedRoleAssignmentCount = useMemo(
+    () => Number(tenantRoleAssignmentCounts?.[String(selectedRoleKey || "").trim()] || 0),
+    [tenantRoleAssignmentCounts, selectedRoleKey]
+  );
   const selectedPlatformRoleDefinition = useMemo(
     () => sortedPlatformRoleDefinitions.find((row) => String(row?.role || "") === String(selectedPlatformRoleKey || "")) || null,
     [sortedPlatformRoleDefinitions, selectedPlatformRoleKey]
@@ -3776,6 +3780,7 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, roles: `Removed role ${role} from ${tenant_key}.` }));
+    setTenantRoleEditMode(false);
     await loadTenantRoleConfig(tenant_key);
     await loadTenantAdmins();
   }, [canDeleteTenantRoles, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
@@ -6781,9 +6786,8 @@ export default function PlatformAdminApp() {
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Choose Role</h2>
-              <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
-                <span>Existing Roles</span>
+              <div style={{ display: "grid", gap: 6, maxWidth: 360 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Choose Role</div>
                 <select value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
                   {sortedTenantRoleDefinitions.map((row) => {
                     const role = String(row?.role || "").trim();
@@ -6795,89 +6799,57 @@ export default function PlatformAdminApp() {
                     );
                   })}
                 </select>
-              </label>
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Role Directory</h2>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={tableHeadCell}>Role</th>
-                      <th style={tableHeadCell}>Assignments</th>
-                      <th style={tableHeadCell}>Type</th>
-                      <th style={tableHeadCell}>State</th>
-                      <th style={tableHeadCell}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedTenantRoleDefinitions.map((row) => {
-                      const role = String(row?.role || "").trim();
-                      if (!role) return null;
-                      const roleLabel = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role));
-                      const assignments = Number(tenantRoleAssignmentCounts?.[role] || 0);
-                      const isSelected = role === selectedRoleKey;
-                      const canRemove = canDeleteTenantRoles && row?.is_system !== true && assignments === 0;
-                      return (
-                        <tr key={role} style={{ background: isSelected ? "rgba(18,128,106,0.08)" : "transparent" }}>
-                          <td style={{ padding: "8px 0" }}>
-                            {roleLabel}
-                            <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({role})</span>
-                          </td>
-                          <td style={{ padding: "8px 0" }}>{assignments}</td>
-                          <td style={{ padding: "8px 0" }}>{row?.is_system ? "System" : "Custom"}</td>
-                          <td style={{ padding: "8px 0" }}>{row?.active === false ? "Disabled" : "Active"}</td>
-                          <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            <button type="button" style={buttonAlt} onClick={() => setSelectedRoleKey(role)}>
-                              Manage Permissions
-                            </button>
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, opacity: canRemove ? 1 : 0.55 }}
-                              disabled={!canRemove}
-                              title={
-                                row?.is_system
-                                  ? "System roles cannot be removed."
-                                  : assignments > 0
-                                    ? "Remove assignments before deleting this role."
-                                    : "Remove role"
-                              }
-                              onClick={() => void removeTenantRole(row)}
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!sortedTenantRoleDefinitions.length ? (
-                      <tr>
-                        <td colSpan={5} style={{ padding: "10px 0", opacity: 0.75 }}>No roles found for this organization.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
               </div>
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>
-                Manage Role Permission {selectedRoleDefinition ? `(${toOrganizationLanguage(String(selectedRoleDefinition.role_label || selectedRoleDefinition.role))})` : ""}
-              </h2>
               {selectedRoleDefinition ? (
                 <>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {!tenantRoleEditMode ? (
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canManageTenantRoles ? 1 : 0.55 }}
-                        disabled={!canManageTenantRoles}
-                        onClick={() => setTenantRoleEditMode(true)}
-                      >
-                        Edit
-                      </button>
-                    ) : null}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <h2 style={{ margin: 0, color: palette.navy900 }}>
+                        Manage Role Permission ({toOrganizationLanguage(String(selectedRoleDefinition.role_label || selectedRoleDefinition.role))})
+                      </h2>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        {selectedRoleDefinition?.is_system ? "System role" : "Custom role"}
+                        {" • "}
+                        {selectedRoleDefinition?.active === false ? "Disabled" : "Active"}
+                        {" • "}
+                        {selectedRoleAssignmentCount} assignment{selectedRoleAssignmentCount === 1 ? "" : "s"}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {!tenantRoleEditMode ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                          disabled={!canManageTenantRoles}
+                          onClick={() => setTenantRoleEditMode(true)}
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{
+                            ...buttonAlt,
+                            borderColor: palette.red600,
+                            color: palette.red600,
+                            opacity: canDeleteTenantRoles && selectedRoleDefinition?.is_system !== true && selectedRoleAssignmentCount === 0 ? 1 : 0.55,
+                          }}
+                          disabled={!canDeleteTenantRoles || selectedRoleDefinition?.is_system === true || selectedRoleAssignmentCount > 0}
+                          title={
+                            selectedRoleDefinition?.is_system === true
+                              ? "System roles cannot be removed."
+                              : selectedRoleAssignmentCount > 0
+                                ? "Remove assignments before deleting this role."
+                                : canDeleteTenantRoles
+                                  ? "Delete role"
+                                  : "You need the Roles delete permission"
+                          }
+                          onClick={() => void removeTenantRole(selectedRoleDefinition)}
+                        >
+                          Delete Role
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -6947,7 +6919,7 @@ export default function PlatformAdminApp() {
                 </>
               ) : (
                 <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                  Select a role above to edit permissions.
+                  No roles found for this organization.
                 </p>
               )}
             </div>
