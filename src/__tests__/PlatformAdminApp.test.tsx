@@ -92,6 +92,24 @@ vi.mock("../supabaseClient", () => {
     tenant_map_features: [],
     tenant_files: [],
     tenant_audit_log: [],
+    client_leads: [
+      {
+        id: "lead-1",
+        lead_number: "LD0001",
+        created_at: "2026-04-01T13:00:00.000Z",
+        full_name: "Morgan Lee",
+        work_email: "morgan.lee@example.gov",
+        city_agency: "Ashtabula Public Works",
+        role_title: "Operations Director",
+        priority_domain: "streetlights",
+        notes: "Interested in pilot rollout.",
+        status: "new",
+        internal_notes: "",
+        follow_up_on: null,
+        last_follow_up_at: null,
+        updated_at: "2026-04-01T13:00:00.000Z",
+      },
+    ],
     platform_user_roles: [
       {
         user_id: "owner-user-id",
@@ -513,6 +531,17 @@ describe("PlatformAdminApp", () => {
     await openUsersAndAdmins();
 
     expect(screen.getByRole("link", { name: /open organization hub/i })).toBeInTheDocument();
+  });
+
+  it("shows stored chronological lead codes in manage leads", async () => {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /manage leads/i }));
+
+    await screen.findByRole("heading", { name: /manage leads/i });
+    expect(screen.getAllByText("LD0001").length).toBeGreaterThan(0);
   });
 
   it("restores the current tenant workspace after refresh-style reload", async () => {

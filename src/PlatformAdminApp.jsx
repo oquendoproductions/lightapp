@@ -921,9 +921,19 @@ function summarizeTenantAssetCategory(categoryKey) {
 }
 
 function formatLeadNumber(value) {
-  const numericValue = Number(value);
+  const rawValue = String(value || "").trim();
+  if (!rawValue) return "Lead Pending";
+
+  const normalizedDigits = rawValue
+    .toUpperCase()
+    .replace(/^LD-?/, "")
+    .replace(/\D/g, "");
+
+  if (normalizedDigits) return `LD${normalizedDigits.padStart(4, "0")}`;
+
+  const numericValue = Number(rawValue);
   if (!Number.isFinite(numericValue) || numericValue <= 0) return "Lead Pending";
-  return `LD-${String(Math.trunc(numericValue)).padStart(4, "0")}`;
+  return `LD${String(Math.trunc(numericValue)).padStart(4, "0")}`;
 }
 
 function domainKeyToLabel(domainKey) {
