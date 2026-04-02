@@ -6800,6 +6800,9 @@ export default function PlatformAdminApp() {
                   })}
                 </select>
               </div>
+            </div>
+
+            <div style={{ ...card, display: "grid", gap: 8 }}>
               {selectedRoleDefinition ? (
                 <>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap" }}>
