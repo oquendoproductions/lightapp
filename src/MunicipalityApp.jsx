@@ -3674,10 +3674,9 @@ export default function MunicipalityApp() {
         ) : null}
 
         {settingsRouteActive ? (
-          <section>
-            <HomeCard title="Settings" subtitle="Manage your account, organization details, team access, and map presentation from one place.">
+          <section className="municipality-settings-shell">
               {!session?.user?.id ? (
-                <div className="municipality-auth-cta">
+                <div className="municipality-auth-cta municipality-account-card municipality-account-card--section">
                   <h4>Sign in to open settings</h4>
                   <p className="municipality-note">Use the location login to manage account details, locations, and organization tools.</p>
                   <div className="municipality-actions">
@@ -5171,7 +5170,6 @@ export default function MunicipalityApp() {
                   </div>
                 </div>
               )}
-            </HomeCard>
           </section>
         ) : null}
 

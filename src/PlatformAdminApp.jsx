@@ -645,7 +645,7 @@ const controlPlaneSettingsLayout = {
   display: "grid",
   gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
   gap: 18,
-  alignItems: "start",
+  alignItems: "stretch",
 };
 
 const controlPlaneSettingsSidebar = {
@@ -653,6 +653,7 @@ const controlPlaneSettingsSidebar = {
   top: "calc(var(--desktop-header-height) + 74px)",
   display: "grid",
   gap: 14,
+  alignSelf: "stretch",
 };
 
 const controlPlaneSettingsSidebarShell = {
@@ -662,6 +663,8 @@ const controlPlaneSettingsSidebarShell = {
   borderRadius: 24,
   background: "linear-gradient(180deg, #155e59 0%, #154f4b 100%)",
   boxShadow: "0 24px 44px rgba(10, 34, 42, 0.18)",
+  minHeight: "calc(100vh - var(--desktop-header-height) - 98px)",
+  alignContent: "start",
 };
 
 const controlPlaneSettingsGroupButton = {
@@ -4614,6 +4617,7 @@ export default function PlatformAdminApp() {
 
   const settingsPageActive = controlPlaneSection === "settings";
   const controlPlaneSettingsLayoutStyle = isCompactViewport ? { display: "grid", gap: 14 } : controlPlaneSettingsLayout;
+  const controlPlaneSettingsContentPaneStyle = { display: "grid", gap: 14, minWidth: 0, alignContent: "start" };
   const currentPageActions = controlPlanePage === "manage-team" ? (
     <button
       type="button"
@@ -4649,6 +4653,11 @@ export default function PlatformAdminApp() {
       >
         Add Organization
       </button>
+    </div>
+  ) : null;
+  const controlPlaneSettingsActions = settingsPageActive && currentPageActions ? (
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+      {currentPageActions}
     </div>
   ) : null;
   const controlPlaneSettingsSidebarContent = settingsPageActive && !isCompactViewport ? (
@@ -4828,7 +4837,7 @@ export default function PlatformAdminApp() {
       </div>
     </div>
   ) : null;
-  const controlPlanePageHeader = sessionUserId && isPlatformAdmin && controlPlanePage !== "manage-leads" ? (
+  const controlPlanePageHeader = sessionUserId && isPlatformAdmin && controlPlanePage !== "manage-leads" && !settingsPageActive ? (
     <section style={{ ...fullWidthSection, display: "grid", gap: 12, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
       <div
         style={{
@@ -5749,37 +5758,40 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
-            <div style={{ ...card, display: "grid", gap: 12 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
-              <div style={responsiveTwoColGrid}>
-                <div style={metricCard}>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
+              <div style={{ ...card, display: "grid", gap: 12 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
+                <div style={responsiveTwoColGrid}>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+                  </div>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+                  </div>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
+                  </div>
+                  <div style={metricCard}>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
+                  </div>
                 </div>
-                <div style={metricCard}>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    style={buttonBase}
+                    onClick={() => {
+                      setForgotPasswordEmail(sessionEmail);
+                      setForgotPasswordOpen(true);
+                    }}
+                  >
+                    Update Password
+                  </button>
                 </div>
-                <div style={metricCard}>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
-                </div>
-                <div style={metricCard}>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  style={buttonBase}
-                  onClick={() => {
-                    setForgotPasswordEmail(sessionEmail);
-                    setForgotPasswordOpen(true);
-                  }}
-                >
-                  Update Password
-                </button>
               </div>
             </div>
           </div>
@@ -5789,7 +5801,8 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
-            <div style={{ display: "grid", gap: 14 }}>
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
               {platformTeamStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformTeamStatus}</div> : null}
               {platformTeamManagementView === "add" ? (
                 <div style={{ ...card, display: "grid", gap: 10 }}>
@@ -5948,7 +5961,8 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
-            <div style={{ display: "grid", gap: 14 }}>
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Add PCP Role</h2>
                 <p style={{ margin: 0, color: palette.textMuted }}>
@@ -6126,11 +6140,14 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
-            <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
-              <p style={{ margin: 0, color: palette.textMuted }}>
-                PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
-              </p>
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
+              <div style={{ ...card, display: "grid", gap: 10 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
+                <p style={{ margin: 0, color: palette.textMuted }}>
+                  PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
+                </p>
+              </div>
             </div>
           </div>
         </section>
