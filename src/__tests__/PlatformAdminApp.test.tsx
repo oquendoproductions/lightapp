@@ -7,8 +7,10 @@ const mockState = vi.hoisted(() => ({
   sessionUser: {
     id: "owner-user-id",
     email: "owner@cityreport.io",
+    phone: "(555) 555-0110",
     user_metadata: {
       full_name: "Owner Person",
+      phone: "(555) 555-0110",
     },
   },
   platformUsers: [],
@@ -359,6 +361,23 @@ vi.mock("../supabaseClient", () => {
           },
         },
       })),
+      updateUser: vi.fn(async (payload: any) => {
+        const nextData = payload?.data || {};
+        mockState.sessionUser = {
+          ...mockState.sessionUser,
+          phone: String(nextData.phone || mockState.sessionUser.phone || "").trim(),
+          user_metadata: {
+            ...(mockState.sessionUser.user_metadata || {}),
+            ...nextData,
+          },
+        };
+        return {
+          data: {
+            user: mockState.sessionUser,
+          },
+          error: null,
+        };
+      }),
       signOut: vi.fn(async () => ({ error: null })),
       signInWithPassword: vi.fn(async () => ({ data: {}, error: null })),
     },
@@ -489,6 +508,15 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+  async function openAccountInfo() {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/?pcp_section=settings&pcp_page=account-info");
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /account info/i });
+    return { user };
+  }
+
   it("shows the person-first existing-account flow and hides UUIDs in search results", async () => {
     const { user, container } = await openUsersAndAdmins();
 
@@ -592,6 +620,24 @@ describe("PlatformAdminApp", () => {
     await openManageTeam();
 
     expect(screen.getByRole("button", { name: /add team member/i })).toBeInTheDocument();
+  });
+
+  it("lets the PCP user edit and save account name and phone", async () => {
+    const { user } = await openAccountInfo();
+
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+
+    const nameInput = screen.getByDisplayValue("Owner Person");
+    const phoneInput = screen.getByDisplayValue("(555) 555-0110");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Taylor Owner");
+    await user.clear(phoneInput);
+    await user.type(phoneInput, "(555) 555-0199");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await screen.findByText(/account information saved/i);
+    expect(screen.getByText("Taylor Owner")).toBeInTheDocument();
+    expect(screen.getByText("(555) 555-0199")).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {

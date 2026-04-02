@@ -1228,6 +1228,11 @@ export default function PlatformAdminApp() {
   const [sessionUserId, setSessionUserId] = useState("");
   const [sessionEmail, setSessionEmail] = useState("");
   const [sessionActorName, setSessionActorName] = useState("");
+  const [sessionPhone, setSessionPhone] = useState("");
+  const [platformAccountEditMode, setPlatformAccountEditMode] = useState(false);
+  const [platformAccountDraft, setPlatformAccountDraft] = useState({ full_name: "", phone: "" });
+  const [platformAccountStatus, setPlatformAccountStatus] = useState("");
+  const [platformAccountSaving, setPlatformAccountSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const bannerMenuRef = useRef(null);
@@ -2380,10 +2385,18 @@ export default function PlatformAdminApp() {
       const metadataName =
         String(session?.user?.user_metadata?.full_name || "").trim() ||
         String(session?.user?.user_metadata?.name || "").trim();
+      const metadataPhone =
+        String(session?.user?.phone || "").trim() ||
+        String(session?.user?.user_metadata?.phone || "").trim();
       const emailName = userEmail ? String(userEmail.split("@")[0] || "").trim() : "";
       setSessionUserId(userId);
       setSessionEmail(userEmail);
       setSessionActorName(metadataName || emailName);
+      setSessionPhone(metadataPhone);
+      setPlatformAccountDraft({
+        full_name: metadataName || emailName,
+        phone: metadataPhone,
+      });
       setLoginError("");
       setAuthReady(true);
     };
@@ -2469,7 +2482,44 @@ export default function PlatformAdminApp() {
     setControlPlaneSection("reports");
     setControlPlanePage(DEFAULT_CONTROL_PLANE_PAGE);
     setEntryStep("start");
+    setSessionUserId("");
+    setSessionEmail("");
+    setSessionActorName("");
+    setSessionPhone("");
+    setPlatformAccountEditMode(false);
+    setPlatformAccountDraft({ full_name: "", phone: "" });
+    setPlatformAccountStatus("");
   }, []);
+
+  const savePlatformAccountInfo = useCallback(async () => {
+    const fullName = String(platformAccountDraft.full_name || "").trim();
+    const phone = String(platformAccountDraft.phone || "").trim();
+    if (!fullName) {
+      setPlatformAccountStatus("Enter your name before saving.");
+      return;
+    }
+
+    setPlatformAccountSaving(true);
+    setPlatformAccountStatus("");
+    const { error } = await supabase.auth.updateUser({
+      data: {
+        full_name: fullName,
+        name: fullName,
+        phone,
+      },
+    });
+    setPlatformAccountSaving(false);
+    if (error) {
+      setPlatformAccountStatus(String(error?.message || "Could not save your account information."));
+      return;
+    }
+
+    setSessionActorName(fullName);
+    setSessionPhone(phone);
+    setPlatformAccountDraft({ full_name: fullName, phone });
+    setPlatformAccountEditMode(false);
+    setPlatformAccountStatus("Account information saved.");
+  }, [platformAccountDraft.full_name, platformAccountDraft.phone]);
 
   const openAddTenantStep = useCallback(() => {
     if (!canCreateOrganizations) {
@@ -5931,11 +5981,66 @@ export default function PlatformAdminApp() {
             <div style={controlPlaneSettingsContentPaneStyle}>
               {controlPlaneSettingsActions}
               <div style={{ ...card, display: "grid", gap: 12 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 8, flexWrap: "wrap" }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
+                  {platformAccountEditMode ? (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: platformAccountSaving ? 0.7 : 1 }}
+                        disabled={platformAccountSaving}
+                        onClick={() => void savePlatformAccountInfo()}
+                      >
+                        {platformAccountSaving ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={platformAccountSaving}
+                        onClick={() => {
+                          setPlatformAccountEditMode(false);
+                          setPlatformAccountDraft({
+                            full_name: sessionActorName || sessionDisplayName || "",
+                            phone: sessionPhone || "",
+                          });
+                          setPlatformAccountStatus("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      style={buttonAlt}
+                      onClick={() => {
+                        setPlatformAccountEditMode(true);
+                        setPlatformAccountDraft({
+                          full_name: sessionActorName || sessionDisplayName || "",
+                          phone: sessionPhone || "",
+                        });
+                        setPlatformAccountStatus("");
+                      }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+                {platformAccountStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformAccountStatus}</div> : null}
                 <div style={responsiveTwoColGrid}>
                   <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+                    {platformAccountEditMode ? (
+                      <input
+                        value={platformAccountDraft.full_name}
+                        onChange={(e) => setPlatformAccountDraft((prev) => ({ ...prev, full_name: e.target.value }))}
+                        style={{ ...inputBase, minHeight: 38, fontSize: 15 }}
+                        placeholder="Full name"
+                        disabled={platformAccountSaving}
+                      />
+                    ) : (
+                      <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+                    )}
                   </div>
                   <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
@@ -5943,7 +6048,17 @@ export default function PlatformAdminApp() {
                   </div>
                   <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>Coming next</div>
+                    {platformAccountEditMode ? (
+                      <input
+                        value={platformAccountDraft.phone}
+                        onChange={(e) => setPlatformAccountDraft((prev) => ({ ...prev, phone: e.target.value }))}
+                        style={{ ...inputBase, minHeight: 38, fontSize: 15 }}
+                        placeholder="(555) 555-0100"
+                        disabled={platformAccountSaving}
+                      />
+                    ) : (
+                      <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>{sessionPhone || "Not set"}</div>
+                    )}
                   </div>
                   <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
