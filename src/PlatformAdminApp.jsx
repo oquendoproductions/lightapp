@@ -1132,6 +1132,8 @@ export default function PlatformAdminApp() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editingPrimaryContact, setEditingPrimaryContact] = useState(false);
   const [editingAdditionalContactIndex, setEditingAdditionalContactIndex] = useState(null);
+  const [contactDeleteConfirmIndex, setContactDeleteConfirmIndex] = useState(null);
+  const [contactDeleteLoading, setContactDeleteLoading] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -1458,6 +1460,9 @@ export default function PlatformAdminApp() {
   const canEditTenantFiles = hasPlatformPermission("files.edit");
   const canViewTenantAudit = hasPlatformPermission("audit.access");
   const canEditLead = hasPlatformPermission("leads.edit");
+  const pendingContactDelete = contactDeleteConfirmIndex == null
+    ? null
+    : (Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts[contactDeleteConfirmIndex] || null : null);
   const canCreateOrganizations = canEditTenantSetup;
   const canEditTenantCore = canEditTenantSetup;
   const canEditTenantOperational = canEditTenantSetup || canEditTenantDomains || canEditTenantFiles;
@@ -3036,6 +3041,8 @@ export default function PlatformAdminApp() {
       setIsEditingProfile(false);
       setEditingPrimaryContact(false);
       setEditingAdditionalContactIndex(null);
+      setContactDeleteConfirmIndex(null);
+      setContactDeleteLoading(false);
     }
     if (activeTab !== "files") {
       setTenantAssetsManagementView("list");
@@ -3216,6 +3223,8 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
     setEditingAdditionalContactIndex(null);
+    setContactDeleteConfirmIndex(null);
+    setContactDeleteLoading(false);
   }, [selectedTenantKey, tenantProfilesByTenant]);
 
   const saveTenantProfile = useCallback(async (event) => {
@@ -3232,6 +3241,8 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
     setEditingAdditionalContactIndex(null);
+    setContactDeleteConfirmIndex(null);
+    setContactDeleteLoading(false);
     await refreshControlPlaneData();
     return true;
   }, [persistTenantProfileRecord, refreshControlPlaneData]);
@@ -3255,6 +3266,14 @@ export default function PlatformAdminApp() {
       setProfileForm(nextProfileForm);
     }
   }, [profileForm, saveContactsProfile]);
+
+  const confirmAdditionalContactDelete = useCallback(async () => {
+    if (!canEditTenantSetup) return;
+    if (contactDeleteConfirmIndex == null) return;
+    setContactDeleteLoading(true);
+    await removeAdditionalContactAndSave(contactDeleteConfirmIndex);
+    setContactDeleteLoading(false);
+  }, [canEditTenantSetup, contactDeleteConfirmIndex, removeAdditionalContactAndSave]);
 
   const finishAddTenantSetup = useCallback(async (event) => {
     event.preventDefault();
@@ -4509,6 +4528,53 @@ export default function PlatformAdminApp() {
   return (
     <main style={shellStyle}>
       {fixedBanner}
+      {contactDeleteConfirmIndex != null ? (
+        <div style={authModalBackdrop} onClick={() => !contactDeleteLoading && setContactDeleteConfirmIndex(null)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Delete Contact</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Remove {String(pendingContactDelete?.name || "").trim() || `Contact ${Number(contactDeleteConfirmIndex) + 1}`} from this organization&apos;s points of contact?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !contactDeleteLoading && setContactDeleteConfirmIndex(null)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close contact delete dialog"
+                disabled={contactDeleteLoading}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 8, fontSize: 13, color: palette.text }}>
+              <div><strong>Name:</strong> {String(pendingContactDelete?.name || "").trim() || "Not set"}</div>
+              <div><strong>Role / Title:</strong> {String(pendingContactDelete?.title || "").trim() || "Not set"}</div>
+              <div><strong>Email:</strong> {String(pendingContactDelete?.email || "").trim() || "Not set"}</div>
+              <div><strong>Phone:</strong> {String(pendingContactDelete?.phone || "").trim() || "Not set"}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...buttonBase, minWidth: 150, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                disabled={contactDeleteLoading || !canEditTenantSetup}
+                onClick={() => void confirmAdditionalContactDelete()}
+              >
+                {contactDeleteLoading ? "Deleting..." : "Delete Contact"}
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonAlt, minWidth: 120 }}
+                onClick={() => setContactDeleteConfirmIndex(null)}
+                disabled={contactDeleteLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {contractInfoOpen ? (
         <div style={authModalBackdrop} onClick={() => setContractInfoOpen(false)}>
           <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
@@ -6032,7 +6098,7 @@ export default function PlatformAdminApp() {
                                 type="button"
                                 style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantSetup ? 1 : 0.55 }}
                                 disabled={!canEditTenantSetup}
-                                onClick={() => void removeAdditionalContactAndSave(index)}
+                                onClick={() => setContactDeleteConfirmIndex(index)}
                               >
                                 Delete
                               </button>
