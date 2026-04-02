@@ -4618,6 +4618,12 @@ export default function PlatformAdminApp() {
   const settingsPageActive = controlPlaneSection === "settings";
   const controlPlaneSettingsLayoutStyle = isCompactViewport ? { display: "grid", gap: 14 } : controlPlaneSettingsLayout;
   const controlPlaneSettingsContentPaneStyle = { display: "grid", gap: 14, minWidth: 0, alignContent: "start" };
+  const controlPlaneSettingsSectionStyle = {
+    ...fullWidthSection,
+    display: "grid",
+    gap: 14,
+    marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)",
+  };
   const currentPageActions = controlPlanePage === "manage-team" ? (
     <button
       type="button"
@@ -5755,7 +5761,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "account-info" ? (
-        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+        <section style={controlPlaneSettingsSectionStyle}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>
@@ -5798,7 +5804,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-team" ? (
-        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+        <section style={controlPlaneSettingsSectionStyle}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>
@@ -5958,7 +5964,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "roles-permissions" ? (
-        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+        <section style={controlPlaneSettingsSectionStyle}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>
@@ -6137,7 +6143,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "security-checks" ? (
-        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+        <section style={controlPlaneSettingsSectionStyle}>
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>

@@ -739,6 +739,7 @@
 .municipality-settings-shell {
   display: grid;
   gap: 18px;
+  margin-top: var(--app-tab-rail-title-gap);
 }
 
 .municipality-settings-sidebar,
@@ -1169,6 +1170,10 @@
 
   .municipality-settings-sidebar-shell {
     min-height: auto;
+  }
+
+  .municipality-settings-shell {
+    margin-top: 12px;
   }
 
   .municipality-topbar,
