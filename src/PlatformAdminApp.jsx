@@ -5348,144 +5348,6 @@ export default function PlatformAdminApp() {
                   </select>
                 </label>
               </div>
-              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input
-                      type="checkbox"
-                      checked={tenantForm.resident_portal_enabled}
-                      disabled={!isEditingTenant || !canEditTenantSetup}
-                      onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))}
-                    /> Resident Updates Homepage Enabled
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input
-                      type="checkbox"
-                      checked={tenantForm.is_pilot}
-                      disabled={!isEditingTenant || !canEditTenantSetup}
-                      onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))}
-                    /> Pilot Municipality
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input
-                      type="checkbox"
-                      checked={tenantForm.active}
-                      disabled={!isEditingTenant || !canEditTenantSetup}
-                      onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))}
-                    /> Active Organization
-                  </label>
-                </div>
-                {isEditingTenant ? (
-                  <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                    Setup toggles are editable here. Save them from the organization setup editor below.
-                  </div>
-                ) : null}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {isEditingTenant ? (
-                    <>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
-                        onClick={() => void saveTenant({ preventDefault() {} })}
-                        disabled={!canEditTenantSetup}
-                        title={canEditTenantSetup ? "Save organization setup" : "You need the Organizations edit permission"}
-                      >
-                        Save Organization Setup
-                      </button>
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        onClick={cancelTenantEditing}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        style={{ ...headerActionButton, opacity: canEditTenantSetup ? 1 : 0.55 }}
-                        onClick={() => {
-                          setActiveTab("tenants");
-                          setIsEditingTenant(true);
-                        }}
-                        disabled={!canEditTenantSetup}
-                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
-                      >
-                        Edit Organization Setup
-                      </button>
-                      {selectedTenantPendingDeletion ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
-                          onClick={() => void cancelOrganizationDeletion()}
-                          disabled={!canDeleteTenant || deleteLoading}
-                          title={canDeleteTenant ? "Cancel scheduled organization deletion" : "You need the Organizations delete permission"}
-                        >
-                          {deleteLoading ? "Saving..." : "Cancel Deletion"}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
-                          onClick={() => {
-                            setDeleteConfirmOpen((prev) => !prev);
-                            setDeleteConfirmText("");
-                            setStatus((prev) => ({ ...prev, tenant: "" }));
-                          }}
-                          disabled={!canDeleteTenant}
-                          title={canDeleteTenant ? "Schedule organization deletion" : "You need the Organizations delete permission"}
-                        >
-                          Schedule Deletion
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-                {selectedTenantPendingDeletion ? (
-                  <div style={{ fontSize: 12.5, color: palette.red600 }}>
-                    This organization is scheduled for deletion on {formatDateTimeDisplay(selectedTenantDeletionScheduledFor)}.
-                    The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
-                  </div>
-                ) : null}
-                {!isEditingTenant && deleteConfirmOpen ? (
-                  <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
-                      Schedule organization deletion
-                    </div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Type <b>{selectedTenantKey}</b> to confirm. This organization will be marked inactive now and permanently deleted after a {ORGANIZATION_DELETION_HOLD_DAYS}-day hold.
-                    </div>
-                    <input
-                      value={deleteConfirmText}
-                      onChange={(event) => setDeleteConfirmText(event.target.value)}
-                      placeholder={`Type ${selectedTenantKey} to confirm`}
-                      style={{ ...inputBase, maxWidth: 320 }}
-                    />
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
-                        disabled={deleteLoading || deleteConfirmText !== selectedTenantKey}
-                        onClick={() => void scheduleOrganizationDeletion()}
-                      >
-                        {deleteLoading ? "Scheduling..." : "Confirm 30-Day Deletion Hold"}
-                      </button>
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        disabled={deleteLoading}
-                        onClick={() => {
-                          setDeleteConfirmOpen(false);
-                          setDeleteConfirmText("");
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
             </>
           ) : null}
           {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{toOrganizationLanguage(status.hydrate)}</div> : null}
@@ -5717,20 +5579,32 @@ export default function PlatformAdminApp() {
               </div>
             ) : null}
 
-            {(inAddTenantFlow ? addTenantStep === "setup" : !tenantReadOnly) ? (
+            {(inAddTenantFlow ? addTenantStep === "setup" : true) ? (
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Basic Setup" : "Edit Organization Setup"}
+                    {inAddTenantFlow ? "Basic Setup" : "Organization Setup"}
                   </h2>
-                  {!inAddTenantFlow && !tenantReadOnly ? (
-                    <button
-                      type="button"
-                      style={buttonAlt}
-                      onClick={cancelTenantEditing}
-                    >
-                      Cancel
-                    </button>
+                  {!inAddTenantFlow ? (
+                    tenantReadOnly ? (
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                        onClick={() => setIsEditingTenant(true)}
+                        disabled={!canEditTenantSetup}
+                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
+                      >
+                        Edit Organization Setup
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={cancelTenantEditing}
+                      >
+                        Cancel
+                      </button>
+                    )
                   ) : null}
                 </div>
                 <form onSubmit={inAddTenantFlow ? finishAddTenantSetup : saveTenant} style={responsiveTwoColGrid}>
@@ -5798,7 +5672,8 @@ export default function PlatformAdminApp() {
                   <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <input type="checkbox" checked={tenantForm.active} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Organization
                   </label>
-                  <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {inAddTenantFlow ? (
                       <>
                         <button type="button" style={buttonAlt} onClick={() => setAddTenantStep("contacts")}>
@@ -5809,12 +5684,89 @@ export default function PlatformAdminApp() {
                         </button>
                       </>
                     ) : (
-                      <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
-                        Save Organization Setup
-                      </button>
+                      !tenantReadOnly ? (
+                        <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
+                          Save Organization Setup
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Organization setup stays visible here and can be edited when needed.
+                        </span>
+                      )
                     )}
+                    </div>
+                    {!inAddTenantFlow ? (
+                      selectedTenantPendingDeletion ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
+                          onClick={() => void cancelOrganizationDeletion()}
+                          disabled={!canDeleteTenant || deleteLoading}
+                          title={canDeleteTenant ? "Cancel scheduled organization deletion" : "You need the Organizations delete permission"}
+                        >
+                          {deleteLoading ? "Saving..." : "Cancel Deletion"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
+                          onClick={() => {
+                            setDeleteConfirmOpen((prev) => !prev);
+                            setDeleteConfirmText("");
+                            setStatus((prev) => ({ ...prev, tenant: "" }));
+                          }}
+                          disabled={!canDeleteTenant}
+                          title={canDeleteTenant ? "Schedule organization deletion" : "You need the Organizations delete permission"}
+                        >
+                          Schedule Deletion
+                        </button>
+                      )
+                    ) : null}
                   </div>
                 </form>
+                {!inAddTenantFlow && selectedTenantPendingDeletion ? (
+                  <div style={{ fontSize: 12.5, color: palette.red600 }}>
+                    This organization is scheduled for deletion on {formatDateTimeDisplay(selectedTenantDeletionScheduledFor)}.
+                    The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
+                  </div>
+                ) : null}
+                {!inAddTenantFlow && deleteConfirmOpen ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
+                      Schedule organization deletion
+                    </div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Type <b>{selectedTenantKey}</b> to confirm. This organization will be marked inactive now and permanently deleted after a {ORGANIZATION_DELETION_HOLD_DAYS}-day hold.
+                    </div>
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(event) => setDeleteConfirmText(event.target.value)}
+                      placeholder={`Type ${selectedTenantKey} to confirm`}
+                      style={{ ...inputBase, maxWidth: 320 }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                        disabled={deleteLoading || deleteConfirmText !== selectedTenantKey}
+                        onClick={() => void scheduleOrganizationDeletion()}
+                      >
+                        {deleteLoading ? "Scheduling..." : "Confirm 30-Day Deletion Hold"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={deleteLoading}
+                        onClick={() => {
+                          setDeleteConfirmOpen(false);
+                          setDeleteConfirmText("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.tenant)}</div> : null}
               </div>
             ) : null}
