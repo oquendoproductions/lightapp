@@ -1267,6 +1267,8 @@ export default function PlatformAdminApp() {
   const [editingPlatformAssignmentRole, setEditingPlatformAssignmentRole] = useState("");
   const [platformTeamStatus, setPlatformTeamStatus] = useState("");
   const [platformUserSearchLoading, setPlatformUserSearchLoading] = useState(false);
+  const [platformTeamDeleteConfirmRow, setPlatformTeamDeleteConfirmRow] = useState(null);
+  const [platformTeamDeleteLoading, setPlatformTeamDeleteLoading] = useState(false);
   const [selectedPlatformRoleKey, setSelectedPlatformRoleKey] = useState("platform_owner");
   const [platformRoleForm, setPlatformRoleForm] = useState({ role: "", role_label: "" });
   const [platformRolePermissionDraft, setPlatformRolePermissionDraft] = useState({});
@@ -2677,15 +2679,18 @@ export default function PlatformAdminApp() {
       setPlatformTeamStatus("You cannot remove your own Platform Owner role from this screen.");
       return;
     }
+    setPlatformTeamDeleteLoading(true);
     const { error } = await supabase
       .from("platform_user_roles")
       .delete()
       .eq("user_id", userId)
       .eq("role", role);
+    setPlatformTeamDeleteLoading(false);
     if (error) {
       setPlatformTeamStatus(statusText(error, ""));
       return;
     }
+    setPlatformTeamDeleteConfirmRow(null);
     setPlatformTeamStatus("Platform role removed.");
     await loadPlatformTeamAssignments();
   }, [canRemovePlatformUsers, loadPlatformTeamAssignments, sessionUserId]);
@@ -4624,16 +4629,7 @@ export default function PlatformAdminApp() {
     gap: 14,
     marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)",
   };
-  const currentPageActions = controlPlanePage === "manage-team" ? (
-    <button
-      type="button"
-      style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }}
-      disabled={!canManagePlatformUsers}
-      onClick={() => setPlatformTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
-    >
-      {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
-    </button>
-  ) : controlPlanePage === "lead-detail" ? (
+  const currentPageActions = controlPlanePage === "lead-detail" ? (
     <button type="button" style={headerActionButton} onClick={() => openControlPlanePage("manage-leads")}>
       Back to Leads
     </button>
@@ -5606,6 +5602,52 @@ export default function PlatformAdminApp() {
           </div>
         </div>
       ) : null}
+      {platformTeamDeleteConfirmRow ? (
+        <div style={authModalBackdrop} onClick={() => !platformTeamDeleteLoading && setPlatformTeamDeleteConfirmRow(null)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Remove Team Member</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Remove {formatPlatformUserLabel(platformTeamDeleteConfirmRow?.user_id)} from the {platformRoleLabelByKey[String(platformTeamDeleteConfirmRow?.role || "").trim()] || platformRoleToLabel(platformTeamDeleteConfirmRow?.role)} role?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !platformTeamDeleteLoading && setPlatformTeamDeleteConfirmRow(null)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close team member removal dialog"
+                disabled={platformTeamDeleteLoading}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 8, fontSize: 13, color: palette.text }}>
+              <div><strong>Team Member:</strong> {formatPlatformUserLabel(platformTeamDeleteConfirmRow?.user_id)}</div>
+              <div><strong>Role:</strong> {platformRoleLabelByKey[String(platformTeamDeleteConfirmRow?.role || "").trim()] || platformRoleToLabel(platformTeamDeleteConfirmRow?.role)}</div>
+              <div><strong>Updated:</strong> {platformTeamDeleteConfirmRow?.updated_at ? new Date(platformTeamDeleteConfirmRow.updated_at).toLocaleString() : "-"}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...buttonBase, minWidth: 160, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                disabled={platformTeamDeleteLoading || !canRemovePlatformUsers}
+                onClick={() => void removePlatformRole(platformTeamDeleteConfirmRow)}
+              >
+                {platformTeamDeleteLoading ? "Removing..." : "Remove Team Member"}
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonAlt, minWidth: 120 }}
+                onClick={() => setPlatformTeamDeleteConfirmRow(null)}
+                disabled={platformTeamDeleteLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {contractInfoOpen ? (
         <div style={authModalBackdrop} onClick={() => setContractInfoOpen(false)}>
           <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
@@ -5879,7 +5921,17 @@ export default function PlatformAdminApp() {
                 </div>
               ) : null}
               <div style={{ ...card, display: "grid", gap: 10 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>
+                  <button
+                    type="button"
+                    style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }}
+                    disabled={!canManagePlatformUsers}
+                    onClick={() => setPlatformTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                  >
+                    {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
+                  </button>
+                </div>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                     <thead>
@@ -5941,7 +5993,12 @@ export default function PlatformAdminApp() {
                                   >
                                     Edit
                                   </button>
-                                  <button type="button" style={{ ...buttonAlt, opacity: canRemovePlatformUsers ? 1 : 0.55 }} disabled={!canRemovePlatformUsers} onClick={() => void removePlatformRole(row)}>
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonAlt, opacity: canRemovePlatformUsers ? 1 : 0.55 }}
+                                    disabled={!canRemovePlatformUsers}
+                                    onClick={() => setPlatformTeamDeleteConfirmRow(row)}
+                                  >
                                     Remove
                                   </button>
                                 </>

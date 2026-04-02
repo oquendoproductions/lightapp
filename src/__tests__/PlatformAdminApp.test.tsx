@@ -115,6 +115,13 @@ vi.mock("../supabaseClient", () => {
         user_id: "owner-user-id",
         role: "platform_owner",
         status: "active",
+        updated_at: "2026-04-02T09:00:00.000Z",
+      },
+      {
+        user_id: "user-2",
+        role: "platform_staff",
+        status: "active",
+        updated_at: "2026-04-01T09:00:00.000Z",
       },
     ],
     platform_role_definitions: [
@@ -473,6 +480,15 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+  async function openManageTeam() {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/?pcp_section=settings&pcp_page=manage-team");
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /current platform team/i });
+    return { user };
+  }
+
   it("shows the person-first existing-account flow and hides UUIDs in search results", async () => {
     const { user, container } = await openUsersAndAdmins();
 
@@ -570,6 +586,12 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("heading", { name: /delete role/i });
     expect(screen.getByText(/remove field supervisor from this organization\?/i)).toBeInTheDocument();
     expect(screen.getByText(/role key:/i)).toBeInTheDocument();
+  });
+
+  it("shows add team member in the current platform team section", async () => {
+    await openManageTeam();
+
+    expect(screen.getByRole("button", { name: /add team member/i })).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
