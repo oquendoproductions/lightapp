@@ -195,7 +195,7 @@ const FIXED_BANNER_HEIGHT = "var(--desktop-header-height)";
 
 const shell = {
   minHeight: "100vh",
-  padding: `calc(${FIXED_BANNER_HEIGHT} + ${FIXED_BANNER_TOP} + 24px) 18px 42px`,
+  padding: `calc(${FIXED_BANNER_HEIGHT} + ${FIXED_BANNER_TOP}) 18px 42px`,
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
