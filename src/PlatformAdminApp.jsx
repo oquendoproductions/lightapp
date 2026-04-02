@@ -6110,7 +6110,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-leads" ? (
-        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
               <div style={{ display: "grid", gap: 3 }}>
