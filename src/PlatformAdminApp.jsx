@@ -4178,7 +4178,13 @@ export default function PlatformAdminApp() {
                 backdropFilter: "blur(14px)",
                 borderTop: "1px solid rgba(23, 49, 79, 0.08)",
               }
-            : { ...controlPlaneTabsRail, marginBottom: 0 }
+            : {
+                ...controlPlaneTabsRail,
+                marginBottom: 0,
+                width: "calc(100% + 36px)",
+                marginLeft: -18,
+                marginRight: -18,
+              }
         }
       >
         <div
