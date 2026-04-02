@@ -1233,6 +1233,14 @@ export default function PlatformAdminApp() {
   const [platformAccountDraft, setPlatformAccountDraft] = useState({ full_name: "", phone: "" });
   const [platformAccountStatus, setPlatformAccountStatus] = useState("");
   const [platformAccountSaving, setPlatformAccountSaving] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changePasswordDraft, setChangePasswordDraft] = useState({
+    current_password: "",
+    new_password: "",
+    confirm_new_password: "",
+  });
+  const [changePasswordError, setChangePasswordError] = useState("");
+  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const bannerMenuRef = useRef(null);
@@ -2520,6 +2528,67 @@ export default function PlatformAdminApp() {
     setPlatformAccountEditMode(false);
     setPlatformAccountStatus("Account information saved.");
   }, [platformAccountDraft.full_name, platformAccountDraft.phone]);
+
+  const closeChangePasswordModal = useCallback(() => {
+    setChangePasswordOpen(false);
+    setChangePasswordDraft({
+      current_password: "",
+      new_password: "",
+      confirm_new_password: "",
+    });
+    setChangePasswordError("");
+    setChangePasswordSaving(false);
+  }, []);
+
+  const savePlatformPassword = useCallback(async () => {
+    const email = String(sessionEmail || "").trim().toLowerCase();
+    const currentPassword = String(changePasswordDraft.current_password || "");
+    const nextPassword = String(changePasswordDraft.new_password || "");
+    const confirmPassword = String(changePasswordDraft.confirm_new_password || "");
+
+    if (!email) {
+      setChangePasswordError("No account email is available for this session.");
+      return;
+    }
+    if (!currentPassword) {
+      setChangePasswordError("Enter your current password.");
+      return;
+    }
+    if (!nextPassword) {
+      setChangePasswordError("Enter a new password.");
+      return;
+    }
+    if (nextPassword !== confirmPassword) {
+      setChangePasswordError("New passwords do not match.");
+      return;
+    }
+    if (currentPassword === nextPassword) {
+      setChangePasswordError("Choose a new password that is different from your current password.");
+      return;
+    }
+
+    setChangePasswordSaving(true);
+    setChangePasswordError("");
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password: currentPassword,
+    });
+    if (signInError) {
+      setChangePasswordSaving(false);
+      setChangePasswordError("Current password is incorrect.");
+      return;
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({ password: nextPassword });
+    setChangePasswordSaving(false);
+    if (updateError) {
+      setChangePasswordError(String(updateError?.message || "Could not update your password."));
+      return;
+    }
+
+    closeChangePasswordModal();
+    setPlatformAccountStatus("Password updated.");
+  }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password, closeChangePasswordModal, sessionEmail]);
 
   const openAddTenantStep = useCallback(() => {
     if (!canCreateOrganizations) {
@@ -6161,8 +6230,14 @@ export default function PlatformAdminApp() {
                     type="button"
                     style={buttonBase}
                     onClick={() => {
-                      setForgotPasswordEmail(sessionEmail);
-                      setForgotPasswordOpen(true);
+                      setPlatformAccountStatus("");
+                      setChangePasswordError("");
+                      setChangePasswordDraft({
+                        current_password: "",
+                        new_password: "",
+                        confirm_new_password: "",
+                      });
+                      setChangePasswordOpen(true);
                     }}
                   >
                     Update Password
@@ -8315,6 +8390,96 @@ export default function PlatformAdminApp() {
                 {authResetLoading ? "Sending reset..." : "Send Reset Email"}
               </button>
               <button type="button" style={{ ...buttonAlt, minWidth: 120 }} onClick={closeForgotPasswordModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {changePasswordOpen ? (
+        <div style={authModalBackdrop} onClick={() => !changePasswordSaving && closeChangePasswordModal()}>
+          <div style={{ ...authModalCard, width: "min(560px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Update Password</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Enter your current password, then confirm your new password to finish the change.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeChangePasswordModal}
+                disabled={changePasswordSaving}
+                style={{
+                  ...buttonAlt,
+                  minWidth: 0,
+                  width: 34,
+                  height: 34,
+                  padding: 0,
+                  borderRadius: 10,
+                  fontSize: 18,
+                  lineHeight: 1,
+                  opacity: changePasswordSaving ? 0.6 : 1,
+                }}
+                aria-label="Close password update dialog"
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <label htmlFor="pcp-current-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
+                Current Password
+              </label>
+              <input
+                id="pcp-current-password"
+                type="password"
+                autoComplete="current-password"
+                value={changePasswordDraft.current_password}
+                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, current_password: event.target.value }))}
+                style={inputBase}
+                disabled={changePasswordSaving}
+              />
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <label htmlFor="pcp-new-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
+                New Password
+              </label>
+              <input
+                id="pcp-new-password"
+                type="password"
+                autoComplete="new-password"
+                value={changePasswordDraft.new_password}
+                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, new_password: event.target.value }))}
+                style={inputBase}
+                disabled={changePasswordSaving}
+              />
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <label htmlFor="pcp-confirm-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
+                Confirm New Password
+              </label>
+              <input
+                id="pcp-confirm-password"
+                type="password"
+                autoComplete="new-password"
+                value={changePasswordDraft.confirm_new_password}
+                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, confirm_new_password: event.target.value }))}
+                style={inputBase}
+                disabled={changePasswordSaving}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !changePasswordSaving) {
+                    event.preventDefault();
+                    void savePlatformPassword();
+                  }
+                }}
+              />
+            </div>
+            {changePasswordError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{changePasswordError}</p> : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={{ ...buttonBase, minWidth: 160 }} disabled={changePasswordSaving} onClick={() => void savePlatformPassword()}>
+                {changePasswordSaving ? "Updating..." : "Save Password"}
+              </button>
+              <button type="button" style={{ ...buttonAlt, minWidth: 120 }} disabled={changePasswordSaving} onClick={closeChangePasswordModal}>
                 Cancel
               </button>
             </div>

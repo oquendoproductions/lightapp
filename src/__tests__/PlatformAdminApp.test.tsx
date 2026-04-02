@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => ({
       phone: "(555) 555-0110",
     },
   },
+  currentPassword: "current-password",
   platformUsers: [],
   invokeMock: vi.fn(),
   resetData: () => {},
@@ -203,6 +204,7 @@ vi.mock("../supabaseClient", () => {
 
   mockState.resetData = () => {
     data = defaultData();
+    mockState.currentPassword = "current-password";
     mockState.invokeMock.mockClear();
   };
 
@@ -363,6 +365,9 @@ vi.mock("../supabaseClient", () => {
       })),
       updateUser: vi.fn(async (payload: any) => {
         const nextData = payload?.data || {};
+        if (payload?.password) {
+          mockState.currentPassword = String(payload.password);
+        }
         mockState.sessionUser = {
           ...mockState.sessionUser,
           phone: String(nextData.phone || mockState.sessionUser.phone || "").trim(),
@@ -379,7 +384,11 @@ vi.mock("../supabaseClient", () => {
         };
       }),
       signOut: vi.fn(async () => ({ error: null })),
-      signInWithPassword: vi.fn(async () => ({ data: {}, error: null })),
+      signInWithPassword: vi.fn(async ({ password }: { password?: string }) => (
+        String(password || "") === mockState.currentPassword
+          ? { data: {}, error: null }
+          : { data: {}, error: { message: "Invalid login credentials" } }
+      )),
     },
     from: vi.fn((table: string) => new QueryBuilder(table)),
     rpc: vi.fn(async () => ({ data: [], error: null })),
@@ -642,6 +651,20 @@ describe("PlatformAdminApp", () => {
     await screen.findByText(/account information saved/i);
     expect(screen.getByText("Taylor Owner")).toBeInTheDocument();
     expect(screen.getByText("(555) 555-0199")).toBeInTheDocument();
+  });
+
+  it("lets the PCP user update password with current password verification", async () => {
+    const { user } = await openAccountInfo();
+
+    await user.click(screen.getByRole("button", { name: /update password/i }));
+
+    await screen.findByRole("heading", { name: /update password/i });
+    await user.type(screen.getByLabelText(/current password/i), "current-password");
+    await user.type(screen.getByLabelText(/^new password$/i), "new-password-123");
+    await user.type(screen.getByLabelText(/confirm new password/i), "new-password-123");
+    await user.click(screen.getByRole("button", { name: /save password/i }));
+
+    await screen.findByText(/password updated/i);
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
