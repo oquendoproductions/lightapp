@@ -350,6 +350,28 @@ const listActionButton = {
   fontWeight: 700,
 };
 
+const contactDetailList = {
+  display: "grid",
+  gap: 6,
+  fontSize: 12.5,
+  color: palette.text,
+};
+
+const contactEditRow = {
+  display: "grid",
+  gridTemplateColumns: "120px minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 10,
+  fontSize: 12.5,
+  color: palette.text,
+};
+
+const contactEditInput = {
+  ...inputBase,
+  minHeight: 36,
+  padding: "6px 10px",
+};
+
 const tableHeadCell = {
   textAlign: "left",
   borderBottom: `1px solid ${palette.border}`,
@@ -5936,29 +5958,29 @@ export default function PlatformAdminApp() {
                   )}
                 </div>
                 {!editingPrimaryContact ? (
-                  <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: palette.text }}>
+                  <div style={contactDetailList}>
                     <div><strong>Name:</strong> {profileForm.contact_primary_name || "Not set"}</div>
                     <div><strong>Role / Title:</strong> {profileForm.contact_primary_title || "Not set"}</div>
                     <div><strong>Email:</strong> {profileForm.contact_primary_email || "Not set"}</div>
                     <div><strong>Phone:</strong> {profileForm.contact_primary_phone || "Not set"}</div>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Name</span>
-                      <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} style={inputBase} />
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <label style={contactEditRow}>
+                      <span><strong>Name:</strong></span>
+                      <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} style={contactEditInput} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Role / Title</span>
-                      <input value={profileForm.contact_primary_title} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))} style={inputBase} />
+                    <label style={contactEditRow}>
+                      <span><strong>Role / Title:</strong></span>
+                      <input value={profileForm.contact_primary_title} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))} style={contactEditInput} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Email</span>
-                      <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} style={inputBase} />
+                    <label style={contactEditRow}>
+                      <span><strong>Email:</strong></span>
+                      <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} style={contactEditInput} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Phone</span>
-                      <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} style={inputBase} />
+                    <label style={contactEditRow}>
+                      <span><strong>Phone:</strong></span>
+                      <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} style={contactEditInput} />
                     </label>
                   </div>
                 )}
@@ -6017,26 +6039,26 @@ export default function PlatformAdminApp() {
                           )}
                         </div>
                         {isEditingContact ? (
-                          <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Name</span>
-                              <input value={contact.name || ""} onChange={(e) => updateAdditionalContact(index, "name", e.target.value)} style={inputBase} />
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <label style={contactEditRow}>
+                              <span><strong>Name:</strong></span>
+                              <input value={contact.name || ""} onChange={(e) => updateAdditionalContact(index, "name", e.target.value)} style={contactEditInput} />
                             </label>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Role / Title</span>
-                              <input value={contact.title || ""} onChange={(e) => updateAdditionalContact(index, "title", e.target.value)} style={inputBase} />
+                            <label style={contactEditRow}>
+                              <span><strong>Role / Title:</strong></span>
+                              <input value={contact.title || ""} onChange={(e) => updateAdditionalContact(index, "title", e.target.value)} style={contactEditInput} />
                             </label>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Email</span>
-                              <input value={contact.email || ""} onChange={(e) => updateAdditionalContact(index, "email", e.target.value)} style={inputBase} />
+                            <label style={contactEditRow}>
+                              <span><strong>Email:</strong></span>
+                              <input value={contact.email || ""} onChange={(e) => updateAdditionalContact(index, "email", e.target.value)} style={contactEditInput} />
                             </label>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Phone</span>
-                              <input value={contact.phone || ""} onChange={(e) => updateAdditionalContact(index, "phone", e.target.value)} style={inputBase} />
+                            <label style={contactEditRow}>
+                              <span><strong>Phone:</strong></span>
+                              <input value={contact.phone || ""} onChange={(e) => updateAdditionalContact(index, "phone", e.target.value)} style={contactEditInput} />
                             </label>
                           </div>
                         ) : (
-                          <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: palette.text }}>
+                          <div style={contactDetailList}>
                             <div><strong>Name:</strong> {contact.name || "Not set"}</div>
                             <div><strong>Role / Title:</strong> {contact.title || "Not set"}</div>
                             <div><strong>Email:</strong> {contact.email || "Not set"}</div>
