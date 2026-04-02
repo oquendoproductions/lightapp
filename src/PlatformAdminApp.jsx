@@ -5892,7 +5892,7 @@ export default function PlatformAdminApp() {
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
                 <button
                   type="button"
-                  style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                  style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
                   disabled={!canEditTenantSetup}
                   onClick={addAdditionalContactFromContactsPage}
                 >
@@ -5943,7 +5943,7 @@ export default function PlatformAdminApp() {
                     <div><strong>Phone:</strong> {profileForm.contact_primary_phone || "Not set"}</div>
                   </div>
                 ) : (
-                  <div style={responsiveTwoColGrid}>
+                  <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Name</span>
                       <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} style={inputBase} />
@@ -6017,7 +6017,7 @@ export default function PlatformAdminApp() {
                           )}
                         </div>
                         {isEditingContact ? (
-                          <div style={responsiveTwoColGrid}>
+                          <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
                             <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                               <span>Name</span>
                               <input value={contact.name || ""} onChange={(e) => updateAdditionalContact(index, "name", e.target.value)} style={inputBase} />
