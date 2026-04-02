@@ -25,8 +25,7 @@ const TAB_OPTIONS = [
   { key: "contacts", label: "Points of Contact" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
-  { key: "domains", label: "Domains + Features" },
-  { key: "files", label: "Assets" },
+  { key: "domains", label: "Domains + Assets" },
   { key: "audit", label: "Audit" },
 ];
 
@@ -95,8 +94,8 @@ const PLATFORM_PERMISSION_MODULES = [
   { key: "security", label: "Security" },
   { key: "reports", label: "Reports" },
   { key: "finance", label: "Finance" },
-  { key: "domains", label: "Domains + Features" },
-  { key: "files", label: "Files" },
+  { key: "domains", label: "Domains + Assets" },
+  { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
 ];
 
@@ -109,8 +108,8 @@ const TENANT_PERMISSION_ACTIONS = [
 const TENANT_PERMISSION_MODULES = [
   { key: "reports", label: "Reports" },
   { key: "users", label: "Users" },
-  { key: "domains", label: "Domains + Features" },
-  { key: "files", label: "Files" },
+  { key: "domains", label: "Domains + Assets" },
+  { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
   { key: "roles", label: "Roles" },
 ];
@@ -1448,7 +1447,15 @@ export default function PlatformAdminApp() {
     return permissionKey ? hasPlatformPermission(permissionKey) : false;
   }, [hasPlatformPermission]);
   const availableTenantWorkspaceTabs = useMemo(
-    () => TAB_OPTIONS.filter((tab) => hasPlatformPermission(TENANT_WORKSPACE_TAB_PERMISSIONS[tab.key] || "")),
+    () => TAB_OPTIONS.filter((tab) => {
+      if (tab.key === "domains") {
+        return hasPlatformPermission("domains.access")
+          || hasPlatformPermission("domains.edit")
+          || hasPlatformPermission("files.access")
+          || hasPlatformPermission("files.edit");
+      }
+      return hasPlatformPermission(TENANT_WORKSPACE_TAB_PERMISSIONS[tab.key] || "");
+    }),
     [hasPlatformPermission]
   );
   const visibleControlPlanePagesBySection = useMemo(
@@ -2823,6 +2830,10 @@ export default function PlatformAdminApp() {
 
   useEffect(() => {
     if (!availableTenantWorkspaceTabs.length) return;
+    if (activeTab === "files") {
+      setActiveTab("domains");
+      return;
+    }
     if (!availableTenantWorkspaceTabs.some((tab) => tab.key === activeTab)) {
       setActiveTab(availableTenantWorkspaceTabs[0].key);
     }
@@ -3329,13 +3340,19 @@ export default function PlatformAdminApp() {
       boundary_border_width: borderWidth,
     };
 
-    const [{ error: visError }, { error: featureError }] = await Promise.all([
+    const tenantPayload = {
+      notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
+      notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
+    };
+
+    const [{ error: visError }, { error: featureError }, { error: tenantError }] = await Promise.all([
       supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
       supabase.from("tenant_map_features").upsert([mapPayload], { onConflict: "tenant_key" }),
+      supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
     ]);
 
-    if (visError || featureError) {
-      setStatus((prev) => ({ ...prev, domains: statusText(visError || featureError, "") }));
+    if (visError || featureError || tenantError) {
+      setStatus((prev) => ({ ...prev, domains: statusText(visError || featureError || tenantError, "") }));
       return;
     }
 
@@ -3347,12 +3364,13 @@ export default function PlatformAdminApp() {
       details: {
         visibility: visibilityRows,
         map_features: mapPayload,
+        notification_emails: tenantPayload,
       },
     });
 
-    setStatus((prev) => ({ ...prev, domains: `Saved domain + map settings for ${key}.` }));
+    setStatus((prev) => ({ ...prev, domains: `Saved domains, notification emails, and map settings for ${key}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, tenantForm.notification_email_potholes, tenantForm.notification_email_water_drain, logAudit, refreshControlPlaneData]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -5355,16 +5373,237 @@ export default function PlatformAdminApp() {
 
         {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
-            {(inAddTenantFlow ? addTenantStep === "organization" : true) ? (
-              <div style={{ ...card, display: "grid", gap: 10 }}>
+            {(inAddTenantFlow ? addTenantStep === "setup" : true) ? (
+              <div style={{ ...card, display: "grid", gap: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Organization Contact Information" : "Organization Contact Information"}
-                  </h2>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>
+                      {inAddTenantFlow ? "Basic Setup" : "Organization Setup"}
+                    </h2>
+                    <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                      Core organization routing, status, and launch settings.
+                    </p>
+                  </div>
+                  {!inAddTenantFlow ? (
+                    tenantReadOnly ? (
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                        onClick={() => setIsEditingTenant(true)}
+                        disabled={!canEditTenantSetup}
+                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
+                      >
+                        Edit Organization Setup
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={cancelTenantEditing}
+                      >
+                        Cancel
+                      </button>
+                    )
+                  ) : null}
+                </div>
+                <form onSubmit={inAddTenantFlow ? finishAddTenantSetup : saveTenant} style={{ display: "grid", gap: 12 }}>
+                  <section style={{ ...subPanel, display: "grid", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Identity + Routing</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Stable keys and URL settings used for this organization across the platform.
+                      </div>
+                    </div>
+                    <div style={responsiveTwoColGrid}>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Organization Key (system ID)</span>
+                        <input
+                          value={tenantForm.tenant_key}
+                          onChange={(e) => {
+                            const nextTenantKeyRaw = e.target.value;
+                            const nextBoundaryKey = buildDefaultBoundaryKey(nextTenantKeyRaw);
+                            setTenantForm((p) => ({
+                              ...p,
+                              tenant_key: nextTenantKeyRaw,
+                              boundary_config_key: nextBoundaryKey || p.boundary_config_key,
+                            }));
+                          }}
+                          placeholder="examplemunicipality"
+                          readOnly={!inAddTenantFlow}
+                          style={{
+                            ...inputBase,
+                            background: !inAddTenantFlow ? "#eef4fb" : inputBase.background,
+                            cursor: !inAddTenantFlow ? "not-allowed" : "text",
+                          }}
+                        />
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Organization Name</span>
+                        <input
+                          readOnly={tenantReadOnly}
+                          value={tenantForm.name}
+                          onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))}
+                          placeholder="Example Municipality"
+                          style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
+                        />
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Primary URL Prefix</span>
+                        <input
+                          readOnly={tenantReadOnly}
+                          value={primarySubdomainPrefix(tenantForm.primary_subdomain)}
+                          onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))}
+                          placeholder="examplemunicipality"
+                          style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
+                        />
+                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                          Live URL: {normalizePrimarySubdomain(tenantForm.primary_subdomain) || "examplemunicipality.cityreport.io"}
+                        </span>
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Boundary Dataset Key</span>
+                        <input
+                          readOnly
+                          value={tenantForm.boundary_config_key}
+                          placeholder="examplemunicipality_city_geojson"
+                          style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }}
+                        />
+                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                          Upload a boundary asset in Domains + Assets, then set it as the organization boundary.
+                        </span>
+                      </label>
+                    </div>
+                  </section>
+                  <section style={{ ...subPanel, display: "grid", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Experience + Status</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Control launch state and whether the public root opens into the resident updates experience.
+                      </div>
+                    </div>
+                    <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
+                      <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={tenantForm.resident_portal_enabled} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))} />
+                        Resident Updates Homepage Enabled
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={tenantForm.is_pilot} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} />
+                        Pilot Municipality
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={tenantForm.active} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} />
+                        Active Organization
+                      </label>
+                    </div>
+                  </section>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {inAddTenantFlow ? (
+                        <>
+                          <button type="button" style={buttonAlt} onClick={() => setAddTenantStep("contacts")}>
+                            Back
+                          </button>
+                          <button type="submit" style={buttonBase}>
+                            Create Organization
+                          </button>
+                        </>
+                      ) : !tenantReadOnly ? (
+                        <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
+                          Save Organization Setup
+                        </button>
+                      ) : null}
+                    </div>
+                    {!inAddTenantFlow ? (
+                      selectedTenantPendingDeletion ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
+                          onClick={() => void cancelOrganizationDeletion()}
+                          disabled={!canDeleteTenant || deleteLoading}
+                          title={canDeleteTenant ? "Cancel scheduled organization deletion" : "You need the Organizations delete permission"}
+                        >
+                          {deleteLoading ? "Saving..." : "Cancel Deletion"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
+                          onClick={() => {
+                            setDeleteConfirmOpen((prev) => !prev);
+                            setDeleteConfirmText("");
+                            setStatus((prev) => ({ ...prev, tenant: "" }));
+                          }}
+                          disabled={!canDeleteTenant}
+                          title={canDeleteTenant ? "Schedule organization deletion" : "You need the Organizations delete permission"}
+                        >
+                          Schedule Deletion
+                        </button>
+                      )
+                    ) : null}
+                  </div>
+                </form>
+                {!inAddTenantFlow && selectedTenantPendingDeletion ? (
+                  <div style={{ fontSize: 12.5, color: palette.red600 }}>
+                    This organization is scheduled for deletion on {formatDateTimeDisplay(selectedTenantDeletionScheduledFor)}.
+                    The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
+                  </div>
+                ) : null}
+                {!inAddTenantFlow && deleteConfirmOpen ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
+                      Schedule organization deletion
+                    </div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Type <b>{selectedTenantKey}</b> to confirm. This organization will be marked inactive now and permanently deleted after a {ORGANIZATION_DELETION_HOLD_DAYS}-day hold.
+                    </div>
+                    <input
+                      value={deleteConfirmText}
+                      onChange={(event) => setDeleteConfirmText(event.target.value)}
+                      placeholder={`Type ${selectedTenantKey} to confirm`}
+                      style={{ ...inputBase, maxWidth: 320 }}
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                        disabled={deleteLoading || deleteConfirmText !== selectedTenantKey}
+                        onClick={() => void scheduleOrganizationDeletion()}
+                      >
+                        {deleteLoading ? "Scheduling..." : "Confirm 30-Day Deletion Hold"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={deleteLoading}
+                        onClick={() => {
+                          setDeleteConfirmOpen(false);
+                          setDeleteConfirmText("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.tenant)}</div> : null}
+              </div>
+            ) : null}
+
+            {(inAddTenantFlow ? addTenantStep === "organization" : true) ? (
+              <div style={{ ...card, display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>
+                      {inAddTenantFlow ? "Organization Information" : "Organization Information"}
+                    </h2>
+                    <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                      Public identity, mailing address, billing, and contract details for the organization.
+                    </p>
+                  </div>
                   {!inAddTenantFlow ? (
                     profileReadOnly ? (
                       <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} onClick={() => setIsEditingProfile(true)} disabled={!canEditTenantSetup}>
-                        Edit Contact Information
+                        Edit Organization Information
                       </button>
                     ) : (
                       <button
@@ -5381,23 +5620,50 @@ export default function PlatformAdminApp() {
                     )
                   ) : null}
                 </div>
-                <section style={{ ...subPanel, display: "grid", gap: 8 }}>
-                  <h3 style={{ margin: 0, color: palette.navy900 }}>Organization Information</h3>
+                <section style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Naming + Identity</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Names and outward-facing profile details used across CityReport surfaces.
+                    </div>
+                  </div>
                   <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Legal Organization Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                        Formal entity name used for contracts, billing, and official documentation.
-                      </span>
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Public Display Name</span>
                       <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                       <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                        Preferred outward-facing label. Falls back to Organization Name anywhere a public label is needed.
+                        Falls back to Organization Name when a public label has not been set.
                       </span>
                     </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Municipality Website URL</span>
+                      <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Timezone</span>
+                      <input readOnly={profileReadOnly} value={profileForm.timezone} onChange={(e) => setProfileForm((p) => ({ ...p, timezone: e.target.value }))} placeholder="America/New_York" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+                      <span>URL Extension (Profile Alias)</span>
+                      <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                        Stored for profile and future alias use. It does not currently change live cityreport.io routing.
+                      </span>
+                    </label>
+                  </div>
+                </section>
+                <section style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Mailing Address</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Primary mailing and billing address information for the organization.
+                    </div>
+                  </div>
+                  <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Address 1</span>
                       <input readOnly={profileReadOnly} value={profileForm.mailing_address_1} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_1: e.target.value }))} placeholder="100 Civic Center Dr" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
@@ -5418,24 +5684,19 @@ export default function PlatformAdminApp() {
                       <span>ZIP</span>
                       <input readOnly={profileReadOnly} value={profileForm.mailing_zip} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_zip: e.target.value }))} placeholder="12345" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Municipality Website URL</span>
-                      <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                    </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>URL Extension (Profile Alias)</span>
-                    <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                      Stored in the organization profile for reference and future alias use. It does not currently change live cityreport.io routing.
-                    </span>
-                  </label>
+                  </div>
+                </section>
+                <section style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Contract + Billing</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Billing and agreement details used for operations and account management.
+                    </div>
+                  </div>
+                  <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Billing Email</span>
                       <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                    </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Timezone</span>
-                      <input readOnly={profileReadOnly} value={profileForm.timezone} onChange={(e) => setProfileForm((p) => ({ ...p, timezone: e.target.value }))} placeholder="America/New_York" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Contract Status</span>
@@ -5459,11 +5720,19 @@ export default function PlatformAdminApp() {
                       <span>Renewal Date</span>
                       <input readOnly={profileReadOnly} type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
                     </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
-                      <span>Operational / Onboarding Notes</span>
-                      <textarea readOnly={profileReadOnly} value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 90, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
-                    </label>
                   </div>
+                </section>
+                <section style={{ ...subPanel, display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Operational Notes</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Internal onboarding, operations, or account notes for this organization.
+                    </div>
+                  </div>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Notes</span>
+                    <textarea readOnly={profileReadOnly} value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 110, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                  </label>
                 </section>
                 {inAddTenantFlow ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -5473,14 +5742,14 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : !profileReadOnly ? (
                   <form onSubmit={saveTenantProfile} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>Save Contact Information</button>
+                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>Save Organization Information</button>
                   </form>
                 ) : null}
                 {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
               </div>
             ) : null}
 
-            {(inAddTenantFlow ? addTenantStep === "contacts" : true) ? (
+            {(inAddTenantFlow ? addTenantStep === "contacts" : false) ? (
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
@@ -5576,198 +5845,6 @@ export default function PlatformAdminApp() {
                   </form>
                 ) : null}
                 {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
-              </div>
-            ) : null}
-
-            {(inAddTenantFlow ? addTenantStep === "setup" : true) ? (
-              <div style={{ ...card, display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Basic Setup" : "Organization Setup"}
-                  </h2>
-                  {!inAddTenantFlow ? (
-                    tenantReadOnly ? (
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
-                        onClick={() => setIsEditingTenant(true)}
-                        disabled={!canEditTenantSetup}
-                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
-                      >
-                        Edit Organization Setup
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        onClick={cancelTenantEditing}
-                      >
-                        Cancel
-                      </button>
-                    )
-                  ) : null}
-                </div>
-                <form onSubmit={inAddTenantFlow ? finishAddTenantSetup : saveTenant} style={responsiveTwoColGrid}>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Organization Key (system ID)</span>
-                    <input
-                      value={tenantForm.tenant_key}
-                      onChange={(e) => {
-                        const nextTenantKeyRaw = e.target.value;
-                        const nextBoundaryKey = buildDefaultBoundaryKey(nextTenantKeyRaw);
-                        setTenantForm((p) => ({
-                          ...p,
-                          tenant_key: nextTenantKeyRaw,
-                          boundary_config_key: nextBoundaryKey || p.boundary_config_key,
-                        }));
-                      }}
-                      placeholder="examplemunicipality"
-                      readOnly={!inAddTenantFlow}
-                      style={{
-                        ...inputBase,
-                        background: !inAddTenantFlow ? "#eef4fb" : inputBase.background,
-                        cursor: !inAddTenantFlow ? "not-allowed" : "text",
-                      }}
-                    />
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Organization Name</span>
-                    <input readOnly={tenantReadOnly} value={tenantForm.name} onChange={(e) => setTenantForm((p) => ({ ...p, name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
-                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                      Primary platform organization name used for tenant records and internal administration.
-                    </span>
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Primary URL Prefix</span>
-                    <input readOnly={tenantReadOnly} value={primarySubdomainPrefix(tenantForm.primary_subdomain)} onChange={(e) => setTenantForm((p) => ({ ...p, primary_subdomain: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
-                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                      Saves as {normalizePrimarySubdomain(tenantForm.primary_subdomain) || "examplemunicipality.cityreport.io"} and controls the live organization subdomain.
-                    </span>
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Boundary Dataset Key (auto-managed)</span>
-                    <input readOnly value={tenantForm.boundary_config_key} placeholder="examplemunicipality_city_geojson" style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }} />
-                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                      Upload a `Boundary GeoJSON` file in Files, then set it as boundary.
-                    </span>
-                  </label>
-                  <div style={{ gridColumn: "1 / -1", fontSize: 11.5, color: palette.textMuted, marginTop: -2 }}>
-                    Turn on the resident updates homepage only when you want this organization root URL to open into the
-                    new alerts, events, and municipality hub. Leave it off to keep the map-first experience.
-                  </div>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Pothole Notification Email</span>
-                    <input readOnly={tenantReadOnly} value={tenantForm.notification_email_potholes} onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))} placeholder="roads@examplemunicipality.gov" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Water / Drain Notification Email</span>
-                    <input readOnly={tenantReadOnly} value={tenantForm.notification_email_water_drain} onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))} placeholder="utilities@examplemunicipality.gov" style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }} />
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input type="checkbox" checked={tenantForm.resident_portal_enabled} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))} /> Resident Updates Homepage Enabled
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input type="checkbox" checked={tenantForm.is_pilot} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} /> Pilot Municipality
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <input type="checkbox" checked={tenantForm.active} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, active: e.target.checked }))} /> Active Organization
-                  </label>
-                  <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {inAddTenantFlow ? (
-                      <>
-                        <button type="button" style={buttonAlt} onClick={() => setAddTenantStep("contacts")}>
-                          Back
-                        </button>
-                        <button type="submit" style={buttonBase}>
-                          Create Organization
-                        </button>
-                      </>
-                    ) : (
-                      !tenantReadOnly ? (
-                        <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
-                          Save Organization Setup
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Organization setup stays visible here and can be edited when needed.
-                        </span>
-                      )
-                    )}
-                    </div>
-                    {!inAddTenantFlow ? (
-                      selectedTenantPendingDeletion ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
-                          onClick={() => void cancelOrganizationDeletion()}
-                          disabled={!canDeleteTenant || deleteLoading}
-                          title={canDeleteTenant ? "Cancel scheduled organization deletion" : "You need the Organizations delete permission"}
-                        >
-                          {deleteLoading ? "Saving..." : "Cancel Deletion"}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canDeleteTenant ? 1 : 0.55 }}
-                          onClick={() => {
-                            setDeleteConfirmOpen((prev) => !prev);
-                            setDeleteConfirmText("");
-                            setStatus((prev) => ({ ...prev, tenant: "" }));
-                          }}
-                          disabled={!canDeleteTenant}
-                          title={canDeleteTenant ? "Schedule organization deletion" : "You need the Organizations delete permission"}
-                        >
-                          Schedule Deletion
-                        </button>
-                      )
-                    ) : null}
-                  </div>
-                </form>
-                {!inAddTenantFlow && selectedTenantPendingDeletion ? (
-                  <div style={{ fontSize: 12.5, color: palette.red600 }}>
-                    This organization is scheduled for deletion on {formatDateTimeDisplay(selectedTenantDeletionScheduledFor)}.
-                    The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
-                  </div>
-                ) : null}
-                {!inAddTenantFlow && deleteConfirmOpen ? (
-                  <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
-                      Schedule organization deletion
-                    </div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Type <b>{selectedTenantKey}</b> to confirm. This organization will be marked inactive now and permanently deleted after a {ORGANIZATION_DELETION_HOLD_DAYS}-day hold.
-                    </div>
-                    <input
-                      value={deleteConfirmText}
-                      onChange={(event) => setDeleteConfirmText(event.target.value)}
-                      placeholder={`Type ${selectedTenantKey} to confirm`}
-                      style={{ ...inputBase, maxWidth: 320 }}
-                    />
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
-                        disabled={deleteLoading || deleteConfirmText !== selectedTenantKey}
-                        onClick={() => void scheduleOrganizationDeletion()}
-                      >
-                        {deleteLoading ? "Scheduling..." : "Confirm 30-Day Deletion Hold"}
-                      </button>
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        disabled={deleteLoading}
-                        onClick={() => {
-                          setDeleteConfirmOpen(false);
-                          setDeleteConfirmText("");
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-                {status.tenant ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.tenant)}</div> : null}
               </div>
             ) : null}
           </section>
@@ -6439,7 +6516,12 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "domains" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Features</h2>
+              <div style={{ display: "grid", gap: 3 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Assets</h2>
+                <p style={{ margin: 0, color: palette.textMuted }}>
+                  Manage domain visibility, notification routing, map behavior, and supporting organization assets in one place.
+                </p>
+              </div>
               <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gap: 3 }}>
@@ -6454,8 +6536,9 @@ export default function PlatformAdminApp() {
                         <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
                         <select
                           value={domainVisibilityForm[d.key] || "enabled"}
+                          disabled={!canEditTenantDomains}
                           onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
-                          style={inputBase}
+                          style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
                         >
                           <option value="enabled">Enabled</option>
                           <option value="disabled">Disabled</option>
@@ -6467,14 +6550,45 @@ export default function PlatformAdminApp() {
 
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Notification Emails</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Set the inboxes that should receive routed notifications from report domains.
+                    </div>
+                  </div>
+                  <div style={responsiveTwoColGrid}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Pothole Notification Email</span>
+                      <input
+                        readOnly={!canEditTenantDomains}
+                        value={tenantForm.notification_email_potholes}
+                        onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))}
+                        placeholder="roads@examplemunicipality.gov"
+                        style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Water / Drain Notification Email</span>
+                      <input
+                        readOnly={!canEditTenantDomains}
+                        value={tenantForm.notification_email_water_drain}
+                        onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))}
+                        placeholder="utilities@examplemunicipality.gov"
+                        style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Features</div>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                       Configure how the organization boundary and map framing behave for the public map and the hub.
                     </div>
                   </div>
                   {(() => {
-                    const borderEnabled = Boolean(mapFeaturesForm.show_boundary_border);
-                    const shadeEnabled = Boolean(mapFeaturesForm.shade_outside_boundary);
+                    const borderEnabled = canEditTenantDomains && Boolean(mapFeaturesForm.show_boundary_border);
+                    const shadeEnabled = canEditTenantDomains && Boolean(mapFeaturesForm.shade_outside_boundary);
                     const disabledFieldStyle = {
                       ...inputBase,
                       opacity: 0.55,
@@ -6487,6 +6601,7 @@ export default function PlatformAdminApp() {
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.show_boundary_border)}
+                            disabled={!canEditTenantDomains}
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
                           />
                           Show boundary border
@@ -6497,7 +6612,7 @@ export default function PlatformAdminApp() {
                             <input
                               type="color"
                               value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
-                              disabled={!borderEnabled}
+                              disabled={!canEditTenantDomains || !borderEnabled}
                               onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
                               style={borderEnabled ? { ...inputBase, padding: 4, height: 42 } : { ...disabledFieldStyle, padding: 4, height: 42 }}
                             />
@@ -6505,7 +6620,7 @@ export default function PlatformAdminApp() {
                               type="text"
                               inputMode="text"
                               value={mapFeaturesForm.boundary_border_color}
-                              disabled={!borderEnabled}
+                              disabled={!canEditTenantDomains || !borderEnabled}
                               onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
                               onBlur={(e) => setMapFeaturesForm((prev) => ({
                                 ...prev,
@@ -6525,7 +6640,7 @@ export default function PlatformAdminApp() {
                             type="text"
                             inputMode="decimal"
                             value={mapFeaturesForm.boundary_border_width}
-                            disabled={!borderEnabled}
+                            disabled={!canEditTenantDomains || !borderEnabled}
                             onChange={(e) => {
                               const nextValue = e.target.value;
                               if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
@@ -6547,6 +6662,7 @@ export default function PlatformAdminApp() {
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.shade_outside_boundary)}
+                            disabled={!canEditTenantDomains}
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
                           />
                           Shade outside boundary
@@ -6557,7 +6673,7 @@ export default function PlatformAdminApp() {
                             type="text"
                             inputMode="decimal"
                             value={mapFeaturesForm.outside_shade_opacity}
-                            disabled={!shadeEnabled}
+                            disabled={!canEditTenantDomains || !shadeEnabled}
                             onChange={(e) => {
                               const nextValue = e.target.value;
                               if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
@@ -6580,21 +6696,19 @@ export default function PlatformAdminApp() {
                   })()}
                 </div>
 
-                <button type="submit" style={{ ...buttonBase, width: "fit-content" }}>Save Domains + Features</button>
+                <button type="submit" style={{ ...buttonBase, width: "fit-content", opacity: canEditTenantDomains ? 1 : 0.55 }} disabled={!canEditTenantDomains}>
+                  Save Domains + Assets Settings
+                </button>
               </form>
               {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.domains)}</div> : null}
             </div>
-          </section>
-        ) : null}
 
-        {inTenantWorkspace && activeTab === "files" ? (
-          <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                 <div style={{ display: "grid", gap: 3 }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>Assets</h2>
                   <p style={{ margin: 0, color: palette.textMuted }}>
-                    Review the organization asset library by category first, then add new files as needed.
+                    Upload and organize domain-related source files like prior report exports, coordinate files, and boundary or location data.
                   </p>
                 </div>
                 <button

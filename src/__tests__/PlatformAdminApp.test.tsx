@@ -500,7 +500,7 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("heading", { name: /start here/i });
     await user.click(screen.getAllByRole("button", { name: /^add organization$/i })[0]);
 
-    await screen.findByRole("heading", { name: /organization contact information/i });
+    await screen.findByRole("heading", { name: /organization information/i });
     expect(screen.getByText(/1\. organization contact information/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /next: contacts/i }));
 
