@@ -696,11 +696,12 @@ describe("PlatformAdminApp", () => {
 
     await user.click(screen.getByRole("button", { name: /update password/i }));
 
-    await screen.findByRole("heading", { name: /update password/i });
+    await screen.findByRole("heading", { name: /change password/i });
     await user.type(screen.getByLabelText(/current password/i), "current-password");
-    await user.type(screen.getByLabelText(/^new password$/i), "new-password-123");
-    await user.type(screen.getByLabelText(/confirm new password/i), "new-password-123");
-    await user.click(screen.getByRole("button", { name: /save password/i }));
+    await user.type(screen.getByLabelText(/^new password$/i), "NewPassword1!");
+    await user.type(screen.getByLabelText(/confirm new password/i), "NewPassword1!");
+    const updateButtons = screen.getAllByRole("button", { name: /update password/i });
+    await user.click(updateButtons[updateButtons.length - 1]);
 
     await screen.findByText(/password updated/i);
   });

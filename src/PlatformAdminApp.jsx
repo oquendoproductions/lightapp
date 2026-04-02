@@ -1239,6 +1239,9 @@ export default function PlatformAdminApp() {
     new_password: "",
     confirm_new_password: "",
   });
+  const [showChangePasswordNew, setShowChangePasswordNew] = useState(false);
+  const [showChangePasswordConfirm, setShowChangePasswordConfirm] = useState(false);
+  const [showChangePasswordCurrent, setShowChangePasswordCurrent] = useState(false);
   const [changePasswordError, setChangePasswordError] = useState("");
   const [changePasswordSaving, setChangePasswordSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1784,6 +1787,30 @@ export default function PlatformAdminApp() {
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
   const selectedPlatformSearchAccount = platformTeamForm.user_id ? platformUserSearchResultById?.[platformTeamForm.user_id] || null : null;
+  const changePasswordRequirements = useMemo(() => {
+    const nextPassword = String(changePasswordDraft.new_password || "");
+    const confirmPassword = String(changePasswordDraft.confirm_new_password || "");
+    const currentPassword = String(changePasswordDraft.current_password || "");
+    const hasLen = nextPassword.length >= 8;
+    const hasUpper = /[A-Z]/.test(nextPassword);
+    const hasLower = /[a-z]/.test(nextPassword);
+    const hasNumber = /[0-9]/.test(nextPassword);
+    const hasSpecial = /[^A-Za-z0-9]/.test(nextPassword);
+    const matches = Boolean(confirmPassword) && nextPassword === confirmPassword;
+    const strongEnough = hasLen && hasUpper && hasLower && hasNumber && hasSpecial;
+    const hasCurrentPassword = currentPassword.trim().length > 0;
+    return {
+      hasLen,
+      hasUpper,
+      hasLower,
+      hasNumber,
+      hasSpecial,
+      matches,
+      strongEnough,
+      hasCurrentPassword,
+      canSubmit: strongEnough && matches && hasCurrentPassword,
+    };
+  }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password]);
   const billingAddressDisplay = useMemo(
     () => composeMailingAddress(selectedTenantProfile || {}),
     [selectedTenantProfile]
@@ -2549,6 +2576,9 @@ export default function PlatformAdminApp() {
       new_password: "",
       confirm_new_password: "",
     });
+    setShowChangePasswordNew(false);
+    setShowChangePasswordConfirm(false);
+    setShowChangePasswordCurrent(false);
     setChangePasswordError("");
     setChangePasswordSaving(false);
   }, []);
@@ -6426,6 +6456,9 @@ export default function PlatformAdminApp() {
                         new_password: "",
                         confirm_new_password: "",
                       });
+                      setShowChangePasswordNew(false);
+                      setShowChangePasswordConfirm(false);
+                      setShowChangePasswordCurrent(false);
                       setChangePasswordOpen(true);
                     }}
                   >
@@ -8590,14 +8623,18 @@ export default function PlatformAdminApp() {
       ) : null}
       {changePasswordOpen ? (
         <div style={authModalBackdrop} onClick={() => !changePasswordSaving && closeChangePasswordModal()}>
-          <div style={{ ...authModalCard, width: "min(560px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Update Password</h2>
-                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
-                  Enter your current password, then confirm your new password to finish the change.
-                </p>
-              </div>
+          <div
+            style={{
+              ...authModalCard,
+              width: "min(720px, calc(100vw - 24px))",
+              padding: 32,
+              borderRadius: 24,
+              gap: 20,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 32, lineHeight: 1.05, color: palette.navy900, fontWeight: 900 }}>Change Password</h2>
               <button
                 type="button"
                 onClick={closeChangePasswordModal}
@@ -8605,74 +8642,215 @@ export default function PlatformAdminApp() {
                 style={{
                   ...buttonAlt,
                   minWidth: 0,
-                  width: 34,
-                  height: 34,
+                  width: 68,
+                  height: 68,
                   padding: 0,
-                  borderRadius: 10,
-                  fontSize: 18,
+                  borderRadius: 20,
+                  fontSize: 30,
                   lineHeight: 1,
                   opacity: changePasswordSaving ? 0.6 : 1,
+                  borderColor: "#d8d8d8",
+                  background: "#ffffff",
+                  color: "#111111",
                 }}
                 aria-label="Close password update dialog"
               >
                 ×
               </button>
             </div>
-            <div style={{ display: "grid", gap: 6 }}>
-              <label htmlFor="pcp-current-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
-                Current Password
-              </label>
-              <input
-                id="pcp-current-password"
-                type="password"
-                autoComplete="current-password"
-                value={changePasswordDraft.current_password}
-                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, current_password: event.target.value }))}
-                style={inputBase}
-                disabled={changePasswordSaving}
-              />
+            <div style={{ display: "grid", gap: 16 }}>
+              <div style={{ position: "relative" }}>
+                <input
+                  id="pcp-new-password"
+                  aria-label="New Password"
+                  placeholder="New password"
+                  type={showChangePasswordNew ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={changePasswordDraft.new_password}
+                  onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, new_password: event.target.value }))}
+                  style={{
+                    ...inputBase,
+                    minHeight: 72,
+                    width: "100%",
+                    borderRadius: 22,
+                    paddingLeft: 20,
+                    paddingRight: 92,
+                    fontSize: 24,
+                    color: "#111111",
+                    borderColor: "#d7d7d7",
+                    background: "#ffffff",
+                  }}
+                  disabled={changePasswordSaving}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordNew((prev) => !prev)}
+                  disabled={changePasswordSaving}
+                  style={{
+                    position: "absolute",
+                    right: 18,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    border: "none",
+                    background: "transparent",
+                    color: "#1f6fd6",
+                    fontSize: 24,
+                    fontWeight: 800,
+                    cursor: changePasswordSaving ? "default" : "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {showChangePasswordNew ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div style={{ position: "relative" }}>
+                <input
+                  id="pcp-confirm-password"
+                  aria-label="Confirm New Password"
+                  placeholder="Re-enter new password"
+                  type={showChangePasswordConfirm ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={changePasswordDraft.confirm_new_password}
+                  onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, confirm_new_password: event.target.value }))}
+                  style={{
+                    ...inputBase,
+                    minHeight: 72,
+                    width: "100%",
+                    borderRadius: 22,
+                    paddingLeft: 20,
+                    paddingRight: 92,
+                    fontSize: 24,
+                    color: "#111111",
+                    borderColor: "#d7d7d7",
+                    background: "#ffffff",
+                  }}
+                  disabled={changePasswordSaving}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && changePasswordRequirements.canSubmit && !changePasswordSaving) {
+                      event.preventDefault();
+                      void savePlatformPassword();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordConfirm((prev) => !prev)}
+                  disabled={changePasswordSaving}
+                  style={{
+                    position: "absolute",
+                    right: 18,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    border: "none",
+                    background: "transparent",
+                    color: "#1f6fd6",
+                    fontSize: 24,
+                    fontWeight: 800,
+                    cursor: changePasswordSaving ? "default" : "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {showChangePasswordConfirm ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#252525" }}>Password Requirements</div>
+                <div style={{ display: "grid", gap: 4, fontSize: 18, lineHeight: 1.35 }}>
+                  <div style={{ color: changePasswordRequirements.hasLen ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- 8 or more characters</div>
+                  <div style={{ color: changePasswordRequirements.hasUpper ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- 1 uppercase</div>
+                  <div style={{ color: changePasswordRequirements.hasLower ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- 1 lowercase</div>
+                  <div style={{ color: changePasswordRequirements.hasNumber ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- 1 number</div>
+                  <div style={{ color: changePasswordRequirements.hasSpecial ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- 1 special character</div>
+                  <div style={{ color: changePasswordRequirements.matches ? "#2eb872" : "#ff5c57", fontWeight: 800 }}>- Passwords match</div>
+                </div>
+              </div>
+              <div style={{ position: "relative" }}>
+                <input
+                  id="pcp-current-password"
+                  aria-label="Current Password"
+                  placeholder="Current password"
+                  type={showChangePasswordCurrent ? "text" : "password"}
+                  autoComplete="current-password"
+                  value={changePasswordDraft.current_password}
+                  onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, current_password: event.target.value }))}
+                  style={{
+                    ...inputBase,
+                    minHeight: 72,
+                    width: "100%",
+                    borderRadius: 22,
+                    paddingLeft: 20,
+                    paddingRight: 92,
+                    fontSize: 24,
+                    color: "#111111",
+                    borderColor: "#d7d7d7",
+                    background: "#ffffff",
+                  }}
+                  disabled={changePasswordSaving}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && changePasswordRequirements.canSubmit && !changePasswordSaving) {
+                      event.preventDefault();
+                      void savePlatformPassword();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordCurrent((prev) => !prev)}
+                  disabled={changePasswordSaving}
+                  style={{
+                    position: "absolute",
+                    right: 18,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    border: "none",
+                    background: "transparent",
+                    color: "#1f6fd6",
+                    fontSize: 24,
+                    fontWeight: 800,
+                    cursor: changePasswordSaving ? "default" : "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {showChangePasswordCurrent ? "Hide" : "Show"}
+                </button>
+              </div>
             </div>
-            <div style={{ display: "grid", gap: 6 }}>
-              <label htmlFor="pcp-new-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
-                New Password
-              </label>
-              <input
-                id="pcp-new-password"
-                type="password"
-                autoComplete="new-password"
-                value={changePasswordDraft.new_password}
-                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, new_password: event.target.value }))}
-                style={inputBase}
-                disabled={changePasswordSaving}
-              />
-            </div>
-            <div style={{ display: "grid", gap: 6 }}>
-              <label htmlFor="pcp-confirm-password" style={{ fontSize: 12.5, fontWeight: 700, color: palette.textMuted }}>
-                Confirm New Password
-              </label>
-              <input
-                id="pcp-confirm-password"
-                type="password"
-                autoComplete="new-password"
-                value={changePasswordDraft.confirm_new_password}
-                onChange={(event) => setChangePasswordDraft((prev) => ({ ...prev, confirm_new_password: event.target.value }))}
-                style={inputBase}
-                disabled={changePasswordSaving}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !changePasswordSaving) {
-                    event.preventDefault();
-                    void savePlatformPassword();
-                  }
+            {changePasswordError ? <p style={{ margin: 0, color: palette.red600, fontSize: 14, fontWeight: 700 }}>{changePasswordError}</p> : null}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+              <button
+                type="button"
+                style={{
+                  ...buttonAlt,
+                  minHeight: 74,
+                  borderRadius: 22,
+                  fontSize: 18,
+                  fontWeight: 900,
+                  borderColor: "#d7d7d7",
+                  background: "#ffffff",
+                  color: "#111111",
                 }}
-              />
-            </div>
-            {changePasswordError ? <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{changePasswordError}</p> : null}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" style={{ ...buttonBase, minWidth: 160 }} disabled={changePasswordSaving} onClick={() => void savePlatformPassword()}>
-                {changePasswordSaving ? "Updating..." : "Save Password"}
-              </button>
-              <button type="button" style={{ ...buttonAlt, minWidth: 120 }} disabled={changePasswordSaving} onClick={closeChangePasswordModal}>
+                disabled={changePasswordSaving}
+                onClick={closeChangePasswordModal}
+              >
                 Cancel
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...buttonBase,
+                  minHeight: 74,
+                  borderRadius: 22,
+                  fontSize: 18,
+                  fontWeight: 900,
+                  background: "#8c98ae",
+                  borderColor: "#8c98ae",
+                  opacity: changePasswordRequirements.canSubmit && !changePasswordSaving ? 1 : 0.75,
+                  cursor: changePasswordRequirements.canSubmit && !changePasswordSaving ? "pointer" : "not-allowed",
+                }}
+                disabled={!changePasswordRequirements.canSubmit || changePasswordSaving}
+                onClick={() => void savePlatformPassword()}
+              >
+                {changePasswordSaving ? "Updating Password" : "Update Password"}
               </button>
             </div>
           </div>

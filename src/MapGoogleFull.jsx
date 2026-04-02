@@ -9511,21 +9511,58 @@ function ChangePasswordModal({
   const hasCurrentPassword = String(currentPassword || "").trim().length > 0;
   const canSubmit = !saving && strongEnough && matches && hasCurrentPassword;
   const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
+  const fieldWrapStyle = { position: "relative" };
+  const fieldInputStyle = {
+    ...inputStyle,
+    width: "100%",
+    minHeight: 72,
+    borderRadius: 22,
+    paddingLeft: 20,
+    paddingRight: 92,
+    fontSize: 24,
+    border: "1px solid #d7d7d7",
+    background: "#ffffff",
+    color: "#111111",
+  };
+  const fieldShowButtonStyle = {
+    position: "absolute",
+    right: 18,
+    top: "50%",
+    transform: "translateY(-50%)",
+    border: "none",
+    background: "transparent",
+    color: "#1f6fd6",
+    fontWeight: 800,
+    cursor: "pointer",
+    padding: 0,
+    fontSize: 24,
+    lineHeight: 1,
+  };
 
   return (
-    <ModalShell open={open} zIndex={10012}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Change Password</div>
+    <ModalShell
+      open={open}
+      zIndex={10012}
+      panelStyle={{
+        width: "min(720px, 100%)",
+        padding: 32,
+        borderRadius: 24,
+        gap: 20,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div style={{ fontSize: 32, lineHeight: 1.05, fontWeight: 950, color: "#111111" }}>Change Password</div>
         <button
           onClick={onClose}
           style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
+            width: 68,
+            height: 68,
+            borderRadius: 20,
+            border: "1px solid #d8d8d8",
+            background: "#ffffff",
+            color: "#111111",
             fontWeight: 900,
+            fontSize: 30,
             cursor: "pointer",
           }}
           aria-label="Close"
@@ -9535,44 +9572,33 @@ function ChangePasswordModal({
         </button>
       </div>
 
-      <div style={{ display: "grid", gap: 8 }}>
-        <div style={{ position: "relative" }}>
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={fieldWrapStyle}>
           <input
+            aria-label="New Password"
             placeholder="New password"
             type={show1 ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            style={fieldInputStyle}
           />
           <button
             type="button"
             onClick={() => setShow1((v) => !v)}
-            style={{
-              position: "absolute",
-              right: 8,
-              top: "50%",
-              transform: "translateY(-50%)",
-              border: "none",
-              background: "transparent",
-              color: "#1976d2",
-              fontWeight: 800,
-              cursor: "pointer",
-              padding: 0,
-              fontSize: 12.5,
-              lineHeight: 1,
-            }}
+            style={fieldShowButtonStyle}
           >
             {show1 ? "Hide" : "Show"}
           </button>
         </div>
 
-        <div style={{ position: "relative" }}>
+        <div style={fieldWrapStyle}>
           <input
+            aria-label="Confirm New Password"
             placeholder="Re-enter new password"
             type={show2 ? "text" : "password"}
             value={password2}
             onChange={(e) => setPassword2(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            style={fieldInputStyle}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) onSubmit();
             }}
@@ -9580,28 +9606,15 @@ function ChangePasswordModal({
           <button
             type="button"
             onClick={() => setShow2((v) => !v)}
-            style={{
-              position: "absolute",
-              right: 8,
-              top: "50%",
-              transform: "translateY(-50%)",
-              border: "none",
-              background: "transparent",
-              color: "#1976d2",
-              fontWeight: 800,
-              cursor: "pointer",
-              padding: 0,
-              fontSize: 12.5,
-              lineHeight: 1,
-            }}
+            style={fieldShowButtonStyle}
           >
             {show2 ? "Hide" : "Show"}
           </button>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--sl-ui-text)", opacity: 0.9 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, color: "#252525" }}>
           Password Requirements
         </div>
-        <div style={{ fontSize: 12, lineHeight: 1.35, display: "grid", gap: 2 }}>
+        <div style={{ fontSize: 18, lineHeight: 1.35, display: "grid", gap: 4 }}>
           <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
           <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
           <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
@@ -9610,13 +9623,14 @@ function ChangePasswordModal({
           <div style={{ color: reqColor(matches), fontWeight: 800 }}>- Passwords match</div>
         </div>
 
-        <div style={{ position: "relative" }}>
+        <div style={fieldWrapStyle}>
           <input
+            aria-label="Current Password"
             placeholder="Current password"
             type={showCurrent ? "text" : "password"}
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10, paddingRight: 76 }}
+            style={fieldInputStyle}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) onSubmit();
             }}
@@ -9624,33 +9638,40 @@ function ChangePasswordModal({
           <button
             type="button"
             onClick={() => setShowCurrent((v) => !v)}
-            style={{
-              position: "absolute",
-              right: 8,
-              top: "50%",
-              transform: "translateY(-50%)",
-              border: "none",
-              background: "transparent",
-              color: "#1976d2",
-              fontWeight: 800,
-              cursor: "pointer",
-              padding: 0,
-              fontSize: 12.5,
-              lineHeight: 1,
-            }}
+            style={fieldShowButtonStyle}
           >
             {showCurrent ? "Hide" : "Show"}
           </button>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={onClose} style={btnSecondary} disabled={saving}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+        <button
+          onClick={onClose}
+          style={{
+            ...btnSecondary,
+            minHeight: 74,
+            borderRadius: 22,
+            fontSize: 18,
+            border: "1px solid #d7d7d7",
+            background: "#ffffff",
+            color: "#111111",
+          }}
+          disabled={saving}
+        >
           Cancel
         </button>
         <button
           onClick={onSubmit}
-          style={{ ...btnPrimary, opacity: canSubmit ? 1 : 0.6, cursor: canSubmit ? "pointer" : "not-allowed" }}
+          style={{
+            ...btnPrimary,
+            minHeight: 74,
+            borderRadius: 22,
+            fontSize: 18,
+            background: "#8c98ae",
+            opacity: canSubmit ? 1 : 0.75,
+            cursor: canSubmit ? "pointer" : "not-allowed",
+          }}
           disabled={!canSubmit}
         >
           {saving ? "Updating…" : "Update Password"}
