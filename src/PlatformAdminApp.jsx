@@ -4074,6 +4074,7 @@ export default function PlatformAdminApp() {
     </button>
   ) : controlPlanePage === "manage-organizations" ? (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {organizationWorkspaceAction}
       <button type="button" style={headerActionButton} onClick={openOrganizationSwitcher}>Switch Organization</button>
       <button
         type="button"
@@ -5320,18 +5321,12 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <>
-              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                <div style={{ display: "grid", gap: 2 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                    Organization
-                  </div>
-                  <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
-                    {selectedTenantPublicDisplayName || selectedTenantKey}
-                  </div>
-                </div>
-                <div style={responsiveTwoColGrid}>
-                  <div style={{ ...metricCard, minHeight: 0 }}>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Organization Name</div>
+              <div style={{ ...subPanel, display: "grid", gap: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                      Organization
+                    </div>
                     <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
                       {selectedTenantOrganizationName || selectedTenantKey}
                     </div>
@@ -5342,30 +5337,22 @@ export default function PlatformAdminApp() {
                       URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                     </div>
                   </div>
-                  <div style={{ ...metricCard, minHeight: 0 }}>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Hub Access</div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                      {selectedTenantLiveUrl ? (
-                        <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                          Open Organization Hub
-                        </a>
-                      ) : null}
-                    </div>
-                  </div>
+                  {selectedTenantLiveUrl ? (
+                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                      Open Organization Hub
+                    </a>
+                  ) : null}
                 </div>
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
-                      <span style={{ color: palette.textMuted }}>Workspace Section</span>
-                      <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                        {availableTenantWorkspaceTabs.map((tab) => (
-                          <option key={tab.key} value={tab.key}>{tab.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    {organizationWorkspaceAction}
-                  </div>
-                </div>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
+                  <span style={{ color: palette.textMuted }}>Workspace Section</span>
+                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
+                    {availableTenantWorkspaceTabs.map((tab) => (
+                      <option key={tab.key} value={tab.key}>{tab.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                 <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
                   <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <input
