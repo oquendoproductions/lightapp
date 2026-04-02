@@ -5330,7 +5330,7 @@ export default function PlatformAdminApp() {
                   </div>
                 </div>
                 <div style={responsiveTwoColGrid}>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 0 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Organization Name</div>
                     <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
                       {selectedTenantOrganizationName || selectedTenantKey}
@@ -5342,7 +5342,7 @@ export default function PlatformAdminApp() {
                       URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                     </div>
                   </div>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 0 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Hub Access</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                       {selectedTenantLiveUrl ? (
@@ -5350,15 +5350,10 @@ export default function PlatformAdminApp() {
                           Open Organization Hub
                         </a>
                       ) : null}
-                      {selectedTenantDevUrl ? (
-                        <a href={selectedTenantDevUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                          Open Dev Organization Hub
-                        </a>
-                      ) : null}
                     </div>
                   </div>
                 </div>
-                <div style={{ ...metricCard, display: "grid", gap: 10 }}>
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
                       <span style={{ color: palette.textMuted }}>Workspace Section</span>
@@ -5369,25 +5364,6 @@ export default function PlatformAdminApp() {
                       </select>
                     </label>
                     {organizationWorkspaceAction}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Legal Name: {selectedTenantLegalOrganizationName || "Not set"}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Alias: {String(selectedTenantProfile?.url_extension || "").trim() || "Not set"}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Billing Address: {billingAddressDisplay || "Not set"}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Contract Status:{" "}
-                    <button
-                      type="button"
-                      onClick={() => setContractInfoOpen(true)}
-                      style={{ border: 0, background: "transparent", color: palette.mint700, font: "inherit", fontWeight: 800, cursor: "pointer", padding: 0 }}
-                    >
-                      {toOrganizationLanguage(String(profileForm.contract_status || "pending"))}
-                    </button>
                   </div>
                 </div>
                 <div style={{ ...responsiveActionGrid, marginTop: 2 }}>

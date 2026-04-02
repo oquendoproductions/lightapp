@@ -489,7 +489,6 @@ describe("PlatformAdminApp", () => {
     await openUsersAndAdmins();
 
     expect(screen.getByRole("link", { name: /open organization hub/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /open dev organization hub/i })).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
