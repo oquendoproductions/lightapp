@@ -920,6 +920,12 @@ function summarizeTenantAssetCategory(categoryKey) {
   return TENANT_ASSET_CATEGORIES.find((category) => category.key === key)?.label || roleKeyToLabel(key || "other");
 }
 
+function formatLeadNumber(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return "Lead Pending";
+  return `Lead #${Math.trunc(numericValue)}`;
+}
+
 function domainKeyToLabel(domainKey) {
   return DOMAIN_OPTIONS.find((entry) => entry.key === domainKey)?.label || roleKeyToLabel(domainKey);
 }
@@ -980,6 +986,25 @@ function buildAuditActionLabel(row) {
   if (action === "tenant_file_removed") return "Removed organization file";
 
   return toOrganizationLanguage(titleCaseWords(action.replace(/_/g, " ")));
+}
+
+async function hashLeadFingerprint(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  try {
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
+      return Array.from(new Uint8Array(digest)).map((part) => part.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fallback below
+  }
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = ((hash << 5) - hash) + normalized.charCodeAt(index);
+    hash |= 0;
+  }
+  return `fallback_${Math.abs(hash)}`;
 }
 
 function buildAuditEntityLabel(row) {
@@ -1223,6 +1248,16 @@ export default function PlatformAdminApp() {
   const [selectedLeadId, setSelectedLeadId] = useState(initialControlPlaneRouteState.selectedLeadId);
   const [leadStatus, setLeadStatus] = useState("");
   const [leadLoading, setLeadLoading] = useState(false);
+  const [leadAddModalOpen, setLeadAddModalOpen] = useState(false);
+  const [leadForm, setLeadForm] = useState({
+    full_name: "",
+    work_email: "",
+    city_agency: "",
+    role_title: "",
+    priority_domain: "potholes",
+    notes: "",
+    status: "new",
+  });
   const [tenantRoleDefinitions, setTenantRoleDefinitions] = useState([]);
   const [tenantRolePermissions, setTenantRolePermissions] = useState([]);
   const [selectedRoleKey, setSelectedRoleKey] = useState("");
@@ -1620,6 +1655,21 @@ export default function PlatformAdminApp() {
     () => (leadRows || []).find((row) => String(row?.id || "") === String(selectedLeadId || "")) || leadRows?.[0] || null,
     [leadRows, selectedLeadId]
   );
+  const fallbackLeadNumberById = useMemo(() => {
+    const sorted = [...(leadRows || [])].sort((left, right) => {
+      const leftTime = new Date(left?.created_at || 0).getTime();
+      const rightTime = new Date(right?.created_at || 0).getTime();
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return String(left?.id || "").localeCompare(String(right?.id || ""));
+    });
+    const next = {};
+    sorted.forEach((row, index) => {
+      const id = String(row?.id || "").trim();
+      if (!id) return;
+      next[id] = index + 1;
+    });
+    return next;
+  }, [leadRows]);
   const sessionDisplayName = formatSessionDisplayName(sessionActorName, sessionEmail);
   const canAccessControlPlanePage = useCallback((pageKey) => {
     const permissionKey = CONTROL_PLANE_PAGE_PERMISSIONS[pageKey];
@@ -1659,12 +1709,12 @@ export default function PlatformAdminApp() {
   );
   const controlPlanePageLabel = useMemo(
     () => {
-      if (controlPlanePage === "lead-detail" && selectedLeadId) {
-        return `Lead #${selectedLeadId}`;
+      if (controlPlanePage === "lead-detail" && selectedLead) {
+        return formatLeadNumber(selectedLead?.lead_number || fallbackLeadNumberById?.[String(selectedLead?.id || "").trim()] || 0);
       }
       return CONTROL_PLANE_PAGES.find((page) => page.key === controlPlanePage)?.label || "";
     },
-    [controlPlanePage, selectedLeadId]
+    [controlPlanePage, selectedLead, fallbackLeadNumberById]
   );
   const addTenantStepIndex = Math.max(0, ADD_TENANT_STEPS.findIndex((step) => step.key === addTenantStep));
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
@@ -1699,20 +1749,22 @@ export default function PlatformAdminApp() {
     const statusFilter = String(leadFilters?.status || "").trim().toLowerCase();
 
     return (leadRows || []).filter((lead) => {
-      const leadNumber = String(lead?.id || "").trim().toLowerCase();
+      const leadId = String(lead?.id || "").trim();
+      const leadNumber = String(lead?.lead_number || fallbackLeadNumberById?.[leadId] || "").trim().toLowerCase();
+      const leadNumberLabel = formatLeadNumber(lead?.lead_number || fallbackLeadNumberById?.[leadId] || 0).toLowerCase();
       const orgName = String(lead?.city_agency || "").trim().toLowerCase();
       const priorityDomain = String(lead?.priority_domain || "").trim().toLowerCase();
       const submittedDate = String(lead?.created_at || "").slice(0, 10);
       const status = String(lead?.status || "new").trim().toLowerCase();
 
-      if (leadNumberFilter && !leadNumber.includes(leadNumberFilter)) return false;
+      if (leadNumberFilter && !leadNumber.includes(leadNumberFilter) && !leadNumberLabel.includes(leadNumberFilter)) return false;
       if (orgNameFilter && !orgName.includes(orgNameFilter)) return false;
       if (domainFilter && priorityDomain !== domainFilter) return false;
       if (dateFilter && submittedDate !== dateFilter) return false;
       if (statusFilter && status !== statusFilter) return false;
       return true;
     });
-  }, [leadFilters, leadRows]);
+  }, [leadFilters, leadRows, fallbackLeadNumberById]);
   const resolveKnownUserSummary = useCallback((userId) => {
     const key = String(userId || "").trim();
     if (!key) return null;
@@ -1897,7 +1949,7 @@ export default function PlatformAdminApp() {
     }
     let result = await supabase
       .from("client_leads")
-      .select("id,created_at,full_name,work_email,city_agency,role_title,priority_domain,notes,status,internal_notes,follow_up_on,last_follow_up_at,updated_at")
+      .select("id,lead_number,created_at,full_name,work_email,city_agency,role_title,priority_domain,notes,status,internal_notes,follow_up_on,last_follow_up_at,updated_at")
       .order("created_at", { ascending: false });
 
     if (result.error && isMissingColumnError(result.error)) {
@@ -1909,6 +1961,7 @@ export default function PlatformAdminApp() {
       const fallbackRows = Array.isArray(result.data)
         ? result.data.map((row) => ({
           ...row,
+          lead_number: null,
           internal_notes: "",
           follow_up_on: null,
           last_follow_up_at: null,
@@ -2813,6 +2866,54 @@ export default function PlatformAdminApp() {
     });
     await loadClientLeads();
   }, [canEditLead, leadDraftById, loadClientLeads]);
+
+  const createPlatformLead = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canEditLead) {
+      setLeadStatus("You need the Leads edit permission to create leads.");
+      return;
+    }
+
+    const payload = {
+      full_name: String(leadForm.full_name || "").trim(),
+      work_email: String(leadForm.work_email || "").trim().toLowerCase(),
+      city_agency: String(leadForm.city_agency || "").trim(),
+      role_title: String(leadForm.role_title || "").trim(),
+      priority_domain: String(leadForm.priority_domain || "other").trim().toLowerCase() || "other",
+      notes: String(leadForm.notes || "").trim() || null,
+      status: String(leadForm.status || "new").trim().toLowerCase() || "new",
+      source: "pcp",
+      ip_hash: await hashLeadFingerprint(`pcp:${sessionUserId || "platform"}:${leadForm.work_email}`),
+      email_hash: await hashLeadFingerprint(leadForm.work_email),
+      user_agent: "pcp-manual-entry",
+    };
+
+    if (!payload.full_name || !payload.work_email || !payload.city_agency || !payload.role_title) {
+      setLeadStatus("Name, work email, organization, and role/title are required.");
+      return;
+    }
+
+    setLeadLoading(true);
+    const { error } = await supabase.from("client_leads").insert([payload]);
+    setLeadLoading(false);
+    if (error) {
+      setLeadStatus(statusText(error, ""));
+      return;
+    }
+
+    setLeadForm({
+      full_name: "",
+      work_email: "",
+      city_agency: "",
+      role_title: "",
+      priority_domain: "potholes",
+      notes: "",
+      status: "new",
+    });
+    setLeadAddModalOpen(false);
+    setLeadStatus(`Created a new lead for ${payload.city_agency}.`);
+    await loadClientLeads();
+  }, [canEditLead, leadForm, sessionUserId, loadClientLeads]);
 
   const createAndAssignTenantUser = useCallback(async (event) => {
     event.preventDefault();
@@ -4500,6 +4601,16 @@ export default function PlatformAdminApp() {
     <button type="button" style={headerActionButton} onClick={() => openControlPlanePage("manage-leads")}>
       Back to Leads
     </button>
+  ) : controlPlanePage === "manage-leads" ? (
+    <button
+      type="button"
+      style={{ ...headerActionButton, opacity: canEditLead ? 1 : 0.55 }}
+      onClick={() => setLeadAddModalOpen(true)}
+      disabled={!canEditLead}
+      title={canEditLead ? "Add lead" : "You need the Leads edit permission"}
+    >
+      Add Lead
+    </button>
   ) : controlPlanePage === "manage-organizations" ? (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       <button type="button" style={headerActionButton} onClick={openOrganizationSwitcher}>Switch Organization</button>
@@ -4691,7 +4802,7 @@ export default function PlatformAdminApp() {
       </div>
     </div>
   ) : null;
-  const controlPlanePageHeader = sessionUserId && isPlatformAdmin ? (
+  const controlPlanePageHeader = sessionUserId && isPlatformAdmin && controlPlanePage !== "manage-leads" ? (
     <section style={{ ...fullWidthSection, display: "grid", gap: 12, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
       <div
         style={{
@@ -5257,6 +5368,79 @@ export default function PlatformAdminApp() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {leadAddModalOpen ? (
+        <div style={authModalBackdrop} onClick={() => !leadLoading && setLeadAddModalOpen(false)}>
+          <div style={{ ...authModalCard, width: "min(760px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Lead</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Create a platform lead manually and place it directly into the PCP lead pipeline.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !leadLoading && setLeadAddModalOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add lead dialog"
+                disabled={leadLoading}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={createPlatformLead} style={{ display: "grid", gap: 12 }}>
+              <div style={modalActionGrid}>
+                <label style={modalField}>
+                  <span>Contact Name</span>
+                  <input value={leadForm.full_name} onChange={(e) => setLeadForm((prev) => ({ ...prev, full_name: e.target.value }))} placeholder="Jordan Rivera" style={modalInput} />
+                </label>
+                <label style={modalField}>
+                  <span>Work Email</span>
+                  <input value={leadForm.work_email} onChange={(e) => setLeadForm((prev) => ({ ...prev, work_email: e.target.value }))} placeholder="jordan.rivera@example.gov" style={modalInput} />
+                </label>
+                <label style={modalField}>
+                  <span>Organization</span>
+                  <input value={leadForm.city_agency} onChange={(e) => setLeadForm((prev) => ({ ...prev, city_agency: e.target.value }))} placeholder="Ashtabula Public Works" style={modalInput} />
+                </label>
+                <label style={modalField}>
+                  <span>Role / Title</span>
+                  <input value={leadForm.role_title} onChange={(e) => setLeadForm((prev) => ({ ...prev, role_title: e.target.value }))} placeholder="Deputy Director" style={modalInput} />
+                </label>
+                <label style={modalField}>
+                  <span>Priority Domain</span>
+                  <select value={leadForm.priority_domain} onChange={(e) => setLeadForm((prev) => ({ ...prev, priority_domain: e.target.value }))} style={modalInput}>
+                    {[...DOMAIN_OPTIONS, { key: "other", label: "Other" }].map((domain) => (
+                      <option key={domain.key} value={domain.key}>{domain.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={modalField}>
+                  <span>Status</span>
+                  <select value={leadForm.status} onChange={(e) => setLeadForm((prev) => ({ ...prev, status: e.target.value }))} style={modalInput}>
+                    <option value="new">New</option>
+                    <option value="reviewed">Reviewed</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </label>
+              </div>
+              <label style={modalField}>
+                <span>Notes</span>
+                <textarea value={leadForm.notes} onChange={(e) => setLeadForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Add lead context, priorities, or follow-up notes." style={{ ...modalInput, minHeight: 110 }} />
+              </label>
+              {leadStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{leadStatus}</div> : null}
+              <div style={modalFooterActions}>
+                <button type="submit" style={{ ...modalPrimaryButton, opacity: canEditLead ? 1 : 0.55 }} disabled={!canEditLead || leadLoading}>
+                  {leadLoading ? "Creating..." : "Create Lead"}
+                </button>
+                <button type="button" style={modalSecondaryButton} onClick={() => setLeadAddModalOpen(false)} disabled={leadLoading}>
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
@@ -5928,10 +6112,23 @@ export default function PlatformAdminApp() {
       {controlPlanePage === "manage-leads" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
-            <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
-            <p style={{ margin: 0, color: palette.textMuted }}>
-              Filter the lead pipeline, review the list, and open a lead into its own detail page for follow-up work.
-            </p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "grid", gap: 3 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
+                <p style={{ margin: 0, color: palette.textMuted }}>
+                  Filter the lead pipeline, review the list, and open a lead into its own detail page for follow-up work.
+                </p>
+              </div>
+              <button
+                type="button"
+                style={{ ...buttonBase, opacity: canEditLead ? 1 : 0.55 }}
+                onClick={() => setLeadAddModalOpen(true)}
+                disabled={!canEditLead}
+                title={canEditLead ? "Add lead" : "You need the Leads edit permission"}
+              >
+                Add Lead
+              </button>
+            </div>
             {leadStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{leadStatus}</div> : null}
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -5997,7 +6194,7 @@ export default function PlatformAdminApp() {
                   <div style={{ display: "grid", gap: 10 }}>
                     {filteredLeadRows.map((lead) => {
                       const leadKey = String(lead?.id || "");
-                      const leadNumber = `LD-${leadKey.padStart(4, "0")}`;
+                      const leadNumber = formatLeadNumber(lead?.lead_number || fallbackLeadNumberById?.[leadKey] || 0);
                       return (
                         <button
                           key={leadKey}
@@ -6055,7 +6252,7 @@ export default function PlatformAdminApp() {
                       <tbody>
                         {filteredLeadRows.map((lead) => {
                           const leadKey = String(lead?.id || "");
-                          const leadNumber = `LD-${leadKey.padStart(4, "0")}`;
+                          const leadNumber = formatLeadNumber(lead?.lead_number || fallbackLeadNumberById?.[leadKey] || 0);
                           return (
                             <tr key={leadKey}>
                               <td style={{ padding: "10px 0" }}>
@@ -6119,7 +6316,9 @@ export default function PlatformAdminApp() {
                 </div>
                 <div style={metricCard}>
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>Lead Summary</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{`LD-${String(selectedLead.id || "").padStart(4, "0")}`}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>
+                    {formatLeadNumber(selectedLead?.lead_number || fallbackLeadNumberById?.[String(selectedLead?.id || "").trim()] || 0)}
+                  </div>
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>Submitted: {selectedLead.created_at ? new Date(selectedLead.created_at).toLocaleString() : "-"}</div>
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>Priority domain: {roleKeyToLabel(selectedLead.priority_domain)}</div>
                 </div>
