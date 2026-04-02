@@ -1110,6 +1110,8 @@ export default function PlatformAdminApp() {
   const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editingPrimaryContact, setEditingPrimaryContact] = useState(false);
+  const [editingAdditionalContactIndex, setEditingAdditionalContactIndex] = useState(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -3012,6 +3014,8 @@ export default function PlatformAdminApp() {
     }
     if (activeTab !== "contacts") {
       setIsEditingProfile(false);
+      setEditingPrimaryContact(false);
+      setEditingAdditionalContactIndex(null);
     }
     if (activeTab !== "files") {
       setTenantAssetsManagementView("list");
@@ -3070,12 +3074,13 @@ export default function PlatformAdminApp() {
     return { ok: true, tenantKey: payload.tenant_key };
   }, [canEditTenantSetup, entryStep, selectedTenantKey, tenantForm, logAudit]);
 
-  const persistTenantProfileRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
+  const persistTenantProfileRecord = useCallback(async ({ tenantKeyOverride, profileFormOverride } = {}) => {
     const key = tenantKeyOverride
       ? sanitizeTenantKey(tenantKeyOverride)
       : entryStep === "add"
         ? sanitizeTenantKey(tenantForm.tenant_key)
         : sanitizeTenantKey(selectedTenantKey);
+    const profileDraft = profileFormOverride || profileForm;
     if (entryStep === "add") {
       // onboarding saves the profile after the tenant record exists
     }
@@ -3087,36 +3092,36 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, profile: "Select a tenant first." }));
       return { ok: false };
     }
-    if (!String(profileForm.legal_name || "").trim()) {
+    if (!String(profileDraft.legal_name || "").trim()) {
       setStatus((prev) => ({ ...prev, profile: "Legal organization name is required." }));
       return { ok: false };
     }
-    if (!String(profileForm.contact_primary_email || "").trim()) {
+    if (!String(profileDraft.contact_primary_email || "").trim()) {
       setStatus((prev) => ({ ...prev, profile: "Primary contact email is required." }));
       return { ok: false };
     }
 
-    const additionalContacts = normalizeAdditionalContacts(profileForm.additional_contacts);
+    const additionalContacts = normalizeAdditionalContacts(profileDraft.additional_contacts);
 
     const payload = {
       tenant_key: key,
-      organization_type: String(profileForm.organization_type || "municipality").trim() || "municipality",
-      legal_name: cleanOptional(profileForm.legal_name),
-      display_name: cleanOptional(profileForm.display_name),
-      mailing_address: cleanOptional(composeMailingAddress(profileForm)),
-      mailing_address_1: cleanOptional(profileForm.mailing_address_1),
-      mailing_address_2: cleanOptional(profileForm.mailing_address_2),
-      mailing_city: cleanOptional(profileForm.mailing_city),
-      mailing_state: cleanOptional(profileForm.mailing_state),
-      mailing_zip: cleanOptional(profileForm.mailing_zip),
-      website_url: cleanOptional(profileForm.website_url),
-      url_extension: cleanOptional(profileForm.url_extension),
-      billing_email: cleanOptional(profileForm.billing_email),
-      timezone: String(profileForm.timezone || "America/New_York").trim() || "America/New_York",
-      contact_primary_name: cleanOptional(profileForm.contact_primary_name),
-      contact_primary_title: cleanOptional(profileForm.contact_primary_title),
-      contact_primary_email: cleanOptional(profileForm.contact_primary_email),
-      contact_primary_phone: cleanOptional(profileForm.contact_primary_phone),
+      organization_type: String(profileDraft.organization_type || "municipality").trim() || "municipality",
+      legal_name: cleanOptional(profileDraft.legal_name),
+      display_name: cleanOptional(profileDraft.display_name),
+      mailing_address: cleanOptional(composeMailingAddress(profileDraft)),
+      mailing_address_1: cleanOptional(profileDraft.mailing_address_1),
+      mailing_address_2: cleanOptional(profileDraft.mailing_address_2),
+      mailing_city: cleanOptional(profileDraft.mailing_city),
+      mailing_state: cleanOptional(profileDraft.mailing_state),
+      mailing_zip: cleanOptional(profileDraft.mailing_zip),
+      website_url: cleanOptional(profileDraft.website_url),
+      url_extension: cleanOptional(profileDraft.url_extension),
+      billing_email: cleanOptional(profileDraft.billing_email),
+      timezone: String(profileDraft.timezone || "America/New_York").trim() || "America/New_York",
+      contact_primary_name: cleanOptional(profileDraft.contact_primary_name),
+      contact_primary_title: cleanOptional(profileDraft.contact_primary_title),
+      contact_primary_email: cleanOptional(profileDraft.contact_primary_email),
+      contact_primary_phone: cleanOptional(profileDraft.contact_primary_phone),
       contact_technical_name: null,
       contact_technical_email: null,
       contact_technical_phone: null,
@@ -3124,11 +3129,11 @@ export default function PlatformAdminApp() {
       contact_legal_email: null,
       contact_legal_phone: null,
       additional_contacts: additionalContacts,
-      contract_status: String(profileForm.contract_status || "pending").trim() || "pending",
-      contract_start_date: cleanOptional(profileForm.contract_start_date),
-      contract_end_date: cleanOptional(profileForm.contract_end_date),
-      renewal_date: cleanOptional(profileForm.renewal_date),
-      notes: cleanOptional(profileForm.notes),
+      contract_status: String(profileDraft.contract_status || "pending").trim() || "pending",
+      contract_start_date: cleanOptional(profileDraft.contract_start_date),
+      contract_end_date: cleanOptional(profileDraft.contract_end_date),
+      renewal_date: cleanOptional(profileDraft.renewal_date),
+      notes: cleanOptional(profileDraft.notes),
     };
 
     const { error } = await supabase
@@ -3185,6 +3190,14 @@ export default function PlatformAdminApp() {
     setIsEditingTenant(false);
   }, [selectedTenant]);
 
+  const resetProfileDraft = useCallback(() => {
+    const key = sanitizeTenantKey(selectedTenantKey);
+    setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
+    setIsEditingProfile(false);
+    setEditingPrimaryContact(false);
+    setEditingAdditionalContactIndex(null);
+  }, [selectedTenantKey, tenantProfilesByTenant]);
+
   const saveTenantProfile = useCallback(async (event) => {
     event.preventDefault();
     const result = await persistTenantProfileRecord();
@@ -3192,6 +3205,36 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     await refreshControlPlaneData();
   }, [persistTenantProfileRecord, refreshControlPlaneData]);
+
+  const saveContactsProfile = useCallback(async ({ profileFormOverride } = {}) => {
+    const result = await persistTenantProfileRecord({ profileFormOverride });
+    if (!result.ok) return false;
+    setIsEditingProfile(false);
+    setEditingPrimaryContact(false);
+    setEditingAdditionalContactIndex(null);
+    await refreshControlPlaneData();
+    return true;
+  }, [persistTenantProfileRecord, refreshControlPlaneData]);
+
+  const addAdditionalContactFromContactsPage = useCallback(() => {
+    if (!canEditTenantSetup) return;
+    const nextIndex = Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts.length : 0;
+    addAdditionalContact();
+    setIsEditingProfile(false);
+    setEditingPrimaryContact(false);
+    setEditingAdditionalContactIndex(nextIndex);
+  }, [canEditTenantSetup, profileForm.additional_contacts, addAdditionalContact]);
+
+  const removeAdditionalContactAndSave = useCallback(async (index) => {
+    const nextProfileForm = {
+      ...profileForm,
+      additional_contacts: (Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts : []).filter((_, rowIndex) => rowIndex !== index),
+    };
+    const saved = await saveContactsProfile({ profileFormOverride: nextProfileForm });
+    if (saved) {
+      setProfileForm(nextProfileForm);
+    }
+  }, [profileForm, saveContactsProfile]);
 
   const finishAddTenantSetup = useCallback(async (event) => {
     event.preventDefault();
@@ -4067,18 +4110,6 @@ export default function PlatformAdminApp() {
       onClick={() => setTenantRoleManagementView((prev) => (prev === "add" ? "list" : "add"))}
     >
       {tenantRoleManagementView === "add" ? "Hide Add Role" : "Add Role"}
-    </button>
-  ) : inTenantWorkspace && activeTab === "contacts" ? (
-    <button
-      type="button"
-      style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
-      disabled={!canEditTenantSetup}
-      onClick={() => {
-        setIsEditingProfile(true);
-        addAdditionalContact();
-      }}
-    >
-      Add New Contact
     </button>
   ) : null;
   const currentPageActions = controlPlanePage === "manage-team" ? (
@@ -5859,21 +5890,52 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
-                {!isEditingProfile ? (
-                  <button
-                    type="button"
-                    style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
-                    disabled={!canEditTenantSetup}
-                    onClick={() => setIsEditingProfile(true)}
-                  >
-                    Edit Contacts
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                  disabled={!canEditTenantSetup}
+                  onClick={addAdditionalContactFromContactsPage}
+                >
+                  Add Contact
+                </button>
               </div>
 
               <div style={{ ...subPanel, display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 900, color: palette.navy900 }}>Primary Contact</div>
-                {!isEditingProfile ? (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Primary Contact</div>
+                  {!editingPrimaryContact ? (
+                    <button
+                      type="button"
+                      style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                      disabled={!canEditTenantSetup}
+                      onClick={() => {
+                        setEditingAdditionalContactIndex(null);
+                        setEditingPrimaryContact(true);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                        disabled={!canEditTenantSetup}
+                        onClick={() => void saveContactsProfile()}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={resetProfileDraft}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {!editingPrimaryContact ? (
                   <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: palette.text }}>
                     <div><strong>Name:</strong> {profileForm.contact_primary_name || "Not set"}</div>
                     <div><strong>Role / Title:</strong> {profileForm.contact_primary_title || "Not set"}</div>
@@ -5903,31 +5965,58 @@ export default function PlatformAdminApp() {
               </div>
 
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
-                  {isEditingProfile ? (
-                    <button type="button" style={buttonAlt} onClick={addAdditionalContact}>
-                      Add New Contact
-                    </button>
-                  ) : null}
-                </div>
+                <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
                 {Array.isArray(profileForm.additional_contacts) && profileForm.additional_contacts.length ? (
                   <div style={{ display: "grid", gap: 10 }}>
                     {profileForm.additional_contacts.map((contact, index) => (
                       <div key={`contact-${index}`} style={{ ...subPanel, display: "grid", gap: 8 }}>
+                        {(() => {
+                          const isEditingContact = editingAdditionalContactIndex === index;
+                          return (
+                            <>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                           <strong style={{ color: palette.navy900 }}>Contact {index + 1}</strong>
-                          {isEditingProfile ? (
-                            <button type="button" style={buttonAlt} onClick={() => removeAdditionalContact(index)}>
-                              Remove
-                            </button>
+                          {isEditingContact ? (
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                                disabled={!canEditTenantSetup}
+                                onClick={() => void saveContactsProfile()}
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                style={buttonAlt}
+                                onClick={resetProfileDraft}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                                disabled={!canEditTenantSetup}
+                                onClick={() => void removeAdditionalContactAndSave(index)}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           ) : (
-                            <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup} onClick={() => setIsEditingProfile(true)}>
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                              disabled={!canEditTenantSetup}
+                              onClick={() => {
+                                setEditingPrimaryContact(false);
+                                setEditingAdditionalContactIndex(index);
+                              }}
+                            >
                               Edit
                             </button>
                           )}
                         </div>
-                        {isEditingProfile ? (
+                        {isEditingContact ? (
                           <div style={responsiveTwoColGrid}>
                             <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                               <span>Name</span>
@@ -5954,34 +6043,19 @@ export default function PlatformAdminApp() {
                             <div><strong>Phone:</strong> {contact.phone || "Not set"}</div>
                           </div>
                         )}
+                            </>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    {isEditingProfile ? "Add a new contact to save additional points of contact." : "No additional contacts saved yet."}
+                    No additional contacts saved yet.
                   </div>
                 )}
               </div>
-
-              {isEditingProfile ? (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button type="button" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup} onClick={() => void saveTenantProfile({ preventDefault() {} })}>
-                    Save Contact Changes
-                  </button>
-                  <button
-                    type="button"
-                    style={buttonAlt}
-                    onClick={() => {
-                      const key = sanitizeTenantKey(selectedTenantKey);
-                      setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
-                      setIsEditingProfile(false);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : null}
+              {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
             </div>
           </section>
         ) : null}
