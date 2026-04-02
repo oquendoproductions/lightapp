@@ -1244,6 +1244,8 @@ export default function PlatformAdminApp() {
   const [profileForm, setProfileForm] = useState(initialProfileForm);
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [domainConfigForm, setDomainConfigForm] = useState(initialDomainConfigForm);
+  const [editingDomainKey, setEditingDomainKey] = useState("");
+  const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
@@ -3125,6 +3127,11 @@ export default function PlatformAdminApp() {
   }, [selectedTenantKey]);
 
   useEffect(() => {
+    setEditingDomainKey("");
+    setEditingDomainSnapshot(null);
+  }, [selectedTenantKey]);
+
+  useEffect(() => {
     if (entryStep !== "tenant") return;
     if (isEditingTenant) return;
     if (!selectedTenant) return;
@@ -3658,8 +3665,8 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [canDeleteTenant, logAudit, refreshControlPlaneData, selectedTenant, selectedTenantKey, selectedTenantPendingDeletion, sessionUserId]);
 
-  const saveDomainAndFeatureSettings = useCallback(async (event) => {
-    event.preventDefault();
+  const saveDomainAndFeatureSettings = useCallback(async (event, options = {}) => {
+    event?.preventDefault?.();
     if (!canEditTenantDomains) {
       setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update organization domains and map settings." }));
       return;
@@ -3730,6 +3737,10 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, domains: `Saved domain types, notification routing, and map settings for ${key}.` }));
+    if (String(options?.closeEditingDomain || "").trim()) {
+      setEditingDomainKey((current) => current === options.closeEditingDomain ? "" : current);
+      setEditingDomainSnapshot((current) => current?.key === options.closeEditingDomain ? null : current);
+    }
     await refreshControlPlaneData();
   }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, mapFeaturesForm, sessionUserId, logAudit, refreshControlPlaneData]);
 
@@ -4195,6 +4206,39 @@ export default function PlatformAdminApp() {
     });
     setTenantAssetsManagementView("add");
   }, []);
+
+  const beginDomainEdit = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key) return;
+    setEditingDomainKey(key);
+    setEditingDomainSnapshot({
+      key,
+      visibility: String(domainVisibilityForm?.[key] || "enabled"),
+      config: {
+        ...(domainConfigForm?.[key] || {
+          domain_type: defaultDomainType(key),
+          notification_email: "",
+        }),
+      },
+    });
+  }, [domainVisibilityForm, domainConfigForm]);
+
+  const cancelDomainEdit = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key) return;
+    if (editingDomainSnapshot?.key === key) {
+      setDomainVisibilityForm((prev) => ({ ...prev, [key]: editingDomainSnapshot.visibility || "enabled" }));
+      setDomainConfigForm((prev) => ({
+        ...prev,
+        [key]: {
+          ...(prev?.[key] || {}),
+          ...(editingDomainSnapshot.config || {}),
+        },
+      }));
+    }
+    setEditingDomainKey("");
+    setEditingDomainSnapshot(null);
+  }, [editingDomainSnapshot]);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -7229,11 +7273,14 @@ export default function PlatformAdminApp() {
                       Control which reporting domains are active, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
                     </div>
                   </div>
-                  <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", gap: 10, alignItems: "start" }}>
                     {DOMAIN_OPTIONS.map((d) => {
                       const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
                       const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
                       const isAssetBacked = domainType === "asset_backed";
+                      const isEditingDomain = editingDomainKey === d.key;
+                      const domainFieldsReadOnly = !canEditTenantDomains || !isEditingDomain;
+                      const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
                       return (
                         <div key={d.key} style={{ ...subPanel, display: "grid", gap: 10, background: "#f8fbff" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
@@ -7256,14 +7303,51 @@ export default function PlatformAdminApp() {
                               {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
                             </span>
                           </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {!isEditingDomain ? (
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain ? 1 : 0.55 }}
+                                disabled={!canEditTenantDomains || editLockedByOtherDomain}
+                                onClick={() => beginDomainEdit(d.key)}
+                                title={
+                                  editLockedByOtherDomain
+                                    ? "Finish the current domain edit before opening another domain."
+                                    : canEditTenantDomains
+                                      ? `Edit ${d.label}`
+                                      : "You need the Domains edit permission"
+                                }
+                              >
+                                Edit
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                  disabled={!canEditTenantDomains}
+                                  onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  style={buttonAlt}
+                                  onClick={() => cancelDomainEdit(d.key)}
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+                          </div>
                           <div style={responsiveActionGrid}>
                             <label style={modalField}>
                               <span>Enablement</span>
                               <select
                                 value={domainVisibilityForm[d.key] || "enabled"}
-                                disabled={!canEditTenantDomains}
+                                disabled={domainFieldsReadOnly}
                                 onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
-                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               >
                                 <option value="enabled">Enabled</option>
                                 <option value="disabled">Disabled</option>
@@ -7273,7 +7357,7 @@ export default function PlatformAdminApp() {
                               <span>Domain Type</span>
                               <select
                                 value={domainType}
-                                disabled={!canEditTenantDomains}
+                                disabled={domainFieldsReadOnly}
                                 onChange={(e) => setDomainConfigForm((prev) => ({
                                   ...prev,
                                   [d.key]: {
@@ -7281,7 +7365,7 @@ export default function PlatformAdminApp() {
                                     domain_type: e.target.value,
                                   },
                                 }))}
-                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               >
                                 {DOMAIN_TYPE_OPTIONS.map((option) => (
                                   <option key={option.key} value={option.key}>{option.label}</option>
@@ -7291,7 +7375,7 @@ export default function PlatformAdminApp() {
                             <label style={modalField}>
                               <span>Notification Email</span>
                               <input
-                                readOnly={!canEditTenantDomains}
+                                readOnly={domainFieldsReadOnly}
                                 value={domainConfigForm?.[d.key]?.notification_email || ""}
                                 onChange={(e) => setDomainConfigForm((prev) => ({
                                   ...prev,
@@ -7301,7 +7385,7 @@ export default function PlatformAdminApp() {
                                   },
                                 }))}
                                 placeholder={`notifications+${d.key}@examplemunicipality.gov`}
-                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               />
                             </label>
                           </div>
@@ -7318,10 +7402,16 @@ export default function PlatformAdminApp() {
                                 </div>
                                 <button
                                   type="button"
-                                  style={{ ...buttonAlt, opacity: canEditTenantFiles ? 1 : 0.55 }}
-                                  disabled={!canEditTenantFiles}
+                                  style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
+                                  disabled={!canEditTenantFiles || !isEditingDomain}
                                   onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
-                                  title={canEditTenantFiles ? `Add coordinate file for ${d.label}` : "You need the Files edit permission"}
+                                  title={
+                                    !isEditingDomain
+                                      ? `Open edit mode to manage ${d.label} coordinates`
+                                      : canEditTenantFiles
+                                        ? `Add coordinate file for ${d.label}`
+                                        : "You need the Files edit permission"
+                                  }
                                 >
                                   Add Coordinates
                                 </button>
