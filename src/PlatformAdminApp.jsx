@@ -7571,7 +7571,9 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                 <div style={{ display: "grid", gap: 3 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>Assets</h2>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>
+                    Assets for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
+                  </h2>
                   <p style={{ margin: 0, color: palette.textMuted }}>
                     Upload and organize domain-related source files like prior report exports, coordinate files, and boundary or location data.
                   </p>
@@ -7587,12 +7589,6 @@ export default function PlatformAdminApp() {
                 </button>
               </div>
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>
-                Asset Library for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
-              </h2>
               <div style={{ display: "grid", gap: 12 }}>
                 {TENANT_ASSET_CATEGORIES.map((category) => {
                   const matchingFiles = groupedTenantFiles[category.key] || [];
