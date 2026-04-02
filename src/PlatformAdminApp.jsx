@@ -22,10 +22,11 @@ const DOMAIN_OPTIONS = [
 
 const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
+  { key: "contacts", label: "Points of Contact" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
   { key: "domains", label: "Domains + Features" },
-  { key: "files", label: "Files" },
+  { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
 ];
 
@@ -40,6 +41,7 @@ const CONTROL_PLANE_TAB_SECTIONS = CONTROL_PLANE_SECTIONS.filter((section) => se
 const CONTROL_PLANE_PAGES = [
   { key: "manage-organizations", section: "organizations", label: "Manage Organizations" },
   { key: "manage-leads", section: "organizations", label: "Manage Leads" },
+  { key: "lead-detail", section: "organizations", label: "Lead Detail", hidden: true },
   { key: "account-info", section: "settings", label: "Account Info" },
   { key: "manage-team", section: "settings", label: "Manage Team" },
   { key: "roles-permissions", section: "settings", label: "Roles & Permissions" },
@@ -52,6 +54,15 @@ const CONTROL_PLANE_PAGES = [
 
 const DEFAULT_CONTROL_PLANE_PAGE = "organization-reports";
 const DEFAULT_SETTINGS_CONTROL_PLANE_PAGE = "account-info";
+
+const CONTROL_PLANE_TOP_NAV_PAGES = [
+  "manage-organizations",
+  "manage-leads",
+  "organization-reports",
+  "domain-reports",
+  "leads-reports",
+  "finance-reports",
+];
 
 const CONTROL_PLANE_SETTINGS_NAV = [
   {
@@ -140,6 +151,7 @@ const DEFAULT_PLATFORM_ROLE_PERMISSIONS = DEFAULT_PLATFORM_PERMISSION_KEYS.flatM
 const CONTROL_PLANE_PAGE_PERMISSIONS = {
   "manage-organizations": "organizations.access",
   "manage-leads": "leads.access",
+  "lead-detail": "leads.access",
   "account-info": "account.access",
   "manage-team": "users.access",
   "roles-permissions": "roles.access",
@@ -152,6 +164,7 @@ const CONTROL_PLANE_PAGE_PERMISSIONS = {
 
 const TENANT_WORKSPACE_TAB_PERMISSIONS = {
   tenants: "organizations.access",
+  contacts: "organizations.access",
   users: "users.access",
   roles: "roles.access",
   domains: "domains.access",
@@ -560,6 +573,29 @@ const ADD_TENANT_STEPS = [
   { key: "setup", label: "Basic Setup" },
 ];
 
+const TENANT_ASSET_CATEGORIES = [
+  {
+    key: "contract",
+    label: "Contracts",
+    description: "Signed agreements, amendments, and supporting contract documents for the organization.",
+  },
+  {
+    key: "asset_coordinates",
+    label: "Asset Coordinates",
+    description: "Bulk asset coordinate files and source data used to seed or refresh organization asset records.",
+  },
+  {
+    key: "boundary_geojson",
+    label: "Boundary GeoJSON",
+    description: "Boundary files that define the organization map footprint and service area.",
+  },
+  {
+    key: "other",
+    label: "Other Files",
+    description: "Additional supporting documents that do not fit the main organization asset categories.",
+  },
+];
+
 function initialTenantForm() {
   return {
     tenant_key: "",
@@ -735,6 +771,11 @@ function roleKeyToLabel(roleKey) {
     .trim()
     .replace(/_/g, " ")
     .replace(/\b\w/g, (ch) => ch.toUpperCase()));
+}
+
+function summarizeTenantAssetCategory(categoryKey) {
+  const key = String(categoryKey || "").trim().toLowerCase();
+  return TENANT_ASSET_CATEGORIES.find((category) => category.key === key)?.label || roleKeyToLabel(key || "other");
 }
 
 function buildAssignmentRowKey(row) {
@@ -1037,6 +1078,7 @@ export default function PlatformAdminApp() {
   const [roleForm, setRoleForm] = useState({ role: "", role_label: "" });
   const [rolePermissionDraft, setRolePermissionDraft] = useState({});
   const [rolePermissionDirty, setRolePermissionDirty] = useState(false);
+  const [tenantRoleEditMode, setTenantRoleEditMode] = useState(false);
   const [tenantFiles, setTenantFiles] = useState([]);
   const [auditRows, setAuditRows] = useState([]);
 
@@ -1054,6 +1096,9 @@ export default function PlatformAdminApp() {
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
+  const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
+  const [tenantRoleManagementView, setTenantRoleManagementView] = useState("list");
+  const [tenantAssetsManagementView, setTenantAssetsManagementView] = useState("list");
   const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [userSearchResults, setUserSearchResults] = useState([]);
@@ -1068,6 +1113,15 @@ export default function PlatformAdminApp() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [leadFiltersOpen, setLeadFiltersOpen] = useState(true);
+  const [leadFilters, setLeadFilters] = useState({
+    lead_number: "",
+    org_name: "",
+    priority_domain: "",
+    date_submitted: "",
+    status: "",
+  });
+  const [contractInfoOpen, setContractInfoOpen] = useState(false);
 
   const [status, setStatus] = useState({
     tenant: "",
@@ -1413,13 +1467,59 @@ export default function PlatformAdminApp() {
     () => visibleControlPlanePagesBySection[controlPlaneSection] || [],
     [controlPlaneSection, visibleControlPlanePagesBySection]
   );
+  const visibleControlPlaneTopNavPages = useMemo(
+    () => CONTROL_PLANE_TOP_NAV_PAGES
+      .map((pageKey) => CONTROL_PLANE_PAGES.find((page) => page.key === pageKey))
+      .filter((page) => page && canAccessControlPlanePage(page.key)),
+    [canAccessControlPlanePage]
+  );
   const controlPlanePageLabel = useMemo(
-    () => CONTROL_PLANE_PAGES.find((page) => page.key === controlPlanePage)?.label || "",
-    [controlPlanePage]
+    () => {
+      if (controlPlanePage === "lead-detail" && selectedLeadId) {
+        return `Lead #${selectedLeadId}`;
+      }
+      return CONTROL_PLANE_PAGES.find((page) => page.key === controlPlanePage)?.label || "";
+    },
+    [controlPlanePage, selectedLeadId]
   );
   const addTenantStepIndex = Math.max(0, ADD_TENANT_STEPS.findIndex((step) => step.key === addTenantStep));
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
+  const billingAddressDisplay = useMemo(
+    () => composeMailingAddress(selectedTenantProfile || {}),
+    [selectedTenantProfile]
+  );
+  const groupedTenantFiles = useMemo(() => {
+    const grouped = Object.fromEntries(TENANT_ASSET_CATEGORIES.map((category) => [category.key, []]));
+    for (const row of tenantFiles || []) {
+      const key = String(row?.file_category || "").trim().toLowerCase();
+      if (grouped[key]) grouped[key].push(row);
+      else grouped.other.push(row);
+    }
+    return grouped;
+  }, [tenantFiles]);
+  const filteredLeadRows = useMemo(() => {
+    const leadNumberFilter = String(leadFilters?.lead_number || "").trim().toLowerCase();
+    const orgNameFilter = String(leadFilters?.org_name || "").trim().toLowerCase();
+    const domainFilter = String(leadFilters?.priority_domain || "").trim().toLowerCase();
+    const dateFilter = String(leadFilters?.date_submitted || "").trim();
+    const statusFilter = String(leadFilters?.status || "").trim().toLowerCase();
+
+    return (leadRows || []).filter((lead) => {
+      const leadNumber = String(lead?.id || "").trim().toLowerCase();
+      const orgName = String(lead?.city_agency || "").trim().toLowerCase();
+      const priorityDomain = String(lead?.priority_domain || "").trim().toLowerCase();
+      const submittedDate = String(lead?.created_at || "").slice(0, 10);
+      const status = String(lead?.status || "new").trim().toLowerCase();
+
+      if (leadNumberFilter && !leadNumber.includes(leadNumberFilter)) return false;
+      if (orgNameFilter && !orgName.includes(orgNameFilter)) return false;
+      if (domainFilter && priorityDomain !== domainFilter) return false;
+      if (dateFilter && submittedDate !== dateFilter) return false;
+      if (statusFilter && status !== statusFilter) return false;
+      return true;
+    });
+  }, [leadFilters, leadRows]);
   const resolveKnownUserSummary = useCallback((userId) => {
     const key = String(userId || "").trim();
     if (!key) return null;
@@ -2118,6 +2218,18 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, users: "", hydrate: "" }));
   }, []);
 
+  const openOrganizationSwitcher = useCallback(() => {
+    setControlPlaneSection("organizations");
+    setControlPlanePage("manage-organizations");
+    setOpenControlPlaneDropdown("");
+    setEntryStep("start");
+    setTenantSearch("");
+    setIsEditingTenant(false);
+    setIsEditingProfile(false);
+    setTenantUsersManagementView("list");
+    setTenantRoleManagementView("list");
+  }, []);
+
   const openControlPlaneSection = useCallback((sectionKey) => {
     const nextSection = String(sectionKey || "").trim();
     if (!nextSection) return;
@@ -2133,6 +2245,15 @@ export default function PlatformAdminApp() {
     setControlPlanePage(nextPage.key);
     setOpenControlPlaneDropdown("");
   }, [canAccessControlPlanePage]);
+
+  const openLeadDetailPage = useCallback((leadId) => {
+    const key = String(leadId || "").trim();
+    if (!key) return;
+    setSelectedLeadId(key);
+    setControlPlaneSection("organizations");
+    setControlPlanePage("lead-detail");
+    setOpenControlPlaneDropdown("");
+  }, []);
 
   const searchPlatformUsers = useCallback(async (event) => {
     event.preventDefault();
@@ -2857,6 +2978,32 @@ export default function PlatformAdminApp() {
       setPlatformTeamManagementView("list");
     }
   }, [controlPlanePage]);
+
+  useEffect(() => {
+    if (controlPlanePage !== "manage-leads") {
+      setLeadFiltersOpen(true);
+    }
+    if (controlPlanePage !== "lead-detail") {
+      setSelectedLeadId("");
+    }
+  }, [controlPlanePage]);
+
+  useEffect(() => {
+    if (activeTab !== "users") {
+      setTenantUsersManagementView("list");
+      setUserAssignmentMode("existing");
+    }
+    if (activeTab !== "roles") {
+      setTenantRoleManagementView("list");
+      setTenantRoleEditMode(false);
+    }
+    if (activeTab !== "contacts") {
+      setIsEditingProfile(false);
+    }
+    if (activeTab !== "files") {
+      setTenantAssetsManagementView("list");
+    }
+  }, [activeTab]);
 
   const persistTenantRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
     if (!canEditTenantSetup) {
@@ -3752,7 +3899,7 @@ export default function PlatformAdminApp() {
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
-    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px 42px" }
+    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 116px)" }
     : shell;
   const bannerStyle = isCompactViewport
     ? {
@@ -3883,6 +4030,37 @@ export default function PlatformAdminApp() {
 
   const settingsPageActive = controlPlaneSection === "settings";
   const controlPlaneSettingsLayoutStyle = isCompactViewport ? { display: "grid", gap: 14 } : controlPlaneSettingsLayout;
+  const organizationWorkspaceAction = inTenantWorkspace && activeTab === "users" ? (
+    <button
+      type="button"
+      style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+      disabled={!canManageTenantUsers}
+      onClick={() => setTenantUsersManagementView((prev) => (prev === "add" ? "list" : "add"))}
+    >
+      {tenantUsersManagementView === "add" ? "Hide Add User/Admin" : "Add User/Admin"}
+    </button>
+  ) : inTenantWorkspace && activeTab === "roles" ? (
+    <button
+      type="button"
+      style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+      disabled={!canManageTenantRoles}
+      onClick={() => setTenantRoleManagementView((prev) => (prev === "add" ? "list" : "add"))}
+    >
+      {tenantRoleManagementView === "add" ? "Hide Add Role" : "Add Role"}
+    </button>
+  ) : inTenantWorkspace && activeTab === "contacts" ? (
+    <button
+      type="button"
+      style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+      disabled={!canEditTenantSetup}
+      onClick={() => {
+        setIsEditingProfile(true);
+        addAdditionalContact();
+      }}
+    >
+      Add New Contact
+    </button>
+  ) : null;
   const currentPageActions = controlPlanePage === "manage-team" ? (
     <button
       type="button"
@@ -3892,9 +4070,13 @@ export default function PlatformAdminApp() {
     >
       {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
     </button>
-  ) : controlPlanePage === "manage-organizations" && inTenantWorkspace ? (
+  ) : controlPlanePage === "lead-detail" ? (
+    <button type="button" style={headerActionButton} onClick={() => openControlPlanePage("manage-leads")}>
+      Back to Leads
+    </button>
+  ) : controlPlanePage === "manage-organizations" ? (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <button type="button" style={headerActionButton} onClick={returnToStart}>Switch Organization</button>
+      <button type="button" style={headerActionButton} onClick={openOrganizationSwitcher}>Switch Organization</button>
       <button
         type="button"
         style={{ ...headerActionButton, opacity: canCreateOrganizations ? 1 : 0.55 }}
@@ -3987,57 +4169,44 @@ export default function PlatformAdminApp() {
         ref={controlPlaneNavRef}
         style={
           isCompactViewport
-            ? { ...fullWidthSection, display: "grid", gap: 10 }
+            ? {
+                position: "fixed",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 85,
+                padding: "10px 10px calc(env(safe-area-inset-bottom, 0px) + 10px)",
+                background: "rgba(248, 251, 255, 0.94)",
+                backdropFilter: "blur(14px)",
+                borderTop: "1px solid rgba(23, 49, 79, 0.08)",
+              }
             : { ...controlPlaneTabsRail }
         }
       >
         <div style={controlPlaneTabsShell}>
-          <nav style={controlPlaneTabsBar} aria-label="Platform Control Plane navigation">
-            {CONTROL_PLANE_TAB_SECTIONS.map((section) => {
-              const visiblePages = visibleControlPlanePagesBySection[section.key] || [];
-              if (!visiblePages.length) return null;
-              const active = section.key === controlPlaneSection;
-              const isOpen = section.key === openControlPlaneDropdown;
+          <nav
+            style={
+              isCompactViewport
+                ? {
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gap: 8,
+                  }
+                : controlPlaneTabsBar
+            }
+            aria-label="Platform Control Plane navigation"
+          >
+            {visibleControlPlaneTopNavPages.map((page) => {
+              const active = page.key === controlPlanePage;
               return (
-                <div key={section.key} style={{ position: "relative", minWidth: 0 }} onClick={(event) => event.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => openControlPlaneSection(section.key)}
-                    style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
-                  >
-                    <span>{section.label}</span>
-                  </button>
-                  {isOpen ? (
-                    <div style={controlPlaneSubmenu}>
-                      {visiblePages.map((page) => {
-                        const pageActive = page.key === controlPlanePage;
-                        return (
-                          <button
-                            key={page.key}
-                            type="button"
-                            onClick={() => openControlPlanePage(page.key)}
-                            style={{
-                              ...controlPlaneSubmenuItem,
-                              ...(pageActive
-                                ? {
-                                    border: "1px solid rgba(18, 128, 106, 0.28)",
-                                    background: "rgba(229, 247, 243, 0.98)",
-                                  }
-                                : null),
-                            }}
-                          >
-                            <span>{page.label}</span>
-                            {pageActive ? (
-                              <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                                Current page
-                              </span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
+                <button
+                  key={page.key}
+                  type="button"
+                  onClick={() => openControlPlanePage(page.key)}
+                  style={active ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                >
+                  <span>{page.label}</span>
+                </button>
               );
             })}
           </nav>
@@ -4046,9 +4215,6 @@ export default function PlatformAdminApp() {
       <div style={{ ...card, display: "grid", gap: 6 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-              Current Page
-            </div>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
               {controlPlanePageLabel}
             </h1>
@@ -4210,6 +4376,36 @@ export default function PlatformAdminApp() {
   return (
     <main style={shellStyle}>
       {fixedBanner}
+      {contractInfoOpen ? (
+        <div style={authModalBackdrop} onClick={() => setContractInfoOpen(false)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Contract Info</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Contract details for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContractInfoOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close contract info dialog"
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 8, fontSize: 13, color: palette.text }}>
+              <div><strong>Status:</strong> {toOrganizationLanguage(String(profileForm.contract_status || "pending"))}</div>
+              <div><strong>Start:</strong> {profileForm.contract_start_date || "Not set"}</div>
+              <div><strong>End:</strong> {profileForm.contract_end_date || "Not set"}</div>
+              <div><strong>Renewal:</strong> {profileForm.renewal_date || "Not set"}</div>
+              <div><strong>Billing Email:</strong> {profileForm.billing_email || "Not set"}</div>
+              <div><strong>Notes:</strong> {profileForm.notes || "No contract notes saved."}</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {controlPlaneNavigation}
       {controlPlanePage === "organization-reports" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
@@ -4728,125 +4924,241 @@ export default function PlatformAdminApp() {
           <div style={{ ...card, display: "grid", gap: 10 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
             <p style={{ margin: 0, color: palette.textMuted }}>
-              Review the lead pipeline as a table first, then open an individual lead to manage notes, follow-ups, and status.
+              Filter the lead pipeline, review the list, and open a lead into its own detail page for follow-up work.
             </p>
             {leadStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{leadStatus}</div> : null}
+            <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 900, color: palette.navy900 }}>Lead Filters</div>
+                <button type="button" style={buttonAlt} onClick={() => setLeadFiltersOpen((prev) => !prev)}>
+                  {leadFiltersOpen ? "Hide Filters" : "Show Filters"}
+                </button>
+              </div>
+              {leadFiltersOpen ? (
+                <div style={responsiveTwoColGrid}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Lead #</span>
+                    <input value={leadFilters.lead_number} onChange={(e) => setLeadFilters((prev) => ({ ...prev, lead_number: e.target.value }))} style={inputBase} />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Org Name</span>
+                    <input value={leadFilters.org_name} onChange={(e) => setLeadFilters((prev) => ({ ...prev, org_name: e.target.value }))} style={inputBase} />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Priority Domain</span>
+                    <select value={leadFilters.priority_domain} onChange={(e) => setLeadFilters((prev) => ({ ...prev, priority_domain: e.target.value }))} style={inputBase}>
+                      <option value="">All</option>
+                      {DOMAIN_OPTIONS.map((domain) => (
+                        <option key={domain.key} value={domain.key}>{domain.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Date Submitted</span>
+                    <input type="date" value={leadFilters.date_submitted} onChange={(e) => setLeadFilters((prev) => ({ ...prev, date_submitted: e.target.value }))} style={inputBase} />
+                  </label>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Status</span>
+                    <select value={leadFilters.status} onChange={(e) => setLeadFilters((prev) => ({ ...prev, status: e.target.value }))} style={inputBase}>
+                      <option value="">All</option>
+                      <option value="new">New</option>
+                      <option value="reviewed">Reviewed</option>
+                      <option value="contacted">Contacted</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
+                    <button
+                      type="button"
+                      style={buttonAlt}
+                      onClick={() => setLeadFilters({
+                        lead_number: "",
+                        org_name: "",
+                        priority_domain: "",
+                        date_submitted: "",
+                        status: "",
+                      })}
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
             {leadRows.length ? (
               <>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={tableHeadCell}>Lead #</th>
-                        <th style={tableHeadCell}>Organization</th>
-                        <th style={tableHeadCell}>POC Info</th>
-                        <th style={tableHeadCell}>Lead Status</th>
-                        <th style={tableHeadCell}>Date Submitted</th>
-                        <th style={tableHeadCell}>Last Modified</th>
-                        <th style={tableHeadCell}>Notes</th>
-                        <th style={tableHeadCell}>Priority Domain</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leadRows.map((lead, index) => {
-                        const leadKey = String(lead?.id || "");
-                        const selected = leadKey === String(selectedLead?.id || "");
-                        const leadNumber = `LD-${String(index + 1).padStart(4, "0")}`;
-                        return (
-                          <tr key={leadKey} style={{ background: selected ? "rgba(18,128,106,0.08)" : "transparent" }}>
-                            <td style={{ padding: "10px 0" }}>
-                              <button
-                                type="button"
-                                style={{ border: 0, background: "transparent", color: palette.mint700, font: "inherit", fontWeight: 800, cursor: "pointer", padding: 0 }}
-                                onClick={() => setSelectedLeadId(leadKey)}
-                              >
-                                {leadNumber}
-                              </button>
-                            </td>
-                            <td style={{ padding: "10px 0", color: palette.navy900, fontWeight: 800 }}>{lead.city_agency || "Not provided"}</td>
-                            <td style={{ padding: "10px 0" }}>
-                              {[lead.full_name, lead.work_email, lead.role_title].filter(Boolean).join(" • ") || "Not provided"}
-                            </td>
-                            <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.status || "new")}</td>
-                            <td style={{ padding: "10px 0" }}>{lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"}</td>
-                            <td style={{ padding: "10px 0" }}>{lead.updated_at ? new Date(lead.updated_at).toLocaleString() : "-"}</td>
-                            <td style={{ padding: "10px 0" }}>{String(lead.internal_notes || lead.notes || "").trim() || "—"}</td>
-                            <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.priority_domain)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {selectedLead ? (
-                  <div style={{ ...subPanel, display: "grid", gap: 12 }}>
-                    <div style={{ display: "grid", gap: 4 }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                        Lead Detail
-                      </div>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: palette.navy900 }}>
-                        {selectedLead.city_agency || "Unnamed organization"}
-                      </div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        {[selectedLead.full_name, selectedLead.role_title, selectedLead.work_email].filter(Boolean).join(" • ")}
-                      </div>
-                    </div>
-                    <div style={responsiveTwoColGrid}>
-                      <div style={metricCard}>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>POC</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{selectedLead.full_name || "Not provided"}</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>{selectedLead.work_email || "No email on file"}</div>
-                      </div>
-                      <div style={metricCard}>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>Submitted</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{selectedLead.created_at ? new Date(selectedLead.created_at).toLocaleString() : "-"}</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>Priority domain: {roleKeyToLabel(selectedLead.priority_domain)}</div>
-                      </div>
-                    </div>
-                    {(() => {
-                      const draft = leadDraftById[String(selectedLead.id)] || {};
+                {isCompactViewport ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {filteredLeadRows.map((lead) => {
+                      const leadKey = String(lead?.id || "");
+                      const leadNumber = `LD-${leadKey.padStart(4, "0")}`;
                       return (
-                        <>
-                          <div style={responsiveTwoColGrid}>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Lead Status</span>
-                              <select value={draft.status ?? selectedLead.status ?? "new"} onChange={(e) => updateLeadDraft(selectedLead.id, "status", e.target.value)} style={inputBase}>
-                                <option value="new">New</option>
-                                <option value="reviewed">Reviewed</option>
-                                <option value="contacted">Contacted</option>
-                                <option value="closed">Closed</option>
-                              </select>
-                            </label>
-                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                              <span>Follow-up Date</span>
-                              <input type="date" value={draft.follow_up_on ?? String(selectedLead.follow_up_on || "").slice(0, 10)} onChange={(e) => updateLeadDraft(selectedLead.id, "follow_up_on", e.target.value)} style={inputBase} />
-                            </label>
+                        <button
+                          key={leadKey}
+                          type="button"
+                          onClick={() => openLeadDetailPage(leadKey)}
+                          style={{
+                            ...subPanel,
+                            display: "grid",
+                            gap: 8,
+                            width: "100%",
+                            textAlign: "left",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                            <div style={{ display: "grid", gap: 3 }}>
+                              <span style={{ color: palette.mint700, fontWeight: 900 }}>{leadNumber}</span>
+                              <span style={{ color: palette.navy900, fontWeight: 900 }}>{lead.city_agency || "Not provided"}</span>
+                            </div>
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>{roleKeyToLabel(lead.status || "new")}</span>
                           </div>
-                          <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                            <span>Internal Notes</span>
-                            <textarea value={draft.internal_notes ?? selectedLead.internal_notes ?? selectedLead.notes ?? ""} onChange={(e) => updateLeadDraft(selectedLead.id, "internal_notes", e.target.value)} style={{ ...inputBase, minHeight: 88 }} />
-                          </label>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                            <button type="button" style={buttonBase} disabled={leadLoading} onClick={() => void saveLeadUpdate(selectedLead)}>
-                              {leadLoading ? "Saving..." : "Save Lead"}
-                            </button>
-                            <button type="button" style={buttonAlt} onClick={() => updateLeadDraft(selectedLead.id, "mark_follow_up", true)}>
-                              Mark Follow-up Done On Save
-                            </button>
-                            {selectedLead.last_follow_up_at ? (
-                              <span style={{ fontSize: 12.5, color: palette.textMuted }}>Last follow-up: {new Date(selectedLead.last_follow_up_at).toLocaleString()}</span>
-                            ) : null}
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            {[lead.full_name, lead.work_email, lead.role_title].filter(Boolean).join(" • ") || "Not provided"}
                           </div>
-                        </>
+                          <div style={{ display: "grid", gap: 2, fontSize: 11.5, color: palette.textMuted }}>
+                            <span>Priority domain: {roleKeyToLabel(lead.priority_domain)}</span>
+                            <span>Submitted: {lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"}</span>
+                            <span>Last modified: {lead.updated_at ? new Date(lead.updated_at).toLocaleString() : "-"}</span>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            {String(lead.internal_notes || lead.notes || "").trim() || "No notes saved."}
+                          </div>
+                        </button>
                       );
-                    })()}
+                    })}
+                    {!filteredLeadRows.length ? (
+                      <div style={{ ...subPanel, color: palette.textMuted }}>No leads match the current filters.</div>
+                    ) : null}
                   </div>
-                ) : null}
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr>
+                          <th style={tableHeadCell}>Lead #</th>
+                          <th style={tableHeadCell}>Organization</th>
+                          <th style={tableHeadCell}>POC Info</th>
+                          <th style={tableHeadCell}>Lead Status</th>
+                          <th style={tableHeadCell}>Date Submitted</th>
+                          <th style={tableHeadCell}>Last Modified</th>
+                          <th style={tableHeadCell}>Notes</th>
+                          <th style={tableHeadCell}>Priority Domain</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredLeadRows.map((lead) => {
+                          const leadKey = String(lead?.id || "");
+                          const leadNumber = `LD-${leadKey.padStart(4, "0")}`;
+                          return (
+                            <tr key={leadKey}>
+                              <td style={{ padding: "10px 0" }}>
+                                <button
+                                  type="button"
+                                  style={{ border: 0, background: "transparent", color: palette.mint700, font: "inherit", fontWeight: 800, cursor: "pointer", padding: 0 }}
+                                  onClick={() => openLeadDetailPage(leadKey)}
+                                >
+                                  {leadNumber}
+                                </button>
+                              </td>
+                              <td style={{ padding: "10px 0", color: palette.navy900, fontWeight: 800 }}>{lead.city_agency || "Not provided"}</td>
+                              <td style={{ padding: "10px 0" }}>
+                                {[lead.full_name, lead.work_email, lead.role_title].filter(Boolean).join(" • ") || "Not provided"}
+                              </td>
+                              <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.status || "new")}</td>
+                              <td style={{ padding: "10px 0" }}>{lead.created_at ? new Date(lead.created_at).toLocaleString() : "-"}</td>
+                              <td style={{ padding: "10px 0" }}>{lead.updated_at ? new Date(lead.updated_at).toLocaleString() : "-"}</td>
+                              <td style={{ padding: "10px 0" }}>{String(lead.internal_notes || lead.notes || "").trim() || "—"}</td>
+                              <td style={{ padding: "10px 0" }}>{roleKeyToLabel(lead.priority_domain)}</td>
+                            </tr>
+                          );
+                        })}
+                        {!filteredLeadRows.length ? (
+                          <tr>
+                            <td colSpan={8} style={{ padding: "10px 0", color: palette.textMuted }}>No leads match the current filters.</td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ ...subPanel, color: palette.textMuted }}>No leads have been captured yet.</div>
             )}
           </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "lead-detail" ? (
+        <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+          {selectedLead ? (
+            <div style={{ ...card, display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+                  Lead Detail
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: palette.navy900 }}>
+                  {selectedLead.city_agency || "Unnamed organization"}
+                </div>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                  {[selectedLead.full_name, selectedLead.role_title, selectedLead.work_email].filter(Boolean).join(" • ")}
+                </div>
+              </div>
+              <div style={responsiveTwoColGrid}>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>POC</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{selectedLead.full_name || "Not provided"}</div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>{selectedLead.work_email || "No email on file"}</div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>{selectedLead.role_title || "No title on file"}</div>
+                </div>
+                <div style={metricCard}>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Lead Summary</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{`LD-${String(selectedLead.id || "").padStart(4, "0")}`}</div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Submitted: {selectedLead.created_at ? new Date(selectedLead.created_at).toLocaleString() : "-"}</div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Priority domain: {roleKeyToLabel(selectedLead.priority_domain)}</div>
+                </div>
+              </div>
+              {(() => {
+                const draft = leadDraftById[String(selectedLead.id)] || {};
+                return (
+                  <>
+                    <div style={responsiveTwoColGrid}>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Lead Status</span>
+                        <select value={draft.status ?? selectedLead.status ?? "new"} onChange={(e) => updateLeadDraft(selectedLead.id, "status", e.target.value)} style={inputBase}>
+                          <option value="new">New</option>
+                          <option value="reviewed">Reviewed</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </label>
+                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                        <span>Follow-up Date</span>
+                        <input type="date" value={draft.follow_up_on ?? String(selectedLead.follow_up_on || "").slice(0, 10)} onChange={(e) => updateLeadDraft(selectedLead.id, "follow_up_on", e.target.value)} style={inputBase} />
+                      </label>
+                    </div>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Internal Notes</span>
+                      <textarea value={draft.internal_notes ?? selectedLead.internal_notes ?? selectedLead.notes ?? ""} onChange={(e) => updateLeadDraft(selectedLead.id, "internal_notes", e.target.value)} style={{ ...inputBase, minHeight: 88 }} />
+                    </label>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <button type="button" style={buttonBase} disabled={leadLoading} onClick={() => void saveLeadUpdate(selectedLead)}>
+                        {leadLoading ? "Saving..." : "Save Lead"}
+                      </button>
+                      <button type="button" style={buttonAlt} onClick={() => updateLeadDraft(selectedLead.id, "mark_follow_up", true)}>
+                        Mark Follow-up Done On Save
+                      </button>
+                      {selectedLead.last_follow_up_at ? (
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>Last follow-up: {new Date(selectedLead.last_follow_up_at).toLocaleString()}</span>
+                      ) : null}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          ) : (
+            <div style={{ ...card, color: palette.textMuted }}>Lead not found. Return to Manage Leads and select a lead.</div>
+          )}
         </section>
       ) : null}
       {controlPlanePage === "manage-organizations" ? (
@@ -4952,54 +5264,22 @@ export default function PlatformAdminApp() {
                   <div style={{ fontSize: 23, fontWeight: 900, color: palette.navy900 }}>
                     {selectedTenantPublicDisplayName || selectedTenantKey}
                   </div>
-                  {selectedTenantPublicDisplayName !== selectedTenantOrganizationName ? (
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Organization Name: {selectedTenantOrganizationName}
-                    </div>
-                  ) : null}
-                  {selectedTenantLegalOrganizationName ? (
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Legal Organization Name: {selectedTenantLegalOrganizationName}
-                    </div>
-                  ) : null}
-                  <div style={{ fontSize: 13, color: palette.textMuted }}>
-                    {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
-                  </div>
                 </div>
                 <div style={responsiveTwoColGrid}>
                   <div style={metricCard}>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Primary URL</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Organization Name</div>
                     <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
-                      {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
+                      {selectedTenantOrganizationName || selectedTenantKey}
                     </div>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Prefix: {primarySubdomainPrefix(selectedTenant?.primary_subdomain) || sanitizeTenantKey(selectedTenantKey)}
+                      Display Name: {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
                     </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
-                        onClick={() => {
-                          setActiveTab("tenants");
-                          setIsEditingTenant(true);
-                        }}
-                        disabled={!canEditTenantSetup}
-                        title={canEditTenantSetup ? "Edit the cityreport.io URL prefix" : "You need the Organizations edit permission"}
-                      >
-                        Edit URL Prefix
-                      </button>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                     </div>
                   </div>
                   <div style={metricCard}>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Workspace Section</div>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
-                      <span>Workspace Section</span>
-                      <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                        {availableTenantWorkspaceTabs.map((tab) => (
-                          <option key={tab.key} value={tab.key}>{tab.label}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>Hub Access</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                       {selectedTenantLiveUrl ? (
                         <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
@@ -5012,6 +5292,38 @@ export default function PlatformAdminApp() {
                         </a>
                       ) : null}
                     </div>
+                  </div>
+                </div>
+                <div style={{ ...metricCard, display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
+                      <span style={{ color: palette.textMuted }}>Workspace Section</span>
+                      <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
+                        {availableTenantWorkspaceTabs.map((tab) => (
+                          <option key={tab.key} value={tab.key}>{tab.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {organizationWorkspaceAction}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Legal Name: {selectedTenantLegalOrganizationName || "Not set"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Alias: {String(selectedTenantProfile?.url_extension || "").trim() || "Not set"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Billing Address: {billingAddressDisplay || "Not set"}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Contract Status:{" "}
+                    <button
+                      type="button"
+                      onClick={() => setContractInfoOpen(true)}
+                      style={{ border: 0, background: "transparent", color: palette.mint700, font: "inherit", fontWeight: 800, cursor: "pointer", padding: 0 }}
+                    >
+                      {toOrganizationLanguage(String(profileForm.contract_status || "pending"))}
+                    </button>
                   </div>
                 </div>
                 <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
@@ -5486,9 +5798,142 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
+        {inTenantWorkspace && activeTab === "contacts" ? (
+          <section style={{ display: "grid", gap: 14 }}>
+            <div style={{ ...card, display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
+                {!isEditingProfile ? (
+                  <button
+                    type="button"
+                    style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                    disabled={!canEditTenantSetup}
+                    onClick={() => setIsEditingProfile(true)}
+                  >
+                    Edit Contacts
+                  </button>
+                ) : null}
+              </div>
+
+              <div style={{ ...subPanel, display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 900, color: palette.navy900 }}>Primary Contact</div>
+                {!isEditingProfile ? (
+                  <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: palette.text }}>
+                    <div><strong>Name:</strong> {profileForm.contact_primary_name || "Not set"}</div>
+                    <div><strong>Role / Title:</strong> {profileForm.contact_primary_title || "Not set"}</div>
+                    <div><strong>Email:</strong> {profileForm.contact_primary_email || "Not set"}</div>
+                    <div><strong>Phone:</strong> {profileForm.contact_primary_phone || "Not set"}</div>
+                  </div>
+                ) : (
+                  <div style={responsiveTwoColGrid}>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Name</span>
+                      <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} style={inputBase} />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Role / Title</span>
+                      <input value={profileForm.contact_primary_title} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))} style={inputBase} />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Email</span>
+                      <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} style={inputBase} />
+                    </label>
+                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                      <span>Phone</span>
+                      <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} style={inputBase} />
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
+                  {isEditingProfile ? (
+                    <button type="button" style={buttonAlt} onClick={addAdditionalContact}>
+                      Add New Contact
+                    </button>
+                  ) : null}
+                </div>
+                {Array.isArray(profileForm.additional_contacts) && profileForm.additional_contacts.length ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {profileForm.additional_contacts.map((contact, index) => (
+                      <div key={`contact-${index}`} style={{ ...subPanel, display: "grid", gap: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <strong style={{ color: palette.navy900 }}>Contact {index + 1}</strong>
+                          {isEditingProfile ? (
+                            <button type="button" style={buttonAlt} onClick={() => removeAdditionalContact(index)}>
+                              Remove
+                            </button>
+                          ) : (
+                            <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup} onClick={() => setIsEditingProfile(true)}>
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                        {isEditingProfile ? (
+                          <div style={responsiveTwoColGrid}>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Name</span>
+                              <input value={contact.name || ""} onChange={(e) => updateAdditionalContact(index, "name", e.target.value)} style={inputBase} />
+                            </label>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Role / Title</span>
+                              <input value={contact.title || ""} onChange={(e) => updateAdditionalContact(index, "title", e.target.value)} style={inputBase} />
+                            </label>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Email</span>
+                              <input value={contact.email || ""} onChange={(e) => updateAdditionalContact(index, "email", e.target.value)} style={inputBase} />
+                            </label>
+                            <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                              <span>Phone</span>
+                              <input value={contact.phone || ""} onChange={(e) => updateAdditionalContact(index, "phone", e.target.value)} style={inputBase} />
+                            </label>
+                          </div>
+                        ) : (
+                          <div style={{ display: "grid", gap: 6, fontSize: 12.5, color: palette.text }}>
+                            <div><strong>Name:</strong> {contact.name || "Not set"}</div>
+                            <div><strong>Role / Title:</strong> {contact.title || "Not set"}</div>
+                            <div><strong>Email:</strong> {contact.email || "Not set"}</div>
+                            <div><strong>Phone:</strong> {contact.phone || "Not set"}</div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    {isEditingProfile ? "Add a new contact to save additional points of contact." : "No additional contacts saved yet."}
+                  </div>
+                )}
+              </div>
+
+              {isEditingProfile ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup} onClick={() => void saveTenantProfile({ preventDefault() {} })}>
+                    Save Contact Changes
+                  </button>
+                  <button
+                    type="button"
+                    style={buttonAlt}
+                    onClick={() => {
+                      const key = sanitizeTenantKey(selectedTenantKey);
+                      setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
+                      setIsEditingProfile(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            {tenantUsersManagementView === "add" ? (
+              <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Users and Admins</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                 Add a person to this organization by finding an existing account or creating a new invited account, then assign one organization role.
@@ -5608,7 +6053,7 @@ export default function PlatformAdminApp() {
                   </div>
                 </>
               ) : (
-                <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
+              <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                     <span>First Name</span>
                     <input
@@ -5684,8 +6129,10 @@ export default function PlatformAdminApp() {
                   </button>
                 </form>
               )}
-              {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
-            </div>
+              </div>
+            ) : null}
+
+            {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Role Assignments</h2>
@@ -5800,7 +6247,8 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            {tenantRoleManagementView === "add" ? (
+              <div style={{ ...card, display: "grid", gap: 10 }}>
               <h2 style={{ margin: 0, color: palette.navy900 }}>Create Organization Role</h2>
               <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                 Create custom roles for {selectedTenantKey}, then enable or disable organization permissions.
@@ -5836,10 +6284,29 @@ export default function PlatformAdminApp() {
                 </button>
               </form>
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
+              </div>
+            ) : null}
+
+            <div style={{ ...card, display: "grid", gap: 8 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Choose Role</h2>
+              <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
+                <span>Existing Roles</span>
+                <select value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
+                  {sortedTenantRoleDefinitions.map((row) => {
+                    const role = String(row?.role || "").trim();
+                    if (!role) return null;
+                    return (
+                      <option key={role} value={role}>
+                        {toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role))}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Roles for {selectedTenantKey}</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Role Directory</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
@@ -5907,6 +6374,18 @@ export default function PlatformAdminApp() {
               </h2>
               {selectedRoleDefinition ? (
                 <>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {!tenantRoleEditMode ? (
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                        disabled={!canManageTenantRoles}
+                        onClick={() => setTenantRoleEditMode(true)}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                  </div>
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                       <thead>
@@ -5928,7 +6407,7 @@ export default function PlatformAdminApp() {
                                   <input
                                     type="checkbox"
                                     checked={Boolean(rolePermissionDraft?.[permissionKey])}
-                                    disabled={!canManageTenantRoles}
+                                    disabled={!canManageTenantRoles || !tenantRoleEditMode}
                                     onChange={(e) => {
                                       const nextAllowed = e.target.checked;
                                       setRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
@@ -5947,8 +6426,11 @@ export default function PlatformAdminApp() {
                     <button
                       type="button"
                       style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
-                      disabled={!canManageTenantRoles || !rolePermissionDirty}
-                      onClick={() => void saveRolePermissions()}
+                      disabled={!canManageTenantRoles || !tenantRoleEditMode || !rolePermissionDirty}
+                      onClick={() => {
+                        void saveRolePermissions();
+                        setTenantRoleEditMode(false);
+                      }}
                     >
                       Save Permission Changes
                     </button>
@@ -5962,10 +6444,11 @@ export default function PlatformAdminApp() {
                         }
                         setRolePermissionDraft(resetDraft);
                         setRolePermissionDirty(false);
+                        setTenantRoleEditMode(false);
                       }}
-                      disabled={!rolePermissionDirty}
+                      disabled={!rolePermissionDirty && !tenantRoleEditMode}
                     >
-                      Reset Changes
+                      {tenantRoleEditMode ? "Cancel" : "Reset Changes"}
                     </button>
                   </div>
                 </>
@@ -5981,26 +6464,39 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "domains" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Domain Enablement + Map Features</h2>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Features</h2>
               <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
-                <div style={responsiveDomainGrid}>
-                  {DOMAIN_OPTIONS.map((d) => (
-                    <label key={d.key} style={{ display: "grid", gap: 5, border: `1px solid ${palette.border}`, borderRadius: 10, padding: 8, background: "#f8fbff" }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
-                      <select
-                        value={domainVisibilityForm[d.key] || "enabled"}
-                        onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
-                        style={inputBase}
-                      >
-                        <option value="enabled">Enabled</option>
-                        <option value="disabled">Disabled</option>
-                      </select>
-                    </label>
-                  ))}
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Control which reporting domains are active for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
+                    </div>
+                  </div>
+                  <div style={responsiveDomainGrid}>
+                    {DOMAIN_OPTIONS.map((d) => (
+                      <label key={d.key} style={{ display: "grid", gap: 5, border: `1px solid ${palette.border}`, borderRadius: 10, padding: 8, background: "#f8fbff" }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
+                        <select
+                          value={domainVisibilityForm[d.key] || "enabled"}
+                          onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
+                          style={inputBase}
+                        >
+                          <option value="enabled">Enabled</option>
+                          <option value="disabled">Disabled</option>
+                        </select>
+                      </label>
+                    ))}
+                  </div>
                 </div>
 
-                <div style={{ border: `1px solid ${palette.border}`, borderRadius: 10, padding: 10, display: "grid", gap: 8, background: "#f8fbff" }}>
-                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Feature Toggles ({selectedTenantKey})</div>
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Features</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Configure how the organization boundary and map framing behave for the public map and the hub.
+                    </div>
+                  </div>
                   {(() => {
                     const borderEnabled = Boolean(mapFeaturesForm.show_boundary_border);
                     const shadeEnabled = Boolean(mapFeaturesForm.shade_outside_boundary);
@@ -6012,98 +6508,98 @@ export default function PlatformAdminApp() {
                     };
                     return (
                       <>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(mapFeaturesForm.show_boundary_border)}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
-                    />
-                    Show boundary border
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
-                    <span>Boundary border color</span>
-                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
-                      <input
-                        type="color"
-                        value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
-                        disabled={!borderEnabled}
-                        onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
-                        style={borderEnabled ? { ...inputBase, padding: 4, height: 42 } : { ...disabledFieldStyle, padding: 4, height: 42 }}
-                      />
-                      <input
-                        type="text"
-                        inputMode="text"
-                        value={mapFeaturesForm.boundary_border_color}
-                        disabled={!borderEnabled}
-                        onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
-                        onBlur={(e) => setMapFeaturesForm((prev) => ({
-                          ...prev,
-                          boundary_border_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev.boundary_border_color), "#e53935"),
-                        }))}
-                        placeholder="#e53935"
-                        style={borderEnabled ? inputBase : disabledFieldStyle}
-                      />
-                    </div>
-                    <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                      Enter a hex color if the mobile picker does not confirm cleanly.
-                    </span>
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
-                    <span>Boundary thickness (0.5 - 8)</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={mapFeaturesForm.boundary_border_width}
-                      disabled={!borderEnabled}
-                      onChange={(e) => {
-                        const nextValue = e.target.value;
-                        if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
-                          setMapFeaturesForm((prev) => ({ ...prev, boundary_border_width: nextValue }));
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0.5, max: 8 });
-                        setMapFeaturesForm((prev) => ({
-                          ...prev,
-                          boundary_border_width: normalized || "4",
-                        }));
-                      }}
-                      placeholder="4"
-                      style={borderEnabled ? inputBase : disabledFieldStyle}
-                    />
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(mapFeaturesForm.shade_outside_boundary)}
-                      onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
-                    />
-                    Shade outside boundary
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
-                    <span>Outside shade opacity (0.0 - 1.0)</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={mapFeaturesForm.outside_shade_opacity}
-                      disabled={!shadeEnabled}
-                      onChange={(e) => {
-                        const nextValue = e.target.value;
-                        if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
-                          setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: nextValue }));
-                        }
-                      }}
-                      onBlur={(e) => {
-                        const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0, max: 1 });
-                        setMapFeaturesForm((prev) => ({
-                          ...prev,
-                          outside_shade_opacity: normalized || "0.42",
-                        }));
-                      }}
-                      placeholder="0.42"
-                      style={shadeEnabled ? inputBase : disabledFieldStyle}
-                    />
-                  </label>
+                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.show_boundary_border)}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
+                          />
+                          Show boundary border
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
+                          <span>Boundary border color</span>
+                          <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                            <input
+                              type="color"
+                              value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
+                              disabled={!borderEnabled}
+                              onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                              style={borderEnabled ? { ...inputBase, padding: 4, height: 42 } : { ...disabledFieldStyle, padding: 4, height: 42 }}
+                            />
+                            <input
+                              type="text"
+                              inputMode="text"
+                              value={mapFeaturesForm.boundary_border_color}
+                              disabled={!borderEnabled}
+                              onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
+                              onBlur={(e) => setMapFeaturesForm((prev) => ({
+                                ...prev,
+                                boundary_border_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev.boundary_border_color), "#e53935"),
+                              }))}
+                              placeholder="#e53935"
+                              style={borderEnabled ? inputBase : disabledFieldStyle}
+                            />
+                          </div>
+                          <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                            Enter a hex color if the mobile picker does not confirm cleanly.
+                          </span>
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
+                          <span>Boundary thickness (0.5 - 8)</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={mapFeaturesForm.boundary_border_width}
+                            disabled={!borderEnabled}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                                setMapFeaturesForm((prev) => ({ ...prev, boundary_border_width: nextValue }));
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0.5, max: 8 });
+                              setMapFeaturesForm((prev) => ({
+                                ...prev,
+                                boundary_border_width: normalized || "4",
+                              }));
+                            }}
+                            placeholder="4"
+                            style={borderEnabled ? inputBase : disabledFieldStyle}
+                          />
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.shade_outside_boundary)}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
+                          />
+                          Shade outside boundary
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
+                          <span>Outside shade opacity (0.0 - 1.0)</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={mapFeaturesForm.outside_shade_opacity}
+                            disabled={!shadeEnabled}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
+                                setMapFeaturesForm((prev) => ({ ...prev, outside_shade_opacity: nextValue }));
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const normalized = normalizeBoundedDecimalInput(e.target.value, { min: 0, max: 1 });
+                              setMapFeaturesForm((prev) => ({
+                                ...prev,
+                                outside_shade_opacity: normalized || "0.42",
+                              }));
+                            }}
+                            placeholder="0.42"
+                            style={shadeEnabled ? inputBase : disabledFieldStyle}
+                          />
+                        </label>
                       </>
                     );
                   })()}
@@ -6119,58 +6615,106 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "files" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Organization Files</h2>
-              <form onSubmit={uploadTenantFile} style={responsiveActionGrid}>
-                <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
-                  <option value="contract">Contract</option>
-                  <option value="asset_coordinates">Asset Coordinates</option>
-                  <option value="boundary_geojson">Boundary GeoJSON</option>
-                  <option value="other">Other</option>
-                </select>
-                <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
-                <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
-                <button type="submit" style={buttonBase}>Upload</button>
-              </form>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                <div style={{ display: "grid", gap: 3 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Assets</h2>
+                  <p style={{ margin: 0, color: palette.textMuted }}>
+                    Review the organization asset library by category first, then add new files as needed.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }}
+                  disabled={!canEditTenantFiles}
+                  onClick={() => setTenantAssetsManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                  title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
+                >
+                  {tenantAssetsManagementView === "add" ? "Hide Add Asset" : "Add Asset"}
+                </button>
+              </div>
+              {tenantAssetsManagementView === "add" ? (
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Add New Asset</div>
+                  <form onSubmit={uploadTenantFile} style={responsiveActionGrid}>
+                    <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
+                      {TENANT_ASSET_CATEGORIES.map((category) => (
+                        <option key={category.key} value={category.key}>{category.label}</option>
+                      ))}
+                    </select>
+                    <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
+                    <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
+                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles}>Upload Asset</button>
+                  </form>
+                </div>
+              ) : null}
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
             </div>
 
             <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Files for {selectedTenantKey}</h2>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={tableHeadCell}>Category</th>
-                      <th style={tableHeadCell}>Name</th>
-                      <th style={tableHeadCell}>Size</th>
-                      <th style={tableHeadCell}>Uploaded</th>
-                      <th style={tableHeadCell}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tenantFiles.map((row) => (
-                      <tr key={row.id}>
-                        <td style={{ padding: "8px 0" }}>{row.file_category}</td>
-                        <td style={{ padding: "8px 0" }}>{row.file_name}</td>
-                        <td style={{ padding: "8px 0" }}>{formatBytes(row.size_bytes)}</td>
-                        <td style={{ padding: "8px 0" }}>{row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "-"}</td>
-                        <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open (signed)</button>
-                          {String(row?.file_category || "").trim().toLowerCase() === "boundary_geojson" ? (
-                            <button type="button" style={buttonAlt} onClick={() => void setBoundaryFromFile(row)}>Set as Boundary</button>
-                          ) : null}
-                          <button type="button" style={buttonAlt} onClick={() => void removeTenantFile(row)}>Remove</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {!tenantFiles.length ? (
-                      <tr>
-                        <td colSpan={5} style={{ padding: "10px 0", opacity: 0.75 }}>No files yet.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>
+                Asset Library for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
+              </h2>
+              <div style={{ display: "grid", gap: 12 }}>
+                {TENANT_ASSET_CATEGORIES.map((category) => {
+                  const matchingFiles = groupedTenantFiles[category.key] || [];
+                  const categoryLoaded = matchingFiles.length > 0;
+                  return (
+                    <div key={category.key} style={{ ...subPanel, display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                        <div style={{ display: "grid", gap: 3 }}>
+                          <strong style={{ color: palette.navy900 }}>{category.label}</strong>
+                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>{category.description}</span>
+                        </div>
+                        <span style={{
+                          borderRadius: 999,
+                          padding: "4px 10px",
+                          fontSize: 11.5,
+                          fontWeight: 800,
+                          color: categoryLoaded ? "#0f6e5c" : palette.textMuted,
+                          background: categoryLoaded ? "rgba(18,128,106,0.12)" : "rgba(74,97,122,0.12)",
+                        }}>
+                          {categoryLoaded ? "Loaded" : "Empty"}
+                        </span>
+                      </div>
+                      {categoryLoaded ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          {matchingFiles.map((row) => (
+                            <div key={row.id} style={{ ...subPanel, display: "grid", gap: 8, background: "#f8fbff" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 3 }}>
+                                  <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed file"}</strong>
+                                  <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    {summarizeTenantAssetCategory(row.file_category)}
+                                    {" • "}
+                                    {formatBytes(row.size_bytes)}
+                                    {" • "}
+                                    {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                  <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
+                                  {String(row?.file_category || "").trim().toLowerCase() === "boundary_geojson" ? (
+                                    <button type="button" style={buttonAlt} onClick={() => void setBoundaryFromFile(row)}>Set as Boundary</button>
+                                  ) : null}
+                                  <button type="button" style={{ ...buttonAlt, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles} onClick={() => void removeTenantFile(row)}>Remove</button>
+                                </div>
+                              </div>
+                              {String(row?.notes || "").trim() ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>{String(row.notes).trim()}</div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ margin: 0, color: palette.textMuted }}>No files are currently attached under this category.</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+              {!tenantFiles.length ? (
+                <div style={{ ...subPanel, color: palette.textMuted }}>No uploaded assets are attached to this organization yet.</div>
+              ) : null}
             </div>
           </section>
         ) : null}
