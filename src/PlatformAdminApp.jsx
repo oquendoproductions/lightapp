@@ -700,6 +700,11 @@ const TENANT_ASSET_CATEGORIES = [
     description: "Signed agreements, amendments, and supporting contract documents for the organization.",
   },
   {
+    key: "logo",
+    label: "Logos",
+    description: "Organization logo files used for hub branding, identity, and other public-facing surfaces.",
+  },
+  {
     key: "asset_coordinates",
     label: "Asset Coordinates",
     description: "Bulk asset coordinate files and source data used to seed or refresh organization asset records.",
