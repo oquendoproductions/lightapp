@@ -425,9 +425,9 @@ describe("PlatformAdminApp", () => {
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
     await user.selectOptions(screen.getByLabelText(/workspace section/i), "users");
 
-    await screen.findByRole("heading", { name: /current organization role assignments/i });
+    await screen.findByRole("heading", { name: /current organization users and admins/i });
     await user.click(screen.getByRole("button", { name: /add user\/admin/i }));
-    await screen.findByRole("heading", { name: /users and admins/i });
+    await screen.findByText(/add a person to this organization by finding an existing account/i);
     return { user, container };
   }
 

@@ -6160,7 +6160,7 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Users and Admins</h2>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Users and Admins</h2>
                 <button
                   type="button"
                   style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
@@ -6171,7 +6171,7 @@ export default function PlatformAdminApp() {
                 </button>
               </div>
               {tenantUsersManagementView === "add" ? (
-                <>
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                     Add a person to this organization by finding an existing account or creating a new invited account, then assign one organization role.
                   </p>
@@ -6366,13 +6366,9 @@ export default function PlatformAdminApp() {
                       </button>
                     </form>
                   )}
-                </>
+                </div>
               ) : null}
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
-              <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Role Assignments</h2>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
