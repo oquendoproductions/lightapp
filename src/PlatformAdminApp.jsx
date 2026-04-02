@@ -1195,6 +1195,8 @@ export default function PlatformAdminApp() {
   const [rolePermissionDraft, setRolePermissionDraft] = useState({});
   const [rolePermissionDirty, setRolePermissionDirty] = useState(false);
   const [tenantRoleEditMode, setTenantRoleEditMode] = useState(false);
+  const [tenantRoleDeleteConfirmOpen, setTenantRoleDeleteConfirmOpen] = useState(false);
+  const [tenantRoleDeleteLoading, setTenantRoleDeleteLoading] = useState(false);
   const [tenantFiles, setTenantFiles] = useState([]);
   const [auditRows, setAuditRows] = useState([]);
 
@@ -1509,6 +1511,11 @@ export default function PlatformAdminApp() {
     () => Number(tenantRoleAssignmentCounts?.[String(selectedRoleKey || "").trim()] || 0),
     [tenantRoleAssignmentCounts, selectedRoleKey]
   );
+  const pendingTenantRoleDelete = useMemo(() => {
+    const role = String(selectedRoleKey || "").trim();
+    if (!role) return null;
+    return sortedTenantRoleDefinitions.find((row) => String(row?.role || "").trim() === role) || null;
+  }, [selectedRoleKey, sortedTenantRoleDefinitions]);
   const selectedPlatformRoleDefinition = useMemo(
     () => sortedPlatformRoleDefinitions.find((row) => String(row?.role || "") === String(selectedPlatformRoleKey || "")) || null,
     [sortedPlatformRoleDefinitions, selectedPlatformRoleKey]
@@ -3851,28 +3858,34 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const { error } = await supabase
-      .from("tenant_role_definitions")
-      .delete()
-      .eq("tenant_key", tenant_key)
-      .eq("role", role);
-    if (error) {
-      setStatus((prev) => ({ ...prev, roles: statusText(error, "") }));
-      return;
+    setTenantRoleDeleteLoading(true);
+    try {
+      const { error } = await supabase
+        .from("tenant_role_definitions")
+        .delete()
+        .eq("tenant_key", tenant_key)
+        .eq("role", role);
+      if (error) {
+        setStatus((prev) => ({ ...prev, roles: statusText(error, "") }));
+        return;
+      }
+
+      await logAudit({
+        tenant_key,
+        action: "tenant_role_removed",
+        entity_type: "tenant_role",
+        entity_id: role,
+        details: {},
+      });
+
+      setStatus((prev) => ({ ...prev, roles: `Removed role ${role} from ${tenant_key}.` }));
+      setTenantRoleDeleteConfirmOpen(false);
+      setTenantRoleEditMode(false);
+      await loadTenantRoleConfig(tenant_key);
+      await loadTenantAdmins();
+    } finally {
+      setTenantRoleDeleteLoading(false);
     }
-
-    await logAudit({
-      tenant_key,
-      action: "tenant_role_removed",
-      entity_type: "tenant_role",
-      entity_id: role,
-      details: {},
-    });
-
-    setStatus((prev) => ({ ...prev, roles: `Removed role ${role} from ${tenant_key}.` }));
-    setTenantRoleEditMode(false);
-    await loadTenantRoleConfig(tenant_key);
-    await loadTenantAdmins();
   }, [canDeleteTenantRoles, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
 
   const saveRolePermissions = useCallback(async () => {
@@ -5032,6 +5045,53 @@ export default function PlatformAdminApp() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+      {tenantRoleDeleteConfirmOpen && pendingTenantRoleDelete ? (
+        <div style={authModalBackdrop} onClick={() => !tenantRoleDeleteLoading && setTenantRoleDeleteConfirmOpen(false)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Delete Role</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  {`Remove ${toOrganizationLanguage(String(pendingTenantRoleDelete?.role_label || pendingTenantRoleDelete?.role || "").trim() || "this role")} from this organization?`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !tenantRoleDeleteLoading && setTenantRoleDeleteConfirmOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close role delete dialog"
+                disabled={tenantRoleDeleteLoading}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 8, fontSize: 13, color: palette.text }}>
+              <div><strong>Role:</strong> {toOrganizationLanguage(String(pendingTenantRoleDelete?.role_label || pendingTenantRoleDelete?.role || "").trim() || "Not set")}</div>
+              <div><strong>Role Key:</strong> {String(pendingTenantRoleDelete?.role || "").trim() || "Not set"}</div>
+              <div><strong>Type:</strong> {pendingTenantRoleDelete?.is_system ? "System role" : "Custom role"}</div>
+              <div><strong>Assignments:</strong> {selectedRoleAssignmentCount}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...buttonBase, minWidth: 150, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                disabled={tenantRoleDeleteLoading || !canDeleteTenantRoles}
+                onClick={() => void removeTenantRole(pendingTenantRoleDelete)}
+              >
+                {tenantRoleDeleteLoading ? "Deleting..." : "Delete Role"}
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonAlt, minWidth: 120 }}
+                onClick={() => setTenantRoleDeleteConfirmOpen(false)}
+                disabled={tenantRoleDeleteLoading}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -6931,7 +6991,7 @@ export default function PlatformAdminApp() {
                                   ? "Delete role"
                                   : "You need the Roles delete permission"
                           }
-                          onClick={() => void removeTenantRole(selectedRoleDefinition)}
+                          onClick={() => setTenantRoleDeleteConfirmOpen(true)}
                         >
                           Delete Role
                         </button>

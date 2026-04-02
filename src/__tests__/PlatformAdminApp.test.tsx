@@ -78,6 +78,13 @@ vi.mock("../supabaseClient", () => {
         is_system: true,
         active: true,
       },
+      {
+        tenant_key: "ashtabulacity",
+        role: "field_supervisor",
+        role_label: "Field Supervisor",
+        is_system: false,
+        active: true,
+      },
     ],
     tenant_role_permissions: [],
     tenant_profiles: [],
@@ -432,6 +439,22 @@ describe("PlatformAdminApp", () => {
     return { user, container };
   }
 
+  async function openRolesAndPermissions() {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /manage organizations/i }));
+    await screen.findByRole("heading", { name: /start here/i });
+
+    await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
+    await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
+    await user.selectOptions(screen.getByLabelText(/workspace section/i), "roles");
+
+    await screen.findByRole("heading", { name: /roles and permissions/i });
+    return { user };
+  }
+
   it("shows the person-first existing-account flow and hides UUIDs in search results", async () => {
     const { user, container } = await openUsersAndAdmins();
 
@@ -505,6 +528,19 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByLabelText(/workspace section/i)).toHaveValue("roles");
     expect(screen.getByText(/choose role/i)).toBeInTheDocument();
     expect(screen.getAllByRole("combobox").length).toBeGreaterThan(1);
+  });
+
+  it("shows a confirmation popup before deleting a custom role", async () => {
+    const { user } = await openRolesAndPermissions();
+
+    const selects = screen.getAllByRole("combobox");
+    await user.selectOptions(selects[1], "field_supervisor");
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await user.click(screen.getByRole("button", { name: /delete role/i }));
+
+    await screen.findByRole("heading", { name: /delete role/i });
+    expect(screen.getByText(/remove field supervisor from this organization\?/i)).toBeInTheDocument();
+    expect(screen.getByText(/role key:/i)).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
