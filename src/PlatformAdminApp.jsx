@@ -923,7 +923,7 @@ function summarizeTenantAssetCategory(categoryKey) {
 function formatLeadNumber(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue) || numericValue <= 0) return "Lead Pending";
-  return `Lead #${Math.trunc(numericValue)}`;
+  return `LD-${String(Math.trunc(numericValue)).padStart(4, "0")}`;
 }
 
 function domainKeyToLabel(domainKey) {
