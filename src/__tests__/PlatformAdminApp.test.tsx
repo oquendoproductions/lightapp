@@ -410,6 +410,7 @@ vi.mock("../supabaseClient", () => {
 
 describe("PlatformAdminApp", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     mockState.resetData();
   });
 
@@ -489,6 +490,21 @@ describe("PlatformAdminApp", () => {
     await openUsersAndAdmins();
 
     expect(screen.getByRole("link", { name: /open organization hub/i })).toBeInTheDocument();
+  });
+
+  it("restores the current tenant workspace after refresh-style reload", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/?pcp_section=organizations&pcp_page=manage-organizations&pcp_entry=tenant&pcp_tenant=ashtabulacity&pcp_tab=roles"
+    );
+
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /manage organizations/i });
+    expect(screen.getByLabelText(/workspace section/i)).toHaveValue("roles");
+    expect(screen.getByText(/choose role/i)).toBeInTheDocument();
+    expect(screen.getByText(/manage role permission/i)).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {

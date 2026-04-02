@@ -53,6 +53,15 @@ const CONTROL_PLANE_PAGES = [
 
 const DEFAULT_CONTROL_PLANE_PAGE = "organization-reports";
 const DEFAULT_SETTINGS_CONTROL_PLANE_PAGE = "account-info";
+const CONTROL_PLANE_ROUTE_QUERY_KEYS = {
+  section: "pcp_section",
+  page: "pcp_page",
+  entry: "pcp_entry",
+  tenant: "pcp_tenant",
+  tab: "pcp_tab",
+  addStep: "pcp_add_step",
+  lead: "pcp_lead",
+};
 
 const CONTROL_PLANE_TOP_NAV_ITEMS = [
   { type: "page", key: "manage-organizations", label: "Manage Organizations" },
@@ -78,6 +87,46 @@ const CONTROL_PLANE_SETTINGS_NAV = [
     ],
   },
 ];
+
+function readInitialControlPlaneRouteState() {
+  const defaultState = {
+    controlPlaneSection: "reports",
+    controlPlanePage: DEFAULT_CONTROL_PLANE_PAGE,
+    entryStep: "start",
+    selectedTenantKey: "ashtabulacity",
+    activeTab: "tenants",
+    addTenantStep: ADD_TENANT_STEPS[0].key,
+    selectedLeadId: "",
+  };
+  if (typeof window === "undefined") return defaultState;
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedPage = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.page) || "").trim();
+  const resolvedPage = CONTROL_PLANE_PAGES.find((page) => page.key === requestedPage);
+  const requestedSection = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.section) || "").trim();
+  const resolvedSection = resolvedPage?.section
+    || CONTROL_PLANE_SECTIONS.find((section) => section.key === requestedSection)?.key
+    || defaultState.controlPlaneSection;
+  const requestedEntryStep = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.entry) || "").trim();
+  const entryStep = ["start", "add", "tenant"].includes(requestedEntryStep) ? requestedEntryStep : defaultState.entryStep;
+  const tenantKey = sanitizeTenantKey(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant) || "") || defaultState.selectedTenantKey;
+  const requestedTab = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab) || "").trim();
+  const normalizedTab = requestedTab === "files" ? "domains" : requestedTab;
+  const activeTab = TAB_OPTIONS.some((tab) => tab.key === normalizedTab) ? normalizedTab : defaultState.activeTab;
+  const requestedAddStep = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.addStep) || "").trim();
+  const addTenantStep = ADD_TENANT_STEPS.some((step) => step.key === requestedAddStep) ? requestedAddStep : defaultState.addTenantStep;
+  const selectedLeadId = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.lead) || "").trim();
+
+  return {
+    controlPlaneSection: resolvedSection,
+    controlPlanePage: resolvedPage?.key || defaultState.controlPlanePage,
+    entryStep,
+    selectedTenantKey: tenantKey,
+    activeTab,
+    addTenantStep,
+    selectedLeadId,
+  };
+}
 
 const PLATFORM_PERMISSION_ACTIONS = [
   { key: "access", label: "Access" },
@@ -1085,6 +1134,7 @@ function normalizeHexDraft(value, fallback = "#e53935") {
 }
 
 export default function PlatformAdminApp() {
+  const initialControlPlaneRouteState = useMemo(() => readInitialControlPlaneRouteState(), []);
   const [authReady, setAuthReady] = useState(false);
   const [sessionUserId, setSessionUserId] = useState("");
   const [sessionEmail, setSessionEmail] = useState("");
@@ -1109,9 +1159,9 @@ export default function PlatformAdminApp() {
   const [forgotPasswordError, setForgotPasswordError] = useState("");
   const [authResetLoading, setAuthResetLoading] = useState(false);
 
-  const [activeTab, setActiveTab] = useState("tenants");
-  const [controlPlaneSection, setControlPlaneSection] = useState("reports");
-  const [controlPlanePage, setControlPlanePage] = useState(DEFAULT_CONTROL_PLANE_PAGE);
+  const [activeTab, setActiveTab] = useState(initialControlPlaneRouteState.activeTab);
+  const [controlPlaneSection, setControlPlaneSection] = useState(initialControlPlaneRouteState.controlPlaneSection);
+  const [controlPlanePage, setControlPlanePage] = useState(initialControlPlaneRouteState.controlPlanePage);
 
   const [tenants, setTenants] = useState([]);
   const [tenantAdmins, setTenantAdmins] = useState([]);
@@ -1135,7 +1185,7 @@ export default function PlatformAdminApp() {
   const [platformRoleStatus, setPlatformRoleStatus] = useState("");
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
-  const [selectedLeadId, setSelectedLeadId] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState(initialControlPlaneRouteState.selectedLeadId);
   const [leadStatus, setLeadStatus] = useState("");
   const [leadLoading, setLeadLoading] = useState(false);
   const [tenantRoleDefinitions, setTenantRoleDefinitions] = useState([]);
@@ -1152,9 +1202,9 @@ export default function PlatformAdminApp() {
   const [tenantVisibilityByTenant, setTenantVisibilityByTenant] = useState({});
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
 
-  const [selectedTenantKey, setSelectedTenantKey] = useState("ashtabulacity");
-  const [entryStep, setEntryStep] = useState("start"); // start | add | tenant
-  const [addTenantStep, setAddTenantStep] = useState(ADD_TENANT_STEPS[0].key);
+  const [selectedTenantKey, setSelectedTenantKey] = useState(initialControlPlaneRouteState.selectedTenantKey);
+  const [entryStep, setEntryStep] = useState(initialControlPlaneRouteState.entryStep); // start | add | tenant
+  const [addTenantStep, setAddTenantStep] = useState(initialControlPlaneRouteState.addTenantStep);
   const [tenantSearch, setTenantSearch] = useState("");
 
   const [tenantForm, setTenantForm] = useState(initialTenantForm);
@@ -2929,6 +2979,46 @@ export default function PlatformAdminApp() {
       setSelectedTenantKey(tenantOptions[0]);
     }
   }, [tenantOptions, selectedTenantKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.section, controlPlaneSection);
+    params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.page, controlPlanePage);
+    params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.entry, entryStep);
+
+    if (entryStep === "tenant") {
+      const tenantKey = sanitizeTenantKey(selectedTenantKey);
+      if (tenantKey) {
+        params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant, tenantKey);
+      } else {
+        params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant);
+      }
+      params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab, activeTab === "files" ? "domains" : activeTab);
+    } else {
+      params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant);
+      params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab);
+    }
+
+    if (entryStep === "add") {
+      params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.addStep, addTenantStep);
+    } else {
+      params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.addStep);
+    }
+
+    if (controlPlanePage === "lead-detail" && selectedLeadId) {
+      params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.lead, selectedLeadId);
+    } else {
+      params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.lead);
+    }
+
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  }, [controlPlaneSection, controlPlanePage, entryStep, selectedTenantKey, activeTab, addTenantStep, selectedLeadId]);
 
   useEffect(() => {
     if (!sortedPlatformRoleDefinitions.some((row) => String(row?.role || "") === String(selectedPlatformRoleKey || ""))) {
