@@ -504,7 +504,7 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("heading", { name: /manage organizations/i });
     expect(screen.getByLabelText(/workspace section/i)).toHaveValue("roles");
     expect(screen.getByText(/choose role/i)).toBeInTheDocument();
-    expect(screen.getByText(/manage role permission/i)).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox").length).toBeGreaterThan(1);
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {

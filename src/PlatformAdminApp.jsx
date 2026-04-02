@@ -6860,7 +6860,7 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ ...card, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Roles and Permissions</h2>
                 <button
@@ -6873,9 +6873,6 @@ export default function PlatformAdminApp() {
                 </button>
               </div>
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
               <div style={{ display: "grid", gap: 6, maxWidth: 360 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Choose Role</div>
                 <select value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
@@ -6890,9 +6887,6 @@ export default function PlatformAdminApp() {
                   })}
                 </select>
               </div>
-            </div>
-
-            <div style={{ ...card, display: "grid", gap: 8 }}>
               {selectedRoleDefinition ? (
                 <>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap" }}>
