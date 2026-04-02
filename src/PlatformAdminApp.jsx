@@ -428,12 +428,12 @@ const controlPlaneTabsRail = {
 
 const controlPlaneTabsShell = {
   width: "100%",
-  padding: "8px 10px",
+  padding: "10px 10px 0",
   border: "1px solid rgba(23, 49, 79, 0.08)",
   borderTop: 0,
-  borderRadius: "0 0 22px 22px",
+  borderRadius: 0,
   background: "rgba(255, 255, 255, 0.92)",
-  boxShadow: "0 10px 24px rgba(17, 49, 79, 0.06)",
+  boxShadow: "none",
 };
 
 const controlPlaneTabsBar = {
@@ -4178,10 +4178,19 @@ export default function PlatformAdminApp() {
                 backdropFilter: "blur(14px)",
                 borderTop: "1px solid rgba(23, 49, 79, 0.08)",
               }
-            : { ...controlPlaneTabsRail }
+            : { ...controlPlaneTabsRail, marginBottom: 0 }
         }
       >
-        <div style={controlPlaneTabsShell}>
+        <div
+          style={
+            isCompactViewport
+              ? controlPlaneTabsShell
+              : {
+                  ...controlPlaneTabsShell,
+                  borderBottom: 0,
+                }
+          }
+        >
           <nav
             style={
               isCompactViewport
@@ -4257,7 +4266,22 @@ export default function PlatformAdminApp() {
           </nav>
         </div>
       </div>
-      <div style={{ ...card, display: "grid", gap: 6, ...(isCompactViewport ? null : { borderTopLeftRadius: 0, borderTopRightRadius: 0 }) }}>
+      <div
+        style={{
+          ...card,
+          display: "grid",
+          gap: 6,
+          ...(isCompactViewport
+            ? null
+            : {
+                marginTop: 0,
+                borderTopLeftRadius: 0,
+                borderTopRightRadius: 0,
+                borderTop: 0,
+                boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
+              }),
+        }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "grid", gap: 6 }}>
             <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
