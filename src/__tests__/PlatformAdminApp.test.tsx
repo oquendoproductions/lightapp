@@ -174,6 +174,16 @@ vi.mock("../supabaseClient", () => {
         sort_order: index + 1,
       };
     }),
+    platform_security_settings: [
+      {
+        config_key: "default",
+        require_pin_for_role_changes: false,
+        require_pin_for_team_changes: false,
+        require_pin_for_account_changes: false,
+        require_pin_for_report_state_changes: false,
+      },
+    ],
+    platform_user_security_profiles: [],
     admins: [],
   });
 
@@ -393,10 +403,10 @@ vi.mock("../supabaseClient", () => {
     from: vi.fn((table: string) => new QueryBuilder(table)),
     rpc: vi.fn(async () => ({ data: [], error: null })),
     functions: {
-      invoke: mockState.invokeMock.mockImplementation(async (_name: string, options?: { body?: any; headers?: Record<string, string> }) => {
+      invoke: mockState.invokeMock.mockImplementation(async (name: string, options?: { body?: any; headers?: Record<string, string> }) => {
         const action = String(options?.body?.action || "").trim().toLowerCase();
 
-        if (action === "search") {
+        if (name === "platform-user-admin" && action === "search") {
           const rawQuery = normalizeText(options?.body?.query);
           const query = rawQuery.toLowerCase();
           const phoneDigits = normalizePhone(options?.body?.query);
@@ -417,7 +427,7 @@ vi.mock("../supabaseClient", () => {
           return { data: { ok: true, results }, error: null };
         }
 
-        if (action === "lookup_users") {
+        if (name === "platform-user-admin" && action === "lookup_users") {
           const ids = new Set(
             Array.isArray(options?.body?.user_ids)
               ? options.body.user_ids.map((value: unknown) => String(value || "").trim()).filter(Boolean)
@@ -431,7 +441,7 @@ vi.mock("../supabaseClient", () => {
           return { data: { ok: true, results }, error: null };
         }
 
-        if (action === "invite_and_assign") {
+        if (name === "platform-user-admin" && action === "invite_and_assign") {
           const createdUser = {
             id: "user-3",
             email: normalizeEmail(options?.body?.email),
@@ -453,7 +463,7 @@ vi.mock("../supabaseClient", () => {
           };
         }
 
-        if (action === "invite_platform_and_assign") {
+        if (name === "platform-user-admin" && action === "invite_platform_and_assign") {
           const createdUser = {
             id: "user-4",
             email: normalizeEmail(options?.body?.email),
@@ -475,6 +485,52 @@ vi.mock("../supabaseClient", () => {
           };
         }
 
+        if (name === "platform-role-admin" && action === "create_role") {
+          const role = String(options?.body?.role || "").trim().toLowerCase();
+          const roleLabel = normalizeText(options?.body?.role_label || role);
+          if (!role) {
+            return { data: null, error: { message: "Role key is required." } };
+          }
+          if (data.platform_role_definitions.some((row: any) => String(row?.role || "").trim() === role)) {
+            return { data: null, error: { message: `Role ${role} already exists.` } };
+          }
+
+          data.platform_role_definitions.push({
+            role,
+            role_label: roleLabel,
+            is_system: false,
+            active: true,
+          });
+          for (const catalogRow of data.platform_permissions_catalog) {
+            data.platform_role_permissions.push({
+              role,
+              permission_key: String(catalogRow?.permission_key || "").trim(),
+              allowed: false,
+            });
+          }
+          return { data: { ok: true, role }, error: null };
+        }
+
+        if (name === "platform-role-admin" && action === "save_permissions") {
+          const role = String(options?.body?.role || "").trim().toLowerCase();
+          const permissions = options?.body?.permissions && typeof options.body.permissions === "object"
+            ? options.body.permissions
+            : {};
+          data.platform_role_permissions = data.platform_role_permissions.map((row: any) => (
+            String(row?.role || "").trim() === role
+              ? { ...row, allowed: Boolean(permissions?.[row.permission_key]) }
+              : row
+          ));
+          return { data: { ok: true, role }, error: null };
+        }
+
+        if (name === "platform-role-admin" && action === "delete_role") {
+          const role = String(options?.body?.role || "").trim().toLowerCase();
+          data.platform_role_definitions = data.platform_role_definitions.filter((row: any) => String(row?.role || "").trim() !== role);
+          data.platform_role_permissions = data.platform_role_permissions.filter((row: any) => String(row?.role || "").trim() !== role);
+          return { data: { ok: true, role }, error: null };
+        }
+
         return { data: { ok: true }, error: null };
       }),
     },
@@ -492,6 +548,7 @@ vi.mock("../supabaseClient", () => {
 
 describe("PlatformAdminApp", () => {
   beforeEach(() => {
+    window.innerWidth = 1280;
     window.history.replaceState({}, "", "/");
     mockState.resetData();
   });
@@ -530,6 +587,7 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+
   async function openManageTeam() {
     const user = userEvent.setup();
     window.history.replaceState({}, "", "/?pcp_section=settings&pcp_page=manage-team");
@@ -547,6 +605,20 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("heading", { name: /account info/i });
     return { user };
   }
+
+  it("shows a mobile settings navigator and can switch settings pages", async () => {
+    const user = userEvent.setup();
+    window.innerWidth = 375;
+    window.history.replaceState({}, "", "/?pcp_section=settings&pcp_page=account-info");
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /account info/i });
+    expect(screen.getByLabelText(/settings category/i)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(/settings category/i), "team");
+    await user.click(screen.getByRole("button", { name: /manage team/i }));
+    await screen.findByRole("heading", { name: /current platform team/i });
+  });
 
   it("shows the person-first existing-account flow and hides UUIDs in search results", async () => {
     const { user, container } = await openUsersAndAdmins();

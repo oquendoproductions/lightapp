@@ -93,6 +93,13 @@ const CONTROL_PLANE_SETTINGS_NAV = [
   },
 ];
 
+const DEFAULT_PLATFORM_SECURITY_SETTINGS = {
+  require_pin_for_role_changes: false,
+  require_pin_for_team_changes: false,
+  require_pin_for_account_changes: false,
+  require_pin_for_report_state_changes: false,
+};
+
 function readInitialControlPlaneRouteState() {
   const defaultState = {
     controlPlaneSection: "reports",
@@ -626,6 +633,37 @@ const controlPlaneSubmenu = {
   zIndex: 30,
 };
 
+const controlPlaneMobileTabsShell = {
+  padding: 8,
+  border: "1px solid rgba(23, 49, 79, 0.12)",
+  borderRadius: 28,
+  background: "rgba(255, 255, 255, 0.96)",
+  boxShadow: "0 18px 36px rgba(17, 49, 79, 0.16)",
+  backdropFilter: "blur(14px)",
+};
+
+const controlPlaneMobileTabButton = {
+  width: "100%",
+  border: 0,
+  borderRadius: 18,
+  background: "transparent",
+  color: "#17314f",
+  minHeight: 48,
+  padding: "8px 6px",
+  font: "inherit",
+  fontSize: 12,
+  fontWeight: 800,
+  lineHeight: 1.1,
+  textAlign: "center",
+  cursor: "pointer",
+};
+
+const controlPlaneMobileTabButtonActive = {
+  ...controlPlaneMobileTabButton,
+  background: "rgba(23, 109, 120, 0.14)",
+  color: "#0e5d67",
+};
+
 const controlPlaneSubmenuItem = {
   display: "grid",
   width: "100%",
@@ -1036,6 +1074,27 @@ async function hashLeadFingerprint(value) {
   return `fallback_${Math.abs(hash)}`;
 }
 
+async function hashSecurityPin(userId, pin) {
+  const normalizedUserId = String(userId || "").trim().toLowerCase();
+  const normalizedPin = String(pin || "").trim();
+  if (!normalizedUserId || !normalizedPin) return "";
+  const payload = `platform-pin:${normalizedUserId}:${normalizedPin}`;
+  try {
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+      return Array.from(new Uint8Array(digest)).map((part) => part.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fallback below
+  }
+  let hash = 0;
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = ((hash << 5) - hash) + payload.charCodeAt(index);
+    hash |= 0;
+  }
+  return `fallback_${Math.abs(hash)}`;
+}
+
 function buildAuditEntityLabel(row) {
   const entityType = String(row?.entity_type || "").trim().toLowerCase();
   const entityId = String(row?.entity_id || "").trim();
@@ -1296,6 +1355,12 @@ export default function PlatformAdminApp() {
   const [platformRoleEditMode, setPlatformRoleEditMode] = useState(false);
   const [platformRoleDeleteConfirmOpen, setPlatformRoleDeleteConfirmOpen] = useState(false);
   const [platformRoleDeleteLoading, setPlatformRoleDeleteLoading] = useState(false);
+  const [platformSecuritySettingsDraft, setPlatformSecuritySettingsDraft] = useState(DEFAULT_PLATFORM_SECURITY_SETTINGS);
+  const [platformSecurityPinDraft, setPlatformSecurityPinDraft] = useState({ pin: "", confirm_pin: "", enabled: false });
+  const [showPlatformSecurityPin, setShowPlatformSecurityPin] = useState(false);
+  const [showPlatformSecurityPinConfirm, setShowPlatformSecurityPinConfirm] = useState(false);
+  const [platformSecurityStatus, setPlatformSecurityStatus] = useState("");
+  const [platformSecuritySaving, setPlatformSecuritySaving] = useState({ pin: false, checks: false });
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
   const [selectedLeadId, setSelectedLeadId] = useState(initialControlPlaneRouteState.selectedLeadId);
@@ -1389,6 +1454,7 @@ export default function PlatformAdminApp() {
     account: true,
     team: true,
   });
+  const [mobileSettingsGroupKey, setMobileSettingsGroupKey] = useState("account");
 
   const invokePlatformUserAdmin = useCallback(async (body) => {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -1405,6 +1471,27 @@ export default function PlatformAdminApp() {
     }
 
     return supabase.functions.invoke("platform-user-admin", {
+      body,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  }, []);
+  const invokePlatformRoleAdmin = useCallback(async (body) => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      return { data: null, error: sessionError };
+    }
+
+    const accessToken = String(sessionData?.session?.access_token || "").trim();
+    if (!accessToken) {
+      return {
+        data: null,
+        error: new Error("Platform admin session expired. Sign in again and retry."),
+      };
+    }
+
+    return supabase.functions.invoke("platform-role-admin", {
       body,
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -1661,24 +1748,6 @@ export default function PlatformAdminApp() {
     () => Number(platformRoleAssignmentCounts?.[String(selectedPlatformRoleKey || "").trim()] || 0),
     [platformRoleAssignmentCounts, selectedPlatformRoleKey]
   );
-  const activeSettingsGroupKey = useMemo(
-    () => CONTROL_PLANE_SETTINGS_NAV.find((group) => group.items.some((item) => item.key === controlPlanePage))?.key || "",
-    [controlPlanePage]
-  );
-  const filteredControlPlaneSettingsNav = useMemo(() => {
-    const query = String(controlPlaneSettingsSearch || "").trim().toLowerCase();
-    if (!query) return CONTROL_PLANE_SETTINGS_NAV;
-    return CONTROL_PLANE_SETTINGS_NAV
-      .map((group) => {
-        const groupMatches = String(group.label || "").trim().toLowerCase().includes(query);
-        if (groupMatches) return group;
-        const nextItems = group.items.filter((item) => String(item.label || "").trim().toLowerCase().includes(query));
-        if (!nextItems.length) return null;
-        return { ...group, items: nextItems };
-      })
-      .filter(Boolean);
-  }, [controlPlaneSettingsSearch]);
-
   const tenantSearchQuery = String(tenantSearch || "").trim();
   const hasTenantSearchQuery = tenantSearchQuery.length > 0;
   const platformPermissionSet = useMemo(
@@ -1698,6 +1767,8 @@ export default function PlatformAdminApp() {
   const canViewPlatformRoles = hasPlatformPermission("roles.access") || hasPlatformPermission("roles.edit") || hasPlatformPermission("roles.delete");
   const canManagePlatformRoles = hasPlatformPermission("roles.edit");
   const canDeletePlatformRoles = hasPlatformPermission("roles.delete");
+  const canViewPlatformSecurity = hasPlatformPermission("security.access") || hasPlatformPermission("security.edit") || hasPlatformPermission("security.delete");
+  const canManagePlatformSecurity = hasPlatformPermission("security.edit");
   const canEditTenantSetup = hasPlatformPermission("organizations.edit");
   const canDeleteTenant = hasPlatformPermission("organizations.delete");
   const canViewTenantUsers = hasPlatformPermission("users.access") || hasPlatformPermission("users.edit") || hasPlatformPermission("users.delete");
@@ -1742,6 +1813,39 @@ export default function PlatformAdminApp() {
     const permissionKey = CONTROL_PLANE_PAGE_PERMISSIONS[pageKey];
     return permissionKey ? hasPlatformPermission(permissionKey) : false;
   }, [hasPlatformPermission]);
+  const visibleControlPlaneSettingsNav = useMemo(
+    () => CONTROL_PLANE_SETTINGS_NAV
+      .map((group) => {
+        const items = group.items.filter((item) => canAccessControlPlanePage(item.key));
+        return items.length ? { ...group, items } : null;
+      })
+      .filter(Boolean),
+    [canAccessControlPlanePage]
+  );
+  const activeSettingsGroupKey = useMemo(
+    () => visibleControlPlaneSettingsNav.find((group) => group.items.some((item) => item.key === controlPlanePage))?.key || "",
+    [controlPlanePage, visibleControlPlaneSettingsNav]
+  );
+  const filteredControlPlaneSettingsNav = useMemo(() => {
+    const query = String(controlPlaneSettingsSearch || "").trim().toLowerCase();
+    if (!query) return visibleControlPlaneSettingsNav;
+    return visibleControlPlaneSettingsNav
+      .map((group) => {
+        const groupMatches = String(group.label || "").trim().toLowerCase().includes(query);
+        if (groupMatches) return group;
+        const nextItems = group.items.filter((item) => String(item.label || "").trim().toLowerCase().includes(query));
+        if (!nextItems.length) return null;
+        return { ...group, items: nextItems };
+      })
+      .filter(Boolean);
+  }, [controlPlaneSettingsSearch, visibleControlPlaneSettingsNav]);
+  const activeMobileSettingsGroup = useMemo(
+    () => filteredControlPlaneSettingsNav.find((group) => group.key === mobileSettingsGroupKey)
+      || filteredControlPlaneSettingsNav.find((group) => group.key === activeSettingsGroupKey)
+      || filteredControlPlaneSettingsNav[0]
+      || null,
+    [activeSettingsGroupKey, filteredControlPlaneSettingsNav, mobileSettingsGroupKey]
+  );
   const availableTenantWorkspaceTabs = useMemo(
     () => TAB_OPTIONS.filter((tab) => {
       if (tab.key === "domains") {
@@ -2033,6 +2137,54 @@ export default function PlatformAdminApp() {
     setPlatformRolePermissions(Array.isArray(permsResult.data) ? permsResult.data : []);
     setPlatformRoleStatus("");
   }, [canViewPlatformRoles, canViewPlatformUsers]);
+
+  const loadPlatformSecurityConfig = useCallback(async () => {
+    if (!sessionUserId || !canViewPlatformSecurity) {
+      setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
+      setPlatformSecurityPinDraft({ pin: "", confirm_pin: "", enabled: false });
+      setPlatformSecurityStatus("");
+      return;
+    }
+
+    const [settingsResult, pinResult] = await Promise.all([
+      supabase
+        .from("platform_security_settings")
+        .select("config_key,require_pin_for_role_changes,require_pin_for_team_changes,require_pin_for_account_changes,require_pin_for_report_state_changes")
+        .eq("config_key", "default")
+        .maybeSingle(),
+      supabase
+        .from("platform_user_security_profiles")
+        .select("user_id,pin_enabled")
+        .eq("user_id", sessionUserId)
+        .maybeSingle(),
+    ]);
+
+    const firstError = settingsResult.error || pinResult.error;
+    if (firstError) {
+      if (isMissingRelationError(firstError)) {
+        setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
+        setPlatformSecurityPinDraft({ pin: "", confirm_pin: "", enabled: false });
+        setPlatformSecurityStatus("Security tables are not available yet. Run the latest migrations to enable PIN checkpoints.");
+        return;
+      }
+      setPlatformSecurityStatus(statusText(firstError, ""));
+      return;
+    }
+
+    setPlatformSecuritySettingsDraft({
+      require_pin_for_role_changes: Boolean(settingsResult.data?.require_pin_for_role_changes),
+      require_pin_for_team_changes: Boolean(settingsResult.data?.require_pin_for_team_changes),
+      require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
+      require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
+    });
+    setPlatformSecurityPinDraft((prev) => ({
+      ...prev,
+      pin: "",
+      confirm_pin: "",
+      enabled: Boolean(pinResult.data?.pin_enabled),
+    }));
+    setPlatformSecurityStatus("");
+  }, [canViewPlatformSecurity, sessionUserId]);
 
   const loadClientLeads = useCallback(async () => {
     if (!hasPlatformPermission("leads.access") && !hasPlatformPermission("leads.edit")) {
@@ -3001,32 +3153,13 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const { error: roleInsertError } = await supabase
-      .from("platform_role_definitions")
-      .insert([{
-        role,
-        role_label,
-        is_system: false,
-        active: true,
-        created_by: cleanOptional(sessionUserId),
-      }]);
-    if (roleInsertError) {
-      setPlatformRoleStatus(statusText(roleInsertError, ""));
-      return;
-    }
-
-    const permissionRows = DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => ({
+    const { error } = await invokePlatformRoleAdmin({
+      action: "create_role",
       role,
-      permission_key,
-      allowed: false,
-      updated_by: cleanOptional(sessionUserId),
-    }));
-
-    const { error: permissionSeedError } = await supabase
-      .from("platform_role_permissions")
-      .upsert(permissionRows, { onConflict: "role,permission_key" });
-    if (permissionSeedError) {
-      setPlatformRoleStatus(statusText(permissionSeedError, ""));
+      role_label,
+    });
+    if (error) {
+      setPlatformRoleStatus(statusText(error, ""));
       return;
     }
 
@@ -3035,7 +3168,7 @@ export default function PlatformAdminApp() {
     setPlatformRoleStatus(`Created PCP role ${role}.`);
     setPlatformRoleAddModalOpen(false);
     await loadPlatformRoleConfig();
-  }, [canManagePlatformRoles, loadPlatformRoleConfig, platformRoleForm, sessionUserId, sortedPlatformRoleDefinitions]);
+  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRoleForm, sortedPlatformRoleDefinitions]);
 
   const removePlatformRoleDefinition = useCallback(async (row) => {
     if (!canDeletePlatformRoles) {
@@ -3055,10 +3188,10 @@ export default function PlatformAdminApp() {
     }
 
     setPlatformRoleDeleteLoading(true);
-    const { error } = await supabase
-      .from("platform_role_definitions")
-      .delete()
-      .eq("role", role);
+    const { error } = await invokePlatformRoleAdmin({
+      action: "delete_role",
+      role,
+    });
     setPlatformRoleDeleteLoading(false);
     if (error) {
       setPlatformRoleStatus(statusText(error, ""));
@@ -3070,7 +3203,7 @@ export default function PlatformAdminApp() {
     setPlatformRoleStatus(`Removed PCP role ${role}.`);
     await loadPlatformRoleConfig();
     await loadPlatformTeamAssignments();
-  }, [canDeletePlatformRoles, loadPlatformRoleConfig, loadPlatformTeamAssignments, platformRoleAssignmentCounts]);
+  }, [canDeletePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, loadPlatformTeamAssignments, platformRoleAssignmentCounts]);
 
   const savePlatformRolePermissions = useCallback(async () => {
     if (!canManagePlatformRoles) {
@@ -3083,16 +3216,15 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const rows = DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => ({
-      role,
-      permission_key,
-      allowed: Boolean(platformRolePermissionDraft?.[permission_key]),
-      updated_by: cleanOptional(sessionUserId),
-    }));
+    const permissions = Object.fromEntries(
+      DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => [permission_key, Boolean(platformRolePermissionDraft?.[permission_key])])
+    );
 
-    const { error } = await supabase
-      .from("platform_role_permissions")
-      .upsert(rows, { onConflict: "role,permission_key" });
+    const { error } = await invokePlatformRoleAdmin({
+      action: "save_permissions",
+      role,
+      permissions,
+    });
     if (error) {
       setPlatformRoleStatus(statusText(error, ""));
       return;
@@ -3101,7 +3233,79 @@ export default function PlatformAdminApp() {
     setPlatformRolePermissionDirty(false);
     setPlatformRoleStatus(`Saved permissions for ${role}.`);
     await loadPlatformRoleConfig();
-  }, [canManagePlatformRoles, loadPlatformRoleConfig, platformRolePermissionDraft, selectedPlatformRoleKey, sessionUserId]);
+  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRolePermissionDraft, selectedPlatformRoleKey]);
+
+  const savePlatformSecurityPin = useCallback(async () => {
+    if (!sessionUserId) {
+      setPlatformSecurityStatus("Sign in again and retry.");
+      return;
+    }
+    if (!canManagePlatformSecurity) {
+      setPlatformSecurityStatus("You need the Security edit permission to update your PIN.");
+      return;
+    }
+
+    const pin = String(platformSecurityPinDraft.pin || "").trim();
+    const confirmPin = String(platformSecurityPinDraft.confirm_pin || "").trim();
+    const pinEnabled = Boolean(platformSecurityPinDraft.enabled);
+    const savingWithoutPin = !pinEnabled && !pin && !confirmPin;
+    if (!savingWithoutPin) {
+      if (!/^\d{4}$/.test(pin)) {
+        setPlatformSecurityStatus("Use a 4-digit PIN.");
+        return;
+      }
+      if (pin !== confirmPin) {
+        setPlatformSecurityStatus("PIN and confirmation do not match.");
+        return;
+      }
+    }
+
+    setPlatformSecuritySaving((prev) => ({ ...prev, pin: true }));
+    setPlatformSecurityStatus("");
+    const pin_hash = savingWithoutPin ? null : await hashSecurityPin(sessionUserId, pin);
+    const { error } = await supabase
+      .from("platform_user_security_profiles")
+      .upsert([{
+        user_id: sessionUserId,
+        pin_hash,
+        pin_enabled: pinEnabled,
+        updated_by: cleanOptional(sessionUserId),
+      }], { onConflict: "user_id" });
+    setPlatformSecuritySaving((prev) => ({ ...prev, pin: false }));
+    if (error) {
+      setPlatformSecurityStatus(statusText(error, ""));
+      return;
+    }
+
+    setPlatformSecurityPinDraft((prev) => ({ ...prev, pin: "", confirm_pin: "" }));
+    setShowPlatformSecurityPin(false);
+    setShowPlatformSecurityPinConfirm(false);
+    setPlatformSecurityStatus("Security PIN saved.");
+  }, [canManagePlatformSecurity, platformSecurityPinDraft.confirm_pin, platformSecurityPinDraft.enabled, platformSecurityPinDraft.pin, sessionUserId]);
+
+  const savePlatformSecurityChecks = useCallback(async () => {
+    if (!canManagePlatformSecurity) {
+      setPlatformSecurityStatus("You need the Security edit permission to update checkpoint rules.");
+      return;
+    }
+
+    setPlatformSecuritySaving((prev) => ({ ...prev, checks: true }));
+    setPlatformSecurityStatus("");
+    const { error } = await supabase
+      .from("platform_security_settings")
+      .upsert([{
+        config_key: "default",
+        ...platformSecuritySettingsDraft,
+        updated_by: cleanOptional(sessionUserId),
+      }], { onConflict: "config_key" });
+    setPlatformSecuritySaving((prev) => ({ ...prev, checks: false }));
+    if (error) {
+      setPlatformSecurityStatus(statusText(error, ""));
+      return;
+    }
+
+    setPlatformSecurityStatus("Security checkpoints saved.");
+  }, [canManagePlatformSecurity, platformSecuritySettingsDraft, sessionUserId]);
 
   const updateLeadDraft = useCallback((leadId, field, value) => {
     const key = String(leadId || "").trim();
@@ -3654,10 +3858,25 @@ export default function PlatformAdminApp() {
   }, [activeSettingsGroupKey]);
 
   useEffect(() => {
+    if (activeSettingsGroupKey) {
+      setMobileSettingsGroupKey(activeSettingsGroupKey);
+      return;
+    }
+    if (filteredControlPlaneSettingsNav[0]?.key) {
+      setMobileSettingsGroupKey(filteredControlPlaneSettingsNav[0].key);
+    }
+  }, [activeSettingsGroupKey, filteredControlPlaneSettingsNav]);
+
+  useEffect(() => {
     if (controlPlanePage === "manage-team") {
       setPlatformTeamManagementView("list");
     }
   }, [controlPlanePage]);
+
+  useEffect(() => {
+    if (controlPlanePage !== "security-checks") return;
+    void loadPlatformSecurityConfig();
+  }, [controlPlanePage, loadPlatformSecurityConfig]);
 
   useEffect(() => {
     if (controlPlanePage !== "manage-leads") {
@@ -4747,7 +4966,7 @@ export default function PlatformAdminApp() {
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
-    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 116px)" }
+    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 108px)" }
     : shell;
   const bannerStyle = isCompactViewport
     ? {
@@ -4918,79 +5137,128 @@ export default function PlatformAdminApp() {
       {currentPageActions}
     </div>
   ) : null;
-  const controlPlaneSettingsSidebarContent = settingsPageActive && !isCompactViewport ? (
-    <aside style={controlPlaneSettingsSidebar}>
-      <div style={controlPlaneSettingsSidebarShell}>
-        <div style={{ display: "grid", gap: 6 }}>
-          <h3 style={{ margin: 0, color: "#f4fbfa", fontSize: 24 }}>Settings</h3>
-          <p style={{ margin: 0, color: "rgba(221, 242, 239, 0.86)", fontSize: 12.5, lineHeight: 1.45 }}>
-            Platform settings now follow the same left-rail pattern as the hub.
-          </p>
+  const controlPlaneSettingsSidebarContent = settingsPageActive ? (
+    isCompactViewport ? (
+      <div style={{ ...card, display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <h3 style={{ margin: 0, color: palette.navy900 }}>Settings</h3>
+          <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>Switch between settings categories and pages from here.</p>
         </div>
         <input
           value={controlPlaneSettingsSearch}
           onChange={(event) => setControlPlaneSettingsSearch(event.target.value)}
           placeholder="Search settings"
-          style={{
-            width: "100%",
-            padding: "11px 13px",
-            border: "1px solid rgba(212, 236, 232, 0.12)",
-            borderRadius: 14,
-            background: "rgba(255, 255, 255, 0.08)",
-            color: "#effaf8",
-            font: "inherit",
-          }}
+          aria-label="Search settings"
+          style={inputBase}
         />
-        <div style={{ display: "grid", gap: 8 }}>
-          {filteredControlPlaneSettingsNav.map((group) => {
-            const open = Boolean(openControlPlaneSettingsGroups?.[group.key]);
-            const active = activeSettingsGroupKey === group.key;
-            return (
-              <div key={group.key} style={{ padding: "4px 0", borderBottom: "1px solid rgba(221, 242, 239, 0.12)" }}>
+        <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
+          <span style={{ color: palette.textMuted }}>Settings Category</span>
+          <select
+            value={activeMobileSettingsGroup?.key || ""}
+            onChange={(event) => setMobileSettingsGroupKey(event.target.value)}
+            style={inputBase}
+          >
+            {filteredControlPlaneSettingsNav.map((group) => (
+              <option key={group.key} value={group.key}>{group.label}</option>
+            ))}
+          </select>
+        </label>
+        {activeMobileSettingsGroup?.items?.length ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {activeMobileSettingsGroup.items.map((item) => {
+              const activeItem = item.key === controlPlanePage;
+              return (
                 <button
+                  key={item.key}
                   type="button"
-                  onClick={() => setOpenControlPlaneSettingsGroups((prev) => ({ ...prev, [group.key]: !open }))}
-                  style={{
-                    ...controlPlaneSettingsGroupButton,
-                    ...(active ? { background: "rgba(255, 255, 255, 0.08)", color: "#ffffff" } : null),
-                  }}
+                  onClick={() => openControlPlanePage(item.key)}
+                  style={activeItem ? controlPlaneTabButtonActive : controlPlaneTabButton}
                 >
-                  <span>{group.label}</span>
-                  <span style={{ color: "rgba(221, 242, 239, 0.68)", fontSize: 12 }}>{open ? "−" : "+"}</span>
+                  {item.label}
                 </button>
-                {open ? (
-                  <div style={{ display: "grid", gap: 6, marginTop: 4, paddingLeft: 14 }}>
-                    {group.items.map((item) => {
-                      const activeItem = item.key === controlPlanePage;
-                      return (
-                        <button
-                          key={item.key}
-                          type="button"
-                          onClick={() => openControlPlanePage(item.key)}
-                          style={{
-                            ...controlPlaneSettingsItemButton,
-                            ...(activeItem
-                              ? {
-                                  background: "rgba(33, 141, 132, 0.9)",
-                                  borderColor: "rgba(255, 255, 255, 0.08)",
-                                  color: "#ffffff",
-                                  boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.04)",
-                                }
-                              : null),
-                          }}
-                        >
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+            No settings matched your search.
+          </div>
+        )}
       </div>
-    </aside>
+    ) : (
+      <aside style={controlPlaneSettingsSidebar}>
+        <div style={controlPlaneSettingsSidebarShell}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <h3 style={{ margin: 0, color: "#f4fbfa", fontSize: 24 }}>Settings</h3>
+            <p style={{ margin: 0, color: "rgba(221, 242, 239, 0.86)", fontSize: 12.5, lineHeight: 1.45 }}>
+              Platform settings now follow the same left-rail pattern as the hub.
+            </p>
+          </div>
+          <input
+            value={controlPlaneSettingsSearch}
+            onChange={(event) => setControlPlaneSettingsSearch(event.target.value)}
+            placeholder="Search settings"
+            style={{
+              width: "100%",
+              padding: "11px 13px",
+              border: "1px solid rgba(212, 236, 232, 0.12)",
+              borderRadius: 14,
+              background: "rgba(255, 255, 255, 0.08)",
+              color: "#effaf8",
+              font: "inherit",
+            }}
+          />
+          <div style={{ display: "grid", gap: 8 }}>
+            {filteredControlPlaneSettingsNav.map((group) => {
+              const open = Boolean(openControlPlaneSettingsGroups?.[group.key]);
+              const active = activeSettingsGroupKey === group.key;
+              return (
+                <div key={group.key} style={{ padding: "4px 0", borderBottom: "1px solid rgba(221, 242, 239, 0.12)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenControlPlaneSettingsGroups((prev) => ({ ...prev, [group.key]: !open }))}
+                    style={{
+                      ...controlPlaneSettingsGroupButton,
+                      ...(active ? { background: "rgba(255, 255, 255, 0.08)", color: "#ffffff" } : null),
+                    }}
+                  >
+                    <span>{group.label}</span>
+                    <span style={{ color: "rgba(221, 242, 239, 0.68)", fontSize: 12 }}>{open ? "−" : "+"}</span>
+                  </button>
+                  {open ? (
+                    <div style={{ display: "grid", gap: 6, marginTop: 4, paddingLeft: 14 }}>
+                      {group.items.map((item) => {
+                        const activeItem = item.key === controlPlanePage;
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => openControlPlanePage(item.key)}
+                            style={{
+                              ...controlPlaneSettingsItemButton,
+                              ...(activeItem
+                                ? {
+                                    background: "rgba(33, 141, 132, 0.9)",
+                                    borderColor: "rgba(255, 255, 255, 0.08)",
+                                    color: "#ffffff",
+                                    boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.04)",
+                                  }
+                                : null),
+                            }}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </aside>
+    )
   ) : null;
 
   const controlPlaneTabsNavigation = sessionUserId && isPlatformAdmin ? (
@@ -5000,14 +5268,10 @@ export default function PlatformAdminApp() {
         isCompactViewport
           ? {
               position: "fixed",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 85,
-              padding: "10px 10px calc(env(safe-area-inset-bottom, 0px) + 10px)",
-              background: "rgba(248, 251, 255, 0.94)",
-              backdropFilter: "blur(14px)",
-              borderTop: "1px solid rgba(23, 49, 79, 0.08)",
+              left: 12,
+              right: 12,
+              bottom: "max(12px, env(safe-area-inset-bottom))",
+              zIndex: 34,
             }
           : {
               ...fullWidthSection,
@@ -5018,7 +5282,7 @@ export default function PlatformAdminApp() {
             }
       }
     >
-      <div style={controlPlaneTabsShell}>
+      <div style={isCompactViewport ? controlPlaneMobileTabsShell : controlPlaneTabsShell}>
         <nav
           style={
             isCompactViewport
@@ -5039,7 +5303,9 @@ export default function PlatformAdminApp() {
                   key={item.key}
                   type="button"
                   onClick={() => openControlPlanePage(item.key)}
-                  style={active ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                  style={isCompactViewport
+                    ? (active ? controlPlaneMobileTabButtonActive : controlPlaneMobileTabButton)
+                    : (active ? controlPlaneTabButtonActive : controlPlaneTabButton)}
                 >
                   <span>{item.label}</span>
                 </button>
@@ -5054,7 +5320,9 @@ export default function PlatformAdminApp() {
                 <button
                   type="button"
                   onClick={() => openControlPlaneSection(item.key)}
-                  style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                  style={isCompactViewport
+                    ? ((active || isOpen) ? controlPlaneMobileTabButtonActive : controlPlaneMobileTabButton)
+                    : ((active || isOpen) ? controlPlaneTabButtonActive : controlPlaneTabButton)}
                 >
                   <span>{item.label}</span>
                 </button>
@@ -5062,7 +5330,7 @@ export default function PlatformAdminApp() {
                   <div
                     style={{
                       ...controlPlaneSubmenu,
-                      ...(isCompactViewport ? { top: "auto", bottom: "calc(100% + 8px)", left: "auto", right: 0, minWidth: 220 } : null),
+                      ...(isCompactViewport ? { top: "auto", bottom: "calc(100% + 8px)", left: 0, right: 0, minWidth: 0 } : null),
                     }}
                   >
                     {sectionPages.map((page) => {
@@ -6756,11 +7024,143 @@ export default function PlatformAdminApp() {
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>
               {controlPlaneSettingsActions}
-              <div style={{ ...card, display: "grid", gap: 10 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checks</h2>
-                <p style={{ margin: 0, color: palette.textMuted }}>
-                  PIN checkpoint controls are reserved here for sensitive actions like role changes, account updates, and report-state changes. This page is now part of the PCP foundation so those controls can be wired without changing the hierarchy again.
-                </p>
+              {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
+              <div style={{ ...card, display: "grid", gap: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Your Security PIN</h2>
+                    <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
+                      Set a 4-digit checkpoint PIN for your sensitive PCP actions.
+                    </p>
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 700, color: palette.navy900 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(platformSecurityPinDraft.enabled)}
+                    onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
+                    disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                  />
+                  Enable PIN checkpoints for my account
+                </label>
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
+                  <label style={{ ...modalField, margin: 0 }}>
+                    <span>Security PIN</span>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showPlatformSecurityPin ? "text" : "password"}
+                        inputMode="numeric"
+                        maxLength={4}
+                        value={platformSecurityPinDraft.pin}
+                        onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                        placeholder="4-digit PIN"
+                        style={{ ...modalInput, paddingRight: 74 }}
+                        disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPlatformSecurityPin((prev) => !prev)}
+                        style={{
+                          position: "absolute",
+                          right: 12,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          border: "none",
+                          background: "transparent",
+                          color: "#1f6fd6",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showPlatformSecurityPin ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                  </label>
+                  <label style={{ ...modalField, margin: 0 }}>
+                    <span>Confirm PIN</span>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showPlatformSecurityPinConfirm ? "text" : "password"}
+                        inputMode="numeric"
+                        maxLength={4}
+                        value={platformSecurityPinDraft.confirm_pin}
+                        onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, confirm_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                        placeholder="Re-enter PIN"
+                        style={{ ...modalInput, paddingRight: 74 }}
+                        disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPlatformSecurityPinConfirm((prev) => !prev)}
+                        style={{
+                          position: "absolute",
+                          right: 12,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          border: "none",
+                          background: "transparent",
+                          color: "#1f6fd6",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showPlatformSecurityPinConfirm ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                <div style={modalFooterActions}>
+                  <button
+                    type="button"
+                    style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                    onClick={() => void savePlatformSecurityPin()}
+                    disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                  >
+                    {platformSecuritySaving.pin ? "Saving PIN..." : "Save Security PIN"}
+                  </button>
+                </div>
+              </div>
+              <div style={{ ...card, display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checkpoints</h2>
+                  <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
+                    Choose which PCP actions should require a PIN checkpoint before completing.
+                  </p>
+                </div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {[
+                    ["require_pin_for_role_changes", "Require PIN for role and permission changes", "Protect custom role creation, permission edits, and role removal."],
+                    ["require_pin_for_team_changes", "Require PIN for team access changes", "Protect platform team assignments and removals."],
+                    ["require_pin_for_account_changes", "Require PIN for account changes", "Protect profile updates and password changes."],
+                    ["require_pin_for_report_state_changes", "Require PIN for report-state changes", "Protect sensitive report and lead state updates."],
+                  ].map(([key, label, note]) => (
+                    <label key={key} style={{ ...subPanel, display: "flex", alignItems: "start", gap: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(platformSecuritySettingsDraft?.[key])}
+                        onChange={(event) => setPlatformSecuritySettingsDraft((prev) => ({ ...prev, [key]: event.target.checked }))}
+                        disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
+                        style={{ marginTop: 4 }}
+                      />
+                      <span style={{ display: "grid", gap: 4 }}>
+                        <strong style={{ color: palette.navy900 }}>{label}</strong>
+                        <span style={{ color: palette.textMuted, fontSize: 12.5 }}>{note}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div style={modalFooterActions}>
+                  <button
+                    type="button"
+                    style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                    onClick={() => void savePlatformSecurityChecks()}
+                    disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
+                  >
+                    {platformSecuritySaving.checks ? "Saving Checkpoints..." : "Save Security Checks"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
