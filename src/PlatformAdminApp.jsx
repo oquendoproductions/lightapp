@@ -234,10 +234,13 @@ const inputBase = {
   border: `1px solid ${palette.borderStrong}`,
   borderRadius: 10,
   padding: "9px 10px",
+  minHeight: 44,
+  lineHeight: 1.35,
   fontSize: 16,
   boxSizing: "border-box",
   color: palette.navy900,
   background: "#fbfdff",
+  verticalAlign: "top",
 };
 
 const buttonBase = {
@@ -302,6 +305,7 @@ const responsiveTwoColGrid = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
   gap: 8,
+  alignItems: "start",
 };
 
 const authModalBackdrop = {
@@ -329,7 +333,7 @@ const responsiveActionGrid = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
   gap: 8,
-  alignItems: "end",
+  alignItems: "start",
 };
 
 const responsiveDomainGrid = {
