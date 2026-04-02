@@ -5148,6 +5148,97 @@ export default function PlatformAdminApp() {
           </div>
         </div>
       ) : null}
+      {platformTeamManagementView === "add" ? (
+        <div style={authModalBackdrop} onClick={() => setPlatformTeamManagementView("list")}>
+          <div style={{ ...authModalCard, width: "min(760px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Platform Team Member</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Find the internal account first, then assign the correct platform role.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlatformTeamManagementView("list")}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add team member dialog"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={searchPlatformTeamUsers} style={{ display: "grid", gap: 12 }}>
+              <div style={modalActionGrid}>
+                <label style={modalField}>
+                  <span>Find Internal Account</span>
+                  <input
+                    value={platformUserSearchQuery}
+                    onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
+                    placeholder="Exact email, exact phone, or full name"
+                    style={modalInput}
+                    disabled={!canManagePlatformUsers}
+                  />
+                </label>
+                <div style={{ display: "grid", alignContent: "end" }}>
+                  <button type="submit" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers || platformUserSearchLoading}>
+                    {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
+                  </button>
+                </div>
+              </div>
+              {platformUserSearchResults.length ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {platformUserSearchResults.map((row) => {
+                    const userId = String(row?.id || "").trim();
+                    const selected = userId === platformTeamForm.user_id;
+                    return (
+                      <button
+                        key={userId}
+                        type="button"
+                        onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
+                        style={{
+                          ...listActionButton,
+                          border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                          background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                        }}
+                      >
+                        <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
+                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                          {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              <div style={modalActionGrid}>
+                <label style={modalField}>
+                  <span>Platform Role</span>
+                  <select
+                    value={platformTeamForm.role}
+                    onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
+                    style={modalInput}
+                    disabled={!canManagePlatformUsers}
+                  >
+                    {assignablePlatformRoles.map((row) => (
+                      <option key={row.role} value={row.role}>
+                        {platformRoleLabelByKey[String(row?.role || "").trim()] || platformRoleToLabel(row?.role)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={modalFooterActions}>
+                <button type="button" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!canManagePlatformUsers || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
+                  Assign Platform Role
+                </button>
+                <button type="button" style={modalSecondaryButton} onClick={() => setPlatformTeamManagementView("list")}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       {tenantUsersManagementView === "add" ? (
         <div style={authModalBackdrop} onClick={() => setTenantUsersManagementView("list")}>
           <div style={{ ...authModalCard, width: "min(860px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
@@ -6089,74 +6180,6 @@ export default function PlatformAdminApp() {
             <div style={controlPlaneSettingsContentPaneStyle}>
               {controlPlaneSettingsActions}
               {platformTeamStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformTeamStatus}</div> : null}
-              {platformTeamManagementView === "add" ? (
-                <div style={{ ...card, display: "grid", gap: 10 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>Add Platform Team Member</h2>
-                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                    Find the internal account first, then assign the correct platform role.
-                  </p>
-                  <form onSubmit={searchPlatformTeamUsers} style={responsiveActionGrid}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Find Internal Account</span>
-                      <input
-                        value={platformUserSearchQuery}
-                        onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
-                        placeholder="Exact email, exact phone, or full name"
-                        style={inputBase}
-                        disabled={!canManagePlatformUsers}
-                      />
-                    </label>
-                    <button type="submit" style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers || platformUserSearchLoading}>
-                      {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
-                    </button>
-                  </form>
-                  {platformUserSearchResults.length ? (
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {platformUserSearchResults.map((row) => {
-                        const userId = String(row?.id || "").trim();
-                        const selected = userId === platformTeamForm.user_id;
-                        return (
-                          <button
-                            key={userId}
-                            type="button"
-                            onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
-                            style={{
-                              ...listActionButton,
-                              border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
-                              background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
-                            }}
-                          >
-                            <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
-                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4, minWidth: 220 }}>
-                      <span>Platform Role</span>
-                      <select
-                        value={platformTeamForm.role}
-                        onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
-                        style={inputBase}
-                        disabled={!canManagePlatformUsers}
-                      >
-                        {assignablePlatformRoles.map((row) => (
-                          <option key={row.role} value={row.role}>
-                            {platformRoleLabelByKey[String(row?.role || "").trim()] || platformRoleToLabel(row?.role)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button type="button" style={{ ...buttonBase, opacity: canManagePlatformUsers && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!canManagePlatformUsers || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
-                      Assign Platform Role
-                    </button>
-                  </div>
-                </div>
-              ) : null}
               <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>Current Platform Team</h2>

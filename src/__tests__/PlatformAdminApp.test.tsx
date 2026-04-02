@@ -616,10 +616,14 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByText(/role key:/i)).toBeInTheDocument();
   });
 
-  it("shows add team member in the current platform team section", async () => {
-    await openManageTeam();
+  it("opens add team member in a modal from the current platform team section", async () => {
+    const { user } = await openManageTeam();
 
     expect(screen.getByRole("button", { name: /add team member/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /add team member/i }));
+
+    await screen.findByRole("heading", { name: /add platform team member/i });
+    expect(screen.getByRole("button", { name: /search accounts/i })).toBeInTheDocument();
   });
 
   it("lets the PCP user edit and save account name and phone", async () => {
