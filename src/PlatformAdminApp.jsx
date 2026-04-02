@@ -370,6 +370,52 @@ const contactFieldInput = {
   padding: "6px 10px",
 };
 
+const modalField = {
+  fontSize: 12.5,
+  display: "grid",
+  gap: 4,
+};
+
+const modalInput = {
+  ...inputBase,
+  minHeight: 44,
+};
+
+const modalActionGrid = {
+  ...responsiveActionGrid,
+  alignItems: "end",
+};
+
+const modalPrimaryButton = {
+  ...buttonBase,
+  minHeight: 44,
+  padding: "0 14px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const modalSecondaryButton = {
+  ...buttonAlt,
+  minHeight: 44,
+  padding: "0 14px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const modalToggleButton = {
+  ...modalSecondaryButton,
+  minWidth: 180,
+};
+
+const modalFooterActions = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  alignItems: "center",
+};
+
 const tableHeadCell = {
   textAlign: "left",
   borderBottom: `1px solid ${palette.border}`,
@@ -4565,50 +4611,50 @@ export default function PlatformAdminApp() {
             </div>
             <form onSubmit={(event) => void saveAdditionalContactFromModal(event)} style={{ display: "grid", gap: 12 }}>
               <div style={contactFieldGrid}>
-                <label style={contactField}>
+                <label style={modalField}>
                   <span>Name</span>
                   <input
                     value={newContactForm.name}
                     onChange={(e) => setNewContactForm((prev) => ({ ...prev, name: e.target.value }))}
                     placeholder="Department Contact"
-                    style={contactFieldInput}
+                    style={modalInput}
                   />
                 </label>
-                <label style={contactField}>
+                <label style={modalField}>
                   <span>Role / Title</span>
                   <input
                     value={newContactForm.title}
                     onChange={(e) => setNewContactForm((prev) => ({ ...prev, title: e.target.value }))}
                     placeholder="Finance Director"
-                    style={contactFieldInput}
+                    style={modalInput}
                   />
                 </label>
-                <label style={contactField}>
+                <label style={modalField}>
                   <span>Email</span>
                   <input
                     type="email"
                     value={newContactForm.email}
                     onChange={(e) => setNewContactForm((prev) => ({ ...prev, email: e.target.value }))}
                     placeholder="finance@examplemunicipality.gov"
-                    style={contactFieldInput}
+                    style={modalInput}
                   />
                 </label>
-                <label style={contactField}>
+                <label style={modalField}>
                   <span>Phone</span>
                   <input
                     value={newContactForm.phone}
                     onChange={(e) => setNewContactForm((prev) => ({ ...prev, phone: e.target.value }))}
                     placeholder="(000) 000-0000"
-                    style={contactFieldInput}
+                    style={modalInput}
                   />
                 </label>
               </div>
               {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
+              <div style={modalFooterActions}>
+                <button type="submit" style={{ ...modalPrimaryButton, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
                   Save Contact
                 </button>
-                <button type="button" style={buttonAlt} onClick={() => setContactAddModalOpen(false)}>
+                <button type="button" style={modalSecondaryButton} onClick={() => setContactAddModalOpen(false)}>
                   Cancel
                 </button>
               </div>
@@ -4635,17 +4681,17 @@ export default function PlatformAdminApp() {
                 ×
               </button>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <button
                 type="button"
-                style={userAssignmentMode === "existing" ? buttonBase : buttonAlt}
+                style={userAssignmentMode === "existing" ? modalPrimaryButton : modalToggleButton}
                 onClick={() => setUserAssignmentMode("existing")}
               >
                 Find Existing Account
               </button>
               <button
                 type="button"
-                style={userAssignmentMode === "invite" ? buttonBase : buttonAlt}
+                style={userAssignmentMode === "invite" ? modalPrimaryButton : modalToggleButton}
                 onClick={() => setUserAssignmentMode("invite")}
               >
                 Create Account
@@ -4653,20 +4699,20 @@ export default function PlatformAdminApp() {
             </div>
             {userAssignmentMode === "existing" ? (
               <>
-                <form onSubmit={searchPlatformUsers} style={responsiveActionGrid}>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <form onSubmit={searchPlatformUsers} style={modalActionGrid}>
+                  <label style={modalField}>
                     <span>Find Person</span>
                     <input
                       value={userSearchQuery}
                       onChange={(e) => setUserSearchQuery(e.target.value)}
                       placeholder="Exact email, exact phone, or full name"
-                      style={{ ...inputBase, fontSize: 16 }}
+                      style={{ ...modalInput, fontSize: 16 }}
                       disabled={!canManageTenantUsers}
                     />
                   </label>
                   <button
                     type="submit"
-                    style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                    style={{ ...modalPrimaryButton, opacity: canManageTenantUsers ? 1 : 0.55 }}
                     disabled={!canManageTenantUsers || userSearchLoading}
                   >
                     {userSearchLoading ? "Searching..." : "Search Accounts"}
@@ -4701,12 +4747,12 @@ export default function PlatformAdminApp() {
                 ) : null}
 
                 <div style={{ display: "grid", gap: 8 }}>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 260 }}>
+                  <label style={{ ...modalField, maxWidth: 260 }}>
                     <span>Organization Role</span>
                     <select
                       value={assignForm.role}
                       onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                      style={{ ...inputBase, minWidth: 0 }}
+                      style={{ ...modalInput, minWidth: 0 }}
                       disabled={!canManageTenantUsers}
                     >
                       {assignableTenantRoles.map((row) => {
@@ -4727,11 +4773,11 @@ export default function PlatformAdminApp() {
                   </label>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={modalFooterActions}>
                   <button
                     type="button"
                     onClick={() => void assignTenantAdmin({ preventDefault() {} })}
-                    style={{ ...buttonBase, opacity: canManageTenantUsers && assignForm.user_id ? 1 : 0.55 }}
+                    style={{ ...modalPrimaryButton, opacity: canManageTenantUsers && assignForm.user_id ? 1 : 0.55 }}
                     disabled={!canManageTenantUsers || !assignForm.user_id}
                     title={assignForm.user_id ? "Assign organization role" : "Select an account first"}
                   >
@@ -4749,54 +4795,54 @@ export default function PlatformAdminApp() {
                 </div>
               </>
             ) : (
-              <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+              <form onSubmit={createAndAssignTenantUser} style={modalActionGrid}>
+                <label style={modalField}>
                   <span>First Name</span>
                   <input
                     value={inviteForm.first_name}
                     onChange={(e) => setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
                     placeholder="Jordan"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantUsers}
                   />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <label style={modalField}>
                   <span>Last Name</span>
                   <input
                     value={inviteForm.last_name}
                     onChange={(e) => setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
                     placeholder="Rivera"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantUsers}
                   />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <label style={modalField}>
                   <span>Email</span>
                   <input
                     type="email"
                     value={inviteForm.email}
                     onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
                     placeholder="jordan.rivera@example.gov"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantUsers}
                   />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <label style={modalField}>
                   <span>Phone Number</span>
                   <input
                     value={inviteForm.phone}
                     onChange={(e) => setInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
                     placeholder="(555) 555-0101"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantUsers}
                   />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <label style={modalField}>
                   <span>Organization Role</span>
                   <select
                     value={assignForm.role}
                     onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantUsers}
                   >
                     {assignableTenantRoles.map((row) => {
@@ -4817,7 +4863,7 @@ export default function PlatformAdminApp() {
                 </label>
                 <button
                   type="submit"
-                  style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                  style={{ ...modalPrimaryButton, opacity: canManageTenantUsers ? 1 : 0.55 }}
                   disabled={!canManageTenantUsers}
                   title={canManageTenantUsers ? "Create account and assign organization role" : "You need the Users edit permission"}
                 >
@@ -4826,8 +4872,8 @@ export default function PlatformAdminApp() {
               </form>
             )}
             {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" style={buttonAlt} onClick={() => setTenantUsersManagementView("list")}>
+            <div style={modalFooterActions}>
+              <button type="button" style={modalSecondaryButton} onClick={() => setTenantUsersManagementView("list")}>
                 Close
               </button>
             </div>
@@ -4854,39 +4900,39 @@ export default function PlatformAdminApp() {
               </button>
             </div>
             <form onSubmit={createTenantRole} style={{ display: "grid", gap: 12 }}>
-              <div style={responsiveActionGrid}>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+              <div style={modalActionGrid}>
+                <label style={modalField}>
                   <span>Role Key</span>
                   <input
                     value={roleForm.role}
                     onChange={(e) => setRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
                     placeholder="field_supervisor"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantRoles}
                   />
                 </label>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <label style={modalField}>
                   <span>Role Label</span>
                   <input
                     value={roleForm.role_label}
                     onChange={(e) => setRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
                     placeholder="Field Supervisor"
-                    style={inputBase}
+                    style={modalInput}
                     disabled={!canManageTenantRoles}
                   />
                 </label>
               </div>
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={modalFooterActions}>
                 <button
                   type="submit"
-                  style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                  style={{ ...modalPrimaryButton, opacity: canManageTenantRoles ? 1 : 0.55 }}
                   disabled={!canManageTenantRoles}
                   title={canManageTenantRoles ? "Create role" : "You need the Roles edit permission"}
                 >
                   Create Role
                 </button>
-                <button type="button" style={buttonAlt} onClick={() => setTenantRoleManagementView("list")}>
+                <button type="button" style={modalSecondaryButton} onClick={() => setTenantRoleManagementView("list")}>
                   Cancel
                 </button>
               </div>
@@ -4914,21 +4960,30 @@ export default function PlatformAdminApp() {
               </button>
             </div>
             <form onSubmit={uploadTenantFile} style={{ display: "grid", gap: 12 }}>
-              <div style={responsiveActionGrid}>
-                <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
-                  {TENANT_ASSET_CATEGORIES.map((category) => (
-                    <option key={category.key} value={category.key}>{category.label}</option>
-                  ))}
-                </select>
-                <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
-                <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
+              <div style={modalActionGrid}>
+                <label style={modalField}>
+                  <span>Asset Category</span>
+                  <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={modalInput}>
+                    {TENANT_ASSET_CATEGORIES.map((category) => (
+                      <option key={category.key} value={category.key}>{category.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={modalField}>
+                  <span>Asset File</span>
+                  <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={modalInput} />
+                </label>
+                <label style={modalField}>
+                  <span>Notes</span>
+                  <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={modalInput} />
+                </label>
               </div>
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="submit" style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles}>
+              <div style={modalFooterActions}>
+                <button type="submit" style={{ ...modalPrimaryButton, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles}>
                   Upload Asset
                 </button>
-                <button type="button" style={buttonAlt} onClick={() => setTenantAssetsManagementView("list")}>
+                <button type="button" style={modalSecondaryButton} onClick={() => setTenantAssetsManagementView("list")}>
                   Cancel
                 </button>
               </div>
