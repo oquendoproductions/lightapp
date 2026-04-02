@@ -44,7 +44,7 @@
 
 .municipality-tabs-shell {
   position: sticky;
-  top: var(--desktop-header-height);
+  top: var(--app-tab-rail-offset);
   z-index: 25;
   padding: 0;
   background: transparent;
@@ -52,7 +52,7 @@
 
 .municipality-tabs-bar {
   width: 100%;
-  padding: 10px;
+  padding: var(--app-tab-rail-shell-padding);
   border: 1px solid rgba(23, 49, 79, 0.08);
   border-top: 0;
   border-radius: 0;
@@ -129,7 +129,7 @@
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
   align-items: stretch;
-  gap: 12px;
+  gap: var(--app-tab-rail-gap);
   min-width: 0;
   width: 100%;
 }
@@ -146,9 +146,9 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   color: #17314f;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 700;
+  padding: var(--app-tab-button-padding-y) var(--app-tab-button-padding-x);
+  font-size: var(--app-tab-button-font-size);
+  font-weight: var(--app-tab-button-font-weight);
   text-decoration: none;
   cursor: pointer;
   transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;

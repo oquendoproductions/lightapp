@@ -12,6 +12,14 @@
   --desktop-header-subtitle-line-height: 1.35;
   --desktop-header-eyebrow-size: 15px;
   --desktop-header-eyebrow-letter-spacing: 0.14em;
+  --app-tab-rail-offset: var(--desktop-header-height);
+  --app-tab-rail-shell-padding: 10px;
+  --app-tab-rail-gap: 12px;
+  --app-tab-button-padding-y: 10px;
+  --app-tab-button-padding-x: 16px;
+  --app-tab-button-font-size: 14px;
+  --app-tab-button-font-weight: 700;
+  --app-tab-rail-title-gap: 12px;
   --mobile-header-top-offset: 10px;
   --mobile-header-horizontal-inset: 10px;
   --mobile-header-height: 72px;

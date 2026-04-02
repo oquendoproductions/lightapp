@@ -420,7 +420,7 @@ const fullWidthSection = {
 
 const controlPlaneTabsRail = {
   position: "sticky",
-  top: FIXED_BANNER_HEIGHT,
+  top: "var(--app-tab-rail-offset)",
   zIndex: 25,
   padding: 0,
   background: "transparent",
@@ -428,7 +428,7 @@ const controlPlaneTabsRail = {
 
 const controlPlaneTabsShell = {
   width: "100%",
-  padding: "10px",
+  padding: "var(--app-tab-rail-shell-padding)",
   border: "1px solid rgba(23, 49, 79, 0.08)",
   borderTop: 0,
   borderRadius: 0,
@@ -442,7 +442,7 @@ const controlPlaneTabsBar = {
   gridAutoColumns: "minmax(0, 1fr)",
   minWidth: 0,
   width: "100%",
-  gap: 12,
+  gap: "var(--app-tab-rail-gap)",
   alignItems: "stretch",
 };
 
@@ -456,9 +456,9 @@ const controlPlaneTabButton = {
   borderRadius: 999,
   background: "rgba(255, 255, 255, 0.92)",
   color: palette.text,
-  padding: "10px 16px",
-  fontSize: 14,
-  fontWeight: 700,
+  padding: "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
+  fontSize: "var(--app-tab-button-font-size)",
+  fontWeight: "var(--app-tab-button-font-weight)",
   cursor: "pointer",
   transition: "transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease",
 };
@@ -4162,120 +4162,115 @@ export default function PlatformAdminApp() {
     </aside>
   ) : null;
 
-  const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
-    <section style={{ ...fullWidthSection, display: "grid", gap: isCompactViewport ? 12 : 12 }}>
-      <div
-        ref={controlPlaneNavRef}
-        style={
-          isCompactViewport
-            ? {
-                position: "fixed",
-                left: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 85,
-                padding: "10px 10px calc(env(safe-area-inset-bottom, 0px) + 10px)",
-                background: "rgba(248, 251, 255, 0.94)",
-                backdropFilter: "blur(14px)",
-                borderTop: "1px solid rgba(23, 49, 79, 0.08)",
-              }
-            : {
-                ...controlPlaneTabsRail,
-                marginBottom: 0,
-                width: "calc(100% + 36px)",
-                marginLeft: -18,
-                marginRight: -18,
-              }
-        }
-      >
-        <div
+  const controlPlaneTabsNavigation = sessionUserId && isPlatformAdmin ? (
+    <div
+      ref={controlPlaneNavRef}
+      style={
+        isCompactViewport
+          ? {
+              position: "fixed",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 85,
+              padding: "10px 10px calc(env(safe-area-inset-bottom, 0px) + 10px)",
+              background: "rgba(248, 251, 255, 0.94)",
+              backdropFilter: "blur(14px)",
+              borderTop: "1px solid rgba(23, 49, 79, 0.08)",
+            }
+          : {
+              ...fullWidthSection,
+              ...controlPlaneTabsRail,
+              width: "calc(100% + 36px)",
+              marginLeft: -18,
+              marginRight: -18,
+            }
+      }
+    >
+      <div style={controlPlaneTabsShell}>
+        <nav
           style={
             isCompactViewport
-              ? controlPlaneTabsShell
-              : controlPlaneTabsShell
+              ? {
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                  gap: 8,
+                }
+              : controlPlaneTabsBar
           }
+          aria-label="Platform Control Plane navigation"
         >
-          <nav
-            style={
-              isCompactViewport
-                ? {
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                    gap: 8,
-                  }
-                : controlPlaneTabsBar
-            }
-            aria-label="Platform Control Plane navigation"
-          >
-            {visibleControlPlaneTopNavItems.map((item) => {
-              if (item.type === "page") {
-                const active = item.key === controlPlanePage;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => openControlPlanePage(item.key)}
-                    style={active ? controlPlaneTabButtonActive : controlPlaneTabButton}
-                  >
-                    <span>{item.label}</span>
-                  </button>
-                );
-              }
-
-              const sectionPages = visibleControlPlanePagesBySection[item.key] || [];
-              const active = controlPlaneSection === item.key;
-              const isOpen = openControlPlaneDropdown === item.key;
+          {visibleControlPlaneTopNavItems.map((item) => {
+            if (item.type === "page") {
+              const active = item.key === controlPlanePage;
               return (
-                <div key={item.key} style={{ position: "relative", minWidth: 0 }} onClick={(event) => event.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => openControlPlaneSection(item.key)}
-                    style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
-                  >
-                    <span>{item.label}</span>
-                  </button>
-                  {isOpen ? (
-                    <div
-                      style={{
-                        ...controlPlaneSubmenu,
-                        ...(isCompactViewport ? { top: "auto", bottom: "calc(100% + 8px)", left: "auto", right: 0, minWidth: 220 } : null),
-                      }}
-                    >
-                      {sectionPages.map((page) => {
-                        const pageActive = page.key === controlPlanePage;
-                        return (
-                          <button
-                            key={page.key}
-                            type="button"
-                            onClick={() => openControlPlanePage(page.key)}
-                            style={{
-                              ...controlPlaneSubmenuItem,
-                              ...(pageActive
-                                ? {
-                                    border: "1px solid rgba(18, 128, 106, 0.28)",
-                                    background: "rgba(229, 247, 243, 0.98)",
-                                  }
-                                : null),
-                            }}
-                          >
-                            <span>{page.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => openControlPlanePage(item.key)}
+                  style={active ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                >
+                  <span>{item.label}</span>
+                </button>
               );
-            })}
-          </nav>
-        </div>
+            }
+
+            const sectionPages = visibleControlPlanePagesBySection[item.key] || [];
+            const active = controlPlaneSection === item.key;
+            const isOpen = openControlPlaneDropdown === item.key;
+            return (
+              <div key={item.key} style={{ position: "relative", minWidth: 0 }} onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => openControlPlaneSection(item.key)}
+                  style={active || isOpen ? controlPlaneTabButtonActive : controlPlaneTabButton}
+                >
+                  <span>{item.label}</span>
+                </button>
+                {isOpen ? (
+                  <div
+                    style={{
+                      ...controlPlaneSubmenu,
+                      ...(isCompactViewport ? { top: "auto", bottom: "calc(100% + 8px)", left: "auto", right: 0, minWidth: 220 } : null),
+                    }}
+                  >
+                    {sectionPages.map((page) => {
+                      const pageActive = page.key === controlPlanePage;
+                      return (
+                        <button
+                          key={page.key}
+                          type="button"
+                          onClick={() => openControlPlanePage(page.key)}
+                          style={{
+                            ...controlPlaneSubmenuItem,
+                            ...(pageActive
+                              ? {
+                                  border: "1px solid rgba(18, 128, 106, 0.28)",
+                                  background: "rgba(229, 247, 243, 0.98)",
+                                }
+                              : null),
+                          }}
+                        >
+                          <span>{page.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </nav>
       </div>
+    </div>
+  ) : null;
+  const controlPlanePageHeader = sessionUserId && isPlatformAdmin ? (
+    <section style={{ ...fullWidthSection, display: "grid", gap: 12, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
       <div
         style={{
           ...card,
           display: "grid",
           gap: 6,
-          ...(isCompactViewport ? null : { marginTop: 0 }),
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -4471,7 +4466,8 @@ export default function PlatformAdminApp() {
           </div>
         </div>
       ) : null}
-      {controlPlaneNavigation}
+      {controlPlaneTabsNavigation}
+      {controlPlanePageHeader}
       {controlPlanePage === "organization-reports" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
