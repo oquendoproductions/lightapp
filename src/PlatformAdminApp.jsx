@@ -4736,7 +4736,7 @@ export default function PlatformAdminApp() {
               </div>
               <button
                 type="button"
-                style={{ ...buttonAlt, width: "fit-content" }}
+                style={{ ...signOutButton, width: "fit-content" }}
                 onClick={() => {
                   setMenuOpen(false);
                   openControlPlanePage(DEFAULT_SETTINGS_CONTROL_PLANE_PAGE);
