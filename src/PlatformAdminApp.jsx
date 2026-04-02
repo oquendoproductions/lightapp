@@ -20,6 +20,11 @@ const DOMAIN_OPTIONS = [
   { key: "water_main", label: "Water Main" },
 ];
 
+const DOMAIN_TYPE_OPTIONS = [
+  { key: "asset_backed", label: "Asset-Backed Domain" },
+  { key: "incident_driven", label: "Incident-Driven Domain" },
+];
+
 const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
   { key: "contacts", label: "Points of Contact" },
@@ -840,6 +845,23 @@ function initialDomainVisibilityForm() {
   return out;
 }
 
+function defaultDomainType(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (key === "streetlights" || key === "street_signs") return "asset_backed";
+  return "incident_driven";
+}
+
+function initialDomainConfigForm() {
+  const out = {};
+  for (const d of DOMAIN_OPTIONS) {
+    out[d.key] = {
+      domain_type: defaultDomainType(d.key),
+      notification_email: "",
+    };
+  }
+  return out;
+}
+
 function initialMapFeaturesForm() {
   return {
     show_boundary_border: true,
@@ -891,6 +913,14 @@ function roleKeyToLabel(roleKey) {
 function summarizeTenantAssetCategory(categoryKey) {
   const key = String(categoryKey || "").trim().toLowerCase();
   return TENANT_ASSET_CATEGORIES.find((category) => category.key === key)?.label || roleKeyToLabel(key || "other");
+}
+
+function domainKeyToLabel(domainKey) {
+  return DOMAIN_OPTIONS.find((entry) => entry.key === domainKey)?.label || roleKeyToLabel(domainKey);
+}
+
+function domainTypeToLabel(domainType) {
+  return DOMAIN_TYPE_OPTIONS.find((entry) => entry.key === domainType)?.label || roleKeyToLabel(domainType);
 }
 
 function buildAssignmentRowKey(row) {
@@ -1202,6 +1232,7 @@ export default function PlatformAdminApp() {
 
   const [tenantProfilesByTenant, setTenantProfilesByTenant] = useState({});
   const [tenantVisibilityByTenant, setTenantVisibilityByTenant] = useState({});
+  const [tenantDomainConfigsByTenant, setTenantDomainConfigsByTenant] = useState({});
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
 
   const [selectedTenantKey, setSelectedTenantKey] = useState(initialControlPlaneRouteState.selectedTenantKey);
@@ -1212,6 +1243,7 @@ export default function PlatformAdminApp() {
   const [tenantForm, setTenantForm] = useState(initialTenantForm);
   const [profileForm, setProfileForm] = useState(initialProfileForm);
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
+  const [domainConfigForm, setDomainConfigForm] = useState(initialDomainConfigForm);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
@@ -1225,7 +1257,7 @@ export default function PlatformAdminApp() {
   const [inviteForm, setInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
   const [editingAssignmentKey, setEditingAssignmentKey] = useState("");
   const [editingAssignmentRole, setEditingAssignmentRole] = useState("");
-  const [fileForm, setFileForm] = useState({ category: "contract", notes: "", file: null });
+  const [fileForm, setFileForm] = useState({ category: "contract", asset_subtype: "", notes: "", file: null });
   const [isEditingTenant, setIsEditingTenant] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editingPrimaryContact, setEditingPrimaryContact] = useState(false);
@@ -1643,6 +1675,15 @@ export default function PlatformAdminApp() {
     }
     return grouped;
   }, [tenantFiles]);
+  const domainCoordinateFiles = useMemo(() => {
+    const grouped = Object.fromEntries(DOMAIN_OPTIONS.map((domain) => [domain.key, []]));
+    for (const row of tenantFiles || []) {
+      if (String(row?.file_category || "").trim().toLowerCase() !== "asset_coordinates") continue;
+      const domainKey = String(row?.asset_subtype || "").trim().toLowerCase();
+      if (grouped[domainKey]) grouped[domainKey].push(row);
+    }
+    return grouped;
+  }, [tenantFiles]);
   const filteredLeadRows = useMemo(() => {
     const leadNumberFilter = String(leadFilters?.lead_number || "").trim().toLowerCase();
     const orgNameFilter = String(leadFilters?.org_name || "").trim().toLowerCase();
@@ -1971,6 +2012,35 @@ export default function PlatformAdminApp() {
     setTenantVisibilityByTenant(next);
   }, [hasPlatformPermission]);
 
+  const loadTenantDomainConfigs = useCallback(async () => {
+    if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
+      setTenantDomainConfigsByTenant({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from("tenant_domain_configs")
+      .select("tenant_key,domain,domain_type,notification_email");
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantDomainConfigsByTenant({});
+        return;
+      }
+      throw error;
+    }
+    const next = {};
+    for (const row of data || []) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      const domain = String(row?.domain || "").trim().toLowerCase();
+      if (!tenantKey || !domain) continue;
+      if (!next[tenantKey]) next[tenantKey] = {};
+      next[tenantKey][domain] = {
+        domain_type: String(row?.domain_type || defaultDomainType(domain)).trim().toLowerCase() || defaultDomainType(domain),
+        notification_email: String(row?.notification_email || "").trim(),
+      };
+    }
+    setTenantDomainConfigsByTenant(next);
+  }, [hasPlatformPermission]);
+
   const loadTenantMapFeatures = useCallback(async () => {
     if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
       setTenantMapFeaturesByTenant({});
@@ -2009,7 +2079,7 @@ export default function PlatformAdminApp() {
     }
     const { data, error } = await supabase
       .from("tenant_files")
-      .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active")
+      .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype")
       .eq("tenant_key", key)
       .order("uploaded_at", { ascending: false });
     if (error) throw error;
@@ -2102,6 +2172,7 @@ export default function PlatformAdminApp() {
         loadTenantRoleConfig(),
         loadTenantProfiles(),
         loadTenantVisibility(),
+        loadTenantDomainConfigs(),
         loadTenantMapFeatures(),
         loadAudit(),
       ]);
@@ -2109,7 +2180,7 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canViewTenantUsers) {
@@ -3085,6 +3156,22 @@ export default function PlatformAdminApp() {
     }
     setDomainVisibilityForm(nextVisibility);
 
+    const configuredDomainSettings = tenantDomainConfigsByTenant?.[key] || {};
+    const nextDomainConfig = initialDomainConfigForm();
+    for (const d of DOMAIN_OPTIONS) {
+      const configured = configuredDomainSettings?.[d.key] || null;
+      const fallbackNotification = d.key === "potholes"
+        ? String(selectedTenant?.notification_email_potholes || "")
+        : d.key === "water_drain_issues"
+          ? String(selectedTenant?.notification_email_water_drain || "")
+          : "";
+      nextDomainConfig[d.key] = {
+        domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
+        notification_email: String(configured?.notification_email || fallbackNotification).trim(),
+      };
+    }
+    setDomainConfigForm(nextDomainConfig);
+
     const features = tenantMapFeaturesByTenant?.[key] || null;
     if (features) {
       setMapFeaturesForm({
@@ -3107,7 +3194,7 @@ export default function PlatformAdminApp() {
     void loadAudit(key).catch((error) => {
       setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
     });
-  }, [selectedTenantKey, tenantProfilesByTenant, tenantVisibilityByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
+  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
 
   useEffect(() => {
     if (!sortedTenantRoleDefinitions.length) {
@@ -3590,6 +3677,13 @@ export default function PlatformAdminApp() {
         ? "internal_only"
         : "public",
     }));
+    const domainConfigRows = DOMAIN_OPTIONS.map((d) => ({
+      tenant_key: key,
+      domain: d.key,
+      domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
+      notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
+      updated_by: cleanOptional(sessionUserId),
+    }));
 
     const opacityRaw = Number(mapFeaturesForm?.outside_shade_opacity);
     const opacity = Number.isFinite(opacityRaw) ? Math.max(0, Math.min(1, opacityRaw)) : 0.42;
@@ -3606,18 +3700,19 @@ export default function PlatformAdminApp() {
     };
 
     const tenantPayload = {
-      notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
-      notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
+      notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
+      notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
     };
 
-    const [{ error: visError }, { error: featureError }, { error: tenantError }] = await Promise.all([
+    const [{ error: visError }, { error: domainConfigError }, { error: featureError }, { error: tenantError }] = await Promise.all([
       supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
+      supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" }),
       supabase.from("tenant_map_features").upsert([mapPayload], { onConflict: "tenant_key" }),
       supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
     ]);
 
-    if (visError || featureError || tenantError) {
-      setStatus((prev) => ({ ...prev, domains: statusText(visError || featureError || tenantError, "") }));
+    if (visError || domainConfigError || featureError || tenantError) {
+      setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || featureError || tenantError, "") }));
       return;
     }
 
@@ -3628,14 +3723,15 @@ export default function PlatformAdminApp() {
       entity_id: key,
       details: {
         visibility: visibilityRows,
+        domain_configurations: domainConfigRows,
         map_features: mapPayload,
         notification_emails: tenantPayload,
       },
     });
 
-    setStatus((prev) => ({ ...prev, domains: `Saved domains, notification emails, and map settings for ${key}.` }));
+    setStatus((prev) => ({ ...prev, domains: `Saved domain types, notification routing, and map settings for ${key}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, mapFeaturesForm, tenantForm.notification_email_potholes, tenantForm.notification_email_water_drain, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, mapFeaturesForm, sessionUserId, logAudit, refreshControlPlaneData]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -3986,6 +4082,11 @@ export default function PlatformAdminApp() {
     }
 
     const category = String(fileForm.category || "other").trim().toLowerCase();
+    const assetSubtype = String(fileForm.asset_subtype || "").trim().toLowerCase();
+    if (category === "asset_coordinates" && !assetSubtype) {
+      setStatus((prev) => ({ ...prev, files: "Choose the related domain before uploading coordinate files." }));
+      return;
+    }
     let boundaryGeoJson = null;
     if (category === "boundary_geojson") {
       try {
@@ -4003,7 +4104,10 @@ export default function PlatformAdminApp() {
 
     const now = Date.now();
     const fileName = sanitizeFileNameSegment(file.name);
-    const path = `${tenantKey}/${category}/${toDatePath(new Date())}/${now}_${fileName}`;
+    const pathSegments = [tenantKey, category];
+    if (category === "asset_coordinates" && assetSubtype) pathSegments.push(assetSubtype);
+    pathSegments.push(toDatePath(new Date()), `${now}_${fileName}`);
+    const path = pathSegments.join("/");
     const contentType = String(file.type || "application/octet-stream");
 
     const { error: uploadError } = await supabase
@@ -4026,6 +4130,7 @@ export default function PlatformAdminApp() {
       size_bytes: Number(file.size || 0),
       uploaded_by: cleanOptional(sessionUserId),
       notes: cleanOptional(fileForm.notes),
+      asset_subtype: cleanOptional(assetSubtype),
       active: true,
     };
 
@@ -4042,6 +4147,7 @@ export default function PlatformAdminApp() {
       entity_id: path,
       details: {
         category,
+        asset_subtype: cleanOptional(assetSubtype),
         file_name: file.name,
         size_bytes: metadataPayload.size_bytes,
       },
@@ -4067,18 +4173,28 @@ export default function PlatformAdminApp() {
         ...prev,
         files: `Uploaded ${file.name} and applied as active boundary.`,
       }));
-      setFileForm({ category: "contract", notes: "", file: null });
+      setFileForm({ category: "contract", asset_subtype: "", notes: "", file: null });
       setTenantAssetsManagementView("list");
       await refreshControlPlaneData();
       return;
     }
 
-    setFileForm({ category: "contract", notes: "", file: null });
+    setFileForm({ category: "contract", asset_subtype: "", notes: "", file: null });
     setStatus((prev) => ({ ...prev, files: `Uploaded ${file.name}.` }));
     setTenantAssetsManagementView("list");
     await loadTenantFiles(tenantKey);
     await loadAudit();
   }, [canEditTenantFiles, selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
+
+  const openTenantAssetModal = useCallback((overrides = {}) => {
+    setFileForm({
+      category: String(overrides?.category || "contract"),
+      asset_subtype: String(overrides?.asset_subtype || ""),
+      notes: String(overrides?.notes || ""),
+      file: null,
+    });
+    setTenantAssetsManagementView("add");
+  }, []);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -5118,12 +5234,35 @@ export default function PlatformAdminApp() {
               <div style={modalActionGrid}>
                 <label style={modalField}>
                   <span>Asset Category</span>
-                  <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={modalInput}>
+                  <select
+                    value={fileForm.category}
+                    onChange={(e) => setFileForm((p) => ({
+                      ...p,
+                      category: e.target.value,
+                      asset_subtype: e.target.value === "asset_coordinates" ? p.asset_subtype : "",
+                    }))}
+                    style={modalInput}
+                  >
                     {TENANT_ASSET_CATEGORIES.map((category) => (
                       <option key={category.key} value={category.key}>{category.label}</option>
                     ))}
                   </select>
                 </label>
+                {fileForm.category === "asset_coordinates" ? (
+                  <label style={modalField}>
+                    <span>Related Domain</span>
+                    <select
+                      value={fileForm.asset_subtype || ""}
+                      onChange={(e) => setFileForm((p) => ({ ...p, asset_subtype: e.target.value }))}
+                      style={modalInput}
+                    >
+                      <option value="">Select domain</option>
+                      {DOMAIN_OPTIONS.map((domain) => (
+                        <option key={domain.key} value={domain.key}>{domain.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <label style={modalField}>
                   <span>Asset File</span>
                   <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={modalInput} />
@@ -7087,55 +7226,131 @@ export default function PlatformAdminApp() {
                   <div style={{ display: "grid", gap: 3 }}>
                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Control which reporting domains are active for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
+                      Control which reporting domains are active, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
                     </div>
                   </div>
-                  <div style={responsiveDomainGrid}>
-                    {DOMAIN_OPTIONS.map((d) => (
-                      <label key={d.key} style={{ display: "grid", gap: 5, border: `1px solid ${palette.border}`, borderRadius: 10, padding: 8, background: "#f8fbff" }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 800 }}>{d.label}</span>
-                        <select
-                          value={domainVisibilityForm[d.key] || "enabled"}
-                          disabled={!canEditTenantDomains}
-                          onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
-                          style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
-                        >
-                          <option value="enabled">Enabled</option>
-                          <option value="disabled">Disabled</option>
-                        </select>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Notification Emails</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Set the inboxes that should receive routed notifications from report domains.
-                    </div>
-                  </div>
-                  <div style={responsiveTwoColGrid}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Pothole Notification Email</span>
-                      <input
-                        readOnly={!canEditTenantDomains}
-                        value={tenantForm.notification_email_potholes}
-                        onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_potholes: e.target.value }))}
-                        placeholder="roads@examplemunicipality.gov"
-                        style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
-                      />
-                    </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Water / Drain Notification Email</span>
-                      <input
-                        readOnly={!canEditTenantDomains}
-                        value={tenantForm.notification_email_water_drain}
-                        onChange={(e) => setTenantForm((p) => ({ ...p, notification_email_water_drain: e.target.value }))}
-                        placeholder="utilities@examplemunicipality.gov"
-                        style={{ ...inputBase, background: canEditTenantDomains ? inputBase.background : "#eef4fb" }}
-                      />
-                    </label>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {DOMAIN_OPTIONS.map((d) => {
+                      const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
+                      const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
+                      const isAssetBacked = domainType === "asset_backed";
+                      return (
+                        <div key={d.key} style={{ ...subPanel, display: "grid", gap: 10, background: "#f8fbff" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>{d.label}</div>
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                {isAssetBacked
+                                  ? "Persistent mapped assets can be seeded with coordinates and also route notifications."
+                                  : "Resident and staff reports create incidents in this domain and route to the selected notification inbox."}
+                              </div>
+                            </div>
+                            <span style={{
+                              borderRadius: 999,
+                              padding: "4px 10px",
+                              fontSize: 11.5,
+                              fontWeight: 800,
+                              color: domainVisibilityForm[d.key] === "disabled" ? palette.textMuted : "#0f6e5c",
+                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(74,97,122,0.12)" : "rgba(18,128,106,0.12)",
+                            }}>
+                              {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
+                            </span>
+                          </div>
+                          <div style={responsiveActionGrid}>
+                            <label style={modalField}>
+                              <span>Enablement</span>
+                              <select
+                                value={domainVisibilityForm[d.key] || "enabled"}
+                                disabled={!canEditTenantDomains}
+                                onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
+                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                              >
+                                <option value="enabled">Enabled</option>
+                                <option value="disabled">Disabled</option>
+                              </select>
+                            </label>
+                            <label style={modalField}>
+                              <span>Domain Type</span>
+                              <select
+                                value={domainType}
+                                disabled={!canEditTenantDomains}
+                                onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ...prev,
+                                  [d.key]: {
+                                    ...(prev?.[d.key] || {}),
+                                    domain_type: e.target.value,
+                                  },
+                                }))}
+                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                              >
+                                {DOMAIN_TYPE_OPTIONS.map((option) => (
+                                  <option key={option.key} value={option.key}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label style={modalField}>
+                              <span>Notification Email</span>
+                              <input
+                                readOnly={!canEditTenantDomains}
+                                value={domainConfigForm?.[d.key]?.notification_email || ""}
+                                onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ...prev,
+                                  [d.key]: {
+                                    ...(prev?.[d.key] || {}),
+                                    notification_email: e.target.value,
+                                  },
+                                }))}
+                                placeholder={`notifications+${d.key}@examplemunicipality.gov`}
+                                style={{ ...modalInput, background: canEditTenantDomains ? modalInput.background : "#eef4fb" }}
+                              />
+                            </label>
+                          </div>
+                          {isAssetBacked ? (
+                            <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 3 }}>
+                                  <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    {coordinateFiles.length
+                                      ? `${coordinateFiles.length} coordinate file${coordinateFiles.length === 1 ? "" : "s"} linked to ${d.label}.`
+                                      : `No coordinate files are linked to ${d.label} yet.`}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, opacity: canEditTenantFiles ? 1 : 0.55 }}
+                                  disabled={!canEditTenantFiles}
+                                  onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
+                                  title={canEditTenantFiles ? `Add coordinate file for ${d.label}` : "You need the Files edit permission"}
+                                >
+                                  Add Coordinates
+                                </button>
+                              </div>
+                              {coordinateFiles.length ? (
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  {coordinateFiles.slice(0, 3).map((row) => (
+                                    <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                      <div style={{ display: "grid", gap: 2 }}>
+                                        <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed coordinate file"}</strong>
+                                        <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                          {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
+                                        </span>
+                                      </div>
+                                      <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
+                                    </div>
+                                  ))}
+                                  {coordinateFiles.length > 3 ? (
+                                    <div style={{ fontSize: 12, color: palette.textMuted }}>
+                                      {coordinateFiles.length - 3} more coordinate file{coordinateFiles.length - 3 === 1 ? "" : "s"} available in the asset library below.
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -7275,7 +7490,7 @@ export default function PlatformAdminApp() {
                   type="button"
                   style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }}
                   disabled={!canEditTenantFiles}
-                  onClick={() => setTenantAssetsManagementView("add")}
+                  onClick={() => openTenantAssetModal()}
                   title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
                 >
                   Add Asset
@@ -7319,6 +7534,7 @@ export default function PlatformAdminApp() {
                                   <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed file"}</strong>
                                   <span style={{ fontSize: 12.5, color: palette.textMuted }}>
                                     {summarizeTenantAssetCategory(row.file_category)}
+                                    {String(row?.asset_subtype || "").trim() ? ` • ${domainKeyToLabel(String(row.asset_subtype).trim().toLowerCase())}` : ""}
                                     {" • "}
                                     {formatBytes(row.size_bytes)}
                                     {" • "}

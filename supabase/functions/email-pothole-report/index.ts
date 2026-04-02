@@ -213,10 +213,25 @@ async function loadTenantRuntimeConfig(admin: SupabaseClient, tenantKey: string)
 
   let value: TenantRuntimeConfig | null = null;
   if (data && data.active !== false) {
+    let domainNotificationEmail = "";
+    const { data: domainConfig, error: domainConfigError } = await admin
+      .from("tenant_domain_configs")
+      .select("notification_email")
+      .eq("tenant_key", tenantKey)
+      .eq("domain", "potholes")
+      .maybeSingle();
+    if (domainConfigError) {
+      const message = String(domainConfigError.message || "").toLowerCase();
+      if (!message.includes("tenant_domain_configs") && !message.includes("relation") && !message.includes("schema cache")) {
+        throw new Error(domainConfigError.message || "Failed to load domain config");
+      }
+    } else {
+      domainNotificationEmail = String(domainConfig?.notification_email || "").trim();
+    }
     value = {
       tenantKey: String(data.tenant_key || tenantKey).trim().toLowerCase() || tenantKey,
       boundaryConfigKey: String(data.boundary_config_key || `${tenantKey}_city_geojson`).trim() || `${tenantKey}_city_geojson`,
-      potholeEmailTo: String(data.notification_email_potholes || "").trim(),
+      potholeEmailTo: domainNotificationEmail || String(data.notification_email_potholes || "").trim(),
     };
   } else if (TENANT_FALLBACK_ENABLED && tenantKey === DEFAULT_TENANT_KEY) {
     value = {
