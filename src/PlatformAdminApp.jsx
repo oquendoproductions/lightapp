@@ -350,23 +350,21 @@ const listActionButton = {
   fontWeight: 700,
 };
 
-const contactDetailList = {
+const contactFieldGrid = {
   display: "grid",
-  gap: 6,
-  fontSize: 12.5,
-  color: palette.text,
-};
-
-const contactEditRow = {
-  display: "grid",
-  gridTemplateColumns: "120px minmax(0, 1fr)",
-  alignItems: "center",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
   gap: 10,
+  alignItems: "start",
+};
+
+const contactField = {
+  display: "grid",
+  gap: 4,
   fontSize: 12.5,
   color: palette.text,
 };
 
-const contactEditInput = {
+const contactFieldInput = {
   ...inputBase,
   minHeight: 36,
   padding: "6px 10px",
@@ -5957,33 +5955,48 @@ export default function PlatformAdminApp() {
                     </div>
                   )}
                 </div>
-                {!editingPrimaryContact ? (
-                  <div style={contactDetailList}>
-                    <div><strong>Name:</strong> {profileForm.contact_primary_name || "Not set"}</div>
-                    <div><strong>Role / Title:</strong> {profileForm.contact_primary_title || "Not set"}</div>
-                    <div><strong>Email:</strong> {profileForm.contact_primary_email || "Not set"}</div>
-                    <div><strong>Phone:</strong> {profileForm.contact_primary_phone || "Not set"}</div>
-                  </div>
-                ) : (
-                  <div style={{ display: "grid", gap: 6 }}>
-                    <label style={contactEditRow}>
-                      <span><strong>Name:</strong></span>
-                      <input value={profileForm.contact_primary_name} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))} style={contactEditInput} />
-                    </label>
-                    <label style={contactEditRow}>
-                      <span><strong>Role / Title:</strong></span>
-                      <input value={profileForm.contact_primary_title} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))} style={contactEditInput} />
-                    </label>
-                    <label style={contactEditRow}>
-                      <span><strong>Email:</strong></span>
-                      <input value={profileForm.contact_primary_email} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))} style={contactEditInput} />
-                    </label>
-                    <label style={contactEditRow}>
-                      <span><strong>Phone:</strong></span>
-                      <input value={profileForm.contact_primary_phone} onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))} style={contactEditInput} />
-                    </label>
-                  </div>
-                )}
+                <div style={contactFieldGrid}>
+                  <label style={contactField}>
+                    <span>Name</span>
+                    <input
+                      readOnly={!editingPrimaryContact}
+                      value={profileForm.contact_primary_name}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_name: e.target.value }))}
+                      placeholder="Not set"
+                      style={{ ...contactFieldInput, background: editingPrimaryContact ? inputBase.background : "#eef4fb" }}
+                    />
+                  </label>
+                  <label style={contactField}>
+                    <span>Role / Title</span>
+                    <input
+                      readOnly={!editingPrimaryContact}
+                      value={profileForm.contact_primary_title}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_title: e.target.value }))}
+                      placeholder="Not set"
+                      style={{ ...contactFieldInput, background: editingPrimaryContact ? inputBase.background : "#eef4fb" }}
+                    />
+                  </label>
+                  <label style={contactField}>
+                    <span>Email</span>
+                    <input
+                      readOnly={!editingPrimaryContact}
+                      value={profileForm.contact_primary_email}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_email: e.target.value }))}
+                      placeholder="Not set"
+                      style={{ ...contactFieldInput, background: editingPrimaryContact ? inputBase.background : "#eef4fb" }}
+                    />
+                  </label>
+                  <label style={contactField}>
+                    <span>Phone</span>
+                    <input
+                      readOnly={!editingPrimaryContact}
+                      value={profileForm.contact_primary_phone}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, contact_primary_phone: e.target.value }))}
+                      placeholder="Not set"
+                      style={{ ...contactFieldInput, background: editingPrimaryContact ? inputBase.background : "#eef4fb" }}
+                    />
+                  </label>
+                </div>
               </div>
 
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
@@ -6038,33 +6051,48 @@ export default function PlatformAdminApp() {
                             </button>
                           )}
                         </div>
-                        {isEditingContact ? (
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <label style={contactEditRow}>
-                              <span><strong>Name:</strong></span>
-                              <input value={contact.name || ""} onChange={(e) => updateAdditionalContact(index, "name", e.target.value)} style={contactEditInput} />
-                            </label>
-                            <label style={contactEditRow}>
-                              <span><strong>Role / Title:</strong></span>
-                              <input value={contact.title || ""} onChange={(e) => updateAdditionalContact(index, "title", e.target.value)} style={contactEditInput} />
-                            </label>
-                            <label style={contactEditRow}>
-                              <span><strong>Email:</strong></span>
-                              <input value={contact.email || ""} onChange={(e) => updateAdditionalContact(index, "email", e.target.value)} style={contactEditInput} />
-                            </label>
-                            <label style={contactEditRow}>
-                              <span><strong>Phone:</strong></span>
-                              <input value={contact.phone || ""} onChange={(e) => updateAdditionalContact(index, "phone", e.target.value)} style={contactEditInput} />
-                            </label>
-                          </div>
-                        ) : (
-                          <div style={contactDetailList}>
-                            <div><strong>Name:</strong> {contact.name || "Not set"}</div>
-                            <div><strong>Role / Title:</strong> {contact.title || "Not set"}</div>
-                            <div><strong>Email:</strong> {contact.email || "Not set"}</div>
-                            <div><strong>Phone:</strong> {contact.phone || "Not set"}</div>
-                          </div>
-                        )}
+                        <div style={contactFieldGrid}>
+                          <label style={contactField}>
+                            <span>Name</span>
+                            <input
+                              readOnly={!isEditingContact}
+                              value={contact.name || ""}
+                              onChange={(e) => updateAdditionalContact(index, "name", e.target.value)}
+                              placeholder="Not set"
+                              style={{ ...contactFieldInput, background: isEditingContact ? inputBase.background : "#eef4fb" }}
+                            />
+                          </label>
+                          <label style={contactField}>
+                            <span>Role / Title</span>
+                            <input
+                              readOnly={!isEditingContact}
+                              value={contact.title || ""}
+                              onChange={(e) => updateAdditionalContact(index, "title", e.target.value)}
+                              placeholder="Not set"
+                              style={{ ...contactFieldInput, background: isEditingContact ? inputBase.background : "#eef4fb" }}
+                            />
+                          </label>
+                          <label style={contactField}>
+                            <span>Email</span>
+                            <input
+                              readOnly={!isEditingContact}
+                              value={contact.email || ""}
+                              onChange={(e) => updateAdditionalContact(index, "email", e.target.value)}
+                              placeholder="Not set"
+                              style={{ ...contactFieldInput, background: isEditingContact ? inputBase.background : "#eef4fb" }}
+                            />
+                          </label>
+                          <label style={contactField}>
+                            <span>Phone</span>
+                            <input
+                              readOnly={!isEditingContact}
+                              value={contact.phone || ""}
+                              onChange={(e) => updateAdditionalContact(index, "phone", e.target.value)}
+                              placeholder="Not set"
+                              style={{ ...contactFieldInput, background: isEditingContact ? inputBase.background : "#eef4fb" }}
+                            />
+                          </label>
+                        </div>
                             </>
                           );
                         })()}
