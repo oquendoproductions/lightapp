@@ -428,7 +428,7 @@ const controlPlaneTabsRail = {
 
 const controlPlaneTabsShell = {
   width: "100%",
-  padding: "10px 10px 0",
+  padding: "10px",
   border: "1px solid rgba(23, 49, 79, 0.08)",
   borderTop: 0,
   borderRadius: 0,
@@ -4162,7 +4162,7 @@ export default function PlatformAdminApp() {
   ) : null;
 
   const controlPlaneNavigation = sessionUserId && isPlatformAdmin ? (
-    <section style={{ ...fullWidthSection, display: "grid", gap: isCompactViewport ? 12 : 0 }}>
+    <section style={{ ...fullWidthSection, display: "grid", gap: isCompactViewport ? 12 : 12 }}>
       <div
         ref={controlPlaneNavRef}
         style={
@@ -4191,10 +4191,7 @@ export default function PlatformAdminApp() {
           style={
             isCompactViewport
               ? controlPlaneTabsShell
-              : {
-                  ...controlPlaneTabsShell,
-                  borderBottom: 0,
-                }
+              : controlPlaneTabsShell
           }
         >
           <nav
@@ -4277,15 +4274,7 @@ export default function PlatformAdminApp() {
           ...card,
           display: "grid",
           gap: 6,
-          ...(isCompactViewport
-            ? null
-            : {
-                marginTop: 0,
-                borderTopLeftRadius: 0,
-                borderTopRightRadius: 0,
-                borderTop: 0,
-                boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
-              }),
+          ...(isCompactViewport ? null : { marginTop: 0 }),
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
