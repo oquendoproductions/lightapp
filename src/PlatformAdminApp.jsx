@@ -1276,6 +1276,8 @@ export default function PlatformAdminApp() {
   const [platformUserSearchResults, setPlatformUserSearchResults] = useState([]);
   const [platformTeamForm, setPlatformTeamForm] = useState({ user_id: "", role: "platform_staff" });
   const [platformTeamManagementView, setPlatformTeamManagementView] = useState("list");
+  const [platformTeamAssignmentMode, setPlatformTeamAssignmentMode] = useState("existing");
+  const [platformInviteForm, setPlatformInviteForm] = useState({ first_name: "", last_name: "", email: "", phone: "" });
   const [editingPlatformAssignmentKey, setEditingPlatformAssignmentKey] = useState("");
   const [editingPlatformAssignmentRole, setEditingPlatformAssignmentRole] = useState("");
   const [platformTeamStatus, setPlatformTeamStatus] = useState("");
@@ -1524,6 +1526,16 @@ export default function PlatformAdminApp() {
     return out;
   }, [userSearchResults]);
 
+  const platformUserSearchResultById = useMemo(() => {
+    const out = {};
+    for (const row of platformUserSearchResults || []) {
+      const key = String(row?.id || "").trim();
+      if (!key) continue;
+      out[key] = row;
+    }
+    return out;
+  }, [platformUserSearchResults]);
+
   const selectedTenantRoleAssignments = useMemo(
     () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
     [tenantAdmins, selectedTenantKey]
@@ -1771,6 +1783,7 @@ export default function PlatformAdminApp() {
   const addTenantStepIndex = Math.max(0, ADD_TENANT_STEPS.findIndex((step) => step.key === addTenantStep));
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
+  const selectedPlatformSearchAccount = platformTeamForm.user_id ? platformUserSearchResultById?.[platformTeamForm.user_id] || null : null;
   const billingAddressDisplay = useMemo(
     () => composeMailingAddress(selectedTenantProfile || {}),
     [selectedTenantProfile]
@@ -2590,6 +2603,31 @@ export default function PlatformAdminApp() {
     setPlatformAccountStatus("Password updated.");
   }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password, closeChangePasswordModal, sessionEmail]);
 
+  const closePlatformTeamAddModal = useCallback(() => {
+    setPlatformTeamManagementView("list");
+    setPlatformTeamAssignmentMode("existing");
+    setPlatformUserSearchQuery("");
+    setPlatformUserSearchResults([]);
+    setPlatformInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setPlatformTeamForm((prev) => ({
+      user_id: "",
+      role: prev.role || String(assignablePlatformRoles?.[0]?.role || "platform_staff"),
+    }));
+  }, [assignablePlatformRoles]);
+
+  const openPlatformTeamAddModal = useCallback(() => {
+    setPlatformTeamStatus("");
+    setPlatformTeamAssignmentMode("existing");
+    setPlatformUserSearchQuery("");
+    setPlatformUserSearchResults([]);
+    setPlatformInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setPlatformTeamForm((prev) => ({
+      user_id: "",
+      role: prev.role || String(assignablePlatformRoles?.[0]?.role || "platform_staff"),
+    }));
+    setPlatformTeamManagementView("add");
+  }, [assignablePlatformRoles]);
+
   const openAddTenantStep = useCallback(() => {
     if (!canCreateOrganizations) {
       setStatus((prev) => ({ ...prev, tenant: "You need the Organizations edit permission to create an organization." }));
@@ -2793,6 +2831,53 @@ export default function PlatformAdminApp() {
     setPlatformUserSearchResults([]);
     await loadPlatformTeamAssignments();
   }, [canManagePlatformUsers, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, sessionUserId]);
+
+  const createAndAssignPlatformUser = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canManagePlatformUsers) {
+      setPlatformTeamStatus("You need the Users edit permission to manage the internal platform team.");
+      return;
+    }
+
+    const role = String(platformTeamForm.role || "").trim().toLowerCase() || String(assignablePlatformRoles?.[0]?.role || "platform_staff");
+    const first_name = String(platformInviteForm.first_name || "").trim();
+    const last_name = String(platformInviteForm.last_name || "").trim();
+    const email = String(platformInviteForm.email || "").trim().toLowerCase();
+    const phone = String(platformInviteForm.phone || "").trim();
+
+    if (!role || !first_name || !last_name || !email) {
+      setPlatformTeamStatus("First name, last name, email, and platform role are required.");
+      return;
+    }
+
+    const { data, error } = await invokePlatformUserAdmin({
+      action: "invite_platform_and_assign",
+      role,
+      first_name,
+      last_name,
+      email,
+      phone,
+    });
+
+    if (error) {
+      setPlatformTeamStatus(statusText(error, ""));
+      return;
+    }
+
+    const inviteSent = data?.inviteSent === true;
+    setPlatformInviteForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setPlatformTeamForm((prev) => ({ ...prev, user_id: "", role }));
+    setPlatformTeamAssignmentMode("existing");
+    setPlatformUserSearchQuery(email);
+    setPlatformUserSearchResults([]);
+    setPlatformTeamStatus(
+      inviteSent
+        ? `Created account invitation for ${email} and assigned ${platformRoleLabelByKey[role] || platformRoleToLabel(role)}.`
+        : `Assigned ${platformRoleLabelByKey[role] || platformRoleToLabel(role)} to existing account ${email}.`
+    );
+    closePlatformTeamAddModal();
+    await refreshControlPlaneData();
+  }, [assignablePlatformRoles, canManagePlatformUsers, closePlatformTeamAddModal, invokePlatformUserAdmin, platformInviteForm, platformRoleLabelByKey, platformTeamForm.role, refreshControlPlaneData]);
 
   const removePlatformRole = useCallback(async (row) => {
     if (!canRemovePlatformUsers) {
@@ -3501,6 +3586,13 @@ export default function PlatformAdminApp() {
       setAssignForm((prev) => ({ ...prev, role: String(assignableTenantRoles[0]?.role || "tenant_employee") }));
     }
   }, [assignableTenantRoles, assignForm.role]);
+
+  useEffect(() => {
+    if (!assignablePlatformRoles.length) return;
+    if (!assignablePlatformRoles.some((row) => String(row?.role || "") === String(platformTeamForm.role || ""))) {
+      setPlatformTeamForm((prev) => ({ ...prev, role: String(assignablePlatformRoles[0]?.role || "platform_staff") }));
+    }
+  }, [assignablePlatformRoles, platformTeamForm.role]);
 
   useEffect(() => {
     if (!selectedRoleKey) {
@@ -5218,74 +5310,167 @@ export default function PlatformAdminApp() {
         </div>
       ) : null}
       {platformTeamManagementView === "add" ? (
-        <div style={authModalBackdrop} onClick={() => setPlatformTeamManagementView("list")}>
+        <div style={authModalBackdrop} onClick={closePlatformTeamAddModal}>
           <div style={{ ...authModalCard, width: "min(760px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
               <div style={{ display: "grid", gap: 6 }}>
                 <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Platform Team Member</h2>
                 <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
-                  Find the internal account first, then assign the correct platform role.
+                  Add a platform team member by finding an existing account or creating a new invited account, then assign one platform role.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setPlatformTeamManagementView("list")}
+                onClick={closePlatformTeamAddModal}
                 style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
                 aria-label="Close add team member dialog"
               >
                 ×
               </button>
             </div>
-            <form onSubmit={searchPlatformTeamUsers} style={{ display: "grid", gap: 12 }}>
-              <div style={modalActionGrid}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                type="button"
+                style={platformTeamAssignmentMode === "existing" ? modalPrimaryButton : modalToggleButton}
+                onClick={() => setPlatformTeamAssignmentMode("existing")}
+              >
+                Find Existing Account
+              </button>
+              <button
+                type="button"
+                style={platformTeamAssignmentMode === "invite" ? modalPrimaryButton : modalToggleButton}
+                onClick={() => setPlatformTeamAssignmentMode("invite")}
+              >
+                Create Account
+              </button>
+            </div>
+            {platformTeamAssignmentMode === "existing" ? (
+              <>
+                <form onSubmit={searchPlatformTeamUsers} style={{ display: "grid", gap: 12 }}>
+                  <div style={modalActionGrid}>
+                    <label style={modalField}>
+                      <span>Find Internal Account</span>
+                      <input
+                        value={platformUserSearchQuery}
+                        onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
+                        placeholder="Exact email, exact phone, or full name"
+                        style={modalInput}
+                        disabled={!canManagePlatformUsers}
+                      />
+                    </label>
+                    <div style={{ display: "grid", alignContent: "end" }}>
+                      <button type="submit" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers || platformUserSearchLoading}>
+                        {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+                {platformUserSearchResults.length ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {platformUserSearchResults.map((row) => {
+                      const userId = String(row?.id || "").trim();
+                      const selected = userId === platformTeamForm.user_id;
+                      return (
+                        <button
+                          key={userId}
+                          type="button"
+                          onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
+                          style={{
+                            ...listActionButton,
+                            border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                            background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                          }}
+                        >
+                          <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
+                          <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                            {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ ...modalField, maxWidth: 260 }}>
+                    <span>Platform Role</span>
+                    <select
+                      value={platformTeamForm.role}
+                      onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
+                      style={{ ...modalInput, minWidth: 0 }}
+                      disabled={!canManagePlatformUsers}
+                    >
+                      {assignablePlatformRoles.map((row) => (
+                        <option key={row.role} value={row.role}>
+                          {platformRoleLabelByKey[String(row?.role || "").trim()] || platformRoleToLabel(row?.role)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div style={modalFooterActions}>
+                  <button type="button" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!canManagePlatformUsers || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
+                    Assign Platform Role
+                  </button>
+                  {platformTeamForm.user_id ? (
+                    <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Selected account: <b>{String(selectedPlatformSearchAccount?.display_name || "").trim() || selectedPlatformSearchAccount?.email || "Account selected"}</b>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <form onSubmit={createAndAssignPlatformUser} style={modalActionGrid}>
                 <label style={modalField}>
-                  <span>Find Internal Account</span>
+                  <span>First Name</span>
                   <input
-                    value={platformUserSearchQuery}
-                    onChange={(e) => setPlatformUserSearchQuery(e.target.value)}
-                    placeholder="Exact email, exact phone, or full name"
+                    value={platformInviteForm.first_name}
+                    onChange={(e) => setPlatformInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                    placeholder="Jordan"
                     style={modalInput}
                     disabled={!canManagePlatformUsers}
                   />
                 </label>
-                <div style={{ display: "grid", alignContent: "end" }}>
-                  <button type="submit" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers ? 1 : 0.55 }} disabled={!canManagePlatformUsers || platformUserSearchLoading}>
-                    {platformUserSearchLoading ? "Searching..." : "Search Accounts"}
-                  </button>
-                </div>
-              </div>
-              {platformUserSearchResults.length ? (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {platformUserSearchResults.map((row) => {
-                    const userId = String(row?.id || "").trim();
-                    const selected = userId === platformTeamForm.user_id;
-                    return (
-                      <button
-                        key={userId}
-                        type="button"
-                        onClick={() => setPlatformTeamForm((prev) => ({ ...prev, user_id: userId }))}
-                        style={{
-                          ...listActionButton,
-                          border: selected ? `1px solid ${palette.mint700}` : listActionButton.border,
-                          background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
-                        }}
-                      >
-                        <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
-                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                          {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <div style={modalActionGrid}>
                 <label style={modalField}>
+                  <span>Last Name</span>
+                  <input
+                    value={platformInviteForm.last_name}
+                    onChange={(e) => setPlatformInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                    placeholder="Rivera"
+                    style={modalInput}
+                    disabled={!canManagePlatformUsers}
+                  />
+                </label>
+                <label style={modalField}>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={platformInviteForm.email}
+                    onChange={(e) => setPlatformInviteForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="jordan.rivera@cityreport.io"
+                    style={modalInput}
+                    disabled={!canManagePlatformUsers}
+                  />
+                </label>
+                <label style={modalField}>
+                  <span>Phone</span>
+                  <input
+                    value={platformInviteForm.phone}
+                    onChange={(e) => setPlatformInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    placeholder="(555) 555-0100"
+                    style={modalInput}
+                    disabled={!canManagePlatformUsers}
+                  />
+                </label>
+                <label style={{ ...modalField, maxWidth: 260 }}>
                   <span>Platform Role</span>
                   <select
                     value={platformTeamForm.role}
                     onChange={(e) => setPlatformTeamForm((prev) => ({ ...prev, role: e.target.value }))}
-                    style={modalInput}
+                    style={{ ...modalInput, minWidth: 0 }}
                     disabled={!canManagePlatformUsers}
                   >
                     {assignablePlatformRoles.map((row) => (
@@ -5295,16 +5480,20 @@ export default function PlatformAdminApp() {
                     ))}
                   </select>
                 </label>
-              </div>
-              <div style={modalFooterActions}>
-                <button type="button" style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers && platformTeamForm.user_id ? 1 : 0.55 }} disabled={!canManagePlatformUsers || !platformTeamForm.user_id} onClick={() => void assignPlatformRole()}>
-                  Assign Platform Role
-                </button>
-                <button type="button" style={modalSecondaryButton} onClick={() => setPlatformTeamManagementView("list")}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+                <div style={modalFooterActions}>
+                  <button
+                    type="submit"
+                    style={{ ...modalPrimaryButton, opacity: canManagePlatformUsers ? 1 : 0.55 }}
+                    disabled={!canManagePlatformUsers}
+                  >
+                    Create Account + Assign Role
+                  </button>
+                  <button type="button" style={modalSecondaryButton} onClick={closePlatformTeamAddModal}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       ) : null}
@@ -6262,7 +6451,10 @@ export default function PlatformAdminApp() {
                     type="button"
                     style={{ ...buttonBase, opacity: canManagePlatformUsers ? 1 : 0.55 }}
                     disabled={!canManagePlatformUsers}
-                    onClick={() => setPlatformTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                    onClick={() => {
+                      if (platformTeamManagementView === "add") closePlatformTeamAddModal();
+                      else openPlatformTeamAddModal();
+                    }}
                   >
                     {platformTeamManagementView === "add" ? "Hide Add Team Member" : "Add Team Member"}
                   </button>

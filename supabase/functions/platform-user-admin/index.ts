@@ -455,6 +455,26 @@ async function resolveAssignableRole(
   return { ok: true, roleDefinition: data };
 }
 
+async function resolveAssignablePlatformRole(
+  admin: ReturnType<typeof createClient>,
+  role: string,
+) {
+  const { data, error } = await admin
+    .from("platform_role_definitions")
+    .select("role,role_label,is_system,active")
+    .eq("role", role)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, response: json({ ok: false, error: "Unable to verify requested platform role." }, 500) };
+  }
+  if (!data?.role) {
+    return { ok: false, response: json({ ok: false, error: "Requested platform role is not available." }, 400) };
+  }
+
+  return { ok: true, roleDefinition: data };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
@@ -548,6 +568,94 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, results });
     } catch (error) {
       return json({ ok: false, error: String((error as Error)?.message || error || "Lookup failed.") }, 500);
+    }
+  }
+
+  if (action === "invite_platform_and_assign") {
+    if (!actor.permissions.usersEdit) {
+      return json({ ok: false, error: "You need the users.edit permission to manage the platform team." }, 403);
+    }
+
+    const role = normalizeRoleKey(body?.role);
+    const firstName = normalizeText(body?.first_name);
+    const lastName = normalizeText(body?.last_name);
+    const email = normalizeEmail(body?.email);
+    const phone = normalizeText(body?.phone);
+
+    if (!role || !firstName || !lastName || !email) {
+      return json({ ok: false, error: "role, first_name, last_name, and email are required." }, 400);
+    }
+
+    const roleCheck = await resolveAssignablePlatformRole(admin, role);
+    if (!roleCheck.ok) {
+      return roleCheck.response;
+    }
+
+    const roleDefinition = roleCheck.roleDefinition;
+    if (roleDefinition?.active === false) {
+      return json({ ok: false, error: "Requested platform role is inactive." }, 400);
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return json({ ok: false, error: "Email address is invalid." }, 400);
+    }
+
+    try {
+      let userSummary = await findUserByEmail(admin, email);
+      let inviteSent = false;
+
+      if (!userSummary) {
+        const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            full_name: `${firstName} ${lastName}`.trim(),
+            phone,
+          },
+          redirectTo: inviteRedirectTo,
+        });
+        if (error || !data?.user?.id) {
+          return json({
+            ok: false,
+            error: String(error?.message || "Unable to create invited account."),
+          }, 500);
+        }
+
+        inviteSent = true;
+        userSummary = toUserSummary({
+          ...data.user,
+          user_metadata: {
+            ...(data.user.user_metadata || {}),
+            first_name: firstName,
+            last_name: lastName,
+            full_name: `${firstName} ${lastName}`.trim(),
+            phone,
+          },
+          phone: data.user.phone || phone,
+        });
+      }
+
+      const userId = String(userSummary?.id || "").trim();
+      if (!userId) {
+        return json({ ok: false, error: "Unable to resolve invited user." }, 500);
+      }
+
+      const { error: roleError } = await admin
+        .from("platform_user_roles")
+        .upsert([{ user_id: userId, role, status: "active", assigned_by: actor.userId }], {
+          onConflict: "user_id,role",
+        });
+      if (roleError) {
+        return json({ ok: false, error: String(roleError.message || roleError) }, 500);
+      }
+
+      return json({
+        ok: true,
+        inviteSent,
+        user: userSummary,
+      });
+    } catch (error) {
+      return json({ ok: false, error: String((error as Error)?.message || error || "Unable to create platform user.") }, 500);
     }
   }
 

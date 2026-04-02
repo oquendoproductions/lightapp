@@ -453,6 +453,28 @@ vi.mock("../supabaseClient", () => {
           };
         }
 
+        if (action === "invite_platform_and_assign") {
+          const createdUser = {
+            id: "user-4",
+            email: normalizeEmail(options?.body?.email),
+            phone: String(options?.body?.phone || "").trim(),
+            user_metadata: {
+              first_name: String(options?.body?.first_name || "").trim(),
+              last_name: String(options?.body?.last_name || "").trim(),
+              full_name: normalizeText(`${options?.body?.first_name || ""} ${options?.body?.last_name || ""}`),
+            },
+          };
+          mockState.platformUsers.push(createdUser);
+          return {
+            data: {
+              ok: true,
+              inviteSent: true,
+              user: toUserSummary(createdUser),
+            },
+            error: null,
+          };
+        }
+
         return { data: { ok: true }, error: null };
       }),
     },
@@ -633,6 +655,22 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /add platform team member/i });
     expect(screen.getByRole("button", { name: /search accounts/i })).toBeInTheDocument();
+  });
+
+  it("lets the PCP create a new platform team account from the add team member modal", async () => {
+    const { user } = await openManageTeam();
+
+    await user.click(screen.getByRole("button", { name: /add team member/i }));
+    await screen.findByRole("heading", { name: /add platform team member/i });
+
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+    await user.type(screen.getByLabelText(/first name/i), "Taylor");
+    await user.type(screen.getByLabelText(/last name/i), "Admin");
+    await user.type(screen.getByLabelText(/email/i), "taylor.admin@cityreport.io");
+    await user.type(screen.getByLabelText(/phone/i), "(555) 555-0188");
+    await user.click(screen.getByRole("button", { name: /create account \+ assign role/i }));
+
+    await screen.findByText(/created account invitation for taylor\.admin@cityreport\.io/i);
   });
 
   it("lets the PCP user edit and save account name and phone", async () => {
