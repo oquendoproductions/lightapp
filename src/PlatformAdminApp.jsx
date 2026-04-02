@@ -5769,21 +5769,21 @@ export default function PlatformAdminApp() {
               <div style={{ ...card, display: "grid", gap: 12 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Account Info</h2>
                 <div style={responsiveTwoColGrid}>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Name</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: palette.navy900 }}>{sessionDisplayName || "Platform User"}</div>
                   </div>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Email</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>{sessionEmail || "No email on file"}</div>
                   </div>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>Phone</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Coming next</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>Coming next</div>
                   </div>
-                  <div style={metricCard}>
+                  <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: palette.navy900 }}>Foundation ready</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>Foundation ready</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
