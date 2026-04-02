@@ -1274,6 +1274,10 @@ export default function PlatformAdminApp() {
   const [platformRolePermissionDraft, setPlatformRolePermissionDraft] = useState({});
   const [platformRolePermissionDirty, setPlatformRolePermissionDirty] = useState(false);
   const [platformRoleStatus, setPlatformRoleStatus] = useState("");
+  const [platformRoleAddModalOpen, setPlatformRoleAddModalOpen] = useState(false);
+  const [platformRoleEditMode, setPlatformRoleEditMode] = useState(false);
+  const [platformRoleDeleteConfirmOpen, setPlatformRoleDeleteConfirmOpen] = useState(false);
+  const [platformRoleDeleteLoading, setPlatformRoleDeleteLoading] = useState(false);
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
   const [selectedLeadId, setSelectedLeadId] = useState(initialControlPlaneRouteState.selectedLeadId);
@@ -1624,6 +1628,10 @@ export default function PlatformAdminApp() {
   const selectedPlatformRoleDefinition = useMemo(
     () => sortedPlatformRoleDefinitions.find((row) => String(row?.role || "") === String(selectedPlatformRoleKey || "")) || null,
     [sortedPlatformRoleDefinitions, selectedPlatformRoleKey]
+  );
+  const selectedPlatformRoleAssignmentCount = useMemo(
+    () => Number(platformRoleAssignmentCounts?.[String(selectedPlatformRoleKey || "").trim()] || 0),
+    [platformRoleAssignmentCounts, selectedPlatformRoleKey]
   );
   const activeSettingsGroupKey = useMemo(
     () => CONTROL_PLANE_SETTINGS_NAV.find((group) => group.items.some((item) => item.key === controlPlanePage))?.key || "",
@@ -2742,7 +2750,7 @@ export default function PlatformAdminApp() {
   }, [canManagePlatformUsers, editingPlatformAssignmentRole, loadPlatformTeamAssignments, sessionUserId]);
 
   const createPlatformRole = useCallback(async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (!canManagePlatformRoles) {
       setPlatformRoleStatus("You need the Roles edit permission to create PCP roles.");
       return;
@@ -2791,6 +2799,7 @@ export default function PlatformAdminApp() {
     setPlatformRoleForm({ role: "", role_label: "" });
     setSelectedPlatformRoleKey(role);
     setPlatformRoleStatus(`Created PCP role ${role}.`);
+    setPlatformRoleAddModalOpen(false);
     await loadPlatformRoleConfig();
   }, [canManagePlatformRoles, loadPlatformRoleConfig, platformRoleForm, sessionUserId, sortedPlatformRoleDefinitions]);
 
@@ -2811,15 +2820,19 @@ export default function PlatformAdminApp() {
       return;
     }
 
+    setPlatformRoleDeleteLoading(true);
     const { error } = await supabase
       .from("platform_role_definitions")
       .delete()
       .eq("role", role);
+    setPlatformRoleDeleteLoading(false);
     if (error) {
       setPlatformRoleStatus(statusText(error, ""));
       return;
     }
 
+    setPlatformRoleDeleteConfirmOpen(false);
+    setPlatformRoleEditMode(false);
     setPlatformRoleStatus(`Removed PCP role ${role}.`);
     await loadPlatformRoleConfig();
     await loadPlatformTeamAssignments();
@@ -3250,6 +3263,7 @@ export default function PlatformAdminApp() {
     if (!selectedPlatformRoleKey) {
       setPlatformRolePermissionDraft({});
       setPlatformRolePermissionDirty(false);
+      setPlatformRoleEditMode(false);
       return;
     }
     const nextDraft = {};
@@ -3258,6 +3272,7 @@ export default function PlatformAdminApp() {
     }
     setPlatformRolePermissionDraft(nextDraft);
     setPlatformRolePermissionDirty(false);
+    setPlatformRoleEditMode(false);
   }, [selectedPlatformRoleKey, platformRolePermissionMap]);
 
   useEffect(() => {
@@ -5408,6 +5423,113 @@ export default function PlatformAdminApp() {
           </div>
         </div>
       ) : null}
+      {platformRoleAddModalOpen ? (
+        <div style={authModalBackdrop} onClick={() => setPlatformRoleAddModalOpen(false)}>
+          <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Create Role</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Create a custom PCP role, then manage its permissions from the roles workspace.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlatformRoleAddModalOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close create role dialog"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={(event) => void createPlatformRole(event)} style={{ display: "grid", gap: 12 }}>
+              <div style={modalActionGrid}>
+                <label style={modalField}>
+                  <span>Role Key</span>
+                  <input
+                    value={platformRoleForm.role}
+                    onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
+                    placeholder="revenue_ops"
+                    style={modalInput}
+                    disabled={!canManagePlatformRoles}
+                  />
+                </label>
+                <label style={modalField}>
+                  <span>Role Label</span>
+                  <input
+                    value={platformRoleForm.role_label}
+                    onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
+                    placeholder="Revenue Operations"
+                    style={modalInput}
+                    disabled={!canManagePlatformRoles}
+                  />
+                </label>
+              </div>
+              {platformRoleStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformRoleStatus}</div> : null}
+              <div style={modalFooterActions}>
+                <button
+                  type="submit"
+                  style={{ ...modalPrimaryButton, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                  disabled={!canManagePlatformRoles}
+                  title={canManagePlatformRoles ? "Create role" : "You need the Roles edit permission"}
+                >
+                  Create Role
+                </button>
+                <button type="button" style={modalSecondaryButton} onClick={() => setPlatformRoleAddModalOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {platformRoleDeleteConfirmOpen && selectedPlatformRoleDefinition ? (
+        <div style={authModalBackdrop} onClick={() => !platformRoleDeleteLoading && setPlatformRoleDeleteConfirmOpen(false)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Delete Role</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Remove {platformRoleLabelByKey[String(selectedPlatformRoleDefinition?.role || "").trim()] || platformRoleToLabel(selectedPlatformRoleDefinition?.role)} from PCP roles?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !platformRoleDeleteLoading && setPlatformRoleDeleteConfirmOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close platform role delete dialog"
+                disabled={platformRoleDeleteLoading}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 8, fontSize: 13, color: palette.text }}>
+              <div><strong>Role:</strong> {platformRoleLabelByKey[String(selectedPlatformRoleDefinition?.role || "").trim()] || platformRoleToLabel(selectedPlatformRoleDefinition?.role)}</div>
+              <div><strong>Role Key:</strong> {String(selectedPlatformRoleDefinition?.role || "").trim() || "Not set"}</div>
+              <div><strong>Type:</strong> {selectedPlatformRoleDefinition?.is_system ? "System role" : "Custom role"}</div>
+              <div><strong>Assignments:</strong> {selectedPlatformRoleAssignmentCount}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...buttonBase, minWidth: 150, background: `linear-gradient(180deg, ${palette.red600} 0%, #a12626 100%)`, borderColor: palette.red600 }}
+                disabled={platformRoleDeleteLoading || !canDeletePlatformRoles}
+                onClick={() => void removePlatformRoleDefinition(selectedPlatformRoleDefinition)}
+              >
+                {platformRoleDeleteLoading ? "Deleting..." : "Delete Role"}
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonAlt, minWidth: 120 }}
+                onClick={() => setPlatformRoleDeleteConfirmOpen(false)}
+                disabled={platformRoleDeleteLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {leadAddModalOpen ? (
         <div style={authModalBackdrop} onClick={() => !leadLoading && setLeadAddModalOpen(false)}>
           <div style={{ ...authModalCard, width: "min(760px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
@@ -6025,115 +6147,100 @@ export default function PlatformAdminApp() {
           <div style={controlPlaneSettingsLayoutStyle}>
             {controlPlaneSettingsSidebarContent}
             <div style={controlPlaneSettingsContentPaneStyle}>
-              {controlPlaneSettingsActions}
-              <div style={{ ...card, display: "grid", gap: 10 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Add PCP Role</h2>
-                <p style={{ margin: 0, color: palette.textMuted }}>
-                  Create reusable platform roles, then assign the exact PCP permissions each role should receive.
-                </p>
-                <form onSubmit={createPlatformRole} style={responsiveActionGrid}>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Role Key</span>
-                    <input
-                      value={platformRoleForm.role}
-                      onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role: e.target.value }))}
-                      placeholder="revenue_ops"
-                      style={inputBase}
-                      disabled={!canManagePlatformRoles}
-                    />
-                  </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                    <span>Role Label</span>
-                    <input
-                      value={platformRoleForm.role_label}
-                      onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
-                      placeholder="Revenue Operations"
-                      style={inputBase}
-                      disabled={!canManagePlatformRoles}
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
-                    disabled={!canManagePlatformRoles}
-                    title={canManagePlatformRoles ? "Create role" : "You need the Roles edit permission"}
-                  >
-                    Create Role
-                  </button>
-                </form>
+              <div style={{ ...card, display: "grid", gap: 12 }}>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Roles and Permissions</h2>
                 {platformRoleStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformRoleStatus}</div> : null}
-              </div>
-
-              <div style={{ ...card, display: "grid", gap: 8 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>PCP Roles</h2>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={tableHeadCell}>Role</th>
-                        <th style={tableHeadCell}>Assignments</th>
-                        <th style={tableHeadCell}>Type</th>
-                        <th style={tableHeadCell}>State</th>
-                        <th style={tableHeadCell}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedPlatformRoleDefinitions.map((row) => {
-                        const role = String(row?.role || "").trim();
-                        if (!role) return null;
-                        const assignments = Number(platformRoleAssignmentCounts?.[role] || 0);
-                        const isSelected = role === selectedPlatformRoleKey;
-                        const canRemove = canDeletePlatformRoles && row?.is_system !== true && assignments === 0;
-                        return (
-                          <tr key={role} style={{ background: isSelected ? "rgba(18,128,106,0.08)" : "transparent" }}>
-                            <td style={{ padding: "8px 0" }}>
-                              {platformRoleLabelByKey[role] || platformRoleToLabel(role)}
-                              <span style={{ marginLeft: 6, color: palette.textMuted, fontSize: 11.5 }}>({role})</span>
-                            </td>
-                            <td style={{ padding: "8px 0" }}>{assignments}</td>
-                            <td style={{ padding: "8px 0" }}>{row?.is_system ? "System" : "Custom"}</td>
-                            <td style={{ padding: "8px 0" }}>{row?.active === false ? "Disabled" : "Active"}</td>
-                            <td style={{ padding: "8px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <button type="button" style={buttonAlt} onClick={() => setSelectedPlatformRoleKey(role)}>
-                                Manage Permissions
-                              </button>
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canRemove ? 1 : 0.55 }}
-                                disabled={!canRemove}
-                                title={
-                                  row?.is_system
-                                    ? "System roles cannot be removed."
-                                    : assignments > 0
-                                      ? "Remove assignments before deleting this role."
-                                      : "Remove role"
-                                }
-                                onClick={() => void removePlatformRoleDefinition(row)}
-                              >
-                                Remove
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Choose Role</div>
+                    <button
+                      type="button"
+                      style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                      disabled={!canManagePlatformRoles}
+                      onClick={() => {
+                        setPlatformRoleAddModalOpen(true);
+                        setPlatformRoleStatus("");
+                      }}
+                    >
+                      Create Role
+                    </button>
+                  </div>
+                  <select value={selectedPlatformRoleKey} onChange={(e) => setSelectedPlatformRoleKey(e.target.value)} style={{ ...inputBase, maxWidth: 360 }}>
+                    {sortedPlatformRoleDefinitions.map((row) => {
+                      const role = String(row?.role || "").trim();
+                      if (!role) return null;
+                      return (
+                        <option key={role} value={role}>
+                          {platformRoleLabelByKey[role] || platformRoleToLabel(role)}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
-              </div>
-
-              <div style={{ ...card, display: "grid", gap: 8 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>
-                  Manage PCP Role Permissions {selectedPlatformRoleDefinition ? `(${platformRoleLabelByKey[String(selectedPlatformRoleDefinition?.role || "").trim()] || platformRoleToLabel(selectedPlatformRoleDefinition?.role)})` : ""}
-                </h2>
                 {selectedPlatformRoleDefinition ? (
-                  <>
+                  <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <h2 style={{ margin: 0, color: palette.navy900 }}>
+                          Manage PCP Role Permissions ({platformRoleLabelByKey[String(selectedPlatformRoleDefinition?.role || "").trim()] || platformRoleToLabel(selectedPlatformRoleDefinition?.role)})
+                        </h2>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          {selectedPlatformRoleDefinition?.is_system ? "System role" : "Custom role"}
+                          {" • "}
+                          {selectedPlatformRoleDefinition?.active === false ? "Disabled" : "Active"}
+                          {" • "}
+                          {selectedPlatformRoleAssignmentCount} assignment{selectedPlatformRoleAssignmentCount === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {!platformRoleEditMode ? (
+                          <button
+                            type="button"
+                            style={{ ...buttonAlt, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                            disabled={!canManagePlatformRoles}
+                            onClick={() => setPlatformRoleEditMode(true)}
+                          >
+                            Edit
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            style={{
+                              ...buttonAlt,
+                              borderColor: palette.red600,
+                              color: palette.red600,
+                              opacity: canDeletePlatformRoles && selectedPlatformRoleDefinition?.is_system !== true && selectedPlatformRoleAssignmentCount === 0 ? 1 : 0.55,
+                            }}
+                            disabled={!canDeletePlatformRoles || selectedPlatformRoleDefinition?.is_system === true || selectedPlatformRoleAssignmentCount > 0}
+                            title={
+                              selectedPlatformRoleDefinition?.is_system === true
+                                ? "System roles cannot be removed."
+                                : selectedPlatformRoleAssignmentCount > 0
+                                  ? "Remove assignments before deleting this role."
+                                  : canDeletePlatformRoles
+                                    ? "Delete role"
+                                    : "You need the Roles delete permission"
+                            }
+                            onClick={() => setPlatformRoleDeleteConfirmOpen(true)}
+                          >
+                            Delete Role
+                          </button>
+                        )}
+                      </div>
+                    </div>
                     <div style={{ overflowX: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <colgroup>
+                          <col />
+                          {PLATFORM_PERMISSION_ACTIONS.map((action) => (
+                            <col key={action.key} style={{ width: 96 }} />
+                          ))}
+                        </colgroup>
                         <thead>
                           <tr>
                             <th style={tableHeadCell}>Module</th>
                             {PLATFORM_PERMISSION_ACTIONS.map((action) => (
-                              <th key={action.key} style={tableHeadCell}>{action.label}</th>
+                              <th key={action.key} style={{ ...tableHeadCell, textAlign: "right" }}>{action.label}</th>
                             ))}
                           </tr>
                         </thead>
@@ -6144,17 +6251,19 @@ export default function PlatformAdminApp() {
                               {PLATFORM_PERMISSION_ACTIONS.map((action) => {
                                 const permissionKey = `${module.key}.${action.key}`;
                                 return (
-                                  <td key={permissionKey} style={{ padding: "8px 0" }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(platformRolePermissionDraft?.[permissionKey])}
-                                      disabled={!canManagePlatformRoles}
-                                      onChange={(e) => {
-                                        const nextAllowed = e.target.checked;
-                                        setPlatformRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
-                                        setPlatformRolePermissionDirty(true);
-                                      }}
-                                    />
+                                  <td key={permissionKey} style={{ padding: "8px 0", textAlign: "right" }}>
+                                    <span style={{ display: "inline-flex", width: "100%", justifyContent: "flex-end" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(platformRolePermissionDraft?.[permissionKey])}
+                                        disabled={!canManagePlatformRoles || !platformRoleEditMode}
+                                        onChange={(e) => {
+                                          const nextAllowed = e.target.checked;
+                                          setPlatformRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextAllowed }));
+                                          setPlatformRolePermissionDirty(true);
+                                        }}
+                                      />
+                                    </span>
                                   </td>
                                 );
                               })}
@@ -6167,8 +6276,11 @@ export default function PlatformAdminApp() {
                       <button
                         type="button"
                         style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
-                        disabled={!canManagePlatformRoles || !platformRolePermissionDirty}
-                        onClick={() => void savePlatformRolePermissions()}
+                        disabled={!canManagePlatformRoles || !platformRoleEditMode || !platformRolePermissionDirty}
+                        onClick={() => {
+                          void savePlatformRolePermissions();
+                          setPlatformRoleEditMode(false);
+                        }}
                       >
                         Save Permission Changes
                       </button>
@@ -6182,16 +6294,17 @@ export default function PlatformAdminApp() {
                           }
                           setPlatformRolePermissionDraft(resetDraft);
                           setPlatformRolePermissionDirty(false);
+                          setPlatformRoleEditMode(false);
                         }}
-                        disabled={!platformRolePermissionDirty}
+                        disabled={!platformRolePermissionDirty && !platformRoleEditMode}
                       >
-                        Reset Changes
+                        {platformRoleEditMode ? "Cancel" : "Reset Changes"}
                       </button>
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                    Select a PCP role above to edit permissions.
+                    No PCP roles found.
                   </p>
                 )}
               </div>
