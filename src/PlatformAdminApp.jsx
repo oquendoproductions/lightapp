@@ -362,6 +362,22 @@ const responsiveTwoColGrid = {
   alignItems: "start",
 };
 
+const formFieldLabel = {
+  fontSize: 12.5,
+  display: "grid",
+  gap: 4,
+  alignContent: "start",
+};
+
+const alignedFormButton = {
+  minHeight: inputBase.minHeight,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  lineHeight: 1.2,
+  whiteSpace: "nowrap",
+};
+
 const authModalBackdrop = {
   position: "fixed",
   inset: 0,
@@ -6122,6 +6138,19 @@ export default function PlatformAdminApp() {
       {controlPlanePage === "manage-leads" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
           <div style={{ ...card, display: "grid", gap: 10 }}>
+            {(() => {
+              const leadFilterGridStyle = {
+                display: "grid",
+                gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(6, minmax(0, 1fr))",
+                gap: 10,
+                alignItems: "end",
+              };
+              const leadActionButtonStyle = {
+                ...alignedFormButton,
+                width: isCompactViewport ? "100%" : "auto",
+              };
+              return (
+                <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
               <div style={{ display: "grid", gap: 3 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Manage Leads</h2>
@@ -6131,7 +6160,7 @@ export default function PlatformAdminApp() {
               </div>
               <button
                 type="button"
-                style={{ ...buttonBase, opacity: canEditLead ? 1 : 0.55 }}
+                style={{ ...buttonBase, ...leadActionButtonStyle, opacity: canEditLead ? 1 : 0.55 }}
                 onClick={() => setLeadAddModalOpen(true)}
                 disabled={!canEditLead}
                 title={canEditLead ? "Add lead" : "You need the Leads edit permission"}
@@ -6143,21 +6172,21 @@ export default function PlatformAdminApp() {
             <div style={{ ...subPanel, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontWeight: 900, color: palette.navy900 }}>Lead Filters</div>
-                <button type="button" style={buttonAlt} onClick={() => setLeadFiltersOpen((prev) => !prev)}>
+                <button type="button" style={{ ...buttonAlt, ...leadActionButtonStyle }} onClick={() => setLeadFiltersOpen((prev) => !prev)}>
                   {leadFiltersOpen ? "Hide Filters" : "Show Filters"}
                 </button>
               </div>
               {leadFiltersOpen ? (
-                <div style={responsiveTwoColGrid}>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                <div style={leadFilterGridStyle}>
+                  <label style={formFieldLabel}>
                     <span>Lead #</span>
                     <input value={leadFilters.lead_number} onChange={(e) => setLeadFilters((prev) => ({ ...prev, lead_number: e.target.value }))} style={inputBase} />
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <label style={formFieldLabel}>
                     <span>Org Name</span>
                     <input value={leadFilters.org_name} onChange={(e) => setLeadFilters((prev) => ({ ...prev, org_name: e.target.value }))} style={inputBase} />
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <label style={formFieldLabel}>
                     <span>Priority Domain</span>
                     <select value={leadFilters.priority_domain} onChange={(e) => setLeadFilters((prev) => ({ ...prev, priority_domain: e.target.value }))} style={inputBase}>
                       <option value="">All</option>
@@ -6166,11 +6195,11 @@ export default function PlatformAdminApp() {
                       ))}
                     </select>
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <label style={formFieldLabel}>
                     <span>Date Submitted</span>
                     <input type="date" value={leadFilters.date_submitted} onChange={(e) => setLeadFilters((prev) => ({ ...prev, date_submitted: e.target.value }))} style={inputBase} />
                   </label>
-                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <label style={formFieldLabel}>
                     <span>Status</span>
                     <select value={leadFilters.status} onChange={(e) => setLeadFilters((prev) => ({ ...prev, status: e.target.value }))} style={inputBase}>
                       <option value="">All</option>
@@ -6180,10 +6209,10 @@ export default function PlatformAdminApp() {
                       <option value="closed">Closed</option>
                     </select>
                   </label>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end" }}>
+                  <div style={{ display: "grid", alignContent: "end" }}>
                     <button
                       type="button"
-                      style={buttonAlt}
+                      style={{ ...buttonAlt, ...leadActionButtonStyle }}
                       onClick={() => setLeadFilters({
                         lead_number: "",
                         org_name: "",
@@ -6198,6 +6227,9 @@ export default function PlatformAdminApp() {
                 </div>
               ) : null}
             </div>
+                </>
+              );
+            })()}
             {leadRows.length ? (
               <>
                 {isCompactViewport ? (
