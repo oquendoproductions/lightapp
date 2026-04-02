@@ -427,7 +427,7 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /current organization users and admins/i });
     await user.click(screen.getByRole("button", { name: /add user\/admin/i }));
-    await screen.findByText(/add a person to this organization by finding an existing account/i);
+    await screen.findByRole("heading", { name: /add user\/admin/i });
     return { user, container };
   }
 

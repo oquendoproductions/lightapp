@@ -1132,6 +1132,8 @@ export default function PlatformAdminApp() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editingPrimaryContact, setEditingPrimaryContact] = useState(false);
   const [editingAdditionalContactIndex, setEditingAdditionalContactIndex] = useState(null);
+  const [contactAddModalOpen, setContactAddModalOpen] = useState(false);
+  const [newContactForm, setNewContactForm] = useState(() => emptyAdditionalContact());
   const [contactDeleteConfirmIndex, setContactDeleteConfirmIndex] = useState(null);
   const [contactDeleteLoading, setContactDeleteLoading] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -2687,6 +2689,7 @@ export default function PlatformAdminApp() {
         ? `Created account invitation for ${email} and assigned ${roleKeyToLabel(role)}.`
         : `Assigned ${roleKeyToLabel(role)} to existing account ${email}.`,
     }));
+    setTenantUsersManagementView("list");
     await refreshControlPlaneData();
   }, [canManageTenantUsers, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData]);
 
@@ -3041,6 +3044,8 @@ export default function PlatformAdminApp() {
       setIsEditingProfile(false);
       setEditingPrimaryContact(false);
       setEditingAdditionalContactIndex(null);
+      setContactAddModalOpen(false);
+      setNewContactForm(emptyAdditionalContact());
       setContactDeleteConfirmIndex(null);
       setContactDeleteLoading(false);
     }
@@ -3223,6 +3228,8 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
     setEditingAdditionalContactIndex(null);
+    setContactAddModalOpen(false);
+    setNewContactForm(emptyAdditionalContact());
     setContactDeleteConfirmIndex(null);
     setContactDeleteLoading(false);
   }, [selectedTenantKey, tenantProfilesByTenant]);
@@ -3241,6 +3248,8 @@ export default function PlatformAdminApp() {
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
     setEditingAdditionalContactIndex(null);
+    setContactAddModalOpen(false);
+    setNewContactForm(emptyAdditionalContact());
     setContactDeleteConfirmIndex(null);
     setContactDeleteLoading(false);
     await refreshControlPlaneData();
@@ -3249,12 +3258,35 @@ export default function PlatformAdminApp() {
 
   const addAdditionalContactFromContactsPage = useCallback(() => {
     if (!canEditTenantSetup) return;
-    const nextIndex = Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts.length : 0;
-    addAdditionalContact();
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
-    setEditingAdditionalContactIndex(nextIndex);
-  }, [canEditTenantSetup, profileForm.additional_contacts, addAdditionalContact]);
+    setEditingAdditionalContactIndex(null);
+    setNewContactForm(emptyAdditionalContact());
+    setContactAddModalOpen(true);
+  }, [canEditTenantSetup]);
+
+  const saveAdditionalContactFromModal = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canEditTenantSetup) return;
+    const nextContact = emptyAdditionalContact(newContactForm);
+    if (!hasAdditionalContactValue(nextContact)) {
+      setStatus((prev) => ({ ...prev, profile: "Add at least one contact detail before saving." }));
+      return;
+    }
+    const nextProfileForm = {
+      ...profileForm,
+      additional_contacts: [
+        ...(Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts : []),
+        nextContact,
+      ],
+    };
+    const saved = await saveContactsProfile({ profileFormOverride: nextProfileForm });
+    if (saved) {
+      setProfileForm(nextProfileForm);
+      setContactAddModalOpen(false);
+      setNewContactForm(emptyAdditionalContact());
+    }
+  }, [canEditTenantSetup, newContactForm, profileForm, saveContactsProfile]);
 
   const removeAdditionalContactAndSave = useCallback(async (index) => {
     const nextProfileForm = {
@@ -3496,6 +3528,7 @@ export default function PlatformAdminApp() {
     const personLabel = formatKnownUserLabel(user_id);
     setStatus((prev) => ({ ...prev, users: `Assigned ${roleKeyToLabel(role)} to ${personLabel}.` }));
     setAssignForm((prev) => ({ ...prev, tenant_key: "", user_id: "", role }));
+    setTenantUsersManagementView("list");
     await refreshControlPlaneData();
   }, [canManageTenantUsers, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
 
@@ -3656,6 +3689,7 @@ export default function PlatformAdminApp() {
     setRoleForm({ role: "", role_label: "" });
     setSelectedRoleKey(role);
     setStatus((prev) => ({ ...prev, roles: `Created role ${role} for ${tenant_key}.` }));
+    setTenantRoleManagementView("list");
     await loadTenantRoleConfig(tenant_key);
   }, [canManageTenantRoles, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig]);
 
@@ -3880,12 +3914,14 @@ export default function PlatformAdminApp() {
         files: `Uploaded ${file.name} and applied as active boundary.`,
       }));
       setFileForm({ category: "contract", notes: "", file: null });
+      setTenantAssetsManagementView("list");
       await refreshControlPlaneData();
       return;
     }
 
     setFileForm({ category: "contract", notes: "", file: null });
     setStatus((prev) => ({ ...prev, files: `Uploaded ${file.name}.` }));
+    setTenantAssetsManagementView("list");
     await loadTenantFiles(tenantKey);
     await loadAudit();
   }, [canEditTenantFiles, selectedTenantKey, fileForm, sessionUserId, logAudit, loadTenantFiles, loadAudit, applyBoundaryPayloadToTenant, refreshControlPlaneData]);
@@ -4508,6 +4544,398 @@ export default function PlatformAdminApp() {
   return (
     <main style={shellStyle}>
       {fixedBanner}
+      {contactAddModalOpen ? (
+        <div style={authModalBackdrop} onClick={() => setContactAddModalOpen(false)}>
+          <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Contact</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Add a new additional point of contact for this organization.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContactAddModalOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add contact dialog"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={(event) => void saveAdditionalContactFromModal(event)} style={{ display: "grid", gap: 12 }}>
+              <div style={contactFieldGrid}>
+                <label style={contactField}>
+                  <span>Name</span>
+                  <input
+                    value={newContactForm.name}
+                    onChange={(e) => setNewContactForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Department Contact"
+                    style={contactFieldInput}
+                  />
+                </label>
+                <label style={contactField}>
+                  <span>Role / Title</span>
+                  <input
+                    value={newContactForm.title}
+                    onChange={(e) => setNewContactForm((prev) => ({ ...prev, title: e.target.value }))}
+                    placeholder="Finance Director"
+                    style={contactFieldInput}
+                  />
+                </label>
+                <label style={contactField}>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={newContactForm.email}
+                    onChange={(e) => setNewContactForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="finance@examplemunicipality.gov"
+                    style={contactFieldInput}
+                  />
+                </label>
+                <label style={contactField}>
+                  <span>Phone</span>
+                  <input
+                    value={newContactForm.phone}
+                    onChange={(e) => setNewContactForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    placeholder="(000) 000-0000"
+                    style={contactFieldInput}
+                  />
+                </label>
+              </div>
+              {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>
+                  Save Contact
+                </button>
+                <button type="button" style={buttonAlt} onClick={() => setContactAddModalOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {tenantUsersManagementView === "add" ? (
+        <div style={authModalBackdrop} onClick={() => setTenantUsersManagementView("list")}>
+          <div style={{ ...authModalCard, width: "min(860px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add User/Admin</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Add a person to this organization by finding an existing account or creating a new invited account, then assign one organization role.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTenantUsersManagementView("list")}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add user dialog"
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={userAssignmentMode === "existing" ? buttonBase : buttonAlt}
+                onClick={() => setUserAssignmentMode("existing")}
+              >
+                Find Existing Account
+              </button>
+              <button
+                type="button"
+                style={userAssignmentMode === "invite" ? buttonBase : buttonAlt}
+                onClick={() => setUserAssignmentMode("invite")}
+              >
+                Create Account
+              </button>
+            </div>
+            {userAssignmentMode === "existing" ? (
+              <>
+                <form onSubmit={searchPlatformUsers} style={responsiveActionGrid}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                    <span>Find Person</span>
+                    <input
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder="Exact email, exact phone, or full name"
+                      style={{ ...inputBase, fontSize: 16 }}
+                      disabled={!canManageTenantUsers}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                    disabled={!canManageTenantUsers || userSearchLoading}
+                  >
+                    {userSearchLoading ? "Searching..." : "Search Accounts"}
+                  </button>
+                </form>
+
+                {userSearchResults.length ? (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {userSearchResults.map((row) => {
+                      const userId = String(row?.id || "").trim();
+                      const displayName = String(row?.display_name || "").trim() || row?.email || "Unnamed account";
+                      const isSelected = userId === assignForm.user_id;
+                      return (
+                        <button
+                          key={userId}
+                          type="button"
+                          onClick={() => setAssignForm((prev) => ({ ...prev, user_id: userId }))}
+                          style={{
+                            ...listActionButton,
+                            border: isSelected ? `1px solid ${palette.mint700}` : listActionButton.border,
+                            background: isSelected ? "rgba(18,128,106,0.08)" : listActionButton.background,
+                          }}
+                        >
+                          <span>{displayName}</span>
+                          <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                            {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 260 }}>
+                    <span>Organization Role</span>
+                    <select
+                      value={assignForm.role}
+                      onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                      style={{ ...inputBase, minWidth: 0 }}
+                      disabled={!canManageTenantUsers}
+                    >
+                      {assignableTenantRoles.map((row) => {
+                        const key = String(row?.role || "");
+                        if (!key) return null;
+                        const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
+                        return (
+                          <option key={key} value={key}>{label}</option>
+                        );
+                      })}
+                      {!assignableTenantRoles.length ? (
+                        <>
+                          <option value="tenant_employee">Organization Employee</option>
+                          <option value="tenant_admin">Organization Admin</option>
+                        </>
+                      ) : null}
+                    </select>
+                  </label>
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => void assignTenantAdmin({ preventDefault() {} })}
+                    style={{ ...buttonBase, opacity: canManageTenantUsers && assignForm.user_id ? 1 : 0.55 }}
+                    disabled={!canManageTenantUsers || !assignForm.user_id}
+                    title={assignForm.user_id ? "Assign organization role" : "Select an account first"}
+                  >
+                    Assign Role
+                  </button>
+                  {assignForm.user_id ? (
+                    <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Selected account: <b>{String(selectedSearchAccount?.display_name || "").trim() || selectedSearchAccount?.email || "Account selected"}</b>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>First Name</span>
+                  <input
+                    value={inviteForm.first_name}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                    placeholder="Jordan"
+                    style={inputBase}
+                    disabled={!canManageTenantUsers}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Last Name</span>
+                  <input
+                    value={inviteForm.last_name}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                    placeholder="Rivera"
+                    style={inputBase}
+                    disabled={!canManageTenantUsers}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={inviteForm.email}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="jordan.rivera@example.gov"
+                    style={inputBase}
+                    disabled={!canManageTenantUsers}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Phone Number</span>
+                  <input
+                    value={inviteForm.phone}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    placeholder="(555) 555-0101"
+                    style={inputBase}
+                    disabled={!canManageTenantUsers}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Organization Role</span>
+                  <select
+                    value={assignForm.role}
+                    onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
+                    style={inputBase}
+                    disabled={!canManageTenantUsers}
+                  >
+                    {assignableTenantRoles.map((row) => {
+                      const key = String(row?.role || "");
+                      if (!key) return null;
+                      const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
+                      return (
+                        <option key={key} value={key}>{label}</option>
+                      );
+                    })}
+                    {!assignableTenantRoles.length ? (
+                      <>
+                        <option value="tenant_employee">Organization Employee</option>
+                        <option value="tenant_admin">Organization Admin</option>
+                      </>
+                    ) : null}
+                  </select>
+                </label>
+                <button
+                  type="submit"
+                  style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                  disabled={!canManageTenantUsers}
+                  title={canManageTenantUsers ? "Create account and assign organization role" : "You need the Users edit permission"}
+                >
+                  Create Account + Assign Role
+                </button>
+              </form>
+            )}
+            {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={buttonAlt} onClick={() => setTenantUsersManagementView("list")}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {tenantRoleManagementView === "add" ? (
+        <div style={authModalBackdrop} onClick={() => setTenantRoleManagementView("list")}>
+          <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Role</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Create a custom role for {selectedTenantKey}, then manage its permissions from the roles workspace.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTenantRoleManagementView("list")}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add role dialog"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={createTenantRole} style={{ display: "grid", gap: 12 }}>
+              <div style={responsiveActionGrid}>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Role Key</span>
+                  <input
+                    value={roleForm.role}
+                    onChange={(e) => setRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
+                    placeholder="field_supervisor"
+                    style={inputBase}
+                    disabled={!canManageTenantRoles}
+                  />
+                </label>
+                <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
+                  <span>Role Label</span>
+                  <input
+                    value={roleForm.role_label}
+                    onChange={(e) => setRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
+                    placeholder="Field Supervisor"
+                    style={inputBase}
+                    disabled={!canManageTenantRoles}
+                  />
+                </label>
+              </div>
+              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="submit"
+                  style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                  disabled={!canManageTenantRoles}
+                  title={canManageTenantRoles ? "Create role" : "You need the Roles edit permission"}
+                >
+                  Create Role
+                </button>
+                <button type="button" style={buttonAlt} onClick={() => setTenantRoleManagementView("list")}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {tenantAssetsManagementView === "add" ? (
+        <div style={authModalBackdrop} onClick={() => setTenantAssetsManagementView("list")}>
+          <div style={{ ...authModalCard, width: "min(760px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Asset</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Upload a new organization asset such as prior report information, coordinates, or boundary/location files.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTenantAssetsManagementView("list")}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add asset dialog"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={uploadTenantFile} style={{ display: "grid", gap: 12 }}>
+              <div style={responsiveActionGrid}>
+                <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
+                  {TENANT_ASSET_CATEGORIES.map((category) => (
+                    <option key={category.key} value={category.key}>{category.label}</option>
+                  ))}
+                </select>
+                <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
+                <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
+              </div>
+              {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="submit" style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles}>
+                  Upload Asset
+                </button>
+                <button type="button" style={buttonAlt} onClick={() => setTenantAssetsManagementView("list")}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       {contactDeleteConfirmIndex != null ? (
         <div style={authModalBackdrop} onClick={() => !contactDeleteLoading && setContactDeleteConfirmIndex(null)}>
           <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
@@ -6165,209 +6593,11 @@ export default function PlatformAdminApp() {
                   type="button"
                   style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
                   disabled={!canManageTenantUsers}
-                  onClick={() => setTenantUsersManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                  onClick={() => setTenantUsersManagementView("add")}
                 >
-                  {tenantUsersManagementView === "add" ? "Hide Add User/Admin" : "Add User/Admin"}
+                  Add User/Admin
                 </button>
               </div>
-              {tenantUsersManagementView === "add" ? (
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                    Add a person to this organization by finding an existing account or creating a new invited account, then assign one organization role.
-                  </p>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      style={userAssignmentMode === "existing" ? buttonBase : buttonAlt}
-                      onClick={() => setUserAssignmentMode("existing")}
-                    >
-                      Find Existing Account
-                    </button>
-                    <button
-                      type="button"
-                      style={userAssignmentMode === "invite" ? buttonBase : buttonAlt}
-                      onClick={() => setUserAssignmentMode("invite")}
-                    >
-                      Create Account
-                    </button>
-                  </div>
-
-                  {userAssignmentMode === "existing" ? (
-                    <>
-                      <form onSubmit={searchPlatformUsers} style={responsiveActionGrid}>
-                        <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                          <span>Find Person</span>
-                          <input
-                            value={userSearchQuery}
-                            onChange={(e) => setUserSearchQuery(e.target.value)}
-                            placeholder="Exact email, exact phone, or full name"
-                            style={{ ...inputBase, fontSize: 16 }}
-                            disabled={!canManageTenantUsers}
-                          />
-                        </label>
-                        <button
-                          type="submit"
-                          style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
-                          disabled={!canManageTenantUsers || userSearchLoading}
-                        >
-                          {userSearchLoading ? "Searching..." : "Search Accounts"}
-                        </button>
-                      </form>
-
-                      {userSearchResults.length ? (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          {userSearchResults.map((row) => {
-                            const userId = String(row?.id || "").trim();
-                            const displayName = String(row?.display_name || "").trim() || row?.email || "Unnamed account";
-                            const isSelected = userId === assignForm.user_id;
-                            return (
-                              <button
-                                key={userId}
-                                type="button"
-                                onClick={() => setAssignForm((prev) => ({ ...prev, user_id: userId }))}
-                                style={{
-                                  ...listActionButton,
-                                  border: isSelected ? `1px solid ${palette.mint700}` : listActionButton.border,
-                                  background: isSelected ? "rgba(18,128,106,0.08)" : listActionButton.background,
-                                }}
-                              >
-                                <span>{displayName}</span>
-                                <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                                  {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-
-                      <div style={{ display: "grid", gap: 8 }}>
-                        <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 320 }}>
-                          <span>Organization Role</span>
-                          <select
-                            value={assignForm.role}
-                            onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                            style={inputBase}
-                            disabled={!canManageTenantUsers}
-                          >
-                            {assignableTenantRoles.map((row) => {
-                              const key = String(row?.role || "");
-                              if (!key) return null;
-                              const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
-                              return (
-                                <option key={key} value={key}>{label}</option>
-                              );
-                            })}
-                            {!assignableTenantRoles.length ? (
-                              <>
-                                <option value="tenant_employee">Organization Employee</option>
-                                <option value="tenant_admin">Organization Admin</option>
-                              </>
-                            ) : null}
-                          </select>
-                        </label>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => void assignTenantAdmin({ preventDefault() {} })}
-                          style={{ ...buttonBase, opacity: canManageTenantUsers && assignForm.user_id ? 1 : 0.55 }}
-                          disabled={!canManageTenantUsers || !assignForm.user_id}
-                          title={assignForm.user_id ? "Assign organization role" : "Select an account first"}
-                        >
-                          Assign Role
-                        </button>
-                        {assignForm.user_id ? (
-                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            Selected account: <b>{String(selectedSearchAccount?.display_name || "").trim() || selectedSearchAccount?.email || "Account selected"}</b>
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <form onSubmit={createAndAssignTenantUser} style={responsiveActionGrid}>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>First Name</span>
-                        <input
-                          value={inviteForm.first_name}
-                          onChange={(e) => setInviteForm((prev) => ({ ...prev, first_name: e.target.value }))}
-                          placeholder="Jordan"
-                          style={inputBase}
-                          disabled={!canManageTenantUsers}
-                        />
-                      </label>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Last Name</span>
-                        <input
-                          value={inviteForm.last_name}
-                          onChange={(e) => setInviteForm((prev) => ({ ...prev, last_name: e.target.value }))}
-                          placeholder="Rivera"
-                          style={inputBase}
-                          disabled={!canManageTenantUsers}
-                        />
-                      </label>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Email</span>
-                        <input
-                          type="email"
-                          value={inviteForm.email}
-                          onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
-                          placeholder="jordan.rivera@example.gov"
-                          style={inputBase}
-                          disabled={!canManageTenantUsers}
-                        />
-                      </label>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Phone Number</span>
-                        <input
-                          value={inviteForm.phone}
-                          onChange={(e) => setInviteForm((prev) => ({ ...prev, phone: e.target.value }))}
-                          placeholder="(555) 555-0101"
-                          style={inputBase}
-                          disabled={!canManageTenantUsers}
-                        />
-                      </label>
-                      <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                        <span>Organization Role</span>
-                        <select
-                          value={assignForm.role}
-                          onChange={(e) => setAssignForm((p) => ({ ...p, role: e.target.value }))}
-                          style={inputBase}
-                          disabled={!canManageTenantUsers}
-                        >
-                          {assignableTenantRoles.map((row) => {
-                            const key = String(row?.role || "");
-                            if (!key) return null;
-                            const label = toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(key));
-                            return (
-                              <option key={key} value={key}>{label}</option>
-                            );
-                          })}
-                          {!assignableTenantRoles.length ? (
-                            <>
-                              <option value="tenant_employee">Organization Employee</option>
-                              <option value="tenant_admin">Organization Admin</option>
-                            </>
-                          ) : null}
-                        </select>
-                      </label>
-                      <button
-                        type="submit"
-                        style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
-                        disabled={!canManageTenantUsers}
-                        title={canManageTenantUsers ? "Create account and assign organization role" : "You need the Users edit permission"}
-                      >
-                        Create Account + Assign Role
-                      </button>
-                    </form>
-                  )}
-                </div>
-              ) : null}
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -6392,7 +6622,7 @@ export default function PlatformAdminApp() {
                             <select
                               value={editingAssignmentRole}
                               onChange={(e) => setEditingAssignmentRole(e.target.value)}
-                              style={{ ...inputBase, minWidth: 180 }}
+                              style={{ ...inputBase, minWidth: 0, width: 150, maxWidth: "100%" }}
                               disabled={!canManageTenantUsers}
                             >
                               {assignableTenantRoles.map((roleRow) => {
@@ -6487,48 +6717,11 @@ export default function PlatformAdminApp() {
                   type="button"
                   style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
                   disabled={!canManageTenantRoles}
-                  onClick={() => setTenantRoleManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                  onClick={() => setTenantRoleManagementView("add")}
                 >
-                  {tenantRoleManagementView === "add" ? "Hide Add Role" : "Add Role"}
+                  Add Role
                 </button>
               </div>
-              {tenantRoleManagementView === "add" ? (
-                <>
-                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                    Create custom roles for {selectedTenantKey}, then enable or disable organization permissions.
-                  </p>
-                  <form onSubmit={createTenantRole} style={responsiveActionGrid}>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Role Key</span>
-                      <input
-                        value={roleForm.role}
-                        onChange={(e) => setRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
-                        placeholder="field_supervisor"
-                        style={inputBase}
-                        disabled={!canManageTenantRoles}
-                      />
-                    </label>
-                    <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
-                      <span>Role Label</span>
-                      <input
-                        value={roleForm.role_label}
-                        onChange={(e) => setRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
-                        placeholder="Field Supervisor"
-                        style={inputBase}
-                        disabled={!canManageTenantRoles}
-                      />
-                    </label>
-                    <button
-                      type="submit"
-                      style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
-                      disabled={!canManageTenantRoles}
-                      title={canManageTenantRoles ? "Create role" : "You need the Roles edit permission"}
-                    >
-                      Create Role
-                    </button>
-                  </form>
-                </>
-              ) : null}
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
             </div>
 
@@ -6908,27 +7101,12 @@ export default function PlatformAdminApp() {
                   type="button"
                   style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }}
                   disabled={!canEditTenantFiles}
-                  onClick={() => setTenantAssetsManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                  onClick={() => setTenantAssetsManagementView("add")}
                   title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
                 >
-                  {tenantAssetsManagementView === "add" ? "Hide Add Asset" : "Add Asset"}
+                  Add Asset
                 </button>
               </div>
-              {tenantAssetsManagementView === "add" ? (
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Add New Asset</div>
-                  <form onSubmit={uploadTenantFile} style={responsiveActionGrid}>
-                    <select value={fileForm.category} onChange={(e) => setFileForm((p) => ({ ...p, category: e.target.value }))} style={inputBase}>
-                      {TENANT_ASSET_CATEGORIES.map((category) => (
-                        <option key={category.key} value={category.key}>{category.label}</option>
-                      ))}
-                    </select>
-                    <input type="file" onChange={(e) => setFileForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} style={inputBase} />
-                    <input value={fileForm.notes} onChange={(e) => setFileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" style={inputBase} />
-                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }} disabled={!canEditTenantFiles}>Upload Asset</button>
-                  </form>
-                </div>
-              ) : null}
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
             </div>
 
