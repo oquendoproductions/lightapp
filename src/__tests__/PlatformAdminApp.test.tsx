@@ -34,6 +34,7 @@ vi.mock("../supabaseClient", () => {
     "roles.edit",
     "roles.delete",
     "security.access",
+    "security.edit",
     "reports.access",
     "finance.access",
     "domains.access",
@@ -606,6 +607,15 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+  async function openSecurityChecks() {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/?pcp_section=settings&pcp_page=security-checks");
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /security checkpoints/i });
+    return { user };
+  }
+
   it("shows a mobile settings navigator and can switch settings pages", async () => {
     const user = userEvent.setup();
     window.innerWidth = 375;
@@ -776,6 +786,23 @@ describe("PlatformAdminApp", () => {
     await user.click(updateButtons[updateButtons.length - 1]);
 
     await screen.findByText(/password updated/i);
+  });
+
+  it("manages the security PIN from account info instead of the security checks page", async () => {
+    const { user } = await openAccountInfo();
+
+    expect(screen.getByRole("button", { name: /edit pin/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /edit pin/i }));
+    expect(await screen.findByLabelText(/^new pin$/i)).toBeInTheDocument();
+    expect(screen.getByText(/security checks controls live on the next page/i)).toBeInTheDocument();
+  });
+
+  it("uses security checks only for PIN-required actions", async () => {
+    await openSecurityChecks();
+
+    expect(screen.getByRole("heading", { name: /security checkpoints/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /your security pin/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/pin setup and pin changes live under account info/i)).toBeInTheDocument();
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {

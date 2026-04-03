@@ -100,6 +100,14 @@ const DEFAULT_PLATFORM_SECURITY_SETTINGS = {
   require_pin_for_report_state_changes: false,
 };
 
+const DEFAULT_PLATFORM_SECURITY_PIN_DRAFT = {
+  current_pin: "",
+  account_password: "",
+  pin: "",
+  confirm_pin: "",
+  enabled: false,
+};
+
 function readInitialControlPlaneRouteState() {
   const defaultState = {
     controlPlaneSection: "reports",
@@ -1356,9 +1364,13 @@ export default function PlatformAdminApp() {
   const [platformRoleDeleteConfirmOpen, setPlatformRoleDeleteConfirmOpen] = useState(false);
   const [platformRoleDeleteLoading, setPlatformRoleDeleteLoading] = useState(false);
   const [platformSecuritySettingsDraft, setPlatformSecuritySettingsDraft] = useState(DEFAULT_PLATFORM_SECURITY_SETTINGS);
-  const [platformSecurityPinDraft, setPlatformSecurityPinDraft] = useState({ pin: "", confirm_pin: "", enabled: false });
+  const [platformSecurityPinDraft, setPlatformSecurityPinDraft] = useState(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
+  const [platformSecurityPinMeta, setPlatformSecurityPinMeta] = useState({ pin_hash: "", enabled: false });
+  const [platformSecurityPinEditMode, setPlatformSecurityPinEditMode] = useState(false);
   const [showPlatformSecurityPin, setShowPlatformSecurityPin] = useState(false);
   const [showPlatformSecurityPinConfirm, setShowPlatformSecurityPinConfirm] = useState(false);
+  const [showPlatformSecurityCurrentPin, setShowPlatformSecurityCurrentPin] = useState(false);
+  const [showPlatformSecurityAccountPassword, setShowPlatformSecurityAccountPassword] = useState(false);
   const [platformSecurityStatus, setPlatformSecurityStatus] = useState("");
   const [platformSecuritySaving, setPlatformSecuritySaving] = useState({ pin: false, checks: false });
   const [leadRows, setLeadRows] = useState([]);
@@ -2141,7 +2153,8 @@ export default function PlatformAdminApp() {
   const loadPlatformSecurityConfig = useCallback(async () => {
     if (!sessionUserId || !canViewPlatformSecurity) {
       setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
-      setPlatformSecurityPinDraft({ pin: "", confirm_pin: "", enabled: false });
+      setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
+      setPlatformSecurityPinMeta({ pin_hash: "", enabled: false });
       setPlatformSecurityStatus("");
       return;
     }
@@ -2154,7 +2167,7 @@ export default function PlatformAdminApp() {
         .maybeSingle(),
       supabase
         .from("platform_user_security_profiles")
-        .select("user_id,pin_enabled")
+        .select("user_id,pin_enabled,pin_hash")
         .eq("user_id", sessionUserId)
         .maybeSingle(),
     ]);
@@ -2163,7 +2176,8 @@ export default function PlatformAdminApp() {
     if (firstError) {
       if (isMissingRelationError(firstError)) {
         setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
-        setPlatformSecurityPinDraft({ pin: "", confirm_pin: "", enabled: false });
+        setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
+        setPlatformSecurityPinMeta({ pin_hash: "", enabled: false });
         setPlatformSecurityStatus("Security tables are not available yet. Run the latest migrations to enable PIN checkpoints.");
         return;
       }
@@ -2177,12 +2191,14 @@ export default function PlatformAdminApp() {
       require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
       require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
     });
-    setPlatformSecurityPinDraft((prev) => ({
-      ...prev,
-      pin: "",
-      confirm_pin: "",
+    setPlatformSecurityPinDraft({
+      ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
       enabled: Boolean(pinResult.data?.pin_enabled),
-    }));
+    });
+    setPlatformSecurityPinMeta({
+      pin_hash: String(pinResult.data?.pin_hash || "").trim(),
+      enabled: Boolean(pinResult.data?.pin_enabled),
+    });
     setPlatformSecurityStatus("");
   }, [canViewPlatformSecurity, sessionUserId]);
 
@@ -3245,9 +3261,13 @@ export default function PlatformAdminApp() {
       return;
     }
 
+    const currentPin = String(platformSecurityPinDraft.current_pin || "").trim();
+    const accountPassword = String(platformSecurityPinDraft.account_password || "");
     const pin = String(platformSecurityPinDraft.pin || "").trim();
     const confirmPin = String(platformSecurityPinDraft.confirm_pin || "").trim();
     const pinEnabled = Boolean(platformSecurityPinDraft.enabled);
+    const existingPinHash = String(platformSecurityPinMeta.pin_hash || "").trim();
+    const hasExistingPin = Boolean(existingPinHash);
     const savingWithoutPin = !pinEnabled && !pin && !confirmPin;
     if (!savingWithoutPin) {
       if (!/^\d{4}$/.test(pin)) {
@@ -3256,6 +3276,39 @@ export default function PlatformAdminApp() {
       }
       if (pin !== confirmPin) {
         setPlatformSecurityStatus("PIN and confirmation do not match.");
+        return;
+      }
+    }
+
+    if (hasExistingPin) {
+      if (!currentPin && !accountPassword) {
+        setPlatformSecurityStatus("Enter your current PIN or your account password to change this PIN.");
+        return;
+      }
+
+      let verified = false;
+      if (currentPin) {
+        const currentPinHash = await hashSecurityPin(sessionUserId, currentPin);
+        verified = currentPinHash === existingPinHash;
+      }
+
+      if (!verified && accountPassword) {
+        const email = String(sessionEmail || "").trim().toLowerCase();
+        if (!email) {
+          setPlatformSecurityStatus("No account email is available for password verification.");
+          return;
+        }
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password: accountPassword,
+        });
+        if (!signInError) {
+          verified = true;
+        }
+      }
+
+      if (!verified) {
+        setPlatformSecurityStatus("Current PIN or account password is incorrect.");
         return;
       }
     }
@@ -3277,11 +3330,31 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    setPlatformSecurityPinDraft((prev) => ({ ...prev, pin: "", confirm_pin: "" }));
+    setPlatformSecurityPinDraft({
+      ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
+      enabled: pinEnabled,
+    });
+    setPlatformSecurityPinMeta({
+      pin_hash: String(pin_hash || "").trim(),
+      enabled: pinEnabled,
+    });
+    setPlatformSecurityPinEditMode(false);
     setShowPlatformSecurityPin(false);
     setShowPlatformSecurityPinConfirm(false);
-    setPlatformSecurityStatus("Security PIN saved.");
-  }, [canManagePlatformSecurity, platformSecurityPinDraft.confirm_pin, platformSecurityPinDraft.enabled, platformSecurityPinDraft.pin, sessionUserId]);
+    setShowPlatformSecurityCurrentPin(false);
+    setShowPlatformSecurityAccountPassword(false);
+    setPlatformSecurityStatus(pinEnabled ? "Security PIN saved." : "Security PIN disabled.");
+  }, [
+    canManagePlatformSecurity,
+    platformSecurityPinDraft.account_password,
+    platformSecurityPinDraft.confirm_pin,
+    platformSecurityPinDraft.current_pin,
+    platformSecurityPinDraft.enabled,
+    platformSecurityPinDraft.pin,
+    platformSecurityPinMeta.pin_hash,
+    sessionEmail,
+    sessionUserId,
+  ]);
 
   const savePlatformSecurityChecks = useCallback(async () => {
     if (!canManagePlatformSecurity) {
@@ -3874,7 +3947,7 @@ export default function PlatformAdminApp() {
   }, [controlPlanePage]);
 
   useEffect(() => {
-    if (controlPlanePage !== "security-checks") return;
+    if (controlPlanePage !== "security-checks" && controlPlanePage !== "account-info") return;
     void loadPlatformSecurityConfig();
   }, [controlPlanePage, loadPlatformSecurityConfig]);
 
@@ -6707,10 +6780,233 @@ export default function PlatformAdminApp() {
                       <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>{sessionPhone || "Not set"}</div>
                     )}
                   </div>
-                  <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Security Checkpoint</div>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>Foundation ready</div>
+                </div>
+                <div style={{ ...subPanel, display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <h3 style={{ margin: 0, color: palette.navy900 }}>PIN Security Checkpoint</h3>
+                      <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
+                        Manage your personal PCP PIN here. Existing PIN changes require your current PIN or your account password.
+                      </p>
+                    </div>
+                    {platformSecurityPinEditMode ? (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                          onClick={() => void savePlatformSecurityPin()}
+                          disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                        >
+                          {platformSecuritySaving.pin ? "Saving..." : "Save PIN"}
+                        </button>
+                        <button
+                          type="button"
+                          style={buttonAlt}
+                          disabled={platformSecuritySaving.pin}
+                          onClick={() => {
+                            setPlatformSecurityPinEditMode(false);
+                            setPlatformSecurityPinDraft({
+                              ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
+                              enabled: Boolean(platformSecurityPinMeta.enabled),
+                            });
+                            setShowPlatformSecurityPin(false);
+                            setShowPlatformSecurityPinConfirm(false);
+                            setShowPlatformSecurityCurrentPin(false);
+                            setShowPlatformSecurityAccountPassword(false);
+                            setPlatformSecurityStatus("");
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                        disabled={!canManagePlatformSecurity}
+                        onClick={() => {
+                          setPlatformSecurityPinEditMode(true);
+                          setPlatformSecurityPinDraft({
+                            ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
+                            enabled: Boolean(platformSecurityPinMeta.enabled),
+                          });
+                          setPlatformSecurityStatus("");
+                        }}
+                        title={canManagePlatformSecurity ? "Edit PIN" : "You need the Security edit permission"}
+                      >
+                        Edit PIN
+                      </button>
+                    )}
                   </div>
+                  {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
+                  <div style={responsiveTwoColGrid}>
+                    <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>Status</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>
+                        {platformSecurityPinMeta.enabled ? "Enabled" : "Disabled"}
+                      </div>
+                    </div>
+                    <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>Current PIN</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>
+                        {platformSecurityPinMeta.pin_hash ? "Configured" : "Not set"}
+                      </div>
+                    </div>
+                  </div>
+                  {platformSecurityPinEditMode ? (
+                    <>
+                      <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 700, color: palette.navy900 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(platformSecurityPinDraft.enabled)}
+                          onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
+                          disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                        />
+                        Enable PIN checkpoints for my account
+                      </label>
+                      <div style={{ display: "grid", gap: 10, gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
+                        <label style={{ ...modalField, margin: 0 }}>
+                          <span>New PIN</span>
+                          <div style={{ position: "relative" }}>
+                            <input
+                              type={showPlatformSecurityPin ? "text" : "password"}
+                              inputMode="numeric"
+                              maxLength={4}
+                              value={platformSecurityPinDraft.pin}
+                              onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                              placeholder="4-digit PIN"
+                              style={{ ...modalInput, paddingRight: 74 }}
+                              disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPlatformSecurityPin((prev) => !prev)}
+                              style={{
+                                position: "absolute",
+                                right: 12,
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                border: "none",
+                                background: "transparent",
+                                color: "#1f6fd6",
+                                fontWeight: 800,
+                                cursor: "pointer",
+                                padding: 0,
+                              }}
+                            >
+                              {showPlatformSecurityPin ? "Hide" : "Show"}
+                            </button>
+                          </div>
+                        </label>
+                        <label style={{ ...modalField, margin: 0 }}>
+                          <span>Confirm New PIN</span>
+                          <div style={{ position: "relative" }}>
+                            <input
+                              type={showPlatformSecurityPinConfirm ? "text" : "password"}
+                              inputMode="numeric"
+                              maxLength={4}
+                              value={platformSecurityPinDraft.confirm_pin}
+                              onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, confirm_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                              placeholder="Re-enter PIN"
+                              style={{ ...modalInput, paddingRight: 74 }}
+                              disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPlatformSecurityPinConfirm((prev) => !prev)}
+                              style={{
+                                position: "absolute",
+                                right: 12,
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                border: "none",
+                                background: "transparent",
+                                color: "#1f6fd6",
+                                fontWeight: 800,
+                                cursor: "pointer",
+                                padding: 0,
+                              }}
+                            >
+                              {showPlatformSecurityPinConfirm ? "Hide" : "Show"}
+                            </button>
+                          </div>
+                        </label>
+                        {platformSecurityPinMeta.pin_hash ? (
+                          <>
+                            <label style={{ ...modalField, margin: 0 }}>
+                              <span>Current PIN</span>
+                              <div style={{ position: "relative" }}>
+                                <input
+                                  type={showPlatformSecurityCurrentPin ? "text" : "password"}
+                                  inputMode="numeric"
+                                  maxLength={4}
+                                  value={platformSecurityPinDraft.current_pin}
+                                  onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, current_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                                  placeholder="Current PIN"
+                                  style={{ ...modalInput, paddingRight: 74 }}
+                                  disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPlatformSecurityCurrentPin((prev) => !prev)}
+                                  style={{
+                                    position: "absolute",
+                                    right: 12,
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    border: "none",
+                                    background: "transparent",
+                                    color: "#1f6fd6",
+                                    fontWeight: 800,
+                                    cursor: "pointer",
+                                    padding: 0,
+                                  }}
+                                >
+                                  {showPlatformSecurityCurrentPin ? "Hide" : "Show"}
+                                </button>
+                              </div>
+                            </label>
+                            <label style={{ ...modalField, margin: 0 }}>
+                              <span>Account Password</span>
+                              <div style={{ position: "relative" }}>
+                                <input
+                                  type={showPlatformSecurityAccountPassword ? "text" : "password"}
+                                  value={platformSecurityPinDraft.account_password}
+                                  onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, account_password: event.target.value }))}
+                                  placeholder="Current account password"
+                                  style={{ ...modalInput, paddingRight: 74 }}
+                                  disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPlatformSecurityAccountPassword((prev) => !prev)}
+                                  style={{
+                                    position: "absolute",
+                                    right: 12,
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    border: "none",
+                                    background: "transparent",
+                                    color: "#1f6fd6",
+                                    fontWeight: 800,
+                                    cursor: "pointer",
+                                    padding: 0,
+                                  }}
+                                >
+                                  {showPlatformSecurityAccountPassword ? "Hide" : "Show"}
+                                </button>
+                              </div>
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        {platformSecurityPinMeta.pin_hash
+                          ? "Enter your current PIN or your account password to confirm PIN changes. Security Checks controls live on the next page."
+                          : "Set your 4-digit PIN here. Security Checks controls live on the next page."}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
@@ -7026,107 +7322,10 @@ export default function PlatformAdminApp() {
               {controlPlaneSettingsActions}
               {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
               <div style={{ ...card, display: "grid", gap: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <h2 style={{ margin: 0, color: palette.navy900 }}>Your Security PIN</h2>
-                    <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
-                      Set a 4-digit checkpoint PIN for your sensitive PCP actions.
-                    </p>
-                  </div>
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 700, color: palette.navy900 }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(platformSecurityPinDraft.enabled)}
-                    onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
-                    disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
-                  />
-                  Enable PIN checkpoints for my account
-                </label>
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
-                  <label style={{ ...modalField, margin: 0 }}>
-                    <span>Security PIN</span>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showPlatformSecurityPin ? "text" : "password"}
-                        inputMode="numeric"
-                        maxLength={4}
-                        value={platformSecurityPinDraft.pin}
-                        onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
-                        placeholder="4-digit PIN"
-                        style={{ ...modalInput, paddingRight: 74 }}
-                        disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPlatformSecurityPin((prev) => !prev)}
-                        style={{
-                          position: "absolute",
-                          right: 12,
-                          top: "50%",
-                          transform: "translateY(-50%)",
-                          border: "none",
-                          background: "transparent",
-                          color: "#1f6fd6",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        {showPlatformSecurityPin ? "Hide" : "Show"}
-                      </button>
-                    </div>
-                  </label>
-                  <label style={{ ...modalField, margin: 0 }}>
-                    <span>Confirm PIN</span>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showPlatformSecurityPinConfirm ? "text" : "password"}
-                        inputMode="numeric"
-                        maxLength={4}
-                        value={platformSecurityPinDraft.confirm_pin}
-                        onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, confirm_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
-                        placeholder="Re-enter PIN"
-                        style={{ ...modalInput, paddingRight: 74 }}
-                        disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPlatformSecurityPinConfirm((prev) => !prev)}
-                        style={{
-                          position: "absolute",
-                          right: 12,
-                          top: "50%",
-                          transform: "translateY(-50%)",
-                          border: "none",
-                          background: "transparent",
-                          color: "#1f6fd6",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        {showPlatformSecurityPinConfirm ? "Hide" : "Show"}
-                      </button>
-                    </div>
-                  </label>
-                </div>
-                <div style={modalFooterActions}>
-                  <button
-                    type="button"
-                    style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
-                    onClick={() => void savePlatformSecurityPin()}
-                    disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
-                  >
-                    {platformSecuritySaving.pin ? "Saving PIN..." : "Save Security PIN"}
-                  </button>
-                </div>
-              </div>
-              <div style={{ ...card, display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 4 }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checkpoints</h2>
                   <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
-                    Choose which PCP actions should require a PIN checkpoint before completing.
+                    Choose which PCP actions should require a PIN checkpoint before completing. PIN setup and PIN changes live under Account Info.
                   </p>
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
