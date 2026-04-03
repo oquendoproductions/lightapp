@@ -1373,10 +1373,12 @@ export default function PlatformAdminApp() {
   const [platformRoleEditMode, setPlatformRoleEditMode] = useState(false);
   const [platformRoleDeleteConfirmOpen, setPlatformRoleDeleteConfirmOpen] = useState(false);
   const [platformRoleDeleteLoading, setPlatformRoleDeleteLoading] = useState(false);
+  const [platformSecuritySettingsSaved, setPlatformSecuritySettingsSaved] = useState(DEFAULT_PLATFORM_SECURITY_SETTINGS);
   const [platformSecuritySettingsDraft, setPlatformSecuritySettingsDraft] = useState(DEFAULT_PLATFORM_SECURITY_SETTINGS);
   const [platformSecurityPinDraft, setPlatformSecurityPinDraft] = useState(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
   const [platformSecurityPinMeta, setPlatformSecurityPinMeta] = useState({ pin_hash: "" });
   const [platformSecurityPinEditMode, setPlatformSecurityPinEditMode] = useState(false);
+  const [platformSecurityChecksEditMode, setPlatformSecurityChecksEditMode] = useState(false);
   const [showPlatformSecurityPin, setShowPlatformSecurityPin] = useState(false);
   const [showPlatformSecurityPinConfirm, setShowPlatformSecurityPinConfirm] = useState(false);
   const [showPlatformSecurityCurrentPin, setShowPlatformSecurityCurrentPin] = useState(false);
@@ -2207,9 +2209,11 @@ export default function PlatformAdminApp() {
 
   const loadPlatformSecurityConfig = useCallback(async () => {
     if (!sessionUserId || !canViewPlatformSecurity) {
+      setPlatformSecuritySettingsSaved(DEFAULT_PLATFORM_SECURITY_SETTINGS);
       setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
       setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
       setPlatformSecurityPinMeta({ pin_hash: "" });
+      setPlatformSecurityChecksEditMode(false);
       setPlatformSecurityStatus("");
       return;
     }
@@ -2217,9 +2221,11 @@ export default function PlatformAdminApp() {
     const snapshot = await readPlatformSecuritySnapshot();
     if (snapshot.error) {
       if (isMissingRelationError(snapshot.error)) {
+        setPlatformSecuritySettingsSaved(DEFAULT_PLATFORM_SECURITY_SETTINGS);
         setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
         setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
         setPlatformSecurityPinMeta({ pin_hash: "" });
+        setPlatformSecurityChecksEditMode(false);
         setPlatformSecurityStatus("Security tables are not available yet. Run the latest migrations to enable PIN checkpoints.");
         return;
       }
@@ -2227,6 +2233,7 @@ export default function PlatformAdminApp() {
       return;
     }
 
+    setPlatformSecuritySettingsSaved(snapshot.settings);
     setPlatformSecuritySettingsDraft(snapshot.settings);
     setPlatformSecurityPinDraft({
       ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
@@ -2234,6 +2241,7 @@ export default function PlatformAdminApp() {
     setPlatformSecurityPinMeta({
       pin_hash: snapshot.pin_hash,
     });
+    setPlatformSecurityChecksEditMode(false);
     setPlatformSecurityStatus("");
   }, [canViewPlatformSecurity, readPlatformSecuritySnapshot, sessionUserId]);
 
@@ -3552,6 +3560,8 @@ export default function PlatformAdminApp() {
       return;
     }
 
+    setPlatformSecuritySettingsSaved(platformSecuritySettingsDraft);
+    setPlatformSecurityChecksEditMode(false);
     setPlatformSecurityStatus("Security checkpoints saved.");
   }, [canManagePlatformSecurity, platformSecuritySettingsDraft, sessionUserId]);
 
@@ -7572,11 +7582,23 @@ export default function PlatformAdminApp() {
               {controlPlaneSettingsActions}
               {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
               <div style={{ ...card, display: "grid", gap: 14 }}>
-                <div style={{ display: "grid", gap: 4 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checkpoints</h2>
-                  <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
-                    Choose which PCP actions should require a PIN checkpoint before completing. PIN setup and PIN changes live under Account Info.
-                  </p>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Security Checkpoints</h2>
+                    <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
+                      Choose which PCP actions should require a PIN checkpoint before completing. PIN setup and PIN changes live under Account Info.
+                    </p>
+                  </div>
+                  {!platformSecurityChecksEditMode ? (
+                    <button
+                      type="button"
+                      style={{ ...buttonAlt, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                      onClick={() => setPlatformSecurityChecksEditMode(true)}
+                      disabled={!canManagePlatformSecurity}
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
                   {[
@@ -7595,7 +7617,7 @@ export default function PlatformAdminApp() {
                         type="checkbox"
                         checked={Boolean(platformSecuritySettingsDraft?.[key])}
                         onChange={(event) => setPlatformSecuritySettingsDraft((prev) => ({ ...prev, [key]: event.target.checked }))}
-                        disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
+                        disabled={!canManagePlatformSecurity || !platformSecurityChecksEditMode || platformSecuritySaving.checks}
                         style={{ marginTop: 4 }}
                       />
                       <span style={{ display: "grid", gap: 4 }}>
@@ -7605,16 +7627,30 @@ export default function PlatformAdminApp() {
                     </label>
                   ))}
                 </div>
-                <div style={modalFooterActions}>
-                  <button
-                    type="button"
-                    style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
-                    onClick={() => void savePlatformSecurityChecks()}
-                    disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
-                  >
-                    {platformSecuritySaving.checks ? "Saving Checkpoints..." : "Save Security Checks"}
-                  </button>
-                </div>
+                {platformSecurityChecksEditMode ? (
+                  <div style={modalFooterActions}>
+                    <button
+                      type="button"
+                      style={{ ...buttonAlt, opacity: platformSecuritySaving.checks ? 0.7 : 1 }}
+                      onClick={() => {
+                        setPlatformSecuritySettingsDraft(platformSecuritySettingsSaved);
+                        setPlatformSecurityChecksEditMode(false);
+                        setPlatformSecurityStatus("");
+                      }}
+                      disabled={platformSecuritySaving.checks}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                      onClick={() => void savePlatformSecurityChecks()}
+                      disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
+                    >
+                      {platformSecuritySaving.checks ? "Saving Checkpoints..." : "Save Security Checks"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

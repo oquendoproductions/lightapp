@@ -879,6 +879,8 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("heading", { name: /security checkpoints/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /your security pin/i })).not.toBeInTheDocument();
     expect(screen.getByText(/pin setup and pin changes live under account info/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save security checks/i })).not.toBeInTheDocument();
     expect(screen.getByText(/require pin for organization info changes/i)).toBeInTheDocument();
     expect(screen.getByText(/require pin for points of contact changes/i)).toBeInTheDocument();
     expect(screen.getByText(/require pin for organization user and admin changes/i)).toBeInTheDocument();
