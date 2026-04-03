@@ -7168,6 +7168,22 @@ export default function MunicipalityApp() {
                                               setSettingsRolePermissionEditMode(false);
                                             }}
                                           >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="municipality-button municipality-button--ghost"
+                                            onClick={() => {
+                                              const resetDraft = {};
+                                              for (const permissionRow of permissionCatalog || []) {
+                                                const permissionKey = trimOrEmpty(permissionRow?.permission_key);
+                                                if (!permissionKey) continue;
+                                                resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedSettingsRoleKey}:${permissionKey}`]);
+                                              }
+                                              setSettingsRolePermissionDraft(resetDraft);
+                                              setSettingsRolePermissionDirty(false);
+                                            }}
+                                          >
                                             Reset
                                           </button>
                                           <button
