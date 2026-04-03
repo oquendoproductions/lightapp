@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { TenantContext } from "./tenant/contextObject";
 import {
@@ -126,13 +126,22 @@ const LOCATION_ASSET_OWNERSHIP_OPTIONS = [
   { key: "third_party", label: "Third-Party" },
 ];
 
+const REPORT_DOMAIN_ICON_SRC = {
+  potholes: "/pothole_icon.png",
+  water_drain_issues: "/water_main_icon.png",
+  streetlights: "/streetlight_icon.png",
+  street_signs: "/street_sign_icons/street_sign_domain_icon.png",
+  power_outage: "/power_outage_icon.png",
+  water_main: "/water_main_icon.png",
+};
+
 const REPORT_DOMAIN_OPTIONS = [
-  { key: "potholes", label: "Potholes" },
-  { key: "water_drain_issues", label: "Water / Drain Issues" },
-  { key: "streetlights", label: "Streetlights" },
-  { key: "street_signs", label: "Street Signs" },
-  { key: "power_outage", label: "Power Outage" },
-  { key: "water_main", label: "Water Main" },
+  { key: "potholes", label: "Potholes", iconSrc: REPORT_DOMAIN_ICON_SRC.potholes },
+  { key: "water_drain_issues", label: "Water / Drain Issues", iconSrc: REPORT_DOMAIN_ICON_SRC.water_drain_issues },
+  { key: "streetlights", label: "Streetlights", iconSrc: REPORT_DOMAIN_ICON_SRC.streetlights },
+  { key: "street_signs", label: "Street Signs", iconSrc: REPORT_DOMAIN_ICON_SRC.street_signs },
+  { key: "power_outage", label: "Power Outage", iconSrc: REPORT_DOMAIN_ICON_SRC.power_outage },
+  { key: "water_main", label: "Water Main", iconSrc: REPORT_DOMAIN_ICON_SRC.water_main },
 ];
 
 const DEFAULT_PUBLIC_REPORT_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
@@ -777,6 +786,251 @@ function HomeCard({ title, children, subtitle, onTitleClick = null }) {
   );
 }
 
+function ReportDomainIcon({ domainKey, label, size = 28 }) {
+  const src = REPORT_DOMAIN_OPTIONS.find((row) => row.key === normalizeReportDomainKey(domainKey))?.iconSrc || "";
+  if (!src) return null;
+  return <img src={src} alt="" aria-hidden="true" width={size} height={size} className="municipality-report-domain-icon" />;
+}
+
+function MunicipalityDateRangePicker({ fromDate, toDate, onApply }) {
+  const [open, setOpen] = useState(false);
+  const [draftFromDate, setDraftFromDate] = useState("");
+  const [draftToDate, setDraftToDate] = useState("");
+  const [calendarLeftMonth, setCalendarLeftMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  });
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const draftRangeFrom = trimOrEmpty(draftFromDate);
+  const draftRangeTo = trimOrEmpty(draftToDate || draftFromDate);
+  const presetOptions = useMemo(() => ([
+    { key: "all", label: "All" },
+    { key: "today", label: "Today" },
+    { key: "thisMonth", label: "This Month" },
+    { key: "lastMonth", label: "Last Month" },
+    { key: "last90", label: "Last 90 days" },
+    { key: "last180", label: "Last 180 days" },
+    { key: "ytd", label: "YTD" },
+  ]), []);
+
+  const getPresetRange = useCallback((presetKey) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let from = new Date(today);
+    let to = new Date(today);
+    if (presetKey === "all") return { from: "", to: "" };
+    if (presetKey === "thisMonth") {
+      from = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (presetKey === "lastMonth") {
+      from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      to = new Date(today.getFullYear(), today.getMonth(), 0);
+    } else if (presetKey === "last90") {
+      from = new Date(today);
+      from.setDate(from.getDate() - 89);
+    } else if (presetKey === "last180") {
+      from = new Date(today);
+      from.setDate(from.getDate() - 179);
+    } else if (presetKey === "ytd") {
+      from = new Date(today.getFullYear(), 0, 1);
+    }
+    return { from: toLocalIsoDate(from), to: toLocalIsoDate(to) };
+  }, []);
+
+  const openPicker = useCallback(() => {
+    const from = trimOrEmpty(fromDate);
+    const to = trimOrEmpty(toDate);
+    setDraftFromDate(from);
+    setDraftToDate(to);
+    const toDateValue = parseLocalIsoDate(to) || parseLocalIsoDate(from) || new Date();
+    setCalendarLeftMonth(new Date(toDateValue.getFullYear(), toDateValue.getMonth() - 1, 1));
+    setOpen(true);
+  }, [fromDate, toDate]);
+
+  const cancelPicker = useCallback(() => {
+    setOpen(false);
+    setDraftFromDate("");
+    setDraftToDate("");
+  }, []);
+
+  const applyPicker = useCallback(() => {
+    const rawFrom = trimOrEmpty(draftFromDate);
+    const rawTo = trimOrEmpty(draftToDate);
+    if (!rawFrom && !rawTo) {
+      onApply?.("", "");
+      setOpen(false);
+      return;
+    }
+    const nextFrom = rawFrom || rawTo;
+    const nextTo = rawTo || rawFrom;
+    if (!nextFrom || !nextTo) {
+      setOpen(false);
+      return;
+    }
+    onApply?.(nextFrom <= nextTo ? nextFrom : nextTo, nextFrom <= nextTo ? nextTo : nextFrom);
+    setOpen(false);
+  }, [draftFromDate, draftToDate, onApply]);
+
+  const applyPresetToDraft = useCallback((presetKey) => {
+    const range = getPresetRange(presetKey);
+    setDraftFromDate(range.from);
+    setDraftToDate(range.to);
+    const toDateValue = parseLocalIsoDate(range.to);
+    if (toDateValue) {
+      setCalendarLeftMonth(new Date(toDateValue.getFullYear(), toDateValue.getMonth() - 1, 1));
+    }
+  }, [getPresetRange]);
+
+  const shiftCalendarMonths = useCallback((delta) => {
+    setCalendarLeftMonth((prev) => {
+      const base = prev instanceof Date ? prev : new Date();
+      return new Date(base.getFullYear(), base.getMonth() + Number(delta || 0), 1);
+    });
+  }, []);
+
+  const formatMonthLabel = useCallback((value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  }, []);
+
+  const buildMonthCells = useCallback((value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDow = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let index = 0; index < firstDow; index += 1) cells.push(null);
+    for (let day = 1; day <= daysInMonth; day += 1) cells.push(toLocalIsoDate(new Date(year, month, day)));
+    while (cells.length % 7 !== 0) cells.push(null);
+    while (cells.length < 42) cells.push(null);
+    return cells;
+  }, []);
+
+  const pickCalendarDate = useCallback((iso) => {
+    const day = trimOrEmpty(iso);
+    if (!day) return;
+    const from = trimOrEmpty(draftFromDate);
+    const to = trimOrEmpty(draftToDate);
+    if (!from || (from && to)) {
+      setDraftFromDate(day);
+      setDraftToDate("");
+      return;
+    }
+    if (day < from) {
+      setDraftFromDate(day);
+      setDraftToDate(from);
+      return;
+    }
+    setDraftToDate(day);
+  }, [draftFromDate, draftToDate]);
+
+  const isDateInDraftRange = useCallback((iso) => {
+    const day = trimOrEmpty(iso);
+    if (!day || !draftRangeFrom || !draftRangeTo) return false;
+    return day >= draftRangeFrom && day <= draftRangeTo;
+  }, [draftRangeFrom, draftRangeTo]);
+
+  const leftMonthCells = useMemo(() => buildMonthCells(calendarLeftMonth), [buildMonthCells, calendarLeftMonth]);
+  const rightMonthDate = useMemo(
+    () => new Date(calendarLeftMonth.getFullYear(), calendarLeftMonth.getMonth() + 1, 1),
+    [calendarLeftMonth]
+  );
+  const rightMonthCells = useMemo(() => buildMonthCells(rightMonthDate), [buildMonthCells, rightMonthDate]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") cancelPicker();
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [cancelPicker, open]);
+
+  return (
+    <div className="municipality-report-date-picker">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="municipality-report-date-trigger"
+        onClick={() => (open ? cancelPicker() : openPicker())}
+      >
+        {formatDateRangeLabel(fromDate, toDate)}
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open ? (
+        <div ref={panelRef} className="municipality-report-date-popover">
+          <div className="municipality-report-date-presets">
+            {presetOptions.map((preset) => (
+              <button key={preset.key} type="button" className="municipality-report-date-preset" onClick={() => applyPresetToDraft(preset.key)}>
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="municipality-report-date-popover-header">
+            <button type="button" className="municipality-report-date-nav" onClick={() => shiftCalendarMonths(-1)}>‹</button>
+            <strong>{formatDateRangeLabel(draftRangeFrom || fromDate, draftRangeTo || toDate)}</strong>
+            <button type="button" className="municipality-report-date-nav" onClick={() => shiftCalendarMonths(1)}>›</button>
+          </div>
+          <div className="municipality-report-calendar-grid">
+            {[calendarLeftMonth, rightMonthDate].map((monthDate, monthIndex) => {
+              const cells = monthIndex === 0 ? leftMonthCells : rightMonthCells;
+              return (
+                <div key={`${monthDate.getFullYear()}-${monthDate.getMonth()}`} className="municipality-report-calendar-month">
+                  <div className="municipality-report-calendar-month-title">{formatMonthLabel(monthDate)}</div>
+                  <div className="municipality-report-calendar-weekdays">
+                    {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((label) => <span key={label}>{label}</span>)}
+                  </div>
+                  <div className="municipality-report-calendar-days">
+                    {cells.map((iso, index) => {
+                      const isActiveEdge = iso && (iso === draftRangeFrom || iso === draftRangeTo);
+                      const inRange = iso && isDateInDraftRange(iso);
+                      return (
+                        <button
+                          key={`${monthDate.getMonth()}-${iso || index}`}
+                          type="button"
+                          className={`municipality-report-calendar-day${!iso ? " is-empty" : ""}${inRange ? " is-in-range" : ""}${isActiveEdge ? " is-edge" : ""}`}
+                          onClick={() => pickCalendarDate(iso)}
+                          disabled={!iso}
+                        >
+                          {iso ? Number(iso.slice(-2)) : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="municipality-report-date-popover-footer">
+            <div className="municipality-report-date-inputs municipality-report-date-inputs--popover">
+              <input type="date" value={draftFromDate} onChange={(event) => setDraftFromDate(event.target.value)} />
+              <input type="date" value={draftToDate} onChange={(event) => setDraftToDate(event.target.value)} />
+            </div>
+            <div className="municipality-report-date-popover-actions">
+              <button type="button" className="municipality-button municipality-button--ghost municipality-report-table-button" onClick={cancelPicker}>
+                Cancel
+              </button>
+              <button type="button" className="municipality-button municipality-button--primary municipality-report-table-button" onClick={applyPicker}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function MunicipalityReportTable({
   items,
   emptyText,
@@ -785,6 +1039,9 @@ function MunicipalityReportTable({
   getFlyToHref = null,
   sortPreset = "recent_desc",
   onChangeSort = null,
+  canMutateIncidents = false,
+  busyIncidentId = "",
+  onToggleIncidentState = null,
 }) {
   if (!items.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
@@ -856,6 +1113,20 @@ function MunicipalityReportTable({
                           Fly to
                         </button>
                       )}
+                      {canMutateIncidents ? (
+                        <button
+                          type="button"
+                          className={`municipality-button municipality-report-table-button${isOpenReportState(item.current_state) ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                          onClick={() => onToggleIncidentState?.(item)}
+                          disabled={busyIncidentId === item.incident_id}
+                        >
+                          {busyIncidentId === item.incident_id
+                            ? "Saving..."
+                            : isOpenReportState(item.current_state)
+                              ? "Mark fixed"
+                              : "Re-open"}
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -1239,6 +1510,8 @@ export default function MunicipalityApp() {
   const [reportToDate, setReportToDate] = useState(() => defaultReportToDate());
   const [reportSortPreset, setReportSortPreset] = useState("recent_desc");
   const [reportExpandedIncidentId, setReportExpandedIncidentId] = useState("");
+  const [reportIncidentActionBusyId, setReportIncidentActionBusyId] = useState("");
+  const [reportIncidentActionStatus, setReportIncidentActionStatus] = useState("");
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
@@ -1621,6 +1894,79 @@ export default function MunicipalityApp() {
       ].join(" ").toLowerCase().includes(normalizedQuery);
     });
   }, [filteredReportActivityRows, reportActivityDetailRows, reportFromDate, reportSearchQuery, reportToDate]);
+  const handleReportIncidentStateToggle = useCallback(async (row) => {
+    if (!manageAccess) return;
+    const incidentId = trimOrEmpty(row?.incident_id);
+    const domainKey = normalizeReportDomainKey(row?.domain);
+    if (!incidentId || !domainKey) return;
+    const nextAction = isOpenReportState(row?.current_state) ? "fix" : "reopen";
+    const nextState = nextAction === "fix" ? "fixed" : "reopened";
+    const incidentLabel = trimOrEmpty(row?.incident_label) || summarizeReportIncidentLabel(row);
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        nextAction === "fix"
+          ? `Mark ${incidentLabel} fixed?`
+          : `Re-open ${incidentLabel}?`
+      );
+      if (!confirmed) return;
+    }
+
+    setReportIncidentActionBusyId(incidentId);
+    setReportIncidentActionStatus("");
+
+    const payload = {
+      light_id: incidentId,
+      action: nextAction,
+      note: null,
+      actor_user_id: session?.user?.id || null,
+    };
+
+    const { error: actionError } = await supabase.from("light_actions").insert([payload]);
+
+    if (actionError) {
+      setReportIncidentActionBusyId("");
+      setReportIncidentActionStatus(actionError.message || "Could not update this incident.");
+      return;
+    }
+
+    if (domainKey === "streetlights") {
+      if (nextAction === "fix") {
+        const { error: fixedError } = await supabase
+          .from("fixed_lights")
+          .upsert([{ light_id: incidentId, fixed_at: new Date().toISOString() }]);
+        if (fixedError) {
+          setReportIncidentActionBusyId("");
+          setReportIncidentActionStatus(fixedError.message || "Incident history was recorded, but fixed status could not be synced.");
+          return;
+        }
+      } else {
+        const { error: reopenError } = await supabase
+          .from("fixed_lights")
+          .delete()
+          .eq("light_id", incidentId);
+        if (reopenError) {
+          setReportIncidentActionBusyId("");
+          setReportIncidentActionStatus(reopenError.message || "Incident history was recorded, but the light could not be re-opened.");
+          return;
+        }
+      }
+    }
+
+    const nextChangedAt = new Date().toISOString();
+    setReportActivityRows((prev) => (prev || []).map((entry) => (
+      trimOrEmpty(entry?.incident_id) === incidentId && normalizeReportDomainKey(entry?.domain) === domainKey
+        ? { ...entry, current_state: nextState, last_changed_at: nextChangedAt }
+        : entry
+    )));
+    setReportActivityDetailRows((prev) => (prev || []).map((entry) => (
+      trimOrEmpty(entry?.incident_id) === incidentId && normalizeReportDomainKey(entry?.domain) === domainKey
+        ? { ...entry, current_state: nextState, last_changed_at: nextChangedAt }
+        : entry
+    )));
+    setReportIncidentActionBusyId("");
+    setReportIncidentActionStatus(nextAction === "fix" ? "Incident marked fixed." : "Incident re-opened.");
+  }, [manageAccess, session?.user?.id]);
   const permissionLabelLookup = useMemo(
     () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
     [permissionCatalog]
@@ -4282,6 +4628,7 @@ export default function MunicipalityApp() {
                           setReportExpandedIncidentId("");
                         }}
                       >
+                        <ReportDomainIcon domainKey={domain.key} label={domain.label} size={30} />
                         {domain.label}
                       </button>
                     );
@@ -4328,23 +4675,14 @@ export default function MunicipalityApp() {
 
                   <div className="municipality-report-toolbar-group municipality-report-toolbar-group--range">
                     <span className="municipality-report-toolbar-label">Date range</span>
-                    <div className="municipality-report-date-range">
-                      <span className="municipality-report-date-summary">{formatDateRangeLabel(reportFromDate, reportToDate)}</span>
-                      <div className="municipality-report-date-inputs">
-                        <input
-                          id="report-from-date"
-                          type="date"
-                          value={reportFromDate}
-                          onChange={(event) => setReportFromDate(event.target.value)}
-                        />
-                        <input
-                          id="report-to-date"
-                          type="date"
-                          value={reportToDate}
-                          onChange={(event) => setReportToDate(event.target.value)}
-                        />
-                      </div>
-                    </div>
+                    <MunicipalityDateRangePicker
+                      fromDate={reportFromDate}
+                      toDate={reportToDate}
+                      onApply={(nextFrom, nextTo) => {
+                        setReportFromDate(nextFrom);
+                        setReportToDate(nextTo);
+                      }}
+                    />
                   </div>
 
                   <div className="municipality-report-toolbar-actions">
@@ -4386,6 +4724,7 @@ export default function MunicipalityApp() {
                 </div>
 
                 {reportActivityStatus ? <p className={`municipality-inline-status${reportActivityStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{reportActivityStatus}</p> : null}
+                {reportIncidentActionStatus ? <p className={`municipality-inline-status${reportIncidentActionStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{reportIncidentActionStatus}</p> : null}
               </div>
 
               {reportActivityLoading ? <div className="municipality-empty">Loading domain reports…</div> : (
@@ -4398,6 +4737,9 @@ export default function MunicipalityApp() {
                     getFlyToHref={(row) => buildReportFlyToHref(window.location.pathname, tenantKey, row)}
                     sortPreset={reportSortPreset}
                     onChangeSort={setReportSortPreset}
+                    canMutateIncidents={manageAccess}
+                    busyIncidentId={reportIncidentActionBusyId}
+                    onToggleIncidentState={handleReportIncidentStateToggle}
                   />
                   <div className="municipality-report-table-footer">
                     <button
