@@ -23643,7 +23643,7 @@ async function insertReportWithFallback(payload) {
                   gap: 0,
                   minHeight: "var(--mobile-header-height)",
                   padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
-                  border: "1px solid rgba(23, 49, 79, 0.18)",
+                  border: "var(--mobile-header-border)",
                   borderRadius: "var(--mobile-header-radius)",
                   background: "var(--mobile-header-background)",
                   boxShadow: "var(--mobile-header-shadow)",
@@ -23681,37 +23681,40 @@ async function insertReportWithFallback(payload) {
             <button
               type="button"
               onClick={handleAccountMenuToggle}
-              aria-label={session?.user?.id ? "Open map menu" : "Log in"}
-              title={session?.user?.id ? "Open map menu" : "Log in"}
+              aria-label={session?.user?.id ? "Open account menu" : "Login"}
+              title={session?.user?.id ? "Account" : "Login"}
               style={{
                 gridColumn: 3,
                 justifySelf: "end",
                 width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
                 minWidth: "var(--mobile-header-side-column)",
                 height: "var(--mobile-header-menu-size)",
-                border: "1px solid rgba(23, 49, 79, 0.14)",
-                background: "rgba(255,255,255,0.94)",
-                color: "var(--sl-ui-text)",
+                border: "var(--mobile-header-menu-border)",
+                background: "var(--mobile-header-menu-background)",
+                color: "var(--mobile-header-menu-text-color)",
                 borderRadius: 999,
-                padding: session?.user?.id ? 0 : "0 12px",
+                padding: session?.user?.id ? 0 : "0 var(--app-tab-button-padding-x)",
                 display: "inline-flex",
+                flexDirection: session?.user?.id ? "column" : "row",
                 alignItems: "center",
                 justifyContent: "center",
+                gap: session?.user?.id ? "var(--mobile-header-menu-line-gap)" : 0,
                 cursor: "pointer",
-                boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
-                fontSize: session?.user?.id ? undefined : 12,
-                fontWeight: session?.user?.id ? undefined : 900,
+                boxShadow: "var(--mobile-header-menu-shadow)",
+                fontSize: session?.user?.id ? undefined : "var(--mobile-header-menu-text-size)",
+                fontWeight: session?.user?.id ? undefined : "var(--mobile-header-menu-text-weight)",
+                textDecoration: "none",
                 zIndex: 1,
               }}
             >
               {session?.user?.id ? (
-                <span style={{ display: "grid", gap: 3 }}>
-                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                </span>
+                <>
+                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
+                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
+                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
+                </>
               ) : (
-                "Log in"
+                "Login"
               )}
             </button>
 
@@ -23731,7 +23734,7 @@ async function insertReportWithFallback(payload) {
                       fontSize: 14,
                       fontWeight: 950,
                       lineHeight: 1.05,
-                      color: "#102b46",
+                      color: "var(--mobile-header-title-color)",
                     }}
                   >
                     CR
@@ -23760,11 +23763,10 @@ async function insertReportWithFallback(payload) {
                   alignContent: "center",
                   justifyItems: "center",
                   minWidth: 0,
-                  width: "100%",
-                  paddingInline: 6,
-                  paddingBlock: 1,
+                  paddingInline: "var(--mobile-header-title-padding-inline)",
+                  paddingBlock: "var(--mobile-header-title-padding-block)",
                   textAlign: "center",
-                  transform: "translateY(-2px)",
+                  transform: "translateY(var(--mobile-header-title-shift-y))",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
@@ -23773,13 +23775,8 @@ async function insertReportWithFallback(payload) {
                     margin: 0,
                     fontSize: "var(--mobile-header-title-size)",
                     fontWeight: "var(--desktop-header-title-weight)",
-                    color: "#102b46",
+                    color: "var(--mobile-header-title-color)",
                     lineHeight: "var(--mobile-header-title-line-height)",
-                    display: "block",
-                    maxWidth: "100%",
-                    whiteSpace: "normal",
-                    overflowWrap: "anywhere",
-                    textWrap: "balance",
                   }}
                 >
                   {organizationName}
