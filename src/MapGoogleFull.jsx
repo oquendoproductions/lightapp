@@ -23649,85 +23649,19 @@ async function insertReportWithFallback(payload) {
                   background: "var(--mobile-header-background)",
                   boxShadow: "var(--mobile-header-shadow)",
                   color: "var(--sl-ui-text)",
+                  overflow: "hidden",
                 }}
             >
-            {/* Account Menu panel (mobile) */}
-            <AccountMenuPanel
-              open={accountMenuOpen}
-              session={session}
-              profile={profile}
-              onClose={() => {
-                setAccountMenuOpen(false);
-                setAccountView("menu");
-              }}
-              onManage={() => {
-                setAccountMenuOpen(false);
-                setManageEditing(false);
-                setManageOpen(true);
-              }}
-              onNotificationPreferences={() => {
-                setAccountMenuOpen(false);
-                setNotificationPreferencesStatus("");
-                setNotificationPreferencesOpen(true);
-              }}
-              onMyReports={() => {
-                setAccountMenuOpen(false);
-                openMyReports();
-              }}
-              onLogout={() => {
-                signOut();
-                setAccountMenuOpen(false);
-              }}
-            />
-            <button
-              type="button"
-              onClick={handleAccountMenuToggle}
-              aria-label={session?.user?.id ? "Open account menu" : "Login"}
-              title={session?.user?.id ? "Account" : "Login"}
-              style={{
-                gridColumn: 3,
-                justifySelf: "end",
-                width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
-                minWidth: "var(--mobile-header-side-column)",
-                height: "var(--mobile-header-menu-size)",
-                border: session?.user?.id ? "1px solid rgba(26, 49, 83, 0.22)" : "1px solid rgba(23, 49, 79, 0.15)",
-                background: session?.user?.id ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.82)",
-                color: session?.user?.id ? "#102b46" : "#17314f",
-                borderRadius: 999,
-                padding: session?.user?.id ? 0 : "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
-                display: "inline-flex",
-                flexDirection: session?.user?.id ? "column" : "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: session?.user?.id ? 4 : 0,
-                cursor: "pointer",
-                boxShadow: "none",
-                fontSize: session?.user?.id ? undefined : "var(--app-tab-button-font-size)",
-                fontWeight: session?.user?.id ? undefined : "var(--app-tab-button-font-weight)",
-                textDecoration: "none",
-                lineHeight: 1,
-                zIndex: 2,
-              }}
-            >
-              {session?.user?.id ? (
-                <>
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                </>
-              ) : (
-                "Login"
-              )}
-            </button>
-
               <div
                 style={{
                   gridColumn: 1,
-                  justifySelf: "start",
                   width: "var(--mobile-header-side-column)",
+                  minWidth: 0,
+                  alignSelf: "stretch",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "flex-start",
+                  flex: "0 0 auto",
                 }}
               >
                 {titleLogoError ? (
@@ -23765,9 +23699,12 @@ async function insertReportWithFallback(payload) {
                   alignContent: "center",
                   justifyItems: "center",
                   minWidth: 0,
+                  height: "100%",
+                  alignSelf: "stretch",
                   paddingInline: "var(--mobile-header-title-padding-inline)",
+                  paddingBlock: "var(--mobile-header-title-padding-block)",
                   textAlign: "center",
-                  transform: "translateY(-4px)",
+                  transform: "translateY(var(--mobile-header-title-shift-y))",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
@@ -23778,10 +23715,9 @@ async function insertReportWithFallback(payload) {
                     fontWeight: "var(--desktop-header-title-weight)",
                     color: "var(--mobile-header-title-color)",
                     lineHeight: "var(--mobile-header-title-line-height)",
-                    maxWidth: "17ch",
+                    width: "100%",
+                    maxWidth: "100%",
                     whiteSpace: "normal",
-                    overflowWrap: "normal",
-                    wordBreak: "normal",
                     textWrap: "balance",
                   }}
                 >
@@ -23789,11 +23725,92 @@ async function insertReportWithFallback(payload) {
                 </h1>
               </div>
 
+              <div
+                style={{
+                  gridColumn: 3,
+                  position: "static",
+                  width: "auto",
+                  minWidth: "var(--mobile-header-side-column)",
+                  alignSelf: "stretch",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  zIndex: 2,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={handleAccountMenuToggle}
+                  aria-label={session?.user?.id ? "Open account menu" : "Login"}
+                  title={session?.user?.id ? "Account" : "Login"}
+                  style={{
+                    width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
+                    minWidth: "var(--mobile-header-side-column)",
+                    height: "var(--mobile-header-menu-size)",
+                    border: session?.user?.id ? "1px solid rgba(26, 49, 83, 0.22)" : "1px solid rgba(23, 49, 79, 0.15)",
+                    background: session?.user?.id ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.82)",
+                    color: session?.user?.id ? "#102b46" : "#17314f",
+                    borderRadius: 999,
+                    padding: session?.user?.id ? 0 : "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
+                    display: "inline-flex",
+                    flexDirection: session?.user?.id ? "column" : "row",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: session?.user?.id ? 4 : 0,
+                    cursor: "pointer",
+                    boxShadow: "none",
+                    fontSize: session?.user?.id ? undefined : "var(--app-tab-button-font-size)",
+                    fontWeight: session?.user?.id ? undefined : "var(--app-tab-button-font-weight)",
+                    textDecoration: "none",
+                    lineHeight: 1,
+                  }}
+                >
+                  {session?.user?.id ? (
+                    <>
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                    </>
+                  ) : (
+                    "Login"
+                  )}
+                </button>
+              </div>
+
+            {/* Account Menu panel (mobile) */}
+            <AccountMenuPanel
+              open={accountMenuOpen}
+              session={session}
+              profile={profile}
+              onClose={() => {
+                setAccountMenuOpen(false);
+                setAccountView("menu");
+              }}
+              onManage={() => {
+                setAccountMenuOpen(false);
+                setManageEditing(false);
+                setManageOpen(true);
+              }}
+              onNotificationPreferences={() => {
+                setAccountMenuOpen(false);
+                setNotificationPreferencesStatus("");
+                setNotificationPreferencesOpen(true);
+              }}
+              onMyReports={() => {
+                setAccountMenuOpen(false);
+                openMyReports();
+              }}
+              onLogout={() => {
+                signOut();
+                setAccountMenuOpen(false);
+              }}
+            />
+
               </div>
 
             <div
               style={{
-                marginTop: 12,
+                marginTop: 20,
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
