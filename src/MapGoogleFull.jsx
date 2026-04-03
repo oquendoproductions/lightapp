@@ -10351,6 +10351,7 @@ export default function App({ onBackToHub = null }) {
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
+  const reportDeepLinkHandledRef = useRef(false);
   const boundaryCameraSignatureRef = useRef("");
   const isMobile = useIsMobile(640);
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
@@ -12005,6 +12006,41 @@ export default function App({ onBackToHub = null }) {
     const hasMyDomain = visibleDomainOptions.some((d) => d.key === myReportsDomain);
     if (!hasMyDomain) setMyReportsDomain(visibleDomainOptions[0].key);
   }, [visibleDomainOptions, adminReportDomain, myReportsDomain]);
+
+  useEffect(() => {
+    if (reportDeepLinkHandledRef.current) return;
+    if (typeof window === "undefined" || !visibleDomainOptions.length) return;
+
+    const params = new URLSearchParams(window.location.search || "");
+    const requestedDomain = normalizeDomainKey(params.get("report_domain"));
+    const focusIncidentId = String(params.get("focus_incident_id") || "").trim();
+    const flyLat = Number(params.get("fly_lat"));
+    const flyLng = Number(params.get("fly_lng"));
+    const flyZoom = Number(params.get("fly_zoom"));
+    const nextDomain = visibleDomainOptions.some((d) => d.key === requestedDomain) ? requestedDomain : "";
+    const hasFlyTarget = Number.isFinite(flyLat) && Number.isFinite(flyLng);
+
+    if (!nextDomain && !focusIncidentId && !hasFlyTarget) {
+      reportDeepLinkHandledRef.current = true;
+      return;
+    }
+
+    reportDeepLinkHandledRef.current = true;
+
+    if (nextDomain) {
+      setAdminReportDomain(nextDomain);
+      setMyReportsDomain(nextDomain);
+    }
+
+    if (focusIncidentId && isAdmin) {
+      setOpenReportsExpanded(new Set([focusIncidentId]));
+      setOpenReportsOpen(true);
+    }
+
+    if (hasFlyTarget) {
+      flyToTarget([flyLat, flyLng], Number.isFinite(flyZoom) ? flyZoom : 18);
+    }
+  }, [visibleDomainOptions, isAdmin]);
 
   useEffect(() => {
     let cancelled = false;
