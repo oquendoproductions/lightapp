@@ -785,6 +785,14 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("button", { name: /search accounts/i })).toBeInTheDocument();
   });
 
+  it("shows current platform team member names instead of selected account placeholders", async () => {
+    await openManageTeam();
+
+    expect(await screen.findByText("Owner Person")).toBeInTheDocument();
+    expect(await screen.findByText("Alex Chen")).toBeInTheDocument();
+    expect(screen.queryByText(/^Selected account$/i)).not.toBeInTheDocument();
+  });
+
   it("lets the PCP create a new platform team account from the add team member modal", async () => {
     const { user } = await openManageTeam();
 

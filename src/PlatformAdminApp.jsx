@@ -2686,13 +2686,22 @@ export default function PlatformAdminApp() {
     if (error) return;
 
     const next = {};
+    if (sessionUserId) {
+      next[sessionUserId] = {
+        id: sessionUserId,
+        user_id: sessionUserId,
+        display_name: sessionDisplayName || sessionEmail || sessionUserId,
+        email: sessionEmail,
+        phone: sessionPhone,
+      };
+    }
     for (const row of Array.isArray(data?.results) ? data.results : []) {
-      const key = String(row?.id || "").trim();
+      const key = String(row?.id || row?.user_id || "").trim();
       if (!key) continue;
       next[key] = row;
     }
     setPlatformTeamUserSummariesById(next);
-  }, [canViewPlatformUsers, invokePlatformUserAdmin, platformTeamAssignments]);
+  }, [canViewPlatformUsers, invokePlatformUserAdmin, platformTeamAssignments, sessionDisplayName, sessionEmail, sessionPhone, sessionUserId]);
 
   useEffect(() => {
     tenantAdminsRef.current = tenantAdmins;
@@ -2743,6 +2752,19 @@ export default function PlatformAdminApp() {
       setSessionEmail(userEmail);
       setSessionActorName(metadataName || emailName);
       setSessionPhone(metadataPhone);
+      if (userId) {
+        setPlatformTeamUserSummariesById((prev) => ({
+          ...prev,
+          [userId]: {
+            ...(prev?.[userId] || {}),
+            id: userId,
+            user_id: userId,
+            display_name: metadataName || emailName || userEmail || userId,
+            email: userEmail,
+            phone: metadataPhone,
+          },
+        }));
+      }
       setPlatformAccountDraft({
         full_name: metadataName || emailName,
         phone: metadataPhone,
