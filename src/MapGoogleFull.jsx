@@ -3,6 +3,7 @@
 // ==================================================
 import React, { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
+import "./headerStandards.css";
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
@@ -21746,121 +21747,165 @@ async function insertReportWithFallback(payload) {
           className="sl-overlay-pass"
           style={{
             position: "fixed",
-            top: "14px",
+            top: 0,
             left: 0,
             right: 0,
             zIndex: 1600,
-            display: "grid",
-            placeItems: "center",
-            padding: "0 16px",
+            pointerEvents: "none",
           }}
         >
+          <div
+            style={{
+              padding: "0 var(--desktop-header-horizontal-padding)",
+              borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
+              backdropFilter: "blur(14px)",
+              background: "rgba(248, 251, 255, 0.88)",
+              pointerEvents: "auto",
+            }}
+          >
             <div
               style={{
-                position: "relative",
-                width: "calc(100vw - 32px)",
-                marginLeft: 0,
+                display: "grid",
+                gridTemplateColumns: "minmax(var(--desktop-header-side-column), 1fr) minmax(0, 2fr) minmax(var(--desktop-header-side-column), 1fr)",
+                alignItems: "center",
+                gap: 16,
+                height: "var(--desktop-header-height)",
+                minHeight: "var(--desktop-header-height)",
+                minWidth: 0,
+                width: "100%",
               }}
             >
               <div
                 style={{
-                  position: "fixed",
-                  left: 16,
-                  top: 16,
-                  transform: "none",
                   display: "grid",
-                  gap: 8,
-                  pointerEvents: "auto",
-                  zIndex: 2201,
+                  alignItems: "center",
+                  justifyItems: "start",
+                  minWidth: 0,
                 }}
               >
-              <button
-                type="button"
-                onClick={() => nudgeMapZoom(1)}
-                aria-label="Zoom in"
-                title="Zoom in"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 22,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                onClick={() => nudgeMapZoom(-1)}
-                aria-label="Zoom out"
-                title="Zoom out"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 22,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
-              >
-                –
-              </button>
-            </div>
+                {typeof onBackToHub === "function" ? (
+                  <button
+                    type="button"
+                    onClick={onBackToHub}
+                    aria-label="Return to municipality home"
+                    title="Return to municipality home"
+                    style={{
+                      appearance: "none",
+                      padding: 0,
+                      border: 0,
+                      background: "transparent",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "flex-start",
+                      width: "fit-content",
+                      minWidth: 0,
+                    }}
+                  >
+                    {titleLogoError ? (
+                      <span
+                        style={{
+                          fontSize: 24,
+                          fontWeight: 950,
+                          lineHeight: 1.05,
+                          color: "#102b46",
+                        }}
+                      >
+                        CityReport.io
+                      </span>
+                    ) : (
+                      <img
+                        src={titleLogoSrc}
+                        alt={TITLE_LOGO_ALT}
+                        onError={() => setTitleLogoError(true)}
+                        style={{
+                          width: "auto",
+                          maxWidth: "min(240px, calc(100vw - 180px))",
+                          height: "var(--desktop-header-logo-height)",
+                          objectFit: "contain",
+                          objectPosition: "left center",
+                          display: "block",
+                        }}
+                      />
+                    )}
+                  </button>
+                ) : titleLogoError ? (
+                  <span
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 950,
+                      lineHeight: 1.05,
+                      color: "#102b46",
+                    }}
+                  >
+                    CityReport.io
+                  </span>
+                ) : (
+                  <img
+                    src={titleLogoSrc}
+                    alt={TITLE_LOGO_ALT}
+                    onError={() => setTitleLogoError(true)}
+                    style={{
+                      width: "auto",
+                      maxWidth: "min(240px, calc(100vw - 180px))",
+                      height: "var(--desktop-header-logo-height)",
+                      objectFit: "contain",
+                      objectPosition: "left center",
+                      display: "block",
+                    }}
+                  />
+                )}
+              </div>
 
-	            <div
-	                style={{
-	                  background: "var(--sl-ui-surface-bg)",
-                  border: "1px solid var(--sl-ui-surface-border)",
-                  borderRadius: 14,
-                  boxShadow: "var(--sl-ui-surface-shadow)",
-                  padding: "18px 76px",
+              <div
+                style={{
                   display: "grid",
-                  gap: 6,
-                  position: "relative",
-	                  color: "var(--sl-ui-text)",
-	                }}
-	            >
-	              {typeof onBackToHub === "function" ? (
-	                <button
-	                  type="button"
-	                  onClick={onBackToHub}
-	                  style={{
-	                    position: "absolute",
-	                    top: 10,
-	                    left: 10,
-	                    border: "1px solid rgba(255,255,255,0.18)",
-	                    background: "var(--sl-ui-brand-blue)",
-	                    color: "#ffffff",
-	                    borderRadius: 999,
-	                    padding: "8px 12px",
-	                    fontSize: 13,
-	                    fontWeight: 800,
-	                    cursor: "pointer",
-	                    boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
-	                  }}
-	                >
-	                  Back to Hub
-	                </button>
-	              ) : null}
+                  gap: "var(--desktop-header-stack-gap)",
+                  minWidth: 0,
+                  textAlign: "center",
+                  justifyItems: "center",
+                  color: "#102b46",
+                }}
+              >
+                <span className="app-header-eyebrow">Municipality Hub</span>
+                <h1
+                  style={{
+                    margin: 0,
+                    fontSize: "var(--desktop-header-title-size)",
+                    fontWeight: "var(--desktop-header-title-weight)",
+                    lineHeight: "var(--desktop-header-title-line-height)",
+                    color: "#102b46",
+                  }}
+                >
+                  Reporting Map
+                </h1>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  alignItems: "center",
+                  minWidth: 0,
+                }}
+              >
                 <button
                   type="button"
-                  aria-label="Open map menu"
-                  title="Open map menu"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!session?.user?.id) {
+                      setAccountMenuOpen(false);
+                      setAccountView("menu");
+                      setAuthGateStep("welcome");
+                      setAuthGateOpen(true);
+                      return;
+                    }
+                    setAccountMenuOpen((p) => !p);
+                  }}
+                  aria-label={session?.user?.id ? "Open account menu" : "Open login"}
+                  title={session?.user?.id ? "Account" : "Login"}
                   style={{
-                    position: "absolute",
-                    top: 10,
-                    right: 10,
                     width: 40,
                     height: 40,
                     borderRadius: 999,
@@ -21870,7 +21915,8 @@ async function insertReportWithFallback(payload) {
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    cursor: "default",
+                    cursor: "pointer",
+                    lineHeight: 1,
                     boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
                   }}
                 >
@@ -21880,232 +21926,233 @@ async function insertReportWithFallback(payload) {
                     <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
                   </span>
                 </button>
-	              {titleLogoError ? (
-	                <>
-                  <div style={{ fontSize: 22, fontWeight: 950, textAlign: "center", lineHeight: 1.1 }}>
-                    CityReport.io
-                  </div>
-                  <div style={{ fontSize: 12, opacity: 0.78, textAlign: "center", lineHeight: 1.2 }}>
-                    transparent reporting, visible progress.
-                  </div>
-                </>
-              ) : (
-                <img
-                  src={titleLogoSrc}
-                  alt={TITLE_LOGO_ALT}
-                  onError={() => setTitleLogoError(true)}
-                  style={{
-                    display: "block",
-                    margin: "0 auto",
-                    width: "100%",
-                    maxWidth: "100%",
-                    height: 90,
-                    objectFit: "contain",
-                  }}
-                />
-              )}
-
               </div>
+            </div>
+          </div>
 
+          <div
+            style={{
+              padding: "0 var(--desktop-header-horizontal-padding)",
+              pointerEvents: "none",
+            }}
+          >
             <div
               style={{
-                marginTop: 8,
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                width: "calc(100vw - 32px)",
+                width: "100%",
+                padding: "var(--app-tab-rail-shell-padding)",
+                border: "1px solid rgba(23, 49, 79, 0.08)",
+                borderTop: 0,
+                background: "rgba(255, 255, 255, 0.92)",
                 pointerEvents: "auto",
               }}
             >
-              <div style={{ display: "none", gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => nudgeMapZoom(1)}
-                  aria-label="Zoom in"
-                  title="Zoom in"
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "40px minmax(0, 1fr)",
+                  alignItems: "start",
+                  gap: 16,
+                  width: "100%",
+                }}
+              >
+                <div style={{ display: "grid", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => nudgeMapZoom(1)}
+                    aria-label="Zoom in"
+                    title="Zoom in"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 10,
+                      border: "1px solid var(--sl-ui-zoom-border)",
+                      background: "var(--sl-ui-zoom-bg)",
+                      boxShadow: "var(--sl-ui-zoom-shadow)",
+                      color: "var(--sl-ui-text)",
+                      fontSize: 22,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      lineHeight: 1,
+                    }}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => nudgeMapZoom(-1)}
+                    aria-label="Zoom out"
+                    title="Zoom out"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 10,
+                      border: "1px solid var(--sl-ui-zoom-border)",
+                      background: "var(--sl-ui-zoom-bg)",
+                      boxShadow: "var(--sl-ui-zoom-shadow)",
+                      color: "var(--sl-ui-text)",
+                      fontSize: 22,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      lineHeight: 1,
+                    }}
+                  >
+                    –
+                  </button>
+                </div>
+
+                <div
                   style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 22,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    lineHeight: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    minWidth: 0,
                   }}
                 >
-                  +
-                </button>
-                <button
-                  type="button"
-                  onClick={() => nudgeMapZoom(-1)}
-                  aria-label="Zoom out"
-                  title="Zoom out"
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 22,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    lineHeight: 1,
-                  }}
-                >
-                  –
-                </button>
+                  {isAggregatedReportingDomain && (
+                    <div
+                      onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                        }
+                      }}
+                      style={{
+                        width: "fit-content",
+                        maxWidth: "min(720px, calc(100vw - 180px))",
+                        fontSize: 11.5,
+                        opacity: 1,
+                        textAlign: "left",
+                        color: inViewCounterColor,
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        border: `1px solid ${inViewCounterBorder}`,
+                        background: inViewCounterBg,
+                        boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                        backdropFilter: "blur(2px)",
+                        WebkitBackdropFilter: "blur(2px)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Reports in view: <b>{openReportsInViewCount}</b>
+                    </div>
+                  )}
+                  {isStreetlightsDomain && (
+                    <>
+                      <div
+                        onClick={() => toggleStreetlightInViewFilter("saved")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleStreetlightInViewFilter("saved");
+                          }
+                        }}
+                        style={{
+                          width: "fit-content",
+                          maxWidth: "min(720px, calc(100vw - 180px))",
+                          fontSize: 11.5,
+                          opacity: 1,
+                          textAlign: "left",
+                          color: inViewCounterColor,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          border: isSavedStreetlightFilterOn
+                            ? "1px solid var(--sl-ui-tool-active-border)"
+                            : `1px solid ${inViewCounterBorder}`,
+                          background: isSavedStreetlightFilterOn
+                            ? "var(--sl-ui-tool-active-bg)"
+                            : inViewCounterBg,
+                          boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                          backdropFilter: "blur(2px)",
+                          WebkitBackdropFilter: "blur(2px)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
+                      </div>
+                      <div
+                        onClick={() => toggleStreetlightInViewFilter("utility")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleStreetlightInViewFilter("utility");
+                          }
+                        }}
+                        style={{
+                          width: "fit-content",
+                          maxWidth: "min(720px, calc(100vw - 180px))",
+                          fontSize: 11.5,
+                          opacity: 1,
+                          textAlign: "left",
+                          color: inViewCounterColor,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          border: isUtilityStreetlightFilterOn
+                            ? "1px solid var(--sl-ui-tool-active-border)"
+                            : `1px solid ${inViewCounterBorder}`,
+                          background: isUtilityStreetlightFilterOn
+                            ? "var(--sl-ui-tool-active-bg)"
+                            : inViewCounterBg,
+                          boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                          backdropFilter: "blur(2px)",
+                          WebkitBackdropFilter: "blur(2px)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
+                      </div>
+                    </>
+                  )}
+                  {isAdmin && openAbuseFlagSummary.total > 0 && (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setModerationFlagsOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setModerationFlagsOpen(true);
+                        }
+                      }}
+                      style={{
+                        width: "fit-content",
+                        maxWidth: "min(720px, calc(100vw - 180px))",
+                        fontSize: 11.5,
+                        fontWeight: 850,
+                        textAlign: "left",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        border: "1px solid rgba(255,255,255,0.18)",
+                        background:
+                          openAbuseFlagSummary.maxSeverity >= 3
+                            ? "rgba(183, 28, 28, 0.86)"
+                            : openAbuseFlagSummary.maxSeverity >= 2
+                              ? "rgba(239, 108, 0, 0.84)"
+                              : "rgba(33, 150, 83, 0.80)",
+                        boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                        backdropFilter: "blur(2px)",
+                        WebkitBackdropFilter: "blur(2px)",
+                        cursor: "pointer",
+                      }}
+                      title="Open moderation flags"
+                    >
+                      Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
+                    </div>
+                  )}
+                </div>
               </div>
-              {isAggregatedReportingDomain && (
-                <div
-                  onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
-                    }
-                  }}
-                  style={{
-                    width: "fit-content",
-                    maxWidth: "min(720px, calc(100vw - 100px))",
-                    marginTop: 2,
-                    fontSize: 11.5,
-                    opacity: 1,
-                    textAlign: "left",
-                    color: inViewCounterColor,
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: `1px solid ${inViewCounterBorder}`,
-                    background: inViewCounterBg,
-                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                    backdropFilter: "blur(2px)",
-                    WebkitBackdropFilter: "blur(2px)",
-                    cursor: "pointer",
-                  }}
-                >
-                  Reports in view: <b>{openReportsInViewCount}</b>
-                </div>
-              )}
-              {isStreetlightsDomain && (
-                <>
-                  <div
-                    onClick={() => toggleStreetlightInViewFilter("saved")}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleStreetlightInViewFilter("saved");
-                      }
-                    }}
-                    style={{
-                      width: "fit-content",
-                      maxWidth: "min(720px, calc(100vw - 100px))",
-                      marginTop: 2,
-                      fontSize: 11.5,
-                      opacity: 1,
-                      textAlign: "left",
-                      color: inViewCounterColor,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      border: isSavedStreetlightFilterOn
-                        ? "1px solid var(--sl-ui-tool-active-border)"
-                        : `1px solid ${inViewCounterBorder}`,
-                      background: isSavedStreetlightFilterOn
-                        ? "var(--sl-ui-tool-active-bg)"
-                        : inViewCounterBg,
-                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                      backdropFilter: "blur(2px)",
-                      WebkitBackdropFilter: "blur(2px)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
-                  </div>
-                  <div
-                    onClick={() => toggleStreetlightInViewFilter("utility")}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleStreetlightInViewFilter("utility");
-                      }
-                    }}
-                    style={{
-                      width: "fit-content",
-                      maxWidth: "min(720px, calc(100vw - 100px))",
-                      marginTop: 2,
-                      fontSize: 11.5,
-                      opacity: 1,
-                      textAlign: "left",
-                      color: inViewCounterColor,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      border: isUtilityStreetlightFilterOn
-                        ? "1px solid var(--sl-ui-tool-active-border)"
-                        : `1px solid ${inViewCounterBorder}`,
-                      background: isUtilityStreetlightFilterOn
-                        ? "var(--sl-ui-tool-active-bg)"
-                        : inViewCounterBg,
-                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                      backdropFilter: "blur(2px)",
-                      WebkitBackdropFilter: "blur(2px)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
-                  </div>
-                </>
-              )}
-              {isAdmin && openAbuseFlagSummary.total > 0 && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setModerationFlagsOpen(true)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setModerationFlagsOpen(true);
-                    }
-                  }}
-                  style={{
-                    width: "fit-content",
-                    maxWidth: "min(720px, calc(100vw - 100px))",
-                    marginTop: 4,
-                    fontSize: 11.5,
-                    fontWeight: 850,
-                    textAlign: "left",
-                    color: "#fff",
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    background:
-                      openAbuseFlagSummary.maxSeverity >= 3
-                        ? "rgba(183, 28, 28, 0.86)"
-                        : openAbuseFlagSummary.maxSeverity >= 2
-                          ? "rgba(239, 108, 0, 0.84)"
-                          : "rgba(33, 150, 83, 0.80)",
-                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                    backdropFilter: "blur(2px)",
-                    WebkitBackdropFilter: "blur(2px)",
-                    cursor: "pointer",
-                  }}
-                  title="Open moderation flags"
-                >
-                  Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
-                </div>
-              )}
-            </div>
             </div>
           </div>
+        </div>
 
         {/* Account menu panel (desktop) */}
         <AccountMenuPanel
