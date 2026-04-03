@@ -1412,7 +1412,6 @@ export default function PlatformAdminApp() {
   const [platformSecurityCheckpointPin, setPlatformSecurityCheckpointPin] = useState("");
   const [platformSecurityCheckpointStatus, setPlatformSecurityCheckpointStatus] = useState("");
   const [platformSecurityCheckpointVerifying, setPlatformSecurityCheckpointVerifying] = useState(false);
-  const [showPlatformSecurityCheckpointPin, setShowPlatformSecurityCheckpointPin] = useState(false);
   const [platformSecurityStatus, setPlatformSecurityStatus] = useState("");
   const [platformSecuritySaving, setPlatformSecuritySaving] = useState({ pin: false, checks: false });
   const platformSecurityCheckpointResolverRef = useRef(null);
@@ -2382,11 +2381,10 @@ export default function PlatformAdminApp() {
     setPlatformSecurityCheckpointPin("");
     setPlatformSecurityCheckpointStatus("");
     setPlatformSecurityCheckpointVerifying(false);
-    setShowPlatformSecurityCheckpointPin(false);
     if (typeof resolver === "function") resolver(approved);
   }, []);
 
-  const submitPlatformSecurityCheckpoint = useCallback(async () => {
+  const submitPlatformSecurityCheckpoint = useCallback(async (pinOverride = "") => {
     if (!platformSecurityCheckpointRequest?.expected_hash) {
       closePlatformSecurityCheckpoint(false);
       return;
@@ -2396,7 +2394,7 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const pin = String(platformSecurityCheckpointPin || "").trim();
+    const pin = String(pinOverride || platformSecurityCheckpointPin || "").trim();
     if (!/^\d{4}$/.test(pin)) {
       setPlatformSecurityCheckpointStatus("Enter your 4-digit PIN to continue.");
       return;
@@ -2447,7 +2445,6 @@ export default function PlatformAdminApp() {
       setPlatformSecurityCheckpointPin("");
       setPlatformSecurityCheckpointStatus("");
       setPlatformSecurityCheckpointVerifying(false);
-      setShowPlatformSecurityCheckpointPin(false);
       setPlatformSecurityCheckpointRequest({
         title,
         description,
@@ -5543,7 +5540,7 @@ export default function PlatformAdminApp() {
         height: "var(--mobile-header-height)",
         minHeight: "var(--mobile-header-height)",
         padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
-        border: "1px solid rgba(23, 49, 79, 0.18)",
+        border: "var(--mobile-header-border)",
         borderRadius: "var(--mobile-header-radius)",
         background: "var(--mobile-header-background)",
         boxShadow: "var(--mobile-header-shadow)",
@@ -5554,10 +5551,17 @@ export default function PlatformAdminApp() {
     : brandLogo;
   const bannerLogoSrc = isCompactViewport ? MOBILE_TITLE_LOGO_SRC : TITLE_LOGO_SRC;
   const bannerMenuButtonStyle = isCompactViewport
-    ? { ...menuToggleButton, width: "var(--mobile-header-menu-size)", height: "var(--mobile-header-menu-size)" }
+    ? {
+        ...menuToggleButton,
+        width: "var(--mobile-header-menu-size)",
+        height: "var(--mobile-header-menu-size)",
+        border: "var(--mobile-header-menu-border)",
+        background: "var(--mobile-header-menu-background)",
+        boxShadow: "var(--mobile-header-menu-shadow)",
+      }
     : menuToggleButton;
-  const menuLineWidth = isCompactViewport ? 16 : 18;
-  const menuLineGap = isCompactViewport ? 3 : 4;
+  const menuLineWidth = isCompactViewport ? "var(--mobile-header-menu-line-width)" : 18;
+  const menuLineGap = isCompactViewport ? "var(--mobile-header-menu-line-gap)" : 4;
 
   const fixedBanner = (
     <div style={bannerStyle}>
@@ -5588,10 +5592,12 @@ export default function PlatformAdminApp() {
           ...brandTitleStack,
           gap: isCompactViewport ? "var(--mobile-header-stack-gap)" : brandTitleStack.gap,
           width: isCompactViewport ? "100%" : "min(640px, calc(100vw - 320px))",
-          paddingInline: isCompactViewport ? 6 : 0,
+          paddingInline: isCompactViewport ? "var(--mobile-header-title-padding-inline)" : 0,
+          paddingBlock: isCompactViewport ? "var(--mobile-header-title-padding-block)" : 0,
           minWidth: 0,
           justifySelf: "center",
           alignContent: isCompactViewport ? "center" : undefined,
+          transform: isCompactViewport ? "translateY(var(--mobile-header-title-shift-y))" : undefined,
         }}
       >
         <span className="app-header-eyebrow">
@@ -5600,7 +5606,7 @@ export default function PlatformAdminApp() {
         <span style={{
           fontSize: isCompactViewport ? "var(--mobile-header-title-size)" : "var(--desktop-header-title-size)",
           fontWeight: "var(--desktop-header-title-weight)",
-          color: palette.navy900,
+          color: isCompactViewport ? "var(--mobile-header-title-color)" : palette.navy900,
           lineHeight: isCompactViewport ? "var(--mobile-header-title-line-height)" : "var(--desktop-header-title-line-height)",
         }}>
           Platform Control Plane
@@ -5616,9 +5622,9 @@ export default function PlatformAdminApp() {
             style={bannerMenuButtonStyle}
           >
             <span style={{ display: "grid", gap: menuLineGap }}>
-              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
-              <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
+              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
+              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
             </span>
           </button>
           {menuOpen ? (
@@ -9320,8 +9326,8 @@ export default function PlatformAdminApp() {
                               padding: "4px 10px",
                               fontSize: 11.5,
                               fontWeight: 800,
-                              color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : "#0f6e5c",
-                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)",
+                              color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : palette.navy500,
+                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(46,98,143,0.12)",
                             }}>
                               {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
                             </span>
@@ -9802,39 +9808,29 @@ export default function PlatformAdminApp() {
             </div>
             <label style={modalField}>
               <span>Security PIN</span>
-              <div style={passwordFieldWrap}>
-                <input
-                  type={showPlatformSecurityCheckpointPin ? "text" : "password"}
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="4-digit PIN"
-                  value={platformSecurityCheckpointPin}
-                  onChange={(event) => setPlatformSecurityCheckpointPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
-                  style={{ ...modalInput, paddingRight: 84 }}
-                  disabled={platformSecurityCheckpointVerifying}
-                />
-                <button
-                  type="button"
-                  style={passwordToggleInline}
-                  aria-label={showPlatformSecurityCheckpointPin ? "Hide security PIN" : "Show security PIN"}
-                  onClick={() => setShowPlatformSecurityCheckpointPin((prev) => !prev)}
-                >
-                  {showPlatformSecurityCheckpointPin ? "Hide" : "Show"}
-                </button>
-              </div>
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={4}
+                placeholder="4-digit PIN"
+                value={platformSecurityCheckpointPin}
+                onChange={(event) => {
+                  const nextPin = event.target.value.replace(/\D/g, "").slice(0, 4);
+                  setPlatformSecurityCheckpointPin(nextPin);
+                  if (platformSecurityCheckpointStatus) setPlatformSecurityCheckpointStatus("");
+                  if (nextPin.length === 4 && !platformSecurityCheckpointVerifying) {
+                    void submitPlatformSecurityCheckpoint(nextPin);
+                  }
+                }}
+                style={modalInput}
+                disabled={platformSecurityCheckpointVerifying}
+              />
             </label>
             {platformSecurityCheckpointStatus ? (
               <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{platformSecurityCheckpointStatus}</p>
             ) : null}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                style={{ ...buttonBase, minWidth: 160 }}
-                disabled={platformSecurityCheckpointVerifying}
-                onClick={() => void submitPlatformSecurityCheckpoint()}
-              >
-                {platformSecurityCheckpointVerifying ? "Checking PIN..." : "Confirm PIN"}
-              </button>
               <button
                 type="button"
                 style={{ ...buttonAlt, minWidth: 120 }}

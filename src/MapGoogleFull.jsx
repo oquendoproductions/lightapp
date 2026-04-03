@@ -23689,29 +23689,30 @@ async function insertReportWithFallback(payload) {
                 width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
                 minWidth: "var(--mobile-header-side-column)",
                 height: "var(--mobile-header-menu-size)",
-                border: "var(--mobile-header-menu-border)",
-                background: "var(--mobile-header-menu-background)",
-                color: "var(--mobile-header-menu-text-color)",
+                border: session?.user?.id ? "1px solid rgba(26, 49, 83, 0.22)" : "1px solid rgba(23, 49, 79, 0.15)",
+                background: session?.user?.id ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.82)",
+                color: session?.user?.id ? "#102b46" : "#17314f",
                 borderRadius: 999,
-                padding: session?.user?.id ? 0 : "0 var(--app-tab-button-padding-x)",
+                padding: session?.user?.id ? 0 : "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
                 display: "inline-flex",
                 flexDirection: session?.user?.id ? "column" : "row",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: session?.user?.id ? "var(--mobile-header-menu-line-gap)" : 0,
+                gap: session?.user?.id ? 4 : 0,
                 cursor: "pointer",
-                boxShadow: "var(--mobile-header-menu-shadow)",
-                fontSize: session?.user?.id ? undefined : "var(--mobile-header-menu-text-size)",
-                fontWeight: session?.user?.id ? undefined : "var(--mobile-header-menu-text-weight)",
+                boxShadow: "none",
+                fontSize: session?.user?.id ? undefined : "var(--app-tab-button-font-size)",
+                fontWeight: session?.user?.id ? undefined : "var(--app-tab-button-font-weight)",
                 textDecoration: "none",
-                zIndex: 1,
+                lineHeight: 1,
+                zIndex: 2,
               }}
             >
               {session?.user?.id ? (
                 <>
-                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
-                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
-                  <span style={{ width: "var(--mobile-header-menu-line-width)", height: "var(--mobile-header-menu-line-height)", borderRadius: 999, background: "var(--mobile-header-menu-line-color)", display: "block" }} />
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                  <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
                 </>
               ) : (
                 "Login"
@@ -23764,9 +23765,8 @@ async function insertReportWithFallback(payload) {
                   justifyItems: "center",
                   minWidth: 0,
                   paddingInline: "var(--mobile-header-title-padding-inline)",
-                  paddingBlock: "var(--mobile-header-title-padding-block)",
                   textAlign: "center",
-                  transform: "translateY(var(--mobile-header-title-shift-y))",
+                  transform: "translateY(-2px)",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
@@ -23777,6 +23777,11 @@ async function insertReportWithFallback(payload) {
                     fontWeight: "var(--desktop-header-title-weight)",
                     color: "var(--mobile-header-title-color)",
                     lineHeight: "var(--mobile-header-title-line-height)",
+                    maxWidth: "17ch",
+                    whiteSpace: "normal",
+                    overflowWrap: "normal",
+                    wordBreak: "normal",
+                    textWrap: "balance",
                   }}
                 >
                   {organizationName}

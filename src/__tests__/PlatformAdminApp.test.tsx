@@ -901,7 +901,6 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /enter security pin/i });
     await user.type(screen.getByLabelText(/^security pin$/i), "1234");
-    await user.click(screen.getByRole("button", { name: /confirm pin/i }));
 
     await screen.findByText(/account information saved/i);
     expect(screen.getByText("(555) 555-0123")).toBeInTheDocument();
@@ -972,7 +971,6 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /enter security pin/i });
     await user.type(screen.getByLabelText(/^security pin$/i), "1234");
-    await user.click(screen.getByRole("button", { name: /confirm pin/i }));
 
     await waitFor(() => {
       expect(
