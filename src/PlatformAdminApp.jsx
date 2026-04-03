@@ -1376,8 +1376,14 @@ export default function PlatformAdminApp() {
   const [showPlatformSecurityPinConfirm, setShowPlatformSecurityPinConfirm] = useState(false);
   const [showPlatformSecurityCurrentPin, setShowPlatformSecurityCurrentPin] = useState(false);
   const [showPlatformSecurityAccountPassword, setShowPlatformSecurityAccountPassword] = useState(false);
+  const [platformSecurityCheckpointRequest, setPlatformSecurityCheckpointRequest] = useState(null);
+  const [platformSecurityCheckpointPin, setPlatformSecurityCheckpointPin] = useState("");
+  const [platformSecurityCheckpointStatus, setPlatformSecurityCheckpointStatus] = useState("");
+  const [platformSecurityCheckpointVerifying, setPlatformSecurityCheckpointVerifying] = useState(false);
+  const [showPlatformSecurityCheckpointPin, setShowPlatformSecurityCheckpointPin] = useState(false);
   const [platformSecurityStatus, setPlatformSecurityStatus] = useState("");
   const [platformSecuritySaving, setPlatformSecuritySaving] = useState({ pin: false, checks: false });
+  const platformSecurityCheckpointResolverRef = useRef(null);
   const [leadRows, setLeadRows] = useState([]);
   const [leadDraftById, setLeadDraftById] = useState({});
   const [selectedLeadId, setSelectedLeadId] = useState(initialControlPlaneRouteState.selectedLeadId);
@@ -2155,15 +2161,14 @@ export default function PlatformAdminApp() {
     setPlatformRoleStatus("");
   }, [canViewPlatformRoles, canViewPlatformUsers]);
 
-  const loadPlatformSecurityConfig = useCallback(async () => {
-    if (!sessionUserId || !canViewPlatformSecurity) {
-      setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
-      setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
-      setPlatformSecurityPinMeta({ pin_hash: "" });
-      setPlatformSecurityStatus("");
-      return;
+  const readPlatformSecuritySnapshot = useCallback(async () => {
+    if (!sessionUserId) {
+      return {
+        settings: DEFAULT_PLATFORM_SECURITY_SETTINGS,
+        pin_hash: "",
+        error: null,
+      };
     }
-
     const [settingsResult, pinResult] = await Promise.all([
       supabase
         .from("platform_security_settings")
@@ -2178,32 +2183,130 @@ export default function PlatformAdminApp() {
     ]);
 
     const firstError = settingsResult.error || pinResult.error;
-    if (firstError) {
-      if (isMissingRelationError(firstError)) {
+    return {
+      settings: {
+        require_pin_for_role_changes: Boolean(settingsResult.data?.require_pin_for_role_changes),
+        require_pin_for_team_changes: Boolean(settingsResult.data?.require_pin_for_team_changes),
+        require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
+        require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
+      },
+      pin_hash: String(pinResult.data?.pin_hash || "").trim(),
+      error: firstError || null,
+    };
+  }, [sessionUserId]);
+
+  const loadPlatformSecurityConfig = useCallback(async () => {
+    if (!sessionUserId || !canViewPlatformSecurity) {
+      setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
+      setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
+      setPlatformSecurityPinMeta({ pin_hash: "" });
+      setPlatformSecurityStatus("");
+      return;
+    }
+
+    const snapshot = await readPlatformSecuritySnapshot();
+    if (snapshot.error) {
+      if (isMissingRelationError(snapshot.error)) {
         setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
         setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
         setPlatformSecurityPinMeta({ pin_hash: "" });
         setPlatformSecurityStatus("Security tables are not available yet. Run the latest migrations to enable PIN checkpoints.");
         return;
       }
-      setPlatformSecurityStatus(statusText(firstError, ""));
+      setPlatformSecurityStatus(statusText(snapshot.error, ""));
       return;
     }
 
-    setPlatformSecuritySettingsDraft({
-      require_pin_for_role_changes: Boolean(settingsResult.data?.require_pin_for_role_changes),
-      require_pin_for_team_changes: Boolean(settingsResult.data?.require_pin_for_team_changes),
-      require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
-      require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
-    });
+    setPlatformSecuritySettingsDraft(snapshot.settings);
     setPlatformSecurityPinDraft({
       ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
     });
     setPlatformSecurityPinMeta({
-      pin_hash: String(pinResult.data?.pin_hash || "").trim(),
+      pin_hash: snapshot.pin_hash,
     });
     setPlatformSecurityStatus("");
-  }, [canViewPlatformSecurity, sessionUserId]);
+  }, [canViewPlatformSecurity, readPlatformSecuritySnapshot, sessionUserId]);
+
+  const closePlatformSecurityCheckpoint = useCallback((approved = false) => {
+    const resolver = platformSecurityCheckpointResolverRef.current;
+    platformSecurityCheckpointResolverRef.current = null;
+    setPlatformSecurityCheckpointRequest(null);
+    setPlatformSecurityCheckpointPin("");
+    setPlatformSecurityCheckpointStatus("");
+    setPlatformSecurityCheckpointVerifying(false);
+    setShowPlatformSecurityCheckpointPin(false);
+    if (typeof resolver === "function") resolver(approved);
+  }, []);
+
+  const submitPlatformSecurityCheckpoint = useCallback(async () => {
+    if (!platformSecurityCheckpointRequest?.expected_hash) {
+      closePlatformSecurityCheckpoint(false);
+      return;
+    }
+    if (!sessionUserId) {
+      setPlatformSecurityCheckpointStatus("Sign in again and retry.");
+      return;
+    }
+
+    const pin = String(platformSecurityCheckpointPin || "").trim();
+    if (!/^\d{4}$/.test(pin)) {
+      setPlatformSecurityCheckpointStatus("Enter your 4-digit PIN to continue.");
+      return;
+    }
+
+    setPlatformSecurityCheckpointVerifying(true);
+    setPlatformSecurityCheckpointStatus("");
+    const providedHash = await hashSecurityPin(sessionUserId, pin);
+    setPlatformSecurityCheckpointVerifying(false);
+    if (providedHash !== String(platformSecurityCheckpointRequest.expected_hash || "").trim()) {
+      setPlatformSecurityCheckpointStatus("PIN is incorrect.");
+      return;
+    }
+
+    closePlatformSecurityCheckpoint(true);
+  }, [closePlatformSecurityCheckpoint, platformSecurityCheckpointPin, platformSecurityCheckpointRequest, sessionUserId]);
+
+  const requirePlatformSecurityCheckpoint = useCallback(async ({
+    settingKey,
+    title,
+    description,
+    onBlocked,
+  }) => {
+    const snapshot = await readPlatformSecuritySnapshot();
+    if (snapshot.error) {
+      const message = isMissingRelationError(snapshot.error)
+        ? "Security PIN tables are not available in this environment yet. Apply the latest Supabase migrations first."
+        : statusText(snapshot.error, "");
+      onBlocked?.(message);
+      return false;
+    }
+
+    setPlatformSecuritySettingsDraft(snapshot.settings);
+    setPlatformSecurityPinMeta({ pin_hash: snapshot.pin_hash });
+    if (!snapshot.settings?.[settingKey]) return true;
+
+    if (!snapshot.pin_hash) {
+      onBlocked?.("This action requires a PIN, but your account does not have one set yet. Set your PIN under Account Info first.");
+      return false;
+    }
+
+    if (platformSecurityCheckpointResolverRef.current) {
+      closePlatformSecurityCheckpoint(false);
+    }
+
+    return new Promise((resolve) => {
+      platformSecurityCheckpointResolverRef.current = resolve;
+      setPlatformSecurityCheckpointPin("");
+      setPlatformSecurityCheckpointStatus("");
+      setPlatformSecurityCheckpointVerifying(false);
+      setShowPlatformSecurityCheckpointPin(false);
+      setPlatformSecurityCheckpointRequest({
+        title,
+        description,
+        expected_hash: snapshot.pin_hash,
+      });
+    });
+  }, [closePlatformSecurityCheckpoint, readPlatformSecuritySnapshot]);
 
   const loadClientLeads = useCallback(async () => {
     if (!hasPlatformPermission("leads.access") && !hasPlatformPermission("leads.edit")) {
@@ -2717,6 +2820,13 @@ export default function PlatformAdminApp() {
       setPlatformAccountStatus("Enter your name before saving.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_account_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to save account information changes.",
+      onBlocked: setPlatformAccountStatus,
+    });
+    if (!checkpointApproved) return;
 
     setPlatformAccountSaving(true);
     setPlatformAccountStatus("");
@@ -2738,7 +2848,7 @@ export default function PlatformAdminApp() {
     setPlatformAccountDraft({ full_name: fullName, phone });
     setPlatformAccountEditMode(false);
     setPlatformAccountStatus("Account information saved.");
-  }, [platformAccountDraft.full_name, platformAccountDraft.phone]);
+  }, [platformAccountDraft.full_name, platformAccountDraft.phone, requirePlatformSecurityCheckpoint]);
 
   const closeChangePasswordModal = useCallback(() => {
     setChangePasswordOpen(false);
@@ -2780,6 +2890,13 @@ export default function PlatformAdminApp() {
       setChangePasswordError("Choose a new password that is different from your current password.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_account_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to update your account password.",
+      onBlocked: setChangePasswordError,
+    });
+    if (!checkpointApproved) return;
 
     setChangePasswordSaving(true);
     setChangePasswordError("");
@@ -2802,7 +2919,7 @@ export default function PlatformAdminApp() {
 
     closeChangePasswordModal();
     setPlatformAccountStatus("Password updated.");
-  }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password, closeChangePasswordModal, sessionEmail]);
+  }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password, closeChangePasswordModal, requirePlatformSecurityCheckpoint, sessionEmail]);
 
   const closePlatformTeamAddModal = useCallback(() => {
     setPlatformTeamManagementView("list");
@@ -3019,6 +3136,13 @@ export default function PlatformAdminApp() {
       setPlatformTeamStatus("Select an account and choose a platform role.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_team_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to assign a platform team role.",
+      onBlocked: setPlatformTeamStatus,
+    });
+    if (!checkpointApproved) return;
     const { error } = await supabase
       .from("platform_user_roles")
       .upsert([{ user_id: userId, role, status: "active", assigned_by: sessionUserId }], { onConflict: "user_id,role" });
@@ -3031,7 +3155,7 @@ export default function PlatformAdminApp() {
     setPlatformUserSearchQuery("");
     setPlatformUserSearchResults([]);
     await loadPlatformTeamAssignments();
-  }, [canManagePlatformUsers, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, sessionUserId]);
+  }, [canManagePlatformUsers, loadPlatformTeamAssignments, platformTeamForm.role, platformTeamForm.user_id, requirePlatformSecurityCheckpoint, sessionUserId]);
 
   const createAndAssignPlatformUser = useCallback(async (event) => {
     event.preventDefault();
@@ -3050,6 +3174,13 @@ export default function PlatformAdminApp() {
       setPlatformTeamStatus("First name, last name, email, and platform role are required.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_team_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to add a platform team member.",
+      onBlocked: setPlatformTeamStatus,
+    });
+    if (!checkpointApproved) return;
 
     const { data, error } = await invokePlatformUserAdmin({
       action: "invite_platform_and_assign",
@@ -3078,7 +3209,7 @@ export default function PlatformAdminApp() {
     );
     closePlatformTeamAddModal();
     await refreshControlPlaneData();
-  }, [assignablePlatformRoles, canManagePlatformUsers, closePlatformTeamAddModal, invokePlatformUserAdmin, platformInviteForm, platformRoleLabelByKey, platformTeamForm.role, refreshControlPlaneData]);
+  }, [assignablePlatformRoles, canManagePlatformUsers, closePlatformTeamAddModal, invokePlatformUserAdmin, platformInviteForm, platformRoleLabelByKey, platformTeamForm.role, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
 
   const removePlatformRole = useCallback(async (row) => {
     if (!canRemovePlatformUsers) {
@@ -3092,6 +3223,13 @@ export default function PlatformAdminApp() {
       setPlatformTeamStatus("You cannot remove your own Platform Owner role from this screen.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_team_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to remove a platform team member.",
+      onBlocked: setPlatformTeamStatus,
+    });
+    if (!checkpointApproved) return;
     setPlatformTeamDeleteLoading(true);
     const { error } = await supabase
       .from("platform_user_roles")
@@ -3106,7 +3244,7 @@ export default function PlatformAdminApp() {
     setPlatformTeamDeleteConfirmRow(null);
     setPlatformTeamStatus("Platform role removed.");
     await loadPlatformTeamAssignments();
-  }, [canRemovePlatformUsers, loadPlatformTeamAssignments, sessionUserId]);
+  }, [canRemovePlatformUsers, loadPlatformTeamAssignments, requirePlatformSecurityCheckpoint, sessionUserId]);
 
   const savePlatformRoleEdit = useCallback(async (row) => {
     if (!canManagePlatformUsers) {
@@ -3129,6 +3267,13 @@ export default function PlatformAdminApp() {
       setPlatformTeamStatus("You cannot edit your own Platform Owner role from this screen.");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_team_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to update a platform team role.",
+      onBlocked: setPlatformTeamStatus,
+    });
+    if (!checkpointApproved) return;
 
     const { error: deleteError } = await supabase
       .from("platform_user_roles")
@@ -3152,7 +3297,7 @@ export default function PlatformAdminApp() {
     setEditingPlatformAssignmentRole("");
     setPlatformTeamStatus("Platform role updated.");
     await loadPlatformTeamAssignments();
-  }, [canManagePlatformUsers, editingPlatformAssignmentRole, loadPlatformTeamAssignments, sessionUserId]);
+  }, [canManagePlatformUsers, editingPlatformAssignmentRole, loadPlatformTeamAssignments, requirePlatformSecurityCheckpoint, sessionUserId]);
 
   const createPlatformRole = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -3171,6 +3316,13 @@ export default function PlatformAdminApp() {
       setPlatformRoleStatus(`Role ${role} already exists.`);
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to create a PCP role.",
+      onBlocked: setPlatformRoleStatus,
+    });
+    if (!checkpointApproved) return;
 
     const { error } = await invokePlatformRoleAdmin({
       action: "create_role",
@@ -3187,7 +3339,7 @@ export default function PlatformAdminApp() {
     setPlatformRoleStatus(`Created PCP role ${role}.`);
     setPlatformRoleAddModalOpen(false);
     await loadPlatformRoleConfig();
-  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRoleForm, sortedPlatformRoleDefinitions]);
+  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRoleForm, requirePlatformSecurityCheckpoint, sortedPlatformRoleDefinitions]);
 
   const removePlatformRoleDefinition = useCallback(async (row) => {
     if (!canDeletePlatformRoles) {
@@ -3205,6 +3357,13 @@ export default function PlatformAdminApp() {
       setPlatformRoleStatus(`Remove or reassign ${assignmentCount} platform assignment(s) for ${role} before deleting it.`);
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to delete a PCP role.",
+      onBlocked: setPlatformRoleStatus,
+    });
+    if (!checkpointApproved) return;
 
     setPlatformRoleDeleteLoading(true);
     const { error } = await invokePlatformRoleAdmin({
@@ -3222,7 +3381,7 @@ export default function PlatformAdminApp() {
     setPlatformRoleStatus(`Removed PCP role ${role}.`);
     await loadPlatformRoleConfig();
     await loadPlatformTeamAssignments();
-  }, [canDeletePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, loadPlatformTeamAssignments, platformRoleAssignmentCounts]);
+  }, [canDeletePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, loadPlatformTeamAssignments, platformRoleAssignmentCounts, requirePlatformSecurityCheckpoint]);
 
   const savePlatformRolePermissions = useCallback(async () => {
     if (!canManagePlatformRoles) {
@@ -3238,6 +3397,13 @@ export default function PlatformAdminApp() {
     const permissions = Object.fromEntries(
       DEFAULT_PLATFORM_PERMISSION_KEYS.map((permission_key) => [permission_key, Boolean(platformRolePermissionDraft?.[permission_key])])
     );
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to save PCP role permissions.",
+      onBlocked: setPlatformRoleStatus,
+    });
+    if (!checkpointApproved) return;
 
     const { error } = await invokePlatformRoleAdmin({
       action: "save_permissions",
@@ -3252,7 +3418,7 @@ export default function PlatformAdminApp() {
     setPlatformRolePermissionDirty(false);
     setPlatformRoleStatus(`Saved permissions for ${role}.`);
     await loadPlatformRoleConfig();
-  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRolePermissionDraft, selectedPlatformRoleKey]);
+  }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRolePermissionDraft, requirePlatformSecurityCheckpoint, selectedPlatformRoleKey]);
 
   const savePlatformSecurityPin = useCallback(async () => {
     if (!sessionUserId) {
@@ -3405,6 +3571,16 @@ export default function PlatformAdminApp() {
       follow_up_on: String(draft.follow_up_on ?? leadRow?.follow_up_on ?? "").trim() || null,
       last_follow_up_at: draft.mark_follow_up ? new Date().toISOString() : (leadRow?.last_follow_up_at || null),
     };
+    const currentStatus = String(leadRow?.status || "new").trim() || "new";
+    if (payload.status !== currentStatus) {
+      const checkpointApproved = await requirePlatformSecurityCheckpoint({
+        settingKey: "require_pin_for_report_state_changes",
+        title: "Enter Security PIN",
+        description: "Enter your PIN to change a lead status.",
+        onBlocked: setLeadStatus,
+      });
+      if (!checkpointApproved) return;
+    }
     setLeadLoading(true);
     const { error } = await supabase
       .from("client_leads")
@@ -3422,7 +3598,7 @@ export default function PlatformAdminApp() {
       return next;
     });
     await loadClientLeads();
-  }, [canEditLead, leadDraftById, loadClientLeads]);
+  }, [canEditLead, leadDraftById, loadClientLeads, requirePlatformSecurityCheckpoint]);
 
   const createPlatformLead = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -9151,6 +9327,84 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
       </section>
+      ) : null}
+      {platformSecurityCheckpointRequest ? (
+        <div style={authModalBackdrop} onClick={() => !platformSecurityCheckpointVerifying && closePlatformSecurityCheckpoint(false)}>
+          <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>
+                  {platformSecurityCheckpointRequest.title || "Enter Security PIN"}
+                </h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  {platformSecurityCheckpointRequest.description || "Enter your PIN to continue."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !platformSecurityCheckpointVerifying && closePlatformSecurityCheckpoint(false)}
+                style={{
+                  ...buttonAlt,
+                  minWidth: 0,
+                  width: 34,
+                  height: 34,
+                  padding: 0,
+                  borderRadius: 10,
+                  fontSize: 18,
+                  lineHeight: 1,
+                }}
+                aria-label="Close security PIN dialog"
+                disabled={platformSecurityCheckpointVerifying}
+              >
+                ×
+              </button>
+            </div>
+            <label style={modalField}>
+              <span>Security PIN</span>
+              <div style={passwordFieldWrap}>
+                <input
+                  type={showPlatformSecurityCheckpointPin ? "text" : "password"}
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="4-digit PIN"
+                  value={platformSecurityCheckpointPin}
+                  onChange={(event) => setPlatformSecurityCheckpointPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                  style={{ ...modalInput, paddingRight: 84 }}
+                  disabled={platformSecurityCheckpointVerifying}
+                />
+                <button
+                  type="button"
+                  style={passwordToggleInline}
+                  aria-label={showPlatformSecurityCheckpointPin ? "Hide security PIN" : "Show security PIN"}
+                  onClick={() => setShowPlatformSecurityCheckpointPin((prev) => !prev)}
+                >
+                  {showPlatformSecurityCheckpointPin ? "Hide" : "Show"}
+                </button>
+              </div>
+            </label>
+            {platformSecurityCheckpointStatus ? (
+              <p style={{ margin: 0, color: palette.red600, fontSize: 12.5 }}>{platformSecurityCheckpointStatus}</p>
+            ) : null}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...buttonBase, minWidth: 160 }}
+                disabled={platformSecurityCheckpointVerifying}
+                onClick={() => void submitPlatformSecurityCheckpoint()}
+              >
+                {platformSecurityCheckpointVerifying ? "Checking PIN..." : "Confirm PIN"}
+              </button>
+              <button
+                type="button"
+                style={{ ...buttonAlt, minWidth: 120 }}
+                disabled={platformSecurityCheckpointVerifying}
+                onClick={() => closePlatformSecurityCheckpoint(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
       {forgotPasswordOpen ? (
         <div style={authModalBackdrop} onClick={closeForgotPasswordModal}>

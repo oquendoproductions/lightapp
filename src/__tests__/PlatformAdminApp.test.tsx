@@ -16,6 +16,7 @@ const mockState = vi.hoisted(() => ({
   currentPassword: "current-password",
   platformUsers: [],
   invokeMock: vi.fn(),
+  configurePlatformSecurity: async (_options?: { checks?: Record<string, boolean>; pin?: string | null }) => {},
   resetData: () => {},
 }));
 
@@ -190,6 +191,23 @@ vi.mock("../supabaseClient", () => {
 
   let data = defaultData();
 
+  const hashPlatformPin = async (userId: unknown, pin: unknown) => {
+    const normalizedUserId = String(userId || "").trim().toLowerCase();
+    const normalizedPin = String(pin || "").trim();
+    if (!normalizedUserId || !normalizedPin) return "";
+    const payload = `platform-pin:${normalizedUserId}:${normalizedPin}`;
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+      return Array.from(new Uint8Array(digest)).map((part) => part.toString(16).padStart(2, "0")).join("");
+    }
+    let hash = 0;
+    for (let index = 0; index < payload.length; index += 1) {
+      hash = ((hash << 5) - hash) + payload.charCodeAt(index);
+      hash |= 0;
+    }
+    return `fallback_${Math.abs(hash)}`;
+  };
+
   mockState.platformUsers = [
     {
       id: "user-1",
@@ -217,6 +235,24 @@ vi.mock("../supabaseClient", () => {
     data = defaultData();
     mockState.currentPassword = "current-password";
     mockState.invokeMock.mockClear();
+  };
+
+  mockState.configurePlatformSecurity = async ({ checks = {}, pin = null } = {}) => {
+    data.platform_security_settings = [{
+      config_key: "default",
+      require_pin_for_role_changes: false,
+      require_pin_for_team_changes: false,
+      require_pin_for_account_changes: false,
+      require_pin_for_report_state_changes: false,
+      ...checks,
+    }];
+    data.platform_user_security_profiles = pin
+      ? [{
+          user_id: mockState.sessionUser.id,
+          pin_enabled: true,
+          pin_hash: await hashPlatformPin(mockState.sessionUser.id, pin),
+        }]
+      : [];
   };
 
   const normalizeText = (value: unknown) => String(value || "").trim().replace(/\s+/g, " ");
@@ -771,6 +807,28 @@ describe("PlatformAdminApp", () => {
     await screen.findByText(/account information saved/i);
     expect(screen.getByText("Taylor Owner")).toBeInTheDocument();
     expect(screen.getByText("(555) 555-0199")).toBeInTheDocument();
+  });
+
+  it("requires a PIN before saving account info when account checkpoints are enabled", async () => {
+    await mockState.configurePlatformSecurity({
+      checks: { require_pin_for_account_changes: true },
+      pin: "1234",
+    });
+
+    const { user } = await openAccountInfo();
+
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    const phoneInput = screen.getByPlaceholderText("(555) 555-0100");
+    await user.clear(phoneInput);
+    await user.type(phoneInput, "(555) 555-0123");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await screen.findByRole("heading", { name: /enter security pin/i });
+    await user.type(screen.getByLabelText(/^security pin$/i), "1234");
+    await user.click(screen.getByRole("button", { name: /confirm pin/i }));
+
+    await screen.findByText(/account information saved/i);
+    expect(screen.getByText("(555) 555-0123")).toBeInTheDocument();
   });
 
   it("lets the PCP user update password with current password verification", async () => {
