@@ -7434,35 +7434,36 @@ export default function PlatformAdminApp() {
                         </tbody>
                       </table>
                     </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
-                        disabled={!canManagePlatformRoles || !platformRoleEditMode || !platformRolePermissionDirty}
-                        onClick={() => {
-                          void savePlatformRolePermissions();
-                          setPlatformRoleEditMode(false);
-                        }}
-                      >
-                        Save Permission Changes
-                      </button>
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        onClick={() => {
-                          const resetDraft = {};
-                          for (const permissionKey of DEFAULT_PLATFORM_PERMISSION_KEYS) {
-                            resetDraft[permissionKey] = Boolean(platformRolePermissionMap[`${selectedPlatformRoleKey}:${permissionKey}`]);
-                          }
-                          setPlatformRolePermissionDraft(resetDraft);
-                          setPlatformRolePermissionDirty(false);
-                          setPlatformRoleEditMode(false);
-                        }}
-                        disabled={!platformRolePermissionDirty && !platformRoleEditMode}
-                      >
-                        {platformRoleEditMode ? "Cancel" : "Reset Changes"}
-                      </button>
-                    </div>
+                    {platformRoleEditMode ? (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                          disabled={!canManagePlatformRoles || !platformRolePermissionDirty}
+                          onClick={() => {
+                            void savePlatformRolePermissions();
+                            setPlatformRoleEditMode(false);
+                          }}
+                        >
+                          Save Permission Changes
+                        </button>
+                        <button
+                          type="button"
+                          style={buttonAlt}
+                          onClick={() => {
+                            const resetDraft = {};
+                            for (const permissionKey of DEFAULT_PLATFORM_PERMISSION_KEYS) {
+                              resetDraft[permissionKey] = Boolean(platformRolePermissionMap[`${selectedPlatformRoleKey}:${permissionKey}`]);
+                            }
+                            setPlatformRolePermissionDraft(resetDraft);
+                            setPlatformRolePermissionDirty(false);
+                            setPlatformRoleEditMode(false);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
