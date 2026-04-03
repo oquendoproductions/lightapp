@@ -12742,94 +12742,104 @@ export default function App({ onBackToHub = null }) {
     };
   }, [authReady]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const resolvedCommunityFeedTenantKey = String(
+    tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
+  ).trim().toLowerCase();
 
-    async function loadMapCommunityFeed() {
-      if (!authReady) return;
-      const tenantKey = activeTenantKey();
-      if (!tenantKey) {
-        if (!cancelled) {
-          setMapCommunityAlerts([]);
-          setMapCommunityEvents([]);
-          setMapCommunityFeedLoading(false);
-          setMapCommunityFeedError("");
-        }
-        return;
-      }
-
-      setMapCommunityFeedLoading(true);
-      setMapCommunityFeedError("");
-
-      const topicQuery = supabase
-        .from("notification_topics")
-        .select("topic_key,label")
-        .eq("active", true)
-        .order("sort_order", { ascending: true });
-
-      const alertQuery = supabase
-        .from("municipality_alerts")
-        .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,status,starts_at,ends_at,published_at,created_at,updated_at")
-        .eq("tenant_key", tenantKey)
-        .eq("status", "published")
-        .order("pinned", { ascending: false })
-        .order("starts_at", { ascending: false })
-        .order("created_at", { ascending: false });
-
-      const eventQuery = supabase
-        .from("municipality_events")
-        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
-        .eq("tenant_key", tenantKey)
-        .eq("status", "published")
-        .order("starts_at", { ascending: true })
-        .order("created_at", { ascending: false });
-
-      const [topicRes, alertRes, eventRes] = await Promise.all([topicQuery, alertQuery, eventQuery]);
-
-      if (cancelled) return;
-
-      const firstError = alertRes.error || eventRes.error;
-      if (firstError) {
-        if (!isMissingRelationError(firstError)) {
-          console.warn("[map community feed]", firstError?.message || firstError);
-          setMapCommunityFeedError("Could not load alerts and events right now.");
-        } else {
-          setMapCommunityFeedError("");
-        }
-        setMapCommunityAlerts([]);
-        setMapCommunityEvents([]);
-        setMapCommunityFeedLoading(false);
-        return;
-      }
-
-      if (topicRes.error && !isMissingRelationError(topicRes.error)) {
-        console.warn("[map community topics]", topicRes.error?.message || topicRes.error);
-      }
-
-      const topicLabelsByKey = Object.fromEntries(
-        (topicRes.data || []).map((topic) => [topic.topic_key, String(topic?.label || "").trim() || topic?.topic_key])
-      );
-
-      setMapCommunityAlerts(
-        sortResidentAlerts((alertRes.data || []).map((alert) => ({
-          ...alert,
-          topic_label: topicLabelsByKey[alert.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[alert.topic_key]?.label || alert.topic_key,
-        })))
-      );
-      setMapCommunityEvents(
-        sortResidentEvents((eventRes.data || []).map((event) => ({
-          ...event,
-          topic_label: topicLabelsByKey[event.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[event.topic_key]?.label || event.topic_key,
-        })))
-      );
+  const loadMapCommunityFeed = useCallback(async () => {
+    if (!authReady || tenant?.ready === false) return;
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    if (!tenantKey) {
+      setMapCommunityAlerts([]);
+      setMapCommunityEvents([]);
       setMapCommunityFeedLoading(false);
+      setMapCommunityFeedError("");
+      return;
     }
 
-    void loadMapCommunityFeed();
+    setMapCommunityFeedLoading(true);
+    setMapCommunityFeedError("");
+
+    const topicQuery = supabase
+      .from("notification_topics")
+      .select("topic_key,label")
+      .eq("tenant_key", tenantKey)
+      .eq("active", true)
+      .order("sort_order", { ascending: true });
+
+    const alertQuery = supabase
+      .from("municipality_alerts")
+      .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,status,starts_at,ends_at,published_at,created_at,updated_at")
+      .eq("tenant_key", tenantKey)
+      .eq("status", "published")
+      .order("pinned", { ascending: false })
+      .order("starts_at", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    const eventQuery = supabase
+      .from("municipality_events")
+      .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
+      .eq("tenant_key", tenantKey)
+      .eq("status", "published")
+      .order("starts_at", { ascending: true })
+      .order("created_at", { ascending: false });
+
+    const [topicRes, alertRes, eventRes] = await Promise.all([topicQuery, alertQuery, eventQuery]);
+
+    const firstError = alertRes.error || eventRes.error;
+    if (firstError) {
+      if (!isMissingRelationError(firstError)) {
+        console.warn("[map community feed]", firstError?.message || firstError);
+        setMapCommunityFeedError("Could not load alerts and events right now.");
+      } else {
+        setMapCommunityFeedError("");
+      }
+      setMapCommunityAlerts([]);
+      setMapCommunityEvents([]);
+      setMapCommunityFeedLoading(false);
+      return;
+    }
+
+    if (topicRes.error && !isMissingRelationError(topicRes.error)) {
+      console.warn("[map community topics]", topicRes.error?.message || topicRes.error);
+    }
+
+    const topicLabelsByKey = Object.fromEntries(
+      (topicRes.data || []).map((topic) => [topic.topic_key, String(topic?.label || "").trim() || topic?.topic_key])
+    );
+
+    setMapCommunityAlerts(
+      sortResidentAlerts((alertRes.data || []).map((alert) => ({
+        ...alert,
+        topic_label: topicLabelsByKey[alert.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[alert.topic_key]?.label || alert.topic_key,
+      })))
+    );
+    setMapCommunityEvents(
+      sortResidentEvents((eventRes.data || []).map((event) => ({
+        ...event,
+        topic_label: topicLabelsByKey[event.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[event.topic_key]?.label || event.topic_key,
+      })))
+    );
+    setMapCommunityFeedLoading(false);
+  }, [authReady, resolvedCommunityFeedTenantKey, tenant?.ready]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadMapCommunityFeed().catch((error) => {
+      if (cancelled) return;
+      console.warn("[map community feed]", error?.message || error);
+      setMapCommunityFeedError("Could not load alerts and events right now.");
+      setMapCommunityFeedLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [authReady, tenant?.tenantKey]);
+  }, [loadMapCommunityFeed]);
+
+  useEffect(() => {
+    if (!alertsWindowOpen && !eventsWindowOpen) return;
+    void loadMapCommunityFeed();
+  }, [alertsWindowOpen, eventsWindowOpen, loadMapCommunityFeed]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
