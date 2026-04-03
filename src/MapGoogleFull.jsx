@@ -9831,6 +9831,7 @@ function AccountMenuPanel({
   onManage,
   onMyReports,
   onLogout,
+  variant = "modal",
 }) {
   if (!open) return null;
 
@@ -9847,10 +9848,116 @@ function AccountMenuPanel({
     sessionEmail ||
     "—";
 
-  const displayPhone =
-    (profile?.phone || "").trim() ||
-    (meta.phone || meta.phone_number || "").trim() ||
-    "—";
+  const actionButtonStyle = {
+    padding: 10,
+    width: "100%",
+    borderRadius: 999,
+    border: "1px solid rgba(23, 49, 79, 0.15)",
+    background: "rgba(255, 255, 255, 0.92)",
+    color: "#17314f",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+
+  const primaryActionButtonStyle = {
+    ...actionButtonStyle,
+    border: "1px solid transparent",
+    background: "linear-gradient(135deg, #113d5f 0%, #176d78 100%)",
+    color: "#f7fbff",
+  };
+
+  const menuBody = session ? (
+    <>
+      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+        Signed In
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.05, color: "#17314f" }}>{displayName}</div>
+      <div style={{ color: "#4b6784", fontSize: 14, lineHeight: 1.35, overflowWrap: "anywhere" }}>{displayEmail}</div>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 6 }}>
+        <button onClick={onManage} style={primaryActionButtonStyle}>
+          Manage Account
+        </button>
+        <button onClick={onMyReports} style={actionButtonStyle}>
+          My Reports
+        </button>
+        <button onClick={onLogout} style={actionButtonStyle}>
+          Logout
+        </button>
+      </div>
+    </>
+  ) : (
+    <>
+      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+        Account
+      </div>
+      <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.15, color: "#17314f" }}>
+        Login or create an account
+      </div>
+      <div style={{ fontSize: 12.5, color: "#4b6784", lineHeight: 1.35 }}>
+        Sign in to view your report history and manage your account.
+      </div>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 6 }}>
+        <button
+          onClick={() => {
+            onClose();
+            window.__openAuthGate?.("login");
+          }}
+          style={primaryActionButtonStyle}
+        >
+          Log in
+        </button>
+        <button
+          onClick={() => {
+            onClose();
+            window.__openAuthGate?.("signup");
+          }}
+          style={actionButtonStyle}
+        >
+          Create account
+        </button>
+        {variant === "modal" ? (
+          <button onClick={onClose} style={actionButtonStyle}>
+            Close
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
+
+  if (variant === "dropdown") {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          top: "calc(100% + 8px)",
+          right: 0,
+          left: "auto",
+          width: "min(320px, calc(100vw - 32px))",
+          maxWidth: "calc(100vw - 32px)",
+          zIndex: 35,
+          pointerEvents: "auto",
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            padding: "24px 28px 28px",
+            borderRadius: 32,
+            border: "1px solid rgba(173, 198, 224, 0.9)",
+            background: "linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(246, 251, 255, 0.98) 100%)",
+            boxShadow: "0 22px 42px rgba(17, 49, 79, 0.15)",
+          }}
+        >
+          {menuBody}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -9897,129 +10004,9 @@ function AccountMenuPanel({
             ✕
           </button>
         </div>
-
-        {session ? (
-          <>
-            <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.35 }}>
-              <div><b>Name:</b> {displayName}</div>
-            </div>
-
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              <button
-                onClick={onManage}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "1px solid var(--sl-ui-brand-blue-border)",
-                  background: "var(--sl-ui-brand-blue)",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Manage Account
-              </button>
-
-              <button
-                onClick={onMyReports}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "1px solid var(--sl-ui-brand-green-border)",
-                  background: "var(--sl-ui-brand-green)",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                My Reports
-              </button>
-
-              <button
-                onClick={onLogout}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#111",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Logout
-              </button>
-            </div>
-
-          </>
-        ) : (
-          <>
-            <div style={{ marginTop: 10, fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
-              You’re not signed in. Log in or create an account to view your report history.
-            </div>
-
-            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-              <button
-                onClick={() => {
-                  onClose();
-                  // open auth gate straight to login
-                  window.__openAuthGate?.("login");
-                }}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#111",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Log in
-              </button>
-
-              <button
-                onClick={() => {
-                  onClose();
-                  // open auth gate straight to signup
-                  window.__openAuthGate?.("signup");
-                }}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Create account
-              </button>
-
-              <button
-                onClick={onClose}
-                style={{
-                  padding: 10,
-                  width: "100%",
-                  borderRadius: 10,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                Close
-              </button>
-            </div>
-          </>
-        )}
+        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          {menuBody}
+        </div>
       </div>
     </div>
   );
@@ -10352,6 +10339,7 @@ function normalizeOfficialSignRow(row) {
 export default function App({ onBackToHub = null }) {
   const tenant = useContext(TenantContext);
   const mapRef = useRef(null);
+  const desktopAccountMenuAnchorRef = useRef(null);
   const flyAnimRef = useRef(null);
   const flyInfoTimerRef = useRef(null);
   const officialCanvasOverlayRef = useRef(null);
@@ -10384,6 +10372,19 @@ export default function App({ onBackToHub = null }) {
       .replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }, [tenant?.tenantConfig?.display_name, tenant?.tenantConfig?.name, tenant?.tenantKey]);
+
+  const handleAccountMenuToggle = useCallback((event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (!session?.user?.id) {
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+      setAuthGateStep("welcome");
+      setAuthGateOpen(true);
+      return;
+    }
+    setAccountMenuOpen((prev) => !prev);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
@@ -10423,6 +10424,30 @@ export default function App({ onBackToHub = null }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
+
+    const handlePointerDown = (event) => {
+      const root = desktopAccountMenuAnchorRef.current;
+      if (root && root.contains(event.target)) return;
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+    };
+
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [accountMenuOpen, isMobile]);
 
   function cancelFlyAnimation() {
     if (flyAnimRef.current) {
@@ -11601,7 +11626,7 @@ export default function App({ onBackToHub = null }) {
     }
     setAdminReportDomain(nextKey);
     setAdminDomainMenuOpen(false);
-    showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 4);
+    showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 3);
   }
 
   function cancelAdminDomainSwitch() {
@@ -11618,7 +11643,7 @@ export default function App({ onBackToHub = null }) {
     if (!ok) return;
     setAdminReportDomain(pendingDomainSwitchTarget.key);
     setAdminDomainMenuOpen(false);
-    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 4);
+    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 3);
     cancelAdminDomainSwitch();
   }
 
@@ -11631,7 +11656,7 @@ export default function App({ onBackToHub = null }) {
     setSelectedQueuedTempId(null);
     setAdminReportDomain(pendingDomainSwitchTarget.key);
     setAdminDomainMenuOpen(false);
-    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 4);
+    showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 3);
     cancelAdminDomainSwitch();
   }
 
@@ -21345,26 +21370,6 @@ async function insertReportWithFallback(payload) {
             <div className="sl-map-tool-hint">{toolHintText}</div>
           </div>
         )}
-        <button
-          type="button"
-          className={`sl-map-tool-mini sl-account-btn ${accountMenuOpen ? "is-on" : ""} ${session?.user ? "signed-in" : ""}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!session?.user?.id) {
-              setAccountMenuOpen(false);
-              setAccountView("menu");
-              setAuthGateStep("welcome");
-              setAuthGateOpen(true);
-              return;
-            }
-            setAccountMenuOpen((p) => !p);
-          }}
-          aria-label="Account menu"
-          title={session ? "Account" : "Login / Account"}
-        >
-            <AppIcon src={UI_ICON_SRC.account} size={38} />
-          </button>
 
         {/* Satellite toggle */}
         <button
@@ -21375,7 +21380,7 @@ async function insertReportWithFallback(payload) {
             e.stopPropagation();
             setMapType((t) => {
               const next = t === "roadmap" ? "satellite" : "roadmap";
-              showToolHint(next === "satellite" ? "Satellite view" : "Map view", 1100, 1);
+              showToolHint(next === "satellite" ? "Satellite view" : "Map view", 1100, 0);
               return next;
             });
           }}
@@ -21409,7 +21414,7 @@ async function insertReportWithFallback(payload) {
             } catch {
               // ignore
             }
-            showToolHint("Realigned to north", 1100, 2);
+            showToolHint("Realigned to north", 1100, 1);
           }}
           title="Reset heading"
           aria-label="Reset heading"
@@ -21426,12 +21431,12 @@ async function insertReportWithFallback(payload) {
 
             // If denied previously → show prompt modal (which calls forced retry)
             if (geoDenied) {
-              setShowLocationPrompt(true);
-              return;
-            }
+            setShowLocationPrompt(true);
+            return;
+          }
 
             // Normal locate
-            showToolHint("Location", 1100, 3);
+            showToolHint("Location", 1100, 2);
             followHeadingEnabledRef.current = true;
             findMyLocation(false);
           }}
@@ -21456,7 +21461,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminToolboxOpen(false);
                   return next;
                 });
-                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 4);
+                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 3);
               }}
             >
               <AppIcon src={adminDomainMeta.iconSrc} size={38} />
@@ -21535,7 +21540,7 @@ async function insertReportWithFallback(payload) {
 
               setBulkMode((on) => {
                 const next = !on;
-                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 5);
+                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 4);
 
                 if (next) {
                   setDeleteCircleMode(false);
@@ -21575,7 +21580,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminDomainMenuOpen(false);
                   return next;
                 });
-                showToolHint("Admin tools", 1000, 6);
+                showToolHint("Admin tools", 1000, 5);
               }}
             >
               <AppIcon src={UI_ICON_SRC.toolbox} size={38} />
@@ -21894,27 +21899,18 @@ async function insertReportWithFallback(payload) {
               </div>
 
               <div
+                ref={desktopAccountMenuAnchorRef}
                 style={{
                   display: "flex",
                   justifyContent: "flex-end",
                   alignItems: "center",
                   minWidth: 0,
+                  position: "relative",
                 }}
               >
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (!session?.user?.id) {
-                      setAccountMenuOpen(false);
-                      setAccountView("menu");
-                      setAuthGateStep("welcome");
-                      setAuthGateOpen(true);
-                      return;
-                    }
-                    setAccountMenuOpen((p) => !p);
-                  }}
+                  onClick={handleAccountMenuToggle}
                   aria-label={session?.user?.id ? "Open account menu" : "Open login"}
                   title={session?.user?.id ? "Account" : "Login"}
                   style={{
@@ -21938,6 +21934,29 @@ async function insertReportWithFallback(payload) {
                     <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
                   </span>
                 </button>
+                <AccountMenuPanel
+                  open={accountMenuOpen}
+                  session={session}
+                  profile={profile}
+                  variant="dropdown"
+                  onClose={() => {
+                    setAccountMenuOpen(false);
+                    setAccountView("menu");
+                  }}
+                  onManage={() => {
+                    setAccountMenuOpen(false);
+                    setManageEditing(false);
+                    setManageOpen(true);
+                  }}
+                  onMyReports={() => {
+                    setAccountMenuOpen(false);
+                    openMyReports();
+                  }}
+                  onLogout={() => {
+                    signOut();
+                    setAccountMenuOpen(false);
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -22162,31 +22181,6 @@ async function insertReportWithFallback(payload) {
             </div>
           </div>
         </div>
-
-        {/* Account menu panel (desktop) */}
-        <AccountMenuPanel
-          open={accountMenuOpen}
-          session={session}
-          profile={profile}
-          onClose={() => {
-            setAccountMenuOpen(false);
-            setAccountView("menu");
-          }}
-          onManage={() => {
-            setAccountMenuOpen(false);
-            setManageEditing(false);
-            setManageOpen(true);
-          }}
-          onMyReports={() => {
-            setAccountMenuOpen(false);
-            openMyReports();
-          }}
-          onLogout={() => {
-            signOut();
-            setAccountMenuOpen(false);
-          }}
-        />
-
 
         {/* =========================
               Bulk Action Bar (desktop)
@@ -22549,6 +22543,7 @@ async function insertReportWithFallback(payload) {
             />
             <button
               type="button"
+              onClick={handleAccountMenuToggle}
               aria-label="Open map menu"
               title="Open map menu"
               style={{
@@ -22565,7 +22560,7 @@ async function insertReportWithFallback(payload) {
                 padding: 0,
                 display: "grid",
                 placeItems: "center",
-                cursor: "default",
+                cursor: "pointer",
                 boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
               }}
             >
