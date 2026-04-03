@@ -2025,6 +2025,7 @@ export default function MunicipalityApp() {
         settings: DEFAULT_TENANT_SECURITY_SETTINGS,
         pin_hash: "",
         pin_scope: "shared",
+        settings_available: true,
         error: null,
       };
     }
@@ -2048,21 +2049,28 @@ export default function MunicipalityApp() {
         .maybeSingle(),
     ]);
 
-    const firstError = settingsResult.error || sharedPinResult.error || legacyTenantPinResult.error;
+    const settingsMissing = isMissingRelationError(settingsResult.error);
+    const legacyPinMissing = isMissingRelationError(legacyTenantPinResult.error);
+    const firstError = (!settingsMissing ? settingsResult.error : null)
+      || sharedPinResult.error
+      || (!legacyPinMissing ? legacyTenantPinResult.error : null);
     const sharedPinHash = trimOrEmpty(sharedPinResult.data?.pin_hash);
     const legacyPinHash = trimOrEmpty(legacyTenantPinResult.data?.pin_hash);
     return {
-      settings: {
-        require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
-        require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
-        require_pin_for_organization_info_changes: Boolean(settingsResult.data?.require_pin_for_organization_info_changes),
-        require_pin_for_contact_changes: Boolean(settingsResult.data?.require_pin_for_contact_changes),
-        require_pin_for_organization_user_changes: Boolean(settingsResult.data?.require_pin_for_organization_user_changes),
-        require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
-        require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
-      },
+      settings: settingsMissing
+        ? DEFAULT_TENANT_SECURITY_SETTINGS
+        : {
+          require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
+          require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
+          require_pin_for_organization_info_changes: Boolean(settingsResult.data?.require_pin_for_organization_info_changes),
+          require_pin_for_contact_changes: Boolean(settingsResult.data?.require_pin_for_contact_changes),
+          require_pin_for_organization_user_changes: Boolean(settingsResult.data?.require_pin_for_organization_user_changes),
+          require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
+          require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
+        },
       pin_hash: sharedPinHash || legacyPinHash,
       pin_scope: sharedPinHash ? "shared" : (legacyPinHash ? "legacy_tenant" : "shared"),
+      settings_available: !settingsMissing,
       error: firstError || null,
     };
   }, [sessionUserId, tenantKey]);
@@ -2100,7 +2108,9 @@ export default function MunicipalityApp() {
     setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash, pin_scope: snapshot.pin_scope || "shared" });
     setTenantSecurityPinEditMode(false);
     setTenantSecurityChecksEditMode(false);
-    setTenantSecurityStatus("");
+    setTenantSecurityStatus(snapshot.settings_available
+      ? ""
+      : "Shared PIN is available. Municipality checkpoint rules will stay off until the tenant security settings migration is applied.");
   }, [canViewTenantSecurity, readTenantSecuritySnapshot, sessionUserId, tenantKey]);
   const closeTenantSecurityCheckpoint = useCallback((approved = false) => {
     const resolver = tenantSecurityCheckpointResolverRef.current;
@@ -2787,11 +2797,13 @@ export default function MunicipalityApp() {
       const topicQuery = supabase
         .from("notification_topics")
         .select("tenant_key,topic_key,label,description,default_enabled,active,sort_order")
+        .eq("tenant_key", tenantKey)
         .order("sort_order", { ascending: true });
 
       const alertQuery = supabase
         .from("municipality_alerts")
         .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+        .eq("tenant_key", tenantKey)
         .order("pinned", { ascending: false })
         .order("starts_at", { ascending: false })
         .order("created_at", { ascending: false });
@@ -2799,6 +2811,7 @@ export default function MunicipalityApp() {
       const eventQuery = supabase
         .from("municipality_events")
         .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
+        .eq("tenant_key", tenantKey)
         .order("starts_at", { ascending: true })
         .order("created_at", { ascending: false });
 
@@ -4390,6 +4403,7 @@ export default function MunicipalityApp() {
     const { data } = await supabase
       .from("municipality_alerts")
       .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+      .eq("tenant_key", tenantKey)
       .order("pinned", { ascending: false })
       .order("starts_at", { ascending: false })
       .order("created_at", { ascending: false });
@@ -4405,6 +4419,7 @@ export default function MunicipalityApp() {
     const { data } = await supabase
       .from("municipality_events")
       .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
+      .eq("tenant_key", tenantKey)
       .order("starts_at", { ascending: true })
       .order("created_at", { ascending: false });
     if (data) {
