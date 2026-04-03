@@ -106,6 +106,7 @@ const BULK_MAX_LIGHTS_PER_SUBMIT = 10;
 const EXPORT_SCHEMA_VERSION = "v1";
 const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
+const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v1";
 
 // Location request prompt upon opening page
 const LOC_PROMPTED_SESSION_KEY = "streetlight_loc_prompted_session_v1";
@@ -284,6 +285,60 @@ function countUpcomingPublishedEvents(events) {
     const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
     return !startsAt || startsAt >= now - (60 * 60 * 1000);
   }).length;
+}
+
+function mapCommunityFeedStorageKey(tenantKey, viewerKey) {
+  const tenant = String(tenantKey || "").trim().toLowerCase();
+  const viewer = String(viewerKey || "anon").trim().toLowerCase();
+  return `${MAP_COMMUNITY_FEED_READ_KEY}:${tenant || "unknown"}:${viewer || "anon"}`;
+}
+
+function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
+  if (typeof window === "undefined") return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+  try {
+    const raw = window.localStorage.getItem(mapCommunityFeedStorageKey(tenantKey, viewerKey));
+    if (!raw) return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+    const parsed = JSON.parse(raw);
+    return {
+      alertsLastViewedAt: Math.max(0, Number(parsed?.alertsLastViewedAt || 0)),
+      eventsLastViewedAt: Math.max(0, Number(parsed?.eventsLastViewedAt || 0)),
+    };
+  } catch {
+    return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+  }
+}
+
+function saveMapCommunityFeedReadState(tenantKey, viewerKey, value) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      mapCommunityFeedStorageKey(tenantKey, viewerKey),
+      JSON.stringify({
+        alertsLastViewedAt: Math.max(0, Number(value?.alertsLastViewedAt || 0)),
+        eventsLastViewedAt: Math.max(0, Number(value?.eventsLastViewedAt || 0)),
+      })
+    );
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function mapCommunityFeedItemTs(item) {
+  return Math.max(
+    Number(new Date(item?.updated_at || 0).getTime() || 0),
+    Number(new Date(item?.published_at || 0).getTime() || 0),
+    Number(new Date(item?.created_at || 0).getTime() || 0),
+    Number(new Date(item?.starts_at || 0).getTime() || 0)
+  );
+}
+
+function maxMapCommunityFeedTs(items) {
+  return (items || []).reduce((max, item) => Math.max(max, mapCommunityFeedItemTs(item)), 0);
+}
+
+function countUnreadMapCommunityFeedItems(items, lastViewedAt = 0) {
+  const threshold = Math.max(0, Number(lastViewedAt || 0));
+  return (items || []).filter((item) => mapCommunityFeedItemTs(item) > threshold).length;
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -11470,6 +11525,7 @@ export default function App({ onBackToHub = null }) {
   const [mapCommunityEvents, setMapCommunityEvents] = useState([]);
   const [mapCommunityFeedLoading, setMapCommunityFeedLoading] = useState(false);
   const [mapCommunityFeedError, setMapCommunityFeedError] = useState("");
+  const [mapCommunityFeedReadState, setMapCommunityFeedReadState] = useState({ alertsLastViewedAt: 0, eventsLastViewedAt: 0 });
 
 
   function toggleMyReportsExpanded(lightId) {
@@ -12745,6 +12801,32 @@ export default function App({ onBackToHub = null }) {
   const resolvedCommunityFeedTenantKey = String(
     tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
   ).trim().toLowerCase();
+  const communityFeedViewerKey = String(session?.user?.id || "anon").trim().toLowerCase() || "anon";
+
+  useEffect(() => {
+    setMapCommunityFeedReadState(loadMapCommunityFeedReadState(resolvedCommunityFeedTenantKey, communityFeedViewerKey));
+  }, [resolvedCommunityFeedTenantKey, communityFeedViewerKey]);
+
+  const markMapCommunityFeedViewed = useCallback((kind) => {
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    if (!tenantKey) return;
+    const nextTs = kind === "alerts"
+      ? maxMapCommunityFeedTs(mapCommunityAlerts)
+      : maxMapCommunityFeedTs(mapCommunityEvents);
+    if (!nextTs) return;
+    setMapCommunityFeedReadState((prev) => {
+      const next = {
+        alertsLastViewedAt: kind === "alerts"
+          ? Math.max(Number(prev?.alertsLastViewedAt || 0), nextTs)
+          : Math.max(0, Number(prev?.alertsLastViewedAt || 0)),
+        eventsLastViewedAt: kind === "events"
+          ? Math.max(Number(prev?.eventsLastViewedAt || 0), nextTs)
+          : Math.max(0, Number(prev?.eventsLastViewedAt || 0)),
+      };
+      saveMapCommunityFeedReadState(tenantKey, communityFeedViewerKey, next);
+      return next;
+    });
+  }, [communityFeedViewerKey, mapCommunityAlerts, mapCommunityEvents, resolvedCommunityFeedTenantKey]);
 
   const loadMapCommunityFeed = useCallback(async () => {
     if (!authReady || tenant?.ready === false) return;
@@ -12840,6 +12922,16 @@ export default function App({ onBackToHub = null }) {
     if (!alertsWindowOpen && !eventsWindowOpen) return;
     void loadMapCommunityFeed();
   }, [alertsWindowOpen, eventsWindowOpen, loadMapCommunityFeed]);
+
+  useEffect(() => {
+    if (!alertsWindowOpen || mapCommunityFeedLoading) return;
+    markMapCommunityFeedViewed("alerts");
+  }, [alertsWindowOpen, mapCommunityFeedLoading, mapCommunityAlerts, markMapCommunityFeedViewed]);
+
+  useEffect(() => {
+    if (!eventsWindowOpen || mapCommunityFeedLoading) return;
+    markMapCommunityFeedViewed("events");
+  }, [eventsWindowOpen, mapCommunityFeedLoading, mapCommunityEvents, markMapCommunityFeedViewed]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
@@ -19428,8 +19520,14 @@ async function insertReportWithFallback(payload) {
     fontWeight: 900,
     cursor: "pointer",
   };
-  const mapAlertsActiveCount = useMemo(() => countActivePublishedAlerts(mapCommunityAlerts), [mapCommunityAlerts]);
-  const mapEventsUpcomingCount = useMemo(() => countUpcomingPublishedEvents(mapCommunityEvents), [mapCommunityEvents]);
+  const mapAlertsUnreadCount = useMemo(
+    () => countUnreadMapCommunityFeedItems(mapCommunityAlerts, mapCommunityFeedReadState.alertsLastViewedAt),
+    [mapCommunityAlerts, mapCommunityFeedReadState.alertsLastViewedAt]
+  );
+  const mapEventsUnreadCount = useMemo(
+    () => countUnreadMapCommunityFeedItems(mapCommunityEvents, mapCommunityFeedReadState.eventsLastViewedAt),
+    [mapCommunityEvents, mapCommunityFeedReadState.eventsLastViewedAt]
+  );
   const markerPopupCardStyle = {
     minWidth: 210,
     display: "grid",
@@ -22329,98 +22427,6 @@ async function insertReportWithFallback(payload) {
             <AppIcon src={UI_ICON_SRC.location} size={38} />
           </button>
 
-        <button
-          type="button"
-          className={`sl-map-tool-mini ${alertsWindowOpen ? "is-on" : ""}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setAdminDomainMenuOpen(false);
-            setAdminToolboxOpen(false);
-            setEventsWindowOpen(false);
-            setAlertsWindowOpen((prev) => {
-              const next = !prev;
-              if (next) showToolHint("Alerts", 1100, 3);
-              return next;
-            });
-          }}
-          title="Alerts"
-          aria-label="Open alerts"
-          style={{ position: "relative" }}
-        >
-          <AppIcon src={UI_ICON_SRC.notification} size={38} />
-          {mapAlertsActiveCount > 0 ? (
-            <span
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                minWidth: 18,
-                height: 18,
-                padding: "0 5px",
-                borderRadius: 999,
-                background: "#c62828",
-                color: "#fff",
-                border: "1px solid rgba(255,255,255,0.88)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 10.5,
-                fontWeight: 900,
-                lineHeight: 1,
-              }}
-            >
-              {mapAlertsActiveCount > 99 ? "99+" : mapAlertsActiveCount}
-            </span>
-          ) : null}
-        </button>
-
-        <button
-          type="button"
-          className={`sl-map-tool-mini ${eventsWindowOpen ? "is-on" : ""}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setAdminDomainMenuOpen(false);
-            setAdminToolboxOpen(false);
-            setAlertsWindowOpen(false);
-            setEventsWindowOpen((prev) => {
-              const next = !prev;
-              if (next) showToolHint("Events", 1100, 4);
-              return next;
-            });
-          }}
-          title="Events"
-          aria-label="Open events"
-          style={{ position: "relative" }}
-        >
-          <AppIcon src={UI_ICON_SRC.calendar} size={38} />
-          {mapEventsUpcomingCount > 0 ? (
-            <span
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                minWidth: 18,
-                height: 18,
-                padding: "0 5px",
-                borderRadius: 999,
-                background: "#176d78",
-                color: "#fff",
-                border: "1px solid rgba(255,255,255,0.88)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 10.5,
-                fontWeight: 900,
-                lineHeight: 1,
-              }}
-            >
-              {mapEventsUpcomingCount > 99 ? "99+" : mapEventsUpcomingCount}
-            </span>
-          ) : null}
-        </button>
-
         {
           <div style={{ position: "relative" }}>
             <button
@@ -22436,7 +22442,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminToolboxOpen(false);
                   return next;
                 });
-                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 5);
+                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 3);
               }}
             >
               <AppIcon src={adminDomainMeta.iconSrc} size={38} />
@@ -22515,7 +22521,7 @@ async function insertReportWithFallback(payload) {
 
               setBulkMode((on) => {
                 const next = !on;
-                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 6);
+                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 4);
 
                 if (next) {
                   setDeleteCircleMode(false);
@@ -22555,7 +22561,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminDomainMenuOpen(false);
                   return next;
                 });
-                showToolHint("Admin tools", 1000, 7);
+                showToolHint("Admin tools", 1000, 5);
               }}
             >
               <AppIcon src={UI_ICON_SRC.toolbox} size={38} />
@@ -22805,53 +22811,7 @@ async function insertReportWithFallback(payload) {
                   minWidth: 0,
                 }}
               >
-                {typeof onBackToHub === "function" ? (
-                  <button
-                    type="button"
-                    onClick={onBackToHub}
-                    aria-label="Return to municipality home"
-                    title="Return to municipality home"
-                    style={{
-                      appearance: "none",
-                      padding: 0,
-                      border: 0,
-                      background: "transparent",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "flex-start",
-                      width: "fit-content",
-                      minWidth: 0,
-                    }}
-                  >
-                    {titleLogoError ? (
-                      <span
-                        style={{
-                          fontSize: 24,
-                          fontWeight: 950,
-                          lineHeight: 1.05,
-                          color: "#102b46",
-                        }}
-                      >
-                        CityReport.io
-                      </span>
-                    ) : (
-                      <img
-                        src={titleLogoSrc}
-                        alt={TITLE_LOGO_ALT}
-                        onError={() => setTitleLogoError(true)}
-                        style={{
-                          width: "auto",
-                          maxWidth: "min(240px, calc(100vw - 180px))",
-                          height: "var(--desktop-header-logo-height)",
-                          objectFit: "contain",
-                          objectPosition: "left center",
-                          display: "block",
-                        }}
-                      />
-                    )}
-                  </button>
-                ) : titleLogoError ? (
+                {titleLogoError ? (
                   <span
                     style={{
                       fontSize: 24,
@@ -23015,6 +22975,120 @@ async function insertReportWithFallback(payload) {
                     }}
                   >
                     –
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminDomainMenuOpen(false);
+                      setAdminToolboxOpen(false);
+                      setEventsWindowOpen(false);
+                      setAlertsWindowOpen((prev) => !prev);
+                    }}
+                    aria-label="Open alerts"
+                    title="Open alerts"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 10,
+                      border: alertsWindowOpen
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : "1px solid var(--sl-ui-zoom-border)",
+                      background: alertsWindowOpen
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : "var(--sl-ui-zoom-bg)",
+                      boxShadow: "var(--sl-ui-zoom-shadow)",
+                      color: alertsWindowOpen
+                        ? "var(--sl-ui-tool-active-text)"
+                        : "var(--sl-ui-text)",
+                      cursor: "pointer",
+                      lineHeight: 1,
+                      position: "relative",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    <AppIcon src={UI_ICON_SRC.notification} size={22} />
+                    {mapAlertsUnreadCount > 0 ? (
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: -4,
+                          right: -4,
+                          minWidth: 18,
+                          height: 18,
+                          padding: "0 5px",
+                          borderRadius: 999,
+                          background: "#c62828",
+                          color: "#fff",
+                          border: "1px solid rgba(255,255,255,0.88)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 10.5,
+                          fontWeight: 900,
+                          lineHeight: 1,
+                        }}
+                      >
+                        {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminDomainMenuOpen(false);
+                      setAdminToolboxOpen(false);
+                      setAlertsWindowOpen(false);
+                      setEventsWindowOpen((prev) => !prev);
+                    }}
+                    aria-label="Open events"
+                    title="Open events"
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 10,
+                      border: eventsWindowOpen
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : "1px solid var(--sl-ui-zoom-border)",
+                      background: eventsWindowOpen
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : "var(--sl-ui-zoom-bg)",
+                      boxShadow: "var(--sl-ui-zoom-shadow)",
+                      color: eventsWindowOpen
+                        ? "var(--sl-ui-tool-active-text)"
+                        : "var(--sl-ui-text)",
+                      cursor: "pointer",
+                      lineHeight: 1,
+                      position: "relative",
+                      display: "grid",
+                      placeItems: "center",
+                    }}
+                  >
+                    <AppIcon src={UI_ICON_SRC.calendar} size={22} />
+                    {mapEventsUnreadCount > 0 ? (
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: -4,
+                          right: -4,
+                          minWidth: 18,
+                          height: 18,
+                          padding: "0 5px",
+                          borderRadius: 999,
+                          background: "#176d78",
+                          color: "#fff",
+                          border: "1px solid rgba(255,255,255,0.88)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 10.5,
+                          fontWeight: 900,
+                          lineHeight: 1,
+                        }}
+                      >
+                        {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
+                      </span>
+                    ) : null}
                   </button>
                 </div>
 
@@ -23439,8 +23513,6 @@ async function insertReportWithFallback(payload) {
               <AppIcon src={UI_ICON_SRC.info} size={20} />
             </button>
             <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34 }}>
-              <b>About:</b> Community reporting tool to help track local infrastructure issues.
-              <br />
               <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
             </div>
           </div>
@@ -23527,14 +23599,17 @@ async function insertReportWithFallback(payload) {
 
             <div
                 style={{
-                  background: "var(--sl-ui-surface-bg)",
-                  border: "1px solid var(--sl-ui-surface-border)",
-                  borderRadius: 12,
-                  boxShadow: "var(--sl-ui-surface-shadow)",
-                  padding: typeof onBackToHub === "function" ? "12px 52px 12px 52px" : "12px 52px 12px 12px",
-                  display: "grid",
-                  gap: 5,
                   position: "relative",
+                  display: "grid",
+                  gridTemplateColumns: "var(--mobile-header-side-column) 1fr var(--mobile-header-side-column)",
+                  alignItems: "center",
+                  gap: 0,
+                  minHeight: "var(--mobile-header-height)",
+                  padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
+                  border: "1px solid rgba(23, 49, 79, 0.18)",
+                  borderRadius: "var(--mobile-header-radius)",
+                  background: "var(--mobile-header-background)",
+                  boxShadow: "var(--mobile-header-shadow)",
                   color: "var(--sl-ui-text)",
                 }}
             >
@@ -23572,17 +23647,16 @@ async function insertReportWithFallback(payload) {
               aria-label={session?.user?.id ? "Open map menu" : "Log in"}
               title={session?.user?.id ? "Open map menu" : "Log in"}
               style={{
-                position: "absolute",
-                top: "50%",
-                right: 9,
-                transform: "translateY(-50%)",
-                width: session?.user?.id ? 32 : "auto",
-                height: 32,
+                gridColumn: 3,
+                justifySelf: "end",
+                width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
+                minWidth: "var(--mobile-header-side-column)",
+                height: "var(--mobile-header-menu-size)",
                 border: "1px solid rgba(23, 49, 79, 0.14)",
                 background: "rgba(255,255,255,0.94)",
                 color: "var(--sl-ui-text)",
                 borderRadius: 999,
-                padding: session?.user?.id ? 0 : "0 10px",
+                padding: session?.user?.id ? 0 : "0 12px",
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -23590,6 +23664,7 @@ async function insertReportWithFallback(payload) {
                 boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
                 fontSize: session?.user?.id ? undefined : 12,
                 fontWeight: session?.user?.id ? undefined : 900,
+                zIndex: 1,
               }}
             >
               {session?.user?.id ? (
@@ -23603,90 +23678,72 @@ async function insertReportWithFallback(payload) {
               )}
             </button>
 
-	              {titleLogoError ? (
-	                <>
-	                {typeof onBackToHub === "function" ? (
-	                  <button
-	                    type="button"
-	                    onClick={onBackToHub}
-	                    style={{
-	                      position: "absolute",
-	                      top: "50%",
-	                      left: 9,
-	                      transform: "translateY(-50%)",
-	                      width: 32,
-	                      height: 32,
-	                      border: "1px solid rgba(255,255,255,0.18)",
-	                      background: "var(--sl-ui-brand-blue)",
-	                      color: "#ffffff",
-	                      borderRadius: 999,
-	                      padding: 0,
-	                      display: "grid",
-	                      placeItems: "center",
-	                      fontSize: 18,
-	                      fontWeight: 800,
-	                      cursor: "pointer",
-	                      boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
-	                    }}
-	                    aria-label="Back to Hub"
-	                    title="Back to Hub"
-	                  >
-	                    ←
-	                  </button>
-	                ) : null}
-	                <div style={{ fontSize: 16, fontWeight: 950, textAlign: "center", lineHeight: 1.15 }}>
-	                  CityReport.io
-	                </div>
-                  <div style={{ fontSize: 11, opacity: 0.78, textAlign: "center", lineHeight: 1.2 }}>
-                    transparent reporting, visible progress.
-                  </div>
-                </>
-	              ) : (
-	                <>
-	                  {typeof onBackToHub === "function" ? (
-	                    <button
-	                      type="button"
-	                      onClick={onBackToHub}
-	                      style={{
-	                        position: "absolute",
-	                        top: "50%",
-	                        left: 9,
-	                        transform: "translateY(-50%)",
-	                        width: 32,
-	                        height: 32,
-	                        border: "1px solid rgba(255,255,255,0.18)",
-	                        background: "var(--sl-ui-brand-blue)",
-	                        color: "#ffffff",
-	                        borderRadius: 999,
-	                        padding: 0,
-	                        display: "grid",
-	                        placeItems: "center",
-	                        fontSize: 18,
-	                        fontWeight: 800,
-	                        cursor: "pointer",
-	                        boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
-	                      }}
-	                      aria-label="Back to Hub"
-	                      title="Back to Hub"
-	                    >
-	                        ←
-	                    </button>
-	                  ) : null}
-	                  <img
-	                    src={titleLogoSrc}
-	                    alt={TITLE_LOGO_ALT}
-	                    onError={() => setTitleLogoError(true)}
-	                  style={{
-	                    display: "block",
-	                    margin: "0 auto",
-	                    width: "100%",
-	                    maxWidth: "100%",
-	                    height: 63,
-	                    objectFit: "contain",
-	                  }}
-	                />
-	                </>
-	            )}
+              <div
+                style={{
+                  gridColumn: 1,
+                  justifySelf: "start",
+                  width: "var(--mobile-header-side-column)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-start",
+                }}
+              >
+                {titleLogoError ? (
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 950,
+                      lineHeight: 1.05,
+                      color: "#102b46",
+                    }}
+                  >
+                    CR
+                  </span>
+                ) : (
+                  <img
+                    src={titleLogoSrc}
+                    alt={TITLE_LOGO_ALT}
+                    onError={() => setTitleLogoError(true)}
+                    style={{
+                      width: "var(--mobile-header-logo-size)",
+                      height: "var(--mobile-header-logo-size)",
+                      objectFit: "contain",
+                      objectPosition: "left center",
+                      display: "block",
+                    }}
+                  />
+                )}
+              </div>
+
+              <div
+                style={{
+                  gridColumn: 2,
+                  display: "grid",
+                  gap: "var(--mobile-header-stack-gap)",
+                  alignContent: "center",
+                  justifyItems: "center",
+                  minWidth: 0,
+                  paddingInline: 6,
+                  textAlign: "center",
+                }}
+              >
+                <span className="app-header-eyebrow">Reporting Map</span>
+                <span
+                  style={{
+                    fontSize: "var(--mobile-header-title-size)",
+                    fontWeight: "var(--desktop-header-title-weight)",
+                    color: "#102b46",
+                    lineHeight: "var(--mobile-header-title-line-height)",
+                    display: "block",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {organizationName}
+                </span>
+              </div>
 
               </div>
 
@@ -23742,6 +23799,120 @@ async function insertReportWithFallback(payload) {
                   }}
                 >
                   –
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminDomainMenuOpen(false);
+                    setAdminToolboxOpen(false);
+                    setEventsWindowOpen(false);
+                    setAlertsWindowOpen((prev) => !prev);
+                  }}
+                  aria-label="Open alerts"
+                  title="Open alerts"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: alertsWindowOpen
+                      ? "1px solid var(--sl-ui-tool-active-border)"
+                      : "1px solid var(--sl-ui-zoom-border)",
+                    background: alertsWindowOpen
+                      ? "var(--sl-ui-tool-active-bg)"
+                      : "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                    color: alertsWindowOpen
+                      ? "var(--sl-ui-tool-active-text)"
+                      : "var(--sl-ui-text)",
+                    cursor: "pointer",
+                    lineHeight: 1,
+                    position: "relative",
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
+                  <AppIcon src={UI_ICON_SRC.notification} size={18} />
+                  {mapAlertsUnreadCount > 0 ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: -4,
+                        right: -4,
+                        minWidth: 16,
+                        height: 16,
+                        padding: "0 4px",
+                        borderRadius: 999,
+                        background: "#c62828",
+                        color: "#fff",
+                        border: "1px solid rgba(255,255,255,0.88)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 9.5,
+                        fontWeight: 900,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminDomainMenuOpen(false);
+                    setAdminToolboxOpen(false);
+                    setAlertsWindowOpen(false);
+                    setEventsWindowOpen((prev) => !prev);
+                  }}
+                  aria-label="Open events"
+                  title="Open events"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: eventsWindowOpen
+                      ? "1px solid var(--sl-ui-tool-active-border)"
+                      : "1px solid var(--sl-ui-zoom-border)",
+                    background: eventsWindowOpen
+                      ? "var(--sl-ui-tool-active-bg)"
+                      : "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                    color: eventsWindowOpen
+                      ? "var(--sl-ui-tool-active-text)"
+                      : "var(--sl-ui-text)",
+                    cursor: "pointer",
+                    lineHeight: 1,
+                    position: "relative",
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
+                  <AppIcon src={UI_ICON_SRC.calendar} size={18} />
+                  {mapEventsUnreadCount > 0 ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: -4,
+                        right: -4,
+                        minWidth: 16,
+                        height: 16,
+                        padding: "0 4px",
+                        borderRadius: 999,
+                        background: "#176d78",
+                        color: "#fff",
+                        border: "1px solid rgba(255,255,255,0.88)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 9.5,
+                        fontWeight: 900,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
+                    </span>
+                  ) : null}
                 </button>
               </div>
               {isAggregatedReportingDomain && (
@@ -24159,8 +24330,6 @@ async function insertReportWithFallback(payload) {
             </button>
 
             <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30 }}>
-              <b>About:</b> Community reporting tool to help track local infrastructure issues.
-              <br />
               <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
             </div>
           </div>
