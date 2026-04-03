@@ -3306,14 +3306,14 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const role = sanitizeRoleKey(platformRoleForm.role);
-    const role_label = toOrganizationLanguage(String(platformRoleForm.role_label || "").trim() || roleKeyToLabel(role));
-    if (!role) {
-      setPlatformRoleStatus("Role key is required (example: revenue_ops).");
+    const role_label = toOrganizationLanguage(String(platformRoleForm.role_label || "").trim());
+    const role = sanitizeRoleKey(role_label);
+    if (!role_label || !role) {
+      setPlatformRoleStatus("Role name is required.");
       return;
     }
     if (sortedPlatformRoleDefinitions.some((row) => String(row?.role || "") === role)) {
-      setPlatformRoleStatus(`Role ${role} already exists.`);
+      setPlatformRoleStatus(`${role_label} already exists.`);
       return;
     }
     const checkpointApproved = await requirePlatformSecurityCheckpoint({
@@ -3336,7 +3336,7 @@ export default function PlatformAdminApp() {
 
     setPlatformRoleForm({ role: "", role_label: "" });
     setSelectedPlatformRoleKey(role);
-    setPlatformRoleStatus(`Created PCP role ${role}.`);
+    setPlatformRoleStatus(`Created PCP role ${role_label}.`);
     setPlatformRoleAddModalOpen(false);
     await loadPlatformRoleConfig();
   }, [canManagePlatformRoles, invokePlatformRoleAdmin, loadPlatformRoleConfig, platformRoleForm, requirePlatformSecurityCheckpoint, sortedPlatformRoleDefinitions]);
@@ -6388,19 +6388,9 @@ export default function PlatformAdminApp() {
               </button>
             </div>
             <form onSubmit={(event) => void createPlatformRole(event)} style={{ display: "grid", gap: 12 }}>
-              <div style={modalActionGrid}>
+              <div style={{ display: "grid", gap: 10 }}>
                 <label style={modalField}>
-                  <span>Role Key</span>
-                  <input
-                    value={platformRoleForm.role}
-                    onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role: sanitizeRoleKey(e.target.value) }))}
-                    placeholder="revenue_ops"
-                    style={modalInput}
-                    disabled={!canManagePlatformRoles}
-                  />
-                </label>
-                <label style={modalField}>
-                  <span>Role Label</span>
+                  <span>Role Name</span>
                   <input
                     value={platformRoleForm.role_label}
                     onChange={(e) => setPlatformRoleForm((prev) => ({ ...prev, role_label: e.target.value }))}
@@ -6409,6 +6399,9 @@ export default function PlatformAdminApp() {
                     disabled={!canManagePlatformRoles}
                   />
                 </label>
+                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                  Internal role keys are generated automatically from the role name.
+                </div>
               </div>
               {platformRoleStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformRoleStatus}</div> : null}
               <div style={modalFooterActions}>
