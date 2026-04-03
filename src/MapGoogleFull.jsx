@@ -47,8 +47,8 @@ const GMAPS_ACTIVE_KEY =
 // SECTION 2 — App Settings
 // ==================================================
 const containerStyle = { height: "100%", width: "100%" };
-const USA_OVERVIEW = [39.8283, -98.5795];
-const INITIAL_OVERVIEW_ZOOM = 4;
+const USA_OVERVIEW = [39.5, -98.35];
+const INITIAL_OVERVIEW_ZOOM = 5;
 const GROUP_RADIUS_METERS = 25;
 const POTHOLE_MERGE_RADIUS_METERS = 22;
 const POTHOLE_ROAD_HIT_METERS = 12;
@@ -597,6 +597,24 @@ function incidentSnapshotKey(domain, incidentId) {
   const id = String(incidentId || "").trim();
   if (!d || !id) return "";
   return `${d}:${id}`;
+}
+
+function readReportDeepLinkRequest(search = "") {
+  const params = new URLSearchParams(String(search || ""));
+  const requestedDomain = normalizeDomainKey(params.get("report_domain"));
+  const focusIncidentId = String(params.get("focus_incident_id") || "").trim();
+  const flyLat = Number(params.get("fly_lat"));
+  const flyLng = Number(params.get("fly_lng"));
+  const flyZoomRaw = Number(params.get("fly_zoom"));
+
+  return {
+    requestedDomain,
+    focusIncidentId,
+    flyLat,
+    flyLng,
+    flyZoom: Number.isFinite(flyZoomRaw) ? flyZoomRaw : 18,
+    hasFlyTarget: Number.isFinite(flyLat) && Number.isFinite(flyLng),
+  };
 }
 
 function incidentStateLabel(state) {
@@ -10052,148 +10070,166 @@ function NotificationPreferencesModal({
       panelStyle={{
         width: "min(820px, 100%)",
         maxHeight: "min(88vh, 900px)",
-        overflowY: "auto",
         borderRadius: 24,
-        padding: 22,
+        padding: 0,
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-        <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
-            Notification Preferences
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(0, 1fr) auto",
+          maxHeight: "min(88vh, 900px)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "22px 22px 18px" }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+              Notification Preferences
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+              Events and alerts
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+              Manage the same resident notification categories used in the hub. In-app and email are live now; web push is next.
+            </div>
           </div>
-          <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
-            Events and alerts
-          </div>
-          <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
-            Manage the same resident notification categories used in the hub. In-app and email are live now; web push is next.
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 999,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              flex: "0 0 auto",
+            }}
+            aria-label="Close notification preferences"
+          >
+            ✕
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            width: 38,
-            height: 38,
-            borderRadius: 999,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-            flex: "0 0 auto",
-          }}
-          aria-label="Close notification preferences"
-        >
-          ✕
-        </button>
-      </div>
 
-      {loading ? (
-        <div style={{ fontSize: 13, opacity: 0.82 }}>Loading your notification preferences…</div>
-      ) : (
-        <div style={{ display: "grid", gap: 14 }}>
-          {topics.map((topic) => {
-            const current = preferencesByTopic?.[topic.topic_key] || {
-              in_app_enabled: Boolean(topic.default_enabled),
-              email_enabled: false,
-              web_push_enabled: false,
-            };
-            return (
-              <article
-                key={topic.topic_key}
-                style={{
-                  padding: 18,
-                  borderRadius: 20,
-                  border: "1px solid rgba(23, 49, 79, 0.08)",
-                  background: "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)",
-                  display: "grid",
-                  gap: 12,
-                }}
-              >
-                <div style={{ display: "grid", gap: 6 }}>
-                  <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.2 }}>{topic.label}</h4>
-                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#58718a" }}>{topic.description}</p>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(current.in_app_enabled)}
-                      onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)}
-                    />
-                    In-app
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(current.email_enabled)}
-                      onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)}
-                    />
-                    Email
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7 }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(current.web_push_enabled)}
-                      disabled
-                      readOnly
-                    />
-                    Web push (next)
-                  </label>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      {status ? (
         <div
           style={{
-            fontSize: 13,
-            lineHeight: 1.4,
-            color: hasError ? "#ffb4b4" : "var(--sl-ui-text)",
-            opacity: hasError ? 1 : 0.84,
+            overflowY: "auto",
+            padding: "0 14px 0 22px",
+            marginRight: 4,
           }}
         >
-          {status}
+          {loading ? (
+            <div style={{ fontSize: 13, opacity: 0.82, paddingBottom: 12 }}>Loading your notification preferences…</div>
+          ) : (
+            <div style={{ display: "grid", gap: 14, paddingBottom: 12 }}>
+              {topics.map((topic) => {
+                const current = preferencesByTopic?.[topic.topic_key] || {
+                  in_app_enabled: Boolean(topic.default_enabled),
+                  email_enabled: false,
+                  web_push_enabled: false,
+                };
+                return (
+                  <article
+                    key={topic.topic_key}
+                    style={{
+                      padding: 18,
+                      borderRadius: 20,
+                      border: "1px solid rgba(23, 49, 79, 0.08)",
+                      background: "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)",
+                      display: "grid",
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.2 }}>{topic.label}</h4>
+                      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#58718a" }}>{topic.description}</p>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(current.in_app_enabled)}
+                          onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)}
+                        />
+                        In-app
+                      </label>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(current.email_enabled)}
+                          onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)}
+                        />
+                        Email
+                      </label>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7 }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(current.web_push_enabled)}
+                          disabled
+                          readOnly
+                        />
+                        Web push (next)
+                      </label>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
-      ) : null}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 999,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving || loading}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 999,
-            border: "none",
-            background: "var(--sl-ui-brand-blue)",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: saving || loading ? "not-allowed" : "pointer",
-            opacity: saving || loading ? 0.65 : 1,
-          }}
-        >
-          {saving ? "Saving…" : "Save Preferences"}
-        </button>
+        <div style={{ display: "grid", gap: 12, padding: "14px 22px 22px", borderTop: "1px solid rgba(23, 49, 79, 0.08)" }}>
+          {status ? (
+            <div
+              style={{
+                fontSize: 13,
+                lineHeight: 1.4,
+                color: hasError ? "#ffb4b4" : "var(--sl-ui-text)",
+                opacity: hasError ? 1 : 0.84,
+              }}
+            >
+              {status}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving || loading}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: "none",
+                background: "var(--sl-ui-brand-blue)",
+                color: "#fff",
+                fontWeight: 900,
+                cursor: saving || loading ? "not-allowed" : "pointer",
+                opacity: saving || loading ? 0.65 : 1,
+              }}
+            >
+              {saving ? "Saving…" : "Save Preferences"}
+            </button>
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
@@ -10541,6 +10577,10 @@ export default function App({ onBackToHub = null }) {
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
   const boundaryCameraSignatureRef = useRef("");
   const reportDeepLinkHandledRef = useRef(false);
+  const initialReportDeepLinkRef = useRef(
+    typeof window === "undefined" ? readReportDeepLinkRequest("") : readReportDeepLinkRequest(window.location.search || "")
+  );
+  const preserveReportFlyTargetCameraRef = useRef(Boolean(initialReportDeepLinkRef.current?.hasFlyTarget));
   const isMobile = useIsMobile(640);
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -12308,14 +12348,9 @@ export default function App({ onBackToHub = null }) {
     if (reportDeepLinkHandledRef.current) return;
     if (typeof window === "undefined" || !visibleDomainOptions.length) return;
 
-    const params = new URLSearchParams(window.location.search || "");
-    const requestedDomain = normalizeDomainKey(params.get("report_domain"));
-    const focusIncidentId = String(params.get("focus_incident_id") || "").trim();
-    const flyLat = Number(params.get("fly_lat"));
-    const flyLng = Number(params.get("fly_lng"));
-    const flyZoom = Number(params.get("fly_zoom"));
+    const { requestedDomain, focusIncidentId, flyLat, flyLng, flyZoom, hasFlyTarget } =
+      initialReportDeepLinkRef.current || readReportDeepLinkRequest(window.location.search || "");
     const nextDomain = visibleDomainOptions.some((d) => d.key === requestedDomain) ? requestedDomain : "";
-    const hasFlyTarget = Number.isFinite(flyLat) && Number.isFinite(flyLng);
 
     if (!nextDomain && !focusIncidentId && !hasFlyTarget) {
       reportDeepLinkHandledRef.current = true;
@@ -12335,7 +12370,8 @@ export default function App({ onBackToHub = null }) {
     }
 
     if (hasFlyTarget) {
-      flyToTarget([flyLat, flyLng], Number.isFinite(flyZoom) ? flyZoom : 18);
+      preserveReportFlyTargetCameraRef.current = true;
+      flyToTarget([flyLat, flyLng], flyZoom);
     }
   }, [visibleDomainOptions, isAdmin]);
 
@@ -14065,6 +14101,13 @@ export default function App({ onBackToHub = null }) {
       cityBoundaryViewport.east.toFixed(6),
       cityBoundaryViewport.west.toFixed(6),
     ].join("|");
+
+    // Preserve hub fly-to deep links instead of snapping back to the tenant
+    // boundary once the boundary data finishes loading.
+    if (preserveReportFlyTargetCameraRef.current) {
+      boundaryCameraSignatureRef.current = signature;
+      return;
+    }
 
     const nextCenter = cityBoundaryViewport.center;
     setMapCenter((prev) => {
