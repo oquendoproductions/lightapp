@@ -1782,6 +1782,7 @@ export default function MunicipalityApp() {
   const [selectedSettingsRoleKey, setSelectedSettingsRoleKey] = useState("");
   const [settingsRolePermissionDraft, setSettingsRolePermissionDraft] = useState({});
   const [settingsRolePermissionDirty, setSettingsRolePermissionDirty] = useState(false);
+  const [settingsRolePermissionEditMode, setSettingsRolePermissionEditMode] = useState(false);
   const [settingsRoleFormOpen, setSettingsRoleFormOpen] = useState(false);
   const [settingsRoleForm, setSettingsRoleForm] = useState({ role: "", role_label: "" });
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
@@ -2693,6 +2694,7 @@ export default function MunicipalityApp() {
     if (!selectedSettingsRoleKey) {
       setSettingsRolePermissionDraft({});
       setSettingsRolePermissionDirty(false);
+      setSettingsRolePermissionEditMode(false);
       return;
     }
     const nextDraft = {};
@@ -2703,6 +2705,7 @@ export default function MunicipalityApp() {
     }
     setSettingsRolePermissionDraft(nextDraft);
     setSettingsRolePermissionDirty(false);
+    setSettingsRolePermissionEditMode(false);
   }, [permissionCatalog, rolePermissionMap, selectedSettingsRoleKey]);
 
   useEffect(() => {
@@ -4453,6 +4456,7 @@ export default function MunicipalityApp() {
       ...rows,
     ]);
     setSettingsRolePermissionDirty(false);
+    setSettingsRolePermissionEditMode(false);
     setSettingsSectionStatus((prev) => ({ ...prev, roles: "Role permissions saved." }));
   }
 
@@ -5067,7 +5071,7 @@ export default function MunicipalityApp() {
                   Close
                 </button>
               </div>
-              <div className="municipality-form-grid">
+                <div className="municipality-form-grid">
                   <div className="municipality-field">
                     <label htmlFor="tenant-security-checkpoint-pin">Security PIN</label>
                     <input
@@ -7090,11 +7094,30 @@ export default function MunicipalityApp() {
                                   </div>
                                   {selectedSettingsRoleKey ? (
                                     <>
+                                      <div className="municipality-settings-item-actions-row">
+                                        <p className="municipality-note">
+                                          {settingsRolePermissionEditMode
+                                            ? "Permission editing is enabled for this role."
+                                            : "Permissions are view-only until you select Edit Permissions."}
+                                        </p>
+                                        {!settingsRolePermissionEditMode ? (
+                                          <button
+                                            type="button"
+                                            className="municipality-button municipality-button--primary"
+                                            onClick={() => {
+                                              setSettingsRolePermissionEditMode(true);
+                                              setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
+                                            }}
+                                          >
+                                            Edit Permissions
+                                          </button>
+                                        ) : null}
+                                      </div>
                                       <div className="municipality-permission-matrix">
-                                        <div className="municipality-permission-matrix-header">Category</div>
-                                        <div className="municipality-permission-matrix-header">Access</div>
-                                        <div className="municipality-permission-matrix-header">Edit</div>
-                                        <div className="municipality-permission-matrix-header">Delete</div>
+                                        <div className="municipality-permission-matrix-header municipality-permission-matrix-header--label">Category</div>
+                                        <div className="municipality-permission-matrix-header municipality-permission-matrix-header--center">Access</div>
+                                        <div className="municipality-permission-matrix-header municipality-permission-matrix-header--center">Edit</div>
+                                        <div className="municipality-permission-matrix-header municipality-permission-matrix-header--center">Delete</div>
                                         {permissionModules.map((moduleRow) => (
                                           <Fragment key={moduleRow.key}>
                                             <div className="municipality-permission-matrix-cell municipality-permission-matrix-cell--label">
@@ -7111,6 +7134,7 @@ export default function MunicipalityApp() {
                                                         type="checkbox"
                                                         aria-label={`${moduleRow.label} ${actionKey}`}
                                                         checked={Boolean(settingsRolePermissionDraft?.[permissionKey])}
+                                                        disabled={!settingsRolePermissionEditMode}
                                                         onChange={(event) => {
                                                           const nextChecked = event.target.checked;
                                                           setSettingsRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextChecked }));
@@ -7127,33 +7151,35 @@ export default function MunicipalityApp() {
                                           </Fragment>
                                         ))}
                                       </div>
-                                      <div className="municipality-actions">
-                                        <button
-                                          type="button"
-                                          className="municipality-button municipality-button--ghost"
-                                          onClick={() => {
-                                            const resetDraft = {};
-                                            for (const permissionRow of permissionCatalog || []) {
-                                              const permissionKey = trimOrEmpty(permissionRow?.permission_key);
-                                              if (!permissionKey) continue;
-                                              resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedSettingsRoleKey}:${permissionKey}`]);
-                                            }
-                                            setSettingsRolePermissionDraft(resetDraft);
-                                            setSettingsRolePermissionDirty(false);
-                                          }}
-                                          disabled={!settingsRolePermissionDirty}
-                                        >
-                                          Reset
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="municipality-button municipality-button--primary"
-                                          onClick={() => void saveLocationRolePermissions()}
-                                          disabled={!settingsRolePermissionDirty}
-                                        >
-                                          Save Changes
-                                        </button>
-                                      </div>
+                                      {settingsRolePermissionEditMode ? (
+                                        <div className="municipality-actions">
+                                          <button
+                                            type="button"
+                                            className="municipality-button municipality-button--ghost"
+                                            onClick={() => {
+                                              const resetDraft = {};
+                                              for (const permissionRow of permissionCatalog || []) {
+                                                const permissionKey = trimOrEmpty(permissionRow?.permission_key);
+                                                if (!permissionKey) continue;
+                                                resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedSettingsRoleKey}:${permissionKey}`]);
+                                              }
+                                              setSettingsRolePermissionDraft(resetDraft);
+                                              setSettingsRolePermissionDirty(false);
+                                              setSettingsRolePermissionEditMode(false);
+                                            }}
+                                          >
+                                            Reset
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="municipality-button municipality-button--primary"
+                                            onClick={() => void saveLocationRolePermissions()}
+                                            disabled={!settingsRolePermissionDirty}
+                                          >
+                                            Save Changes
+                                          </button>
+                                        </div>
+                                      ) : null}
                                     </>
                                   ) : (
                                     <p className="municipality-note">Select a role to edit its permissions.</p>

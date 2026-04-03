@@ -114,7 +114,7 @@
   font-size: var(--desktop-header-title-size);
   font-weight: var(--desktop-header-title-weight);
   line-height: var(--desktop-header-title-line-height);
-  color: #102b46;
+  color: var(--mobile-header-title-color);
 }
 
 .municipality-brand-copy p {
@@ -389,15 +389,15 @@
   width: var(--desktop-header-menu-size);
   height: var(--desktop-header-menu-size);
   border-radius: 999px;
-  border: 1px solid rgba(26, 49, 83, 0.22);
-  background: rgba(255, 255, 255, 0.92);
+  border: var(--mobile-header-menu-border);
+  background: var(--mobile-header-menu-background);
   display: inline-flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: var(--mobile-header-menu-line-gap);
   cursor: pointer;
-  box-shadow: none;
+  box-shadow: var(--mobile-header-menu-shadow);
 }
 
 .municipality-mobile-nav,
@@ -407,10 +407,10 @@
 
 .municipality-account-toggle span {
   display: block;
-  width: 18px;
-  height: 2px;
+  width: var(--mobile-header-menu-line-width);
+  height: var(--mobile-header-menu-line-height);
   border-radius: 999px;
-  background: #102b46;
+  background: var(--mobile-header-menu-line-color);
 }
 
 .municipality-account-menu {
@@ -1739,6 +1739,14 @@
   color: #61788f;
 }
 
+.municipality-permission-matrix-header--label {
+  text-align: left;
+}
+
+.municipality-permission-matrix-header--center {
+  text-align: center;
+}
+
 .municipality-permission-matrix-cell:not(.municipality-permission-matrix-cell--label) {
   display: flex;
   align-items: center;
@@ -1759,6 +1767,11 @@
   width: 18px;
   height: 18px;
   accent-color: #176d78;
+}
+
+.municipality-permission-toggle input:disabled {
+  cursor: default;
+  opacity: 0.75;
 }
 
 .municipality-settings-list--modal {
@@ -1853,7 +1866,7 @@
     height: var(--mobile-header-height);
     min-height: var(--mobile-header-height);
     padding: var(--mobile-header-padding-y) var(--mobile-header-padding-x);
-    border: 1px solid rgba(23, 49, 79, 0.18);
+    border: var(--mobile-header-border);
     border-radius: var(--mobile-header-radius);
     background: var(--mobile-header-background);
     box-shadow: var(--mobile-header-shadow);
@@ -1977,9 +1990,11 @@
   }
 
   .municipality-brand-copy {
-    padding-inline: 6px;
+    padding-inline: var(--mobile-header-title-padding-inline);
+    padding-block: var(--mobile-header-title-padding-block);
     gap: var(--mobile-header-stack-gap);
     align-content: center;
+    transform: translateY(var(--mobile-header-title-shift-y));
   }
 
   .municipality-tabs-bar {
@@ -2006,6 +2021,7 @@
   .municipality-brand-copy h1 {
     font-size: var(--mobile-header-title-size);
     line-height: var(--mobile-header-title-line-height);
+    color: var(--mobile-header-title-color);
   }
 
   .municipality-account-toggle {

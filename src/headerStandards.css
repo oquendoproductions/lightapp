@@ -31,10 +31,25 @@
   --mobile-header-menu-size: 44px;
   --mobile-header-title-size: 16px;
   --mobile-header-title-line-height: 1.05;
+  --mobile-header-title-color: #102b46;
+  --mobile-header-title-padding-inline: 6px;
+  --mobile-header-title-padding-block: 0;
+  --mobile-header-title-shift-y: 0;
   --mobile-header-eyebrow-size: 10px;
   --mobile-header-stack-gap: 0;
+  --mobile-header-border: 1px solid rgba(23, 49, 79, 0.18);
   --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
   --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
+  --mobile-header-menu-border: 1px solid rgba(26, 49, 83, 0.22);
+  --mobile-header-menu-background: rgba(255, 255, 255, 0.92);
+  --mobile-header-menu-shadow: none;
+  --mobile-header-menu-text-color: #102b46;
+  --mobile-header-menu-text-size: 12px;
+  --mobile-header-menu-text-weight: 900;
+  --mobile-header-menu-line-width: 18px;
+  --mobile-header-menu-line-height: 2px;
+  --mobile-header-menu-line-gap: 4px;
+  --mobile-header-menu-line-color: #102b46;
 }
 
 .app-header-eyebrow {
