@@ -126,6 +126,17 @@ const LOCATION_ASSET_OWNERSHIP_OPTIONS = [
   { key: "third_party", label: "Third-Party" },
 ];
 
+const REPORT_DOMAIN_OPTIONS = [
+  { key: "potholes", label: "Potholes" },
+  { key: "water_drain_issues", label: "Water / Drain Issues" },
+  { key: "streetlights", label: "Streetlights" },
+  { key: "street_signs", label: "Street Signs" },
+  { key: "power_outage", label: "Power Outage" },
+  { key: "water_main", label: "Water Main" },
+];
+
+const DEFAULT_PUBLIC_REPORT_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
+
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
@@ -169,6 +180,71 @@ function normalizeHexDraft(value, fallback = "#e53935") {
 
 function trimOrEmpty(value) {
   return String(value || "").trim();
+}
+
+function normalizeReportDomainKey(value) {
+  const raw = trimOrEmpty(value).toLowerCase();
+  if (!raw) return "";
+  if (raw === "streetlights" || raw === "streetlight") return "streetlights";
+  if (raw === "street_signs" || raw === "street signs" || raw === "street_sign" || raw === "street sign" || raw === "signs") return "street_signs";
+  if (raw === "potholes" || raw === "pothole") return "potholes";
+  if (raw === "water_drain_issues" || raw === "water drain issues" || raw === "drain_issues" || raw === "drain issues" || raw === "storm_drain" || raw === "storm drain" || raw === "sewer") {
+    return "water_drain_issues";
+  }
+  if (raw === "power_outage" || raw === "power outage" || raw === "outage" || raw === "power") return "power_outage";
+  if (raw === "water_main" || raw === "water main" || raw === "water_main_break" || raw === "water main break") return "water_main";
+  return "";
+}
+
+function reportDomainLabel(domainKey) {
+  return REPORT_DOMAIN_OPTIONS.find((row) => row.key === normalizeReportDomainKey(domainKey))?.label
+    || trimOrEmpty(domainKey).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+    || "Report";
+}
+
+function reportDomainForRow(row, officialLightIds, officialSignIds) {
+  const lightId = trimOrEmpty(row?.light_id);
+  if (lightId.startsWith("potholes:")) return "potholes";
+  if (lightId.startsWith("water_drain_issues:")) return "water_drain_issues";
+  if (lightId.startsWith("street_signs:")) return "street_signs";
+  if (lightId.startsWith("power_outage:")) return "power_outage";
+  if (lightId.startsWith("water_main:")) return "water_main";
+  if (lightId && officialSignIds?.has?.(lightId)) return "street_signs";
+  if (lightId && officialLightIds?.has?.(lightId)) return "streetlights";
+
+  const explicit = normalizeReportDomainKey(row?.report_domain)
+    || normalizeReportDomainKey(row?.domain)
+    || normalizeReportDomainKey(row?.category);
+  if (explicit) return explicit;
+
+  const type = trimOrEmpty(row?.report_type || row?.type).toLowerCase();
+  if (!type) return "streetlights";
+  if (type.includes("sign")) return "street_signs";
+  if (type.includes("pothole")) return "potholes";
+  if (type.includes("sewer") || type.includes("storm_drain") || type.includes("drain")) return "water_drain_issues";
+  if (type.includes("water")) return "water_main";
+  if (type.includes("power")) return "power_outage";
+  return "streetlights";
+}
+
+function isOpenReportState(state) {
+  const key = trimOrEmpty(state).toLowerCase();
+  if (!key) return true;
+  return !["fixed", "archived", "likely_resolved", "closed", "resolved", "completed", "done", "operational"].includes(key);
+}
+
+function shortIncidentKey(value) {
+  const normalized = trimOrEmpty(value).replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!normalized) return "UNKNOWN";
+  if (normalized.length <= 10) return normalized;
+  return `${normalized.slice(0, 5)}${normalized.slice(-4)}`;
+}
+
+function summarizeReportIncidentLabel(row) {
+  const domainLabel = reportDomainLabel(row?.domain);
+  const reportNumber = trimOrEmpty(row?.latest_report_number);
+  if (reportNumber) return `${domainLabel} • ${reportNumber}`;
+  return `${domainLabel} Incident ${shortIncidentKey(row?.incident_id)}`;
 }
 
 function buildOrganizationProfileDraft(profile, fallbackName = "") {
@@ -621,6 +697,35 @@ function HomeCard({ title, children, subtitle, onTitleClick = null }) {
   );
 }
 
+function DomainReportFeed({ items, emptyText }) {
+  if (!items.length) return <div className="municipality-empty">{emptyText}</div>;
+  return (
+    <div className="municipality-item-list municipality-report-list">
+      {items.map((item) => (
+        <article key={`${item.domain}-${item.incident_id}`} className="municipality-feed-item municipality-report-item">
+          <div className="municipality-meta-row">
+            <span className="municipality-badge municipality-badge--info">{reportDomainLabel(item.domain)}</span>
+            <span className={statusBadgeClass(isOpenReportState(item.current_state) ? "published" : "archived")}>
+              {trimOrEmpty(item.current_state) || "reported"}
+            </span>
+            <span className="municipality-badge municipality-badge--draft">
+              {Number(item.report_count || 0)} report{Number(item.report_count || 0) === 1 ? "" : "s"}
+            </span>
+          </div>
+          <h4>{summarizeReportIncidentLabel(item)}</h4>
+          <p className="municipality-note">
+            First reported {formatDateTime(item.first_reported_at, { dateStyle: "medium", timeStyle: "short" })}
+            {" • "}
+            Latest activity {formatDateTime(item.latest_reported_at, { dateStyle: "medium", timeStyle: "short" })}
+          </p>
+          {item.latest_note ? <p>{item.latest_note}</p> : null}
+          <p className="municipality-note">Incident key: {item.incident_id}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = null, onEdit = null }) {
   if (!alerts.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
@@ -861,6 +966,7 @@ export default function MunicipalityApp() {
   const [preferencesByTopic, setPreferencesByTopic] = useState({});
   const [savedPreferencesByTopic, setSavedPreferencesByTopic] = useState({});
   const [dataLoading, setDataLoading] = useState(true);
+  const [reportActivityLoading, setReportActivityLoading] = useState(true);
   const [manageAccess, setManageAccess] = useState(false);
   const [manageLoading, setManageLoading] = useState(false);
   const [alertForm, setAlertForm] = useState(EMPTY_ALERT_FORM);
@@ -949,6 +1055,10 @@ export default function MunicipalityApp() {
     calendar: "",
     map: "",
   });
+  const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
+  const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
+  const [reportActivityRows, setReportActivityRows] = useState([]);
+  const [reportActivityStatus, setReportActivityStatus] = useState("");
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
@@ -1234,6 +1344,32 @@ export default function MunicipalityApp() {
     () => sortEvents(events.filter((event) => String(event?.status || "").trim().toLowerCase() === "published")),
     [events]
   );
+  const visibleReportDomains = useMemo(() => {
+    if (!tenantVisibilityLoaded) {
+      return REPORT_DOMAIN_OPTIONS.filter((row) => DEFAULT_PUBLIC_REPORT_DOMAINS.has(row.key));
+    }
+    const configuredPublicDomains = REPORT_DOMAIN_OPTIONS.filter((row) => trimOrEmpty(tenantVisibilityByDomain?.[row.key]).toLowerCase() === "public");
+    return configuredPublicDomains.length
+      ? configuredPublicDomains
+      : REPORT_DOMAIN_OPTIONS.filter((row) => DEFAULT_PUBLIC_REPORT_DOMAINS.has(row.key));
+  }, [tenantVisibilityByDomain, tenantVisibilityLoaded]);
+  const visibleReportDomainSet = useMemo(
+    () => new Set((visibleReportDomains || []).map((row) => row.key)),
+    [visibleReportDomains]
+  );
+  const reportActivitySummary = useMemo(() => {
+    return visibleReportDomains.map((domain) => {
+      const matchingRows = reportActivityRows.filter((row) => row.domain === domain.key);
+      return {
+        ...domain,
+        open_incidents: matchingRows.length,
+        total_reports: matchingRows.reduce((sum, row) => sum + Number(row?.report_count || 0), 0),
+        latest_activity_at: matchingRows[0]?.latest_reported_at || "",
+      };
+    });
+  }, [reportActivityRows, visibleReportDomains]);
+  const latestReportActivityAt = reportActivityRows[0]?.latest_reported_at || "";
+  const activeReportDomainCount = reportActivitySummary.filter((row) => Number(row?.open_incidents || 0) > 0).length;
   const permissionLabelLookup = useMemo(
     () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
     [permissionCatalog]
@@ -1389,6 +1525,199 @@ export default function MunicipalityApp() {
     setSettingsRolePermissionDraft(nextDraft);
     setSettingsRolePermissionDirty(false);
   }, [permissionCatalog, rolePermissionMap, selectedSettingsRoleKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTenantVisibilityConfig() {
+      if (!authReady) return;
+      const { data, error } = await supabase
+        .from("tenant_visibility_config")
+        .select("domain,visibility")
+        .eq("tenant_key", tenantKey);
+
+      if (cancelled) return;
+      if (error) {
+        if (!isPermissionError(error) && !isMissingRelationError(error)) {
+          console.warn("[municipality tenant_visibility_config]", error.message || error);
+        }
+        setTenantVisibilityByDomain({});
+        setTenantVisibilityLoaded(false);
+        return;
+      }
+
+      const nextVisibility = {};
+      for (const row of data || []) {
+        const key = normalizeReportDomainKey(row?.domain);
+        if (!key) continue;
+        nextVisibility[key] = trimOrEmpty(row?.visibility).toLowerCase();
+      }
+      setTenantVisibilityByDomain(nextVisibility);
+      setTenantVisibilityLoaded(true);
+    }
+
+    void loadTenantVisibilityConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, tenantKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadReportActivity() {
+      setReportActivityLoading(true);
+      setReportActivityStatus("");
+
+      const reportSelect = "id,created_at,report_type,note,light_id,report_number";
+      const potholeReportSelect = "id,pothole_id,note,report_number,created_at";
+
+      const [reportsResult, potholesResult, statesResult, officialLightsResult, officialSignsResult] = await Promise.allSettled([
+        (async () => {
+          const publicRes = await supabase
+            .from("reports_public")
+            .select(reportSelect)
+            .order("created_at", { ascending: false });
+          if (!publicRes.error) return publicRes;
+          return supabase
+            .from("reports")
+            .select(reportSelect)
+            .order("created_at", { ascending: false });
+        })(),
+        supabase
+          .from("pothole_reports")
+          .select(potholeReportSelect)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("incident_state_current")
+          .select("domain,incident_id,state,last_changed_at")
+          .order("last_changed_at", { ascending: false }),
+        supabase
+          .from("official_lights")
+          .select("id"),
+        supabase
+          .from("official_signs")
+          .select("id")
+          .eq("active", true),
+      ]);
+
+      if (cancelled) return;
+
+      const readSettledData = (result) => {
+        if (result.status !== "fulfilled") return { data: [], error: result.reason || null };
+        return { data: result.value?.data || [], error: result.value?.error || null };
+      };
+
+      const reportsRes = readSettledData(reportsResult);
+      const potholesRes = readSettledData(potholesResult);
+      const statesRes = readSettledData(statesResult);
+      const officialLightsRes = readSettledData(officialLightsResult);
+      const officialSignsRes = readSettledData(officialSignsResult);
+
+      const primaryError = reportsRes.error || potholesRes.error || statesRes.error;
+      if (primaryError && reportsRes.error && potholesRes.error) {
+        setReportActivityRows([]);
+        setReportActivityStatus(primaryError.message || "Could not load domain reports.");
+        setReportActivityLoading(false);
+        return;
+      }
+
+      const officialLightIds = new Set((officialLightsRes.data || []).map((row) => trimOrEmpty(row?.id)).filter(Boolean));
+      const officialSignIds = new Set((officialSignsRes.data || []).map((row) => trimOrEmpty(row?.id)).filter(Boolean));
+      const incidentStateByKey = new Map();
+
+      for (const row of statesRes.data || []) {
+        const domainKey = normalizeReportDomainKey(row?.domain);
+        const incidentId = trimOrEmpty(row?.incident_id);
+        if (!domainKey || !incidentId || !visibleReportDomainSet.has(domainKey)) continue;
+        incidentStateByKey.set(`${domainKey}::${incidentId}`, {
+          state: trimOrEmpty(row?.state),
+          last_changed_at: trimOrEmpty(row?.last_changed_at),
+        });
+      }
+
+      const detailRows = [];
+      for (const row of reportsRes.data || []) {
+        const domainKey = reportDomainForRow(row, officialLightIds, officialSignIds);
+        const incidentId = trimOrEmpty(row?.light_id);
+        if (!domainKey || !incidentId || !visibleReportDomainSet.has(domainKey)) continue;
+        const stateRow = incidentStateByKey.get(`${domainKey}::${incidentId}`) || null;
+        detailRows.push({
+          domain: domainKey,
+          incident_id: incidentId,
+          submitted_at: trimOrEmpty(row?.created_at),
+          report_number: trimOrEmpty(row?.report_number),
+          note: trimOrEmpty(row?.note),
+          current_state: trimOrEmpty(stateRow?.state) || "reported",
+          last_changed_at: trimOrEmpty(stateRow?.last_changed_at),
+        });
+      }
+
+      for (const row of potholesRes.data || []) {
+        const potholeId = trimOrEmpty(row?.pothole_id);
+        if (!potholeId || !visibleReportDomainSet.has("potholes")) continue;
+        const incidentId = `pothole:${potholeId}`;
+        const stateRow = incidentStateByKey.get(`potholes::${incidentId}`) || null;
+        detailRows.push({
+          domain: "potholes",
+          incident_id: incidentId,
+          submitted_at: trimOrEmpty(row?.created_at),
+          report_number: trimOrEmpty(row?.report_number),
+          note: trimOrEmpty(row?.note),
+          current_state: trimOrEmpty(stateRow?.state) || "reported",
+          last_changed_at: trimOrEmpty(stateRow?.last_changed_at),
+        });
+      }
+
+      detailRows.sort((a, b) => String(b?.submitted_at || "").localeCompare(String(a?.submitted_at || "")));
+
+      const grouped = new Map();
+      for (const row of detailRows) {
+        const key = `${row.domain}::${row.incident_id}`;
+        const existing = grouped.get(key);
+        if (!existing) {
+          grouped.set(key, {
+            domain: row.domain,
+            incident_id: row.incident_id,
+            current_state: row.current_state,
+            report_count: 1,
+            first_reported_at: row.submitted_at,
+            latest_reported_at: row.submitted_at,
+            latest_report_number: row.report_number,
+            latest_note: row.note,
+          });
+          continue;
+        }
+        existing.report_count += 1;
+        if (String(row.submitted_at || "") < String(existing.first_reported_at || "")) {
+          existing.first_reported_at = row.submitted_at;
+        }
+        if (String(row.submitted_at || "") > String(existing.latest_reported_at || "")) {
+          existing.latest_reported_at = row.submitted_at;
+          existing.latest_report_number = row.report_number;
+          existing.latest_note = row.note;
+        }
+        if (!existing.current_state && row.current_state) existing.current_state = row.current_state;
+      }
+
+      const nextIncidentRows = [...grouped.values()]
+        .filter((row) => isOpenReportState(row?.current_state))
+        .sort((a, b) => String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || "")));
+
+      setReportActivityRows(nextIncidentRows);
+      setReportActivityStatus(
+        reportsRes.error || potholesRes.error || statesRes.error
+          ? "Some report sources were unavailable, so this view is showing the report activity that could be loaded."
+          : ""
+      );
+      setReportActivityLoading(false);
+    }
+
+    void loadReportActivity();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, tenantKey, visibleReportDomainSet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2687,39 +3016,29 @@ export default function MunicipalityApp() {
   }
 
   function downloadActivityExport() {
-    const rows = [
-      ...alerts.map((alert) => [
-        "alert",
-        trimOrEmpty(alert?.title),
-        trimOrEmpty(alert?.status),
-        trimOrEmpty(alert?.topic_label || alert?.topic_key),
-        trimOrEmpty(alert?.severity),
-        trimOrEmpty(alert?.starts_at),
-        trimOrEmpty(alert?.ends_at),
-        trimOrEmpty(alert?.location_name),
-        trimOrEmpty(alert?.location_address),
-      ]),
-      ...events.map((eventRow) => [
-        "event",
-        trimOrEmpty(eventRow?.title),
-        trimOrEmpty(eventRow?.status),
-        trimOrEmpty(eventRow?.topic_label || eventRow?.topic_key),
-        eventRow?.all_day ? "all_day" : "scheduled",
-        trimOrEmpty(eventRow?.starts_at),
-        trimOrEmpty(eventRow?.ends_at),
-        trimOrEmpty(eventRow?.location_name),
-        trimOrEmpty(eventRow?.location_address),
-      ]),
-    ];
+    if (!reportActivityRows.length) {
+      setSettingsStatus("No active domain reports are available to export yet.");
+      return;
+    }
+    const rows = reportActivityRows.map((row) => [
+      reportDomainLabel(row?.domain),
+      trimOrEmpty(row?.incident_id),
+      trimOrEmpty(row?.current_state) || "reported",
+      String(Number(row?.report_count || 0)),
+      trimOrEmpty(row?.latest_report_number),
+      trimOrEmpty(row?.first_reported_at),
+      trimOrEmpty(row?.latest_reported_at),
+      trimOrEmpty(row?.latest_note),
+    ]);
     downloadTextFile(
-      `${tenantKey || "location"}-activity-export.csv`,
+      `${tenantKey || "location"}-domain-reports.csv`,
       buildCsvFile(
-        ["record_type", "title", "status", "topic", "priority_or_timing", "starts_at", "ends_at", "location_name", "location_address"],
+        ["domain", "incident_id", "state", "report_count", "latest_report_number", "first_reported_at", "latest_reported_at", "latest_note"],
         rows
       ),
       "text/csv;charset=utf-8"
     );
-    setSettingsStatus("Location activity export downloaded.");
+    setSettingsStatus("Domain reports export downloaded.");
   }
 
   function downloadRoleAccessExport() {
@@ -3418,7 +3737,6 @@ export default function MunicipalityApp() {
     );
   }
 
-  const currentPreferenceCount = Object.values(preferencesByTopic || {}).filter((entry) => entry?.in_app_enabled || entry?.email_enabled).length;
   const alertsCreateMode = routePath === "/alerts/create";
   const eventsCreateMode = routePath === "/events/create";
   const settingsRouteActive = String(routePath || "").startsWith("/settings");
@@ -3635,29 +3953,29 @@ export default function MunicipalityApp() {
         ) : null}
 
         {routePath === "/reports" ? (
-          <HomeCard title="Domain Reports" subtitle="Review domain activity for this location and export what your team needs.">
+          <HomeCard title="Domain Reports" subtitle="Review live reported incidents across the same map domains and reported items used in the reporting workspace.">
             <div className="municipality-admin-panel">
               <div className="municipality-detail-grid">
                 <div className="municipality-detail-item">
-                  <span>Published Alerts</span>
-                  <strong>{publishedAlerts.length}</strong>
+                  <span>Open Incidents</span>
+                  <strong>{reportActivityRows.length}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Published Events</span>
-                  <strong>{publishedEvents.length}</strong>
+                  <span>Visible Domains</span>
+                  <strong>{visibleReportDomains.length}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Enabled Topics</span>
-                  <strong>{topics.length}</strong>
+                  <span>Domains With Activity</span>
+                  <strong>{activeReportDomainCount}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Resident Preferences</span>
-                  <strong>{session?.user?.id ? currentPreferenceCount : 0}</strong>
+                  <span>Total Open Reports</span>
+                  <strong>{reportActivityRows.reduce((sum, row) => sum + Number(row?.report_count || 0), 0)}</strong>
                 </div>
               </div>
               <div className="municipality-actions">
                 <button type="button" className="municipality-button municipality-button--primary" onClick={downloadActivityExport}>
-                  Export Activity CSV
+                  Export Reports CSV
                 </button>
                 {manageAccess ? (
                   <button type="button" className="municipality-button municipality-button--ghost" onClick={downloadRoleAccessExport}>
@@ -3668,8 +3986,36 @@ export default function MunicipalityApp() {
                   Open Map
                 </button>
               </div>
-              <p className="municipality-note">This reports view mirrors the location activity summary side of the map reports flow while keeping exports and overview metrics in one place.</p>
+              {reportActivityStatus ? <p className={`municipality-inline-status${reportActivityStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{reportActivityStatus}</p> : null}
+              <p className="municipality-note">
+                {latestReportActivityAt
+                  ? `Latest reported activity was ${formatDateTime(latestReportActivityAt, { dateStyle: "medium", timeStyle: "short" })}.`
+                  : "This reports view stays aligned with the map by grouping reported items into domain incidents."}
+              </p>
             </div>
+            <div className="municipality-report-domain-grid">
+              {reportActivitySummary.map((domain) => (
+                <article key={domain.key} className="municipality-report-domain-card">
+                  <div className="municipality-meta-row">
+                    <span className="municipality-badge municipality-badge--info">{domain.label}</span>
+                  </div>
+                  <strong>{domain.open_incidents}</strong>
+                  <p>Open incident{domain.open_incidents === 1 ? "" : "s"}</p>
+                  <p className="municipality-note">{domain.total_reports} total report{domain.total_reports === 1 ? "" : "s"}</p>
+                  <p className="municipality-note">
+                    {domain.latest_activity_at
+                      ? `Latest activity ${formatDateTime(domain.latest_activity_at, { dateStyle: "medium", timeStyle: "short" })}`
+                      : "No active reported items right now."}
+                  </p>
+                </article>
+              ))}
+            </div>
+            {reportActivityLoading ? <div className="municipality-empty">Loading domain reports…</div> : (
+              <DomainReportFeed
+                items={reportActivityRows}
+                emptyText="No active domain reports are open right now."
+              />
+            )}
           </HomeCard>
         ) : null}
 
@@ -5094,14 +5440,14 @@ export default function MunicipalityApp() {
                                     id="map-border-color"
                                     type="color"
                                     value={sanitizeHexColor(mapAppearanceDraft.boundary_border_color, "#e53935")}
-                                    disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                    disabled={!mapAppearanceDraft.show_boundary_border}
                                     onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_color: event.target.value }))}
                                   />
                                   <input
                                     type="text"
                                     inputMode="text"
                                     value={mapAppearanceDraft.boundary_border_color}
-                                    disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                    disabled={!mapAppearanceDraft.show_boundary_border}
                                     onChange={(event) => setMapAppearanceDraft((prev) => ({ ...prev, boundary_border_color: event.target.value }))}
                                     onBlur={(event) => setMapAppearanceDraft((prev) => ({
                                       ...prev,
@@ -5118,7 +5464,7 @@ export default function MunicipalityApp() {
                                   type="text"
                                   inputMode="decimal"
                                   value={mapAppearanceDraft.boundary_border_width}
-                                  disabled={!Boolean(mapAppearanceDraft.show_boundary_border)}
+                                  disabled={!mapAppearanceDraft.show_boundary_border}
                                   onChange={(event) => {
                                     const nextValue = event.target.value;
                                     if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
@@ -5139,7 +5485,7 @@ export default function MunicipalityApp() {
                                   type="text"
                                   inputMode="decimal"
                                   value={mapAppearanceDraft.outside_shade_opacity}
-                                  disabled={!Boolean(mapAppearanceDraft.shade_outside_boundary)}
+                                  disabled={!mapAppearanceDraft.shade_outside_boundary}
                                   onChange={(event) => {
                                     const nextValue = event.target.value;
                                     if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {

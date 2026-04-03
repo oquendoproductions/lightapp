@@ -794,7 +794,15 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("button", { name: /edit pin/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /edit pin/i }));
     expect(await screen.findByLabelText(/^new pin$/i)).toBeInTheDocument();
-    expect(screen.getByText(/security checks controls live on the next page/i)).toBeInTheDocument();
+    expect(screen.queryByText(/enable pin checkpoints for my account/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/security checks decides which pcp actions will prompt for your pin/i)).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^new pin$/i), "1234");
+    await user.type(screen.getByLabelText(/confirm new pin/i), "1234");
+    await user.click(screen.getByRole("button", { name: /save pin/i }));
+
+    await screen.findByText(/security pin saved/i);
+    expect(screen.getByText("Configured")).toBeInTheDocument();
   });
 
   it("uses security checks only for PIN-required actions", async () => {

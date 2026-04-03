@@ -105,7 +105,6 @@ const DEFAULT_PLATFORM_SECURITY_PIN_DRAFT = {
   account_password: "",
   pin: "",
   confirm_pin: "",
-  enabled: false,
 };
 
 function readInitialControlPlaneRouteState() {
@@ -1365,7 +1364,7 @@ export default function PlatformAdminApp() {
   const [platformRoleDeleteLoading, setPlatformRoleDeleteLoading] = useState(false);
   const [platformSecuritySettingsDraft, setPlatformSecuritySettingsDraft] = useState(DEFAULT_PLATFORM_SECURITY_SETTINGS);
   const [platformSecurityPinDraft, setPlatformSecurityPinDraft] = useState(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
-  const [platformSecurityPinMeta, setPlatformSecurityPinMeta] = useState({ pin_hash: "", enabled: false });
+  const [platformSecurityPinMeta, setPlatformSecurityPinMeta] = useState({ pin_hash: "" });
   const [platformSecurityPinEditMode, setPlatformSecurityPinEditMode] = useState(false);
   const [showPlatformSecurityPin, setShowPlatformSecurityPin] = useState(false);
   const [showPlatformSecurityPinConfirm, setShowPlatformSecurityPinConfirm] = useState(false);
@@ -2154,7 +2153,7 @@ export default function PlatformAdminApp() {
     if (!sessionUserId || !canViewPlatformSecurity) {
       setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
       setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
-      setPlatformSecurityPinMeta({ pin_hash: "", enabled: false });
+      setPlatformSecurityPinMeta({ pin_hash: "" });
       setPlatformSecurityStatus("");
       return;
     }
@@ -2177,7 +2176,7 @@ export default function PlatformAdminApp() {
       if (isMissingRelationError(firstError)) {
         setPlatformSecuritySettingsDraft(DEFAULT_PLATFORM_SECURITY_SETTINGS);
         setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
-        setPlatformSecurityPinMeta({ pin_hash: "", enabled: false });
+        setPlatformSecurityPinMeta({ pin_hash: "" });
         setPlatformSecurityStatus("Security tables are not available yet. Run the latest migrations to enable PIN checkpoints.");
         return;
       }
@@ -2193,11 +2192,9 @@ export default function PlatformAdminApp() {
     });
     setPlatformSecurityPinDraft({
       ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
-      enabled: Boolean(pinResult.data?.pin_enabled),
     });
     setPlatformSecurityPinMeta({
       pin_hash: String(pinResult.data?.pin_hash || "").trim(),
-      enabled: Boolean(pinResult.data?.pin_enabled),
     });
     setPlatformSecurityStatus("");
   }, [canViewPlatformSecurity, sessionUserId]);
@@ -3265,19 +3262,15 @@ export default function PlatformAdminApp() {
     const accountPassword = String(platformSecurityPinDraft.account_password || "");
     const pin = String(platformSecurityPinDraft.pin || "").trim();
     const confirmPin = String(platformSecurityPinDraft.confirm_pin || "").trim();
-    const pinEnabled = Boolean(platformSecurityPinDraft.enabled);
     const existingPinHash = String(platformSecurityPinMeta.pin_hash || "").trim();
     const hasExistingPin = Boolean(existingPinHash);
-    const savingWithoutPin = !pinEnabled && !pin && !confirmPin;
-    if (!savingWithoutPin) {
-      if (!/^\d{4}$/.test(pin)) {
-        setPlatformSecurityStatus("Use a 4-digit PIN.");
-        return;
-      }
-      if (pin !== confirmPin) {
-        setPlatformSecurityStatus("PIN and confirmation do not match.");
-        return;
-      }
+    if (!/^\d{4}$/.test(pin)) {
+      setPlatformSecurityStatus("Use a 4-digit PIN.");
+      return;
+    }
+    if (pin !== confirmPin) {
+      setPlatformSecurityStatus("PIN and confirmation do not match.");
+      return;
     }
 
     if (hasExistingPin) {
@@ -3315,13 +3308,13 @@ export default function PlatformAdminApp() {
 
     setPlatformSecuritySaving((prev) => ({ ...prev, pin: true }));
     setPlatformSecurityStatus("");
-    const pin_hash = savingWithoutPin ? null : await hashSecurityPin(sessionUserId, pin);
+    const pin_hash = await hashSecurityPin(sessionUserId, pin);
     const { error } = await supabase
       .from("platform_user_security_profiles")
       .upsert([{
         user_id: sessionUserId,
         pin_hash,
-        pin_enabled: pinEnabled,
+        pin_enabled: true,
         updated_by: cleanOptional(sessionUserId),
       }], { onConflict: "user_id" });
     setPlatformSecuritySaving((prev) => ({ ...prev, pin: false }));
@@ -3332,26 +3325,22 @@ export default function PlatformAdminApp() {
 
     setPlatformSecurityPinDraft({
       ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
-      enabled: pinEnabled,
     });
-    setPlatformSecurityPinMeta({
-      pin_hash: String(pin_hash || "").trim(),
-      enabled: pinEnabled,
-    });
+    await loadPlatformSecurityConfig();
     setPlatformSecurityPinEditMode(false);
     setShowPlatformSecurityPin(false);
     setShowPlatformSecurityPinConfirm(false);
     setShowPlatformSecurityCurrentPin(false);
     setShowPlatformSecurityAccountPassword(false);
-    setPlatformSecurityStatus(pinEnabled ? "Security PIN saved." : "Security PIN disabled.");
+    setPlatformSecurityStatus("Security PIN saved.");
   }, [
     canManagePlatformSecurity,
     platformSecurityPinDraft.account_password,
     platformSecurityPinDraft.confirm_pin,
     platformSecurityPinDraft.current_pin,
-    platformSecurityPinDraft.enabled,
     platformSecurityPinDraft.pin,
     platformSecurityPinMeta.pin_hash,
+    loadPlatformSecurityConfig,
     sessionEmail,
     sessionUserId,
   ]);
@@ -6805,10 +6794,7 @@ export default function PlatformAdminApp() {
                           disabled={platformSecuritySaving.pin}
                           onClick={() => {
                             setPlatformSecurityPinEditMode(false);
-                            setPlatformSecurityPinDraft({
-                              ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
-                              enabled: Boolean(platformSecurityPinMeta.enabled),
-                            });
+                            setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
                             setShowPlatformSecurityPin(false);
                             setShowPlatformSecurityPinConfirm(false);
                             setShowPlatformSecurityCurrentPin(false);
@@ -6826,10 +6812,7 @@ export default function PlatformAdminApp() {
                         disabled={!canManagePlatformSecurity}
                         onClick={() => {
                           setPlatformSecurityPinEditMode(true);
-                          setPlatformSecurityPinDraft({
-                            ...DEFAULT_PLATFORM_SECURITY_PIN_DRAFT,
-                            enabled: Boolean(platformSecurityPinMeta.enabled),
-                          });
+                          setPlatformSecurityPinDraft(DEFAULT_PLATFORM_SECURITY_PIN_DRAFT);
                           setPlatformSecurityStatus("");
                         }}
                         title={canManagePlatformSecurity ? "Edit PIN" : "You need the Security edit permission"}
@@ -6841,9 +6824,9 @@ export default function PlatformAdminApp() {
                   {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
                   <div style={responsiveTwoColGrid}>
                     <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>Status</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>PIN Requirement</div>
                       <div style={{ fontSize: 16, fontWeight: 700, color: palette.navy900 }}>
-                        {platformSecurityPinMeta.enabled ? "Enabled" : "Disabled"}
+                        Controlled in Security Checks
                       </div>
                     </div>
                     <div style={{ ...metricCard, minHeight: 78, gap: 3, padding: 10 }}>
@@ -6855,15 +6838,6 @@ export default function PlatformAdminApp() {
                   </div>
                   {platformSecurityPinEditMode ? (
                     <>
-                      <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 700, color: palette.navy900 }}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(platformSecurityPinDraft.enabled)}
-                          onChange={(event) => setPlatformSecurityPinDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
-                          disabled={!canManagePlatformSecurity || platformSecuritySaving.pin}
-                        />
-                        Enable PIN checkpoints for my account
-                      </label>
                       <div style={{ display: "grid", gap: 10, gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(2, minmax(0, 1fr))" }}>
                         <label style={{ ...modalField, margin: 0 }}>
                           <span>New PIN</span>
@@ -7002,8 +6976,8 @@ export default function PlatformAdminApp() {
                       </div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                         {platformSecurityPinMeta.pin_hash
-                          ? "Enter your current PIN or your account password to confirm PIN changes. Security Checks controls live on the next page."
-                          : "Set your 4-digit PIN here. Security Checks controls live on the next page."}
+                          ? "Enter your current PIN or your account password to confirm PIN changes. Security Checks decides which PCP actions will prompt for your PIN."
+                          : "Set your 4-digit PIN here. Security Checks decides which PCP actions will prompt for your PIN."}
                       </div>
                     </>
                   ) : null}
