@@ -14709,6 +14709,14 @@ export default function App({ onBackToHub = null }) {
   );
 
   useEffect(() => {
+    if (!showMapAlertIcon) setAlertsWindowOpen(false);
+  }, [showMapAlertIcon]);
+
+  useEffect(() => {
+    if (!showMapEventIcon) setEventsWindowOpen(false);
+  }, [showMapEventIcon]);
+
+  useEffect(() => {
     if (!cityBoundaryViewport) {
       boundaryCameraSignatureRef.current = "";
       return;
@@ -23001,6 +23009,7 @@ async function insertReportWithFallback(payload) {
                   >
                     –
                   </button>
+                  {showMapAlertIcon ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -23053,11 +23062,13 @@ async function insertReportWithFallback(payload) {
                           fontWeight: 900,
                           lineHeight: 1,
                         }}
-                      >
-                        {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
-                      </span>
-                    ) : null}
+                    >
+                      {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
+                    </span>
+                  ) : null}
                   </button>
+                  ) : null}
+                  {showMapEventIcon ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -23110,11 +23121,12 @@ async function insertReportWithFallback(payload) {
                           fontWeight: 900,
                           lineHeight: 1,
                         }}
-                      >
-                        {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
-                      </span>
-                    ) : null}
+                    >
+                      {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
+                    </span>
+                  ) : null}
                   </button>
+                  ) : null}
                 </div>
 
                 <div
@@ -23829,6 +23841,7 @@ async function insertReportWithFallback(payload) {
                 >
                   –
                 </button>
+                {showMapAlertIcon ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -23881,11 +23894,13 @@ async function insertReportWithFallback(payload) {
                         fontWeight: 900,
                         lineHeight: 1,
                       }}
-                    >
-                      {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
-                    </span>
-                  ) : null}
+                  >
+                    {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
+                  </span>
+                ) : null}
                 </button>
+                ) : null}
+                {showMapEventIcon ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -23938,11 +23953,12 @@ async function insertReportWithFallback(payload) {
                         fontWeight: 900,
                         lineHeight: 1,
                       }}
-                    >
-                      {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
-                    </span>
-                  ) : null}
+                  >
+                    {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
+                  </span>
+                ) : null}
                 </button>
+                ) : null}
               </div>
               {isAggregatedReportingDomain && (
                 <div

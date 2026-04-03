@@ -948,6 +948,8 @@ function initialMapFeaturesForm() {
   return {
     show_boundary_border: true,
     shade_outside_boundary: true,
+    show_alert_icon: true,
+    show_event_icon: true,
     outside_shade_opacity: "0.42",
     boundary_border_color: "#e53935",
     boundary_border_width: "4",
@@ -959,6 +961,8 @@ function buildMapFeaturesForm(features) {
   return {
     show_boundary_border: features.show_boundary_border !== false,
     shade_outside_boundary: features.shade_outside_boundary !== false,
+    show_alert_icon: features.show_alert_icon !== false,
+    show_event_icon: features.show_event_icon !== false,
     outside_shade_opacity: String(Number.isFinite(Number(features.outside_shade_opacity)) ? Number(features.outside_shade_opacity) : 0.42),
     boundary_border_color: sanitizeHexColor(features.boundary_border_color, "#e53935"),
     boundary_border_width: String(Number.isFinite(Number(features.boundary_border_width)) ? Math.max(0.5, Math.min(8, Number(features.boundary_border_width))) : 4),
@@ -2618,7 +2622,7 @@ export default function PlatformAdminApp() {
     }
     const { data, error } = await supabase
       .from("tenant_map_features")
-      .select("tenant_key,show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width");
+      .select("tenant_key,show_boundary_border,shade_outside_boundary,show_alert_icon,show_event_icon,outside_shade_opacity,boundary_border_color,boundary_border_width");
     if (error) throw error;
     const next = {};
     for (const row of data || []) {
@@ -2631,6 +2635,8 @@ export default function PlatformAdminApp() {
       next[key] = {
         show_boundary_border: row?.show_boundary_border !== false,
         shade_outside_boundary: row?.shade_outside_boundary !== false,
+        show_alert_icon: row?.show_alert_icon !== false,
+        show_event_icon: row?.show_event_icon !== false,
         outside_shade_opacity: Number.isFinite(Number(row?.outside_shade_opacity))
           ? Number(row.outside_shade_opacity)
           : 0.42,
@@ -4831,6 +4837,8 @@ export default function PlatformAdminApp() {
       tenant_key: key,
       show_boundary_border: Boolean(mapFeaturesForm?.show_boundary_border),
       shade_outside_boundary: Boolean(mapFeaturesForm?.shade_outside_boundary),
+      show_alert_icon: Boolean(mapFeaturesForm?.show_alert_icon),
+      show_event_icon: Boolean(mapFeaturesForm?.show_event_icon),
       outside_shade_opacity: opacity,
       boundary_border_color: borderColor,
       boundary_border_width: borderWidth,
@@ -9312,8 +9320,8 @@ export default function PlatformAdminApp() {
                               padding: "4px 10px",
                               fontSize: 11.5,
                               fontWeight: 800,
-                              color: domainVisibilityForm[d.key] === "disabled" ? palette.textMuted : "#0f6e5c",
-                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(74,97,122,0.12)" : "rgba(18,128,106,0.12)",
+                              color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : "#0f6e5c",
+                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)",
                             }}>
                               {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
                             </span>
@@ -9578,6 +9586,24 @@ export default function PlatformAdminApp() {
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
                           />
                           Shade outside boundary
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.show_alert_icon)}
+                            disabled={mapFeaturesReadOnly}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_alert_icon: e.target.checked }))}
+                          />
+                          Show alert icon on map
+                        </label>
+                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.show_event_icon)}
+                            disabled={mapFeaturesReadOnly}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_event_icon: e.target.checked }))}
+                          />
+                          Show event icon on map
                         </label>
                         <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
                           <span>Outside shade opacity (0.0 - 1.0)</span>

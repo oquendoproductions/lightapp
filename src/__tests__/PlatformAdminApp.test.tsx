@@ -752,6 +752,8 @@ describe("PlatformAdminApp", () => {
 
     expect(screen.getByRole("button", { name: /save map features/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/show alert icon on map/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/show event icon on map/i)).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {
