@@ -7631,7 +7631,15 @@ export default function PlatformAdminApp() {
                   <div style={modalFooterActions}>
                     <button
                       type="button"
-                      style={{ ...buttonAlt, opacity: platformSecuritySaving.checks ? 0.7 : 1 }}
+                      style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                      onClick={() => void savePlatformSecurityChecks()}
+                      disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
+                    >
+                      {platformSecuritySaving.checks ? "Saving Checkpoints..." : "Save Security Checks"}
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...modalSecondaryButton, opacity: platformSecuritySaving.checks ? 0.7 : 1 }}
                       onClick={() => {
                         setPlatformSecuritySettingsDraft(platformSecuritySettingsSaved);
                         setPlatformSecurityChecksEditMode(false);
@@ -7640,14 +7648,6 @@ export default function PlatformAdminApp() {
                       disabled={platformSecuritySaving.checks}
                     >
                       Cancel
-                    </button>
-                    <button
-                      type="button"
-                      style={{ ...modalPrimaryButton, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
-                      onClick={() => void savePlatformSecurityChecks()}
-                      disabled={!canManagePlatformSecurity || platformSecuritySaving.checks}
-                    >
-                      {platformSecuritySaving.checks ? "Saving Checkpoints..." : "Save Security Checks"}
                     </button>
                   </div>
                 ) : null}
