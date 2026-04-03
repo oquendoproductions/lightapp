@@ -170,12 +170,27 @@ const STREET_SIGN_TYPE_ICON_SRC = {
   street_name: "/street_sign_icons/street_name_sign_icon.png",
   other: "/street_sign_icons/street_sign_domain_icon.png",
 };
+const RESIDENT_NOTIFICATION_TOPIC_DETAILS = {
+  emergency_alerts: { label: "Emergency Alerts", description: "Urgent citywide issues that need immediate attention.", default_enabled: false },
+  water_utility: { label: "Water + Utility", description: "Water breaks, utility outages, and infrastructure service notices.", default_enabled: false },
+  road_closures: { label: "Road Closures", description: "Closures, detours, and traffic-impacting maintenance work.", default_enabled: false },
+  street_maintenance: { label: "Street Maintenance", description: "Planned street, sidewalk, sign, and streetlight work.", default_enabled: false },
+  trash_recycling: { label: "Trash + Recycling", description: "Pickup changes, holiday schedules, and sanitation reminders.", default_enabled: false },
+  community_events: { label: "Community Events", description: "Parades, public meetings, and city-run civic events.", default_enabled: false },
+  general_updates: { label: "General City Updates", description: "General municipality notices that do not fit another topic.", default_enabled: false },
+};
 
 function defaultDomainIssueFor(domainKey) {
   const d = String(domainKey || "").trim().toLowerCase();
   if (d === "street_signs") return STREET_SIGN_ISSUE_OPTIONS[0].value;
   if (d === "water_drain_issues") return WATER_DRAIN_ISSUE_OPTIONS[0].value;
   return "other";
+}
+
+function isMissingRelationError(error) {
+  const code = String(error?.code || "").trim();
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -9830,8 +9845,10 @@ function AccountMenuPanel({
   onClose,
   onManage,
   onMyReports,
+  onNotificationPreferences,
   onLogout,
   variant = "modal",
+  containerRef = null,
 }) {
   if (!open) return null;
 
@@ -9878,6 +9895,9 @@ function AccountMenuPanel({
       <div style={{ display: "grid", gap: 10, marginTop: 6 }}>
         <button onClick={onManage} style={primaryActionButtonStyle}>
           Manage Account
+        </button>
+        <button onClick={onNotificationPreferences} style={actionButtonStyle}>
+          Notification Preferences
         </button>
         <button onClick={onMyReports} style={actionButtonStyle}>
           My Reports
@@ -9927,17 +9947,17 @@ function AccountMenuPanel({
     </>
   );
 
-  if (variant === "dropdown") {
+  if (variant === "desktop-popout") {
     return (
       <div
+        ref={containerRef}
         style={{
-          position: "absolute",
-          top: "calc(100% + 8px)",
-          right: 0,
-          left: "auto",
+          position: "fixed",
+          top: "calc(var(--desktop-header-height) + 8px)",
+          right: "var(--desktop-header-horizontal-padding)",
           width: "min(320px, calc(100vw - 32px))",
           maxWidth: "calc(100vw - 32px)",
-          zIndex: 35,
+          zIndex: 2600,
           pointerEvents: "auto",
         }}
         onClick={(event) => event.stopPropagation()}
@@ -10009,6 +10029,173 @@ function AccountMenuPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function NotificationPreferencesModal({
+  open,
+  onClose,
+  onSave,
+  topics,
+  preferencesByTopic,
+  updatePreferenceDraft,
+  saving,
+  loading,
+  status,
+}) {
+  const hasError = String(status || "").toLowerCase().includes("could not");
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10050}
+      panelStyle={{
+        width: "min(820px, 100%)",
+        maxHeight: "min(88vh, 900px)",
+        overflowY: "auto",
+        borderRadius: 24,
+        padding: 22,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+            Notification Preferences
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+            Events and alerts
+          </div>
+          <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+            Manage the same resident notification categories used in the hub. In-app and email are live now; web push is next.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 999,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            flex: "0 0 auto",
+          }}
+          aria-label="Close notification preferences"
+        >
+          ✕
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 13, opacity: 0.82 }}>Loading your notification preferences…</div>
+      ) : (
+        <div style={{ display: "grid", gap: 14 }}>
+          {topics.map((topic) => {
+            const current = preferencesByTopic?.[topic.topic_key] || {
+              in_app_enabled: Boolean(topic.default_enabled),
+              email_enabled: false,
+              web_push_enabled: false,
+            };
+            return (
+              <article
+                key={topic.topic_key}
+                style={{
+                  padding: 18,
+                  borderRadius: 20,
+                  border: "1px solid rgba(23, 49, 79, 0.08)",
+                  background: "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)",
+                  display: "grid",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "grid", gap: 6 }}>
+                  <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.2 }}>{topic.label}</h4>
+                  <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#58718a" }}>{topic.description}</p>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(current.in_app_enabled)}
+                      onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)}
+                    />
+                    In-app
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(current.email_enabled)}
+                      onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)}
+                    />
+                    Email
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(current.web_push_enabled)}
+                      disabled
+                      readOnly
+                    />
+                    Web push (next)
+                  </label>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {status ? (
+        <div
+          style={{
+            fontSize: 13,
+            lineHeight: 1.4,
+            color: hasError ? "#ffb4b4" : "var(--sl-ui-text)",
+            opacity: hasError ? 1 : 0.84,
+          }}
+        >
+          {status}
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 999,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving || loading}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 999,
+            border: "none",
+            background: "var(--sl-ui-brand-blue)",
+            color: "#fff",
+            fontWeight: 900,
+            cursor: saving || loading ? "not-allowed" : "pointer",
+            opacity: saving || loading ? 0.65 : 1,
+          }}
+        >
+          {saving ? "Saving…" : "Save Preferences"}
+        </button>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -10340,6 +10527,7 @@ export default function App({ onBackToHub = null }) {
   const tenant = useContext(TenantContext);
   const mapRef = useRef(null);
   const desktopAccountMenuAnchorRef = useRef(null);
+  const desktopAccountMenuPanelRef = useRef(null);
   const flyAnimRef = useRef(null);
   const flyInfoTimerRef = useRef(null);
   const officialCanvasOverlayRef = useRef(null);
@@ -10351,8 +10539,8 @@ export default function App({ onBackToHub = null }) {
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
-  const reportDeepLinkHandledRef = useRef(false);
   const boundaryCameraSignatureRef = useRef("");
+  const reportDeepLinkHandledRef = useRef(false);
   const isMobile = useIsMobile(640);
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -10373,6 +10561,10 @@ export default function App({ onBackToHub = null }) {
       .replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }, [tenant?.tenantConfig?.display_name, tenant?.tenantConfig?.name, tenant?.tenantKey]);
+  const notificationTopics = useMemo(
+    () => Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, value]) => ({ topic_key, ...value })),
+    []
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
@@ -11455,6 +11647,12 @@ export default function App({ onBackToHub = null }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
+  const [notificationPreferencesOpen, setNotificationPreferencesOpen] = useState(false);
+  const [notificationPreferencesByTopic, setNotificationPreferencesByTopic] = useState({});
+  const [savedNotificationPreferencesByTopic, setSavedNotificationPreferencesByTopic] = useState({});
+  const [notificationPreferencesLoading, setNotificationPreferencesLoading] = useState(false);
+  const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false);
+  const [notificationPreferencesStatus, setNotificationPreferencesStatus] = useState("");
 
   const handleAccountMenuToggle = useCallback((event) => {
     event?.preventDefault?.();
@@ -11473,8 +11671,10 @@ export default function App({ onBackToHub = null }) {
     if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
 
     const handlePointerDown = (event) => {
-      const root = desktopAccountMenuAnchorRef.current;
-      if (root && root.contains(event.target)) return;
+      const anchor = desktopAccountMenuAnchorRef.current;
+      const panel = desktopAccountMenuPanelRef.current;
+      if (anchor && anchor.contains(event.target)) return;
+      if (panel && panel.contains(event.target)) return;
       setAccountMenuOpen(false);
       setAccountView("menu");
     };
@@ -11492,6 +11692,103 @@ export default function App({ onBackToHub = null }) {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [accountMenuOpen, isMobile]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNotificationPreferences() {
+      if (!session?.user?.id) {
+        setNotificationPreferencesByTopic({});
+        setSavedNotificationPreferencesByTopic({});
+        setNotificationPreferencesLoading(false);
+        setNotificationPreferencesStatus("");
+        return;
+      }
+
+      setNotificationPreferencesLoading(true);
+      setNotificationPreferencesStatus("");
+      const { data, error } = await supabase
+        .from("resident_notification_preferences")
+        .select("topic_key,in_app_enabled,email_enabled,web_push_enabled")
+        .eq("tenant_key", activeTenantKey())
+        .eq("user_id", session.user.id);
+
+      if (cancelled) return;
+
+      if (error) {
+        setNotificationPreferencesLoading(false);
+        if (isMissingRelationError(error)) {
+          setNotificationPreferencesByTopic({});
+          setSavedNotificationPreferencesByTopic({});
+          return;
+        }
+        setNotificationPreferencesStatus(error.message || "Could not load your notification preferences.");
+        return;
+      }
+
+      const next = {};
+      for (const row of data || []) {
+        next[row.topic_key] = {
+          in_app_enabled: Boolean(row?.in_app_enabled),
+          email_enabled: Boolean(row?.email_enabled),
+          web_push_enabled: Boolean(row?.web_push_enabled),
+        };
+      }
+      setNotificationPreferencesByTopic(next);
+      setSavedNotificationPreferencesByTopic(next);
+      setNotificationPreferencesLoading(false);
+      setNotificationPreferencesStatus("");
+    }
+
+    void loadNotificationPreferences();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, tenant?.tenantKey]);
+
+  const updateNotificationPreferenceDraft = useCallback((topicKey, field, nextValue) => {
+    setNotificationPreferencesByTopic((prev) => ({
+      ...prev,
+      [topicKey]: {
+        in_app_enabled: prev?.[topicKey]?.in_app_enabled ?? Boolean(RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[topicKey]?.default_enabled),
+        email_enabled: prev?.[topicKey]?.email_enabled ?? false,
+        web_push_enabled: prev?.[topicKey]?.web_push_enabled ?? false,
+        [field]: nextValue,
+      },
+    }));
+  }, []);
+
+  const saveNotificationPreferences = useCallback(async () => {
+    if (!session?.user?.id) return;
+
+    setNotificationPreferencesSaving(true);
+    setNotificationPreferencesStatus("");
+    const rows = notificationTopics.map((topic) => {
+      const current = notificationPreferencesByTopic?.[topic.topic_key] || {};
+      return {
+        tenant_key: activeTenantKey(),
+        user_id: session.user.id,
+        topic_key: topic.topic_key,
+        in_app_enabled: current.in_app_enabled ?? Boolean(topic.default_enabled),
+        email_enabled: current.email_enabled ?? false,
+        web_push_enabled: current.web_push_enabled ?? false,
+      };
+    });
+
+    const { error } = await supabase
+      .from("resident_notification_preferences")
+      .upsert(rows, { onConflict: "tenant_key,user_id,topic_key" });
+
+    setNotificationPreferencesSaving(false);
+    if (error) {
+      setNotificationPreferencesStatus(error.message || "Could not save your notification preferences.");
+      return;
+    }
+
+    setSavedNotificationPreferencesByTopic(notificationPreferencesByTopic);
+    setNotificationPreferencesStatus("Notification preferences saved.");
+    setNotificationPreferencesOpen(false);
+  }, [notificationPreferencesByTopic, notificationTopics, session?.user?.id]);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageEditing, setManageEditing] = useState(false);
@@ -21787,6 +22084,22 @@ async function insertReportWithFallback(payload) {
         )}
       </div>
 
+      <NotificationPreferencesModal
+        open={notificationPreferencesOpen}
+        onClose={() => {
+          setNotificationPreferencesByTopic(savedNotificationPreferencesByTopic);
+          setNotificationPreferencesStatus("");
+          setNotificationPreferencesOpen(false);
+        }}
+        onSave={() => void saveNotificationPreferences()}
+        topics={notificationTopics}
+        preferencesByTopic={notificationPreferencesByTopic}
+        updatePreferenceDraft={updateNotificationPreferenceDraft}
+        saving={notificationPreferencesSaving}
+        loading={notificationPreferencesLoading}
+        status={notificationPreferencesStatus}
+      />
+
       {/* =========================
           Mobile UI overlays
          ========================= */}
@@ -21970,29 +22283,6 @@ async function insertReportWithFallback(payload) {
                     <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
                   </span>
                 </button>
-                <AccountMenuPanel
-                  open={accountMenuOpen}
-                  session={session}
-                  profile={profile}
-                  variant="dropdown"
-                  onClose={() => {
-                    setAccountMenuOpen(false);
-                    setAccountView("menu");
-                  }}
-                  onManage={() => {
-                    setAccountMenuOpen(false);
-                    setManageEditing(false);
-                    setManageOpen(true);
-                  }}
-                  onMyReports={() => {
-                    setAccountMenuOpen(false);
-                    openMyReports();
-                  }}
-                  onLogout={() => {
-                    signOut();
-                    setAccountMenuOpen(false);
-                  }}
-                />
               </div>
             </div>
           </div>
@@ -22217,6 +22507,36 @@ async function insertReportWithFallback(payload) {
             </div>
           </div>
         </div>
+
+        <AccountMenuPanel
+          open={accountMenuOpen && !isMobile}
+          session={session}
+          profile={profile}
+          variant="desktop-popout"
+          containerRef={desktopAccountMenuPanelRef}
+          onClose={() => {
+            setAccountMenuOpen(false);
+            setAccountView("menu");
+          }}
+          onManage={() => {
+            setAccountMenuOpen(false);
+            setManageEditing(false);
+            setManageOpen(true);
+          }}
+          onNotificationPreferences={() => {
+            setAccountMenuOpen(false);
+            setNotificationPreferencesStatus("");
+            setNotificationPreferencesOpen(true);
+          }}
+          onMyReports={() => {
+            setAccountMenuOpen(false);
+            openMyReports();
+          }}
+          onLogout={() => {
+            signOut();
+            setAccountMenuOpen(false);
+          }}
+        />
 
         {/* =========================
               Bulk Action Bar (desktop)
@@ -22567,6 +22887,11 @@ async function insertReportWithFallback(payload) {
                 setAccountMenuOpen(false);
                 setManageEditing(false);
                 setManageOpen(true);
+              }}
+              onNotificationPreferences={() => {
+                setAccountMenuOpen(false);
+                setNotificationPreferencesStatus("");
+                setNotificationPreferencesOpen(true);
               }}
               onMyReports={() => {
                 setAccountMenuOpen(false);
