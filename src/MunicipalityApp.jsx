@@ -15,6 +15,7 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
+import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
 import "./headerStandards.css";
 import "./municipality-app.css";
 
@@ -474,10 +475,6 @@ function buildOrganizationProfileDraft(profile, fallbackName = "") {
     mailing_zip: trimOrEmpty(profile?.mailing_zip),
     timezone: trimOrEmpty(profile?.timezone) || "America/New_York",
   };
-}
-
-function resolveOrganizationDisplayName(profile, fallbackName = "") {
-  return trimOrEmpty(profile?.display_name) || trimOrEmpty(fallbackName);
 }
 
 function buildMapAppearanceDraft(row) {
@@ -1742,7 +1739,11 @@ export default function MunicipalityApp() {
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
   const [organizationProfile, setOrganizationProfile] = useState(null);
-  const organizationDisplayName = resolveOrganizationDisplayName(organizationProfile, tenantName) || tenantName;
+  const organizationDisplayName = resolveHeaderDisplayName({
+    organizationProfile,
+    tenantConfig: tenant?.tenantConfig,
+    tenantKey,
+  });
   const [organizationProfileDraft, setOrganizationProfileDraft] = useState(() => buildOrganizationProfileDraft(null, tenantName));
   const [mapAppearance, setMapAppearance] = useState(null);
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));

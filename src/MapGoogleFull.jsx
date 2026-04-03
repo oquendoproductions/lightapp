@@ -11,6 +11,7 @@ import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthSt
 import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } from "./auth/loginFieldStandards";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
+import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
@@ -11053,26 +11054,62 @@ export default function App({ onBackToHub = null }) {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
+  const [headerOrganizationProfile, setHeaderOrganizationProfile] = useState(null);
   const [titleLogoError, setTitleLogoError] = useState(false);
   const [googleMapsAuthError, setGoogleMapsAuthError] = useState("");
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
   const mobileTitleLogoSrc = MOBILE_TITLE_LOGO_SRC;
-  const organizationName = useMemo(() => {
-    const explicit = String(tenant?.tenantConfig?.display_name || tenant?.tenantConfig?.name || "").trim();
-    if (explicit) return explicit;
-
-    const tenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim();
-    if (!tenantKey) return "Municipality";
-    return tenantKey
-      .replace(/[-_]+/g, " ")
-      .replace(/\b\w/g, (char) => char.toUpperCase());
-  }, [tenant?.tenantConfig?.display_name, tenant?.tenantConfig?.name, tenant?.tenantKey]);
+  const headerTenantKey = useMemo(() => String(tenant?.tenantKey || activeTenantKey() || "").trim(), [tenant?.tenantKey]);
+  const organizationDisplayName = useMemo(
+    () =>
+      resolveHeaderDisplayName({
+        organizationProfile: headerOrganizationProfile,
+        tenantConfig: tenant?.tenantConfig,
+        tenantKey: headerTenantKey,
+      }),
+    [headerOrganizationProfile, headerTenantKey, tenant?.tenantConfig]
+  );
   const notificationTopics = useMemo(
     () => Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, value]) => ({ topic_key, ...value })),
     []
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHeaderOrganizationProfile() {
+      if (!headerTenantKey) {
+        setHeaderOrganizationProfile(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("tenant_profiles")
+        .select("display_name")
+        .eq("tenant_key", headerTenantKey)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        if (isMissingRelationError(error)) {
+          setHeaderOrganizationProfile(null);
+          return;
+        }
+        setHeaderOrganizationProfile(null);
+        return;
+      }
+
+      setHeaderOrganizationProfile(data || null);
+    }
+
+    void loadHeaderOrganizationProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [headerTenantKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
@@ -22892,7 +22929,7 @@ async function insertReportWithFallback(payload) {
                     color: "#102b46",
                   }}
                 >
-                  {organizationName}
+                  {organizationDisplayName}
                 </h1>
               </div>
 
@@ -23699,7 +23736,7 @@ async function insertReportWithFallback(payload) {
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
-                <h1 className="app-mobile-header-title">{organizationName}</h1>
+                <h1 className="app-mobile-header-title">{organizationDisplayName}</h1>
               </div>
 
               <div
