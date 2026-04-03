@@ -98,6 +98,11 @@ const DEFAULT_PLATFORM_SECURITY_SETTINGS = {
   require_pin_for_team_changes: false,
   require_pin_for_account_changes: false,
   require_pin_for_report_state_changes: false,
+  require_pin_for_organization_info_changes: false,
+  require_pin_for_contact_changes: false,
+  require_pin_for_organization_user_changes: false,
+  require_pin_for_organization_role_changes: false,
+  require_pin_for_domain_settings_changes: false,
 };
 
 const DEFAULT_PLATFORM_SECURITY_PIN_DRAFT = {
@@ -2172,7 +2177,7 @@ export default function PlatformAdminApp() {
     const [settingsResult, pinResult] = await Promise.all([
       supabase
         .from("platform_security_settings")
-        .select("config_key,require_pin_for_role_changes,require_pin_for_team_changes,require_pin_for_account_changes,require_pin_for_report_state_changes")
+        .select("config_key,require_pin_for_role_changes,require_pin_for_team_changes,require_pin_for_account_changes,require_pin_for_report_state_changes,require_pin_for_organization_info_changes,require_pin_for_contact_changes,require_pin_for_organization_user_changes,require_pin_for_organization_role_changes,require_pin_for_domain_settings_changes")
         .eq("config_key", "default")
         .maybeSingle(),
       supabase
@@ -2189,6 +2194,11 @@ export default function PlatformAdminApp() {
         require_pin_for_team_changes: Boolean(settingsResult.data?.require_pin_for_team_changes),
         require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
         require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
+        require_pin_for_organization_info_changes: Boolean(settingsResult.data?.require_pin_for_organization_info_changes),
+        require_pin_for_contact_changes: Boolean(settingsResult.data?.require_pin_for_contact_changes),
+        require_pin_for_organization_user_changes: Boolean(settingsResult.data?.require_pin_for_organization_user_changes),
+        require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
+        require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
       },
       pin_hash: String(pinResult.data?.pin_hash || "").trim(),
       error: firstError || null,
@@ -3666,6 +3676,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, users: "First name, last name, email, and role are required." }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to create or assign an organization user.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, users: message })),
+    });
+    if (!checkpointApproved) return;
 
     const { data, error } = await invokePlatformUserAdmin({
       action: "invite_and_assign",
@@ -3710,7 +3727,7 @@ export default function PlatformAdminApp() {
     }));
     setTenantUsersManagementView("list");
     await refreshControlPlaneData();
-  }, [canManageTenantUsers, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData]);
+  }, [canManageTenantUsers, selectedTenantKey, assignForm.role, assignableTenantRoles, inviteForm, invokePlatformUserAdmin, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4158,7 +4175,7 @@ export default function PlatformAdminApp() {
     }
   }, [activeTab]);
 
-  const persistTenantRecord = useCallback(async ({ tenantKeyOverride } = {}) => {
+  const persistTenantRecord = useCallback(async ({ tenantKeyOverride, checkpointSettingKey = "", checkpointDescription = "" } = {}) => {
     if (!canEditTenantSetup) {
       setStatus((prev) => ({ ...prev, tenant: "You need the Organizations edit permission to create or modify organization records." }));
       return { ok: false, tenantKey: "" };
@@ -4185,6 +4202,17 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, tenant: "Tenant key, name, and primary subdomain are required." }));
       return { ok: false, tenantKey: "" };
     }
+    if (checkpointSettingKey) {
+      const checkpointApproved = await requirePlatformSecurityCheckpoint({
+        settingKey: checkpointSettingKey,
+        title: "Enter Security PIN",
+        description: checkpointDescription || "Enter your PIN to save organization information changes.",
+        onBlocked: (message) => setStatus((prev) => ({ ...prev, tenant: message })),
+      });
+      if (!checkpointApproved) {
+        return { ok: false, tenantKey: payload.tenant_key };
+      }
+    }
 
     const { error } = await supabase.from("tenants").upsert([payload], { onConflict: "tenant_key" });
     if (error) {
@@ -4208,9 +4236,9 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, tenant: `Saved tenant ${payload.tenant_key}.` }));
     return { ok: true, tenantKey: payload.tenant_key };
-  }, [canEditTenantSetup, entryStep, selectedTenantKey, tenantForm, logAudit]);
+  }, [canEditTenantSetup, entryStep, requirePlatformSecurityCheckpoint, selectedTenantKey, tenantForm, logAudit]);
 
-  const persistTenantProfileRecord = useCallback(async ({ tenantKeyOverride, profileFormOverride } = {}) => {
+  const persistTenantProfileRecord = useCallback(async ({ tenantKeyOverride, profileFormOverride, checkpointSettingKey = "", checkpointDescription = "" } = {}) => {
     const key = tenantKeyOverride
       ? sanitizeTenantKey(tenantKeyOverride)
       : entryStep === "add"
@@ -4235,6 +4263,15 @@ export default function PlatformAdminApp() {
     if (!String(profileDraft.contact_primary_email || "").trim()) {
       setStatus((prev) => ({ ...prev, profile: "Primary contact email is required." }));
       return { ok: false };
+    }
+    if (checkpointSettingKey) {
+      const checkpointApproved = await requirePlatformSecurityCheckpoint({
+        settingKey: checkpointSettingKey,
+        title: "Enter Security PIN",
+        description: checkpointDescription || "Enter your PIN to save organization changes.",
+        onBlocked: (message) => setStatus((prev) => ({ ...prev, profile: message })),
+      });
+      if (!checkpointApproved) return { ok: false };
     }
 
     const additionalContacts = normalizeAdditionalContacts(profileDraft.additional_contacts);
@@ -4294,11 +4331,14 @@ export default function PlatformAdminApp() {
 
     setStatus((prev) => ({ ...prev, profile: `Saved intake profile for ${key}.` }));
     return { ok: true, tenantKey: key };
-  }, [canEditTenantSetup, entryStep, profileForm, selectedTenantKey, tenantForm.tenant_key, logAudit]);
+  }, [canEditTenantSetup, entryStep, profileForm, requirePlatformSecurityCheckpoint, selectedTenantKey, tenantForm.tenant_key, logAudit]);
 
   const saveTenant = useCallback(async (event) => {
     event.preventDefault();
-    const result = await persistTenantRecord();
+    const result = await persistTenantRecord({
+      checkpointSettingKey: entryStep === "tenant" ? "require_pin_for_organization_info_changes" : "",
+      checkpointDescription: "Enter your PIN to save organization information changes.",
+    });
     if (!result.ok) return;
     if (entryStep === "add") {
       setTenantForm(initialTenantForm());
@@ -4340,14 +4380,21 @@ export default function PlatformAdminApp() {
 
   const saveTenantProfile = useCallback(async (event) => {
     event.preventDefault();
-    const result = await persistTenantProfileRecord();
+    const result = await persistTenantProfileRecord({
+      checkpointSettingKey: entryStep === "tenant" ? "require_pin_for_organization_info_changes" : "",
+      checkpointDescription: "Enter your PIN to save organization information changes.",
+    });
     if (!result.ok) return;
     setIsEditingProfile(false);
     await refreshControlPlaneData();
-  }, [persistTenantProfileRecord, refreshControlPlaneData]);
+  }, [entryStep, persistTenantProfileRecord, refreshControlPlaneData]);
 
   const saveContactsProfile = useCallback(async ({ profileFormOverride } = {}) => {
-    const result = await persistTenantProfileRecord({ profileFormOverride });
+    const result = await persistTenantProfileRecord({
+      profileFormOverride,
+      checkpointSettingKey: entryStep === "tenant" ? "require_pin_for_contact_changes" : "",
+      checkpointDescription: "Enter your PIN to save points of contact changes.",
+    });
     if (!result.ok) return false;
     setIsEditingProfile(false);
     setEditingPrimaryContact(false);
@@ -4358,7 +4405,7 @@ export default function PlatformAdminApp() {
     setContactDeleteLoading(false);
     await refreshControlPlaneData();
     return true;
-  }, [persistTenantProfileRecord, refreshControlPlaneData]);
+  }, [entryStep, persistTenantProfileRecord, refreshControlPlaneData]);
 
   const addAdditionalContactFromContactsPage = useCallback(() => {
     if (!canEditTenantSetup) return;
@@ -4539,6 +4586,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, domains: "Select a tenant first." }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to save domain and asset settings.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, domains: message })),
+    });
+    if (!checkpointApproved) return;
 
     const visibilityRows = DOMAIN_OPTIONS.map((d) => ({
       tenant_key: key,
@@ -4605,7 +4659,7 @@ export default function PlatformAdminApp() {
       setEditingDomainSnapshot((current) => current?.key === options.closeEditingDomain ? null : current);
     }
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, mapFeaturesForm, sessionUserId, logAudit, refreshControlPlaneData]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, mapFeaturesForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -4625,6 +4679,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, users: "Select a valid tenant role." }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to assign an organization user role.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, users: message })),
+    });
+    if (!checkpointApproved) return;
 
     const { error } = await supabase
       .from("tenant_user_roles")
@@ -4647,7 +4708,7 @@ export default function PlatformAdminApp() {
     setAssignForm((prev) => ({ ...prev, tenant_key: "", user_id: "", role }));
     setTenantUsersManagementView("list");
     await refreshControlPlaneData();
-  }, [canManageTenantUsers, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canManageTenantUsers, assignForm, assignableTenantRoles, selectedTenantKey, logAudit, refreshControlPlaneData, formatKnownUserLabel, requirePlatformSecurityCheckpoint]);
 
   const removeTenantAdmin = useCallback(async (row) => {
     if (!canDeleteTenantUsers) {
@@ -4658,6 +4719,13 @@ export default function PlatformAdminApp() {
     const user_id = String(row?.user_id || "").trim();
     const role = String(row?.role || "").trim().toLowerCase();
     if (!tenant_key || !user_id || !role) return;
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to remove an organization user role.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, users: message })),
+    });
+    if (!checkpointApproved) return;
 
     const { error } = await supabase
       .from("tenant_user_roles")
@@ -4681,7 +4749,7 @@ export default function PlatformAdminApp() {
     const personLabel = formatKnownUserLabel(user_id);
     setStatus((prev) => ({ ...prev, users: `Removed ${roleKeyToLabel(role)} from ${personLabel}.` }));
     await refreshControlPlaneData();
-  }, [canDeleteTenantUsers, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canDeleteTenantUsers, logAudit, refreshControlPlaneData, formatKnownUserLabel, requirePlatformSecurityCheckpoint]);
 
   const saveTenantAdminRoleEdit = useCallback(async (row) => {
     if (!canManageTenantUsers) {
@@ -4703,6 +4771,13 @@ export default function PlatformAdminApp() {
       setEditingAssignmentRole("");
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to change an organization user role.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, users: message })),
+    });
+    if (!checkpointApproved) return;
 
     const { error: deleteError } = await supabase
       .from("tenant_user_roles")
@@ -4739,7 +4814,7 @@ export default function PlatformAdminApp() {
     setEditingAssignmentRole("");
     setStatus((prev) => ({ ...prev, users: `Updated ${personLabel} to ${roleKeyToLabel(nextRole)}.` }));
     await refreshControlPlaneData();
-  }, [canManageTenantUsers, editingAssignmentRole, logAudit, refreshControlPlaneData, formatKnownUserLabel]);
+  }, [canManageTenantUsers, editingAssignmentRole, logAudit, refreshControlPlaneData, formatKnownUserLabel, requirePlatformSecurityCheckpoint]);
 
   const createTenantRole = useCallback(async (event) => {
     event.preventDefault();
@@ -4763,6 +4838,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, roles: `Role ${role} already exists for ${tenant_key}.` }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to create an organization role.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, roles: message })),
+    });
+    if (!checkpointApproved) return;
 
     const { error: roleInsertError } = await supabase
       .from("tenant_role_definitions")
@@ -4808,7 +4890,7 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, roles: `Created role ${role} for ${tenant_key}.` }));
     setTenantRoleManagementView("list");
     await loadTenantRoleConfig(tenant_key);
-  }, [canManageTenantRoles, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig]);
+  }, [canManageTenantRoles, selectedTenantKey, roleForm, sortedTenantRoleDefinitions, sessionUserId, logAudit, loadTenantRoleConfig, requirePlatformSecurityCheckpoint]);
 
   const removeTenantRole = useCallback(async (row) => {
     if (!canDeleteTenantRoles) {
@@ -4827,6 +4909,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, roles: `Remove or reassign ${assignmentCount} user assignment(s) for ${role} before deleting it.` }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to delete an organization role.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, roles: message })),
+    });
+    if (!checkpointApproved) return;
 
     setTenantRoleDeleteLoading(true);
     try {
@@ -4856,7 +4945,7 @@ export default function PlatformAdminApp() {
     } finally {
       setTenantRoleDeleteLoading(false);
     }
-  }, [canDeleteTenantRoles, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins]);
+  }, [canDeleteTenantRoles, selectedTenantKey, tenantRoleAssignmentCounts, logAudit, loadTenantRoleConfig, loadTenantAdmins, requirePlatformSecurityCheckpoint]);
 
   const saveRolePermissions = useCallback(async () => {
     if (!canManageTenantRoles) {
@@ -4869,6 +4958,13 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, roles: "Select a tenant role first." }));
       return;
     }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_role_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to save organization role permissions.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, roles: message })),
+    });
+    if (!checkpointApproved) return;
 
     const rows = DEFAULT_TENANT_PERMISSION_KEYS.map((permission_key) => ({
       tenant_key,
@@ -4898,7 +4994,7 @@ export default function PlatformAdminApp() {
     setRolePermissionDirty(false);
     setStatus((prev) => ({ ...prev, roles: `Saved permissions for ${role}.` }));
     await loadTenantRoleConfig(tenant_key);
-  }, [canManageTenantRoles, selectedTenantKey, selectedRoleKey, rolePermissionDraft, sessionUserId, logAudit, loadTenantRoleConfig]);
+  }, [canManageTenantRoles, selectedTenantKey, selectedRoleKey, rolePermissionDraft, sessionUserId, logAudit, loadTenantRoleConfig, requirePlatformSecurityCheckpoint]);
 
   const applyBoundaryPayloadToTenant = useCallback(async ({ tenantKey, boundaryGeoJson, sourceLabel }) => {
     if (!canEditTenantDomains) return { ok: false, error: "You need the Domains edit permission to update organization boundaries." };
@@ -7488,6 +7584,11 @@ export default function PlatformAdminApp() {
                     ["require_pin_for_team_changes", "Require PIN for team access changes", "Protect platform team assignments and removals."],
                     ["require_pin_for_account_changes", "Require PIN for account changes", "Protect profile updates and password changes."],
                     ["require_pin_for_report_state_changes", "Require PIN for report-state changes", "Protect sensitive report and lead state updates."],
+                    ["require_pin_for_organization_info_changes", "Require PIN for organization info changes", "Protect organization details, setup updates, and other core organization information changes."],
+                    ["require_pin_for_contact_changes", "Require PIN for points of contact changes", "Protect primary and additional organization contact updates."],
+                    ["require_pin_for_organization_user_changes", "Require PIN for organization user and admin changes", "Protect organization user invitations, role edits, assignments, and removals."],
+                    ["require_pin_for_organization_role_changes", "Require PIN for organization role and permission changes", "Protect organization role creation, permission edits, and role removal."],
+                    ["require_pin_for_domain_settings_changes", "Require PIN for domain and asset settings changes", "Protect domain type updates, notification routing, map settings, and domain asset configuration."],
                   ].map(([key, label, note]) => (
                     <label key={key} style={{ ...subPanel, display: "flex", alignItems: "start", gap: 12 }}>
                       <input

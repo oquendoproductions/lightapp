@@ -183,6 +183,11 @@ vi.mock("../supabaseClient", () => {
         require_pin_for_team_changes: false,
         require_pin_for_account_changes: false,
         require_pin_for_report_state_changes: false,
+        require_pin_for_organization_info_changes: false,
+        require_pin_for_contact_changes: false,
+        require_pin_for_organization_user_changes: false,
+        require_pin_for_organization_role_changes: false,
+        require_pin_for_domain_settings_changes: false,
       },
     ],
     platform_user_security_profiles: [],
@@ -244,6 +249,11 @@ vi.mock("../supabaseClient", () => {
       require_pin_for_team_changes: false,
       require_pin_for_account_changes: false,
       require_pin_for_report_state_changes: false,
+      require_pin_for_organization_info_changes: false,
+      require_pin_for_contact_changes: false,
+      require_pin_for_organization_user_changes: false,
+      require_pin_for_organization_role_changes: false,
+      require_pin_for_domain_settings_changes: false,
       ...checks,
     }];
     data.platform_user_security_profiles = pin
@@ -869,6 +879,38 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("heading", { name: /security checkpoints/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /your security pin/i })).not.toBeInTheDocument();
     expect(screen.getByText(/pin setup and pin changes live under account info/i)).toBeInTheDocument();
+    expect(screen.getByText(/require pin for organization info changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/require pin for points of contact changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/require pin for organization user and admin changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/require pin for organization role and permission changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/require pin for domain and asset settings changes/i)).toBeInTheDocument();
+  });
+
+  it("requires a PIN before changing organization user roles when tenant checkpoints are enabled", async () => {
+    await mockState.configurePlatformSecurity({
+      checks: { require_pin_for_organization_user_changes: true },
+      pin: "1234",
+    });
+
+    const { user } = await openUsersAndAdmins();
+
+    const assignmentCell = await screen.findByText("Jordan Rivera", { selector: "td" });
+    const assignmentRow = assignmentCell.closest("tr");
+    expect(assignmentRow).not.toBeNull();
+
+    await user.click(within(assignmentRow as HTMLTableRowElement).getByRole("button", { name: /^edit$/i }));
+    await user.selectOptions(within(assignmentRow as HTMLTableRowElement).getByRole("combobox"), "tenant_admin");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await screen.findByRole("heading", { name: /enter security pin/i });
+    await user.type(screen.getByLabelText(/^security pin$/i), "1234");
+    await user.click(screen.getByRole("button", { name: /confirm pin/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText((_, node) => String(node?.textContent || "").includes("Updated Jordan Rivera to Organization Admin.")).length
+      ).toBeGreaterThan(0);
+    });
   });
 
   it("walks through add tenant as a step-by-step wizard", async () => {
