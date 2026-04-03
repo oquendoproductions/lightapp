@@ -1655,6 +1655,123 @@
   margin-top: 4px;
 }
 
+.municipality-report-results {
+  display: grid;
+  gap: 14px;
+}
+
+.municipality-report-mobile-sort,
+.municipality-report-mobile-list {
+  display: none;
+}
+
+.municipality-report-mobile-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(23, 49, 79, 0.12);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.municipality-report-mobile-incident {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #17314f;
+  font: inherit;
+  font-size: 1.08rem;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.municipality-report-mobile-fields,
+.municipality-report-mobile-expanded {
+  display: grid;
+  gap: 10px;
+}
+
+.municipality-report-mobile-field {
+  color: #17314f;
+  line-height: 1.5;
+}
+
+.municipality-report-mobile-field strong {
+  font-weight: 900;
+}
+
+.municipality-report-mobile-actions {
+  justify-content: flex-start;
+}
+
+.municipality-asset-toggle {
+  min-width: 110px;
+  justify-content: center;
+}
+
+.municipality-permission-matrix {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.5fr) repeat(3, minmax(86px, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(23, 49, 79, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.municipality-permission-matrix-header,
+.municipality-permission-matrix-cell {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(23, 49, 79, 0.08);
+}
+
+.municipality-permission-matrix-header {
+  background: rgba(244, 249, 252, 0.92);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #61788f;
+}
+
+.municipality-permission-matrix-cell:not(.municipality-permission-matrix-cell--label) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.municipality-permission-matrix-cell--label {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.municipality-permission-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.municipality-permission-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #176d78;
+}
+
+.municipality-settings-list--modal {
+  max-height: min(320px, 42vh);
+  overflow: auto;
+}
+
+.municipality-auth-modal--team {
+  width: min(760px, calc(100vw - 24px));
+  max-height: min(88vh, 820px);
+  overflow: auto;
+}
+
 @media (max-width: 980px) {
   .municipality-hero,
   .municipality-section-grid,
@@ -1769,6 +1886,80 @@
     left: 0;
     right: auto;
     width: min(100vw - 40px, 360px);
+  }
+
+  .municipality-report-panel {
+    gap: 14px;
+  }
+
+  .municipality-report-domain-selector {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .municipality-report-domain-button {
+    min-width: 0;
+    padding: 16px 18px;
+    border-radius: 18px;
+    font-size: 1rem;
+  }
+
+  .municipality-report-search-input,
+  .municipality-report-date-trigger,
+  .municipality-report-toolbar-select {
+    min-height: 52px;
+    font-size: 1rem;
+  }
+
+  .municipality-report-toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .municipality-report-toolbar-actions .municipality-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .municipality-report-totals {
+    padding: 14px;
+    border-radius: 24px;
+  }
+
+  .municipality-report-totals .municipality-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .municipality-report-totals .municipality-detail-item {
+    min-height: 106px;
+    align-content: start;
+  }
+
+  .municipality-report-mobile-sort {
+    display: grid;
+    gap: 10px;
+  }
+
+  .municipality-report-table-shell--desktop {
+    display: none;
+  }
+
+  .municipality-report-mobile-list {
+    display: grid;
+    gap: 14px;
+  }
+
+  .municipality-report-table-button {
+    min-width: 104px;
+  }
+
+  .municipality-permission-matrix {
+    grid-template-columns: minmax(120px, 1.4fr) repeat(3, minmax(70px, 1fr));
+  }
+
+  .municipality-permission-matrix-header,
+  .municipality-permission-matrix-cell {
+    padding: 12px 10px;
   }
 
   .municipality-report-calendar-grid,
@@ -1933,5 +2124,9 @@
     width: min(100%, 520px);
     padding: 18px;
     border-radius: 24px;
+  }
+
+  .municipality-auth-modal--team {
+    width: min(100%, 640px);
   }
 }

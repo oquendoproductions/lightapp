@@ -267,6 +267,17 @@ function sortResidentEvents(rows = []) {
   });
 }
 
+function hasResidentCommunityEndPassed(value) {
+  if (!value) return false;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() < Date.now();
+}
+
+function shouldAutoArchiveResidentCommunityItem(row) {
+  return String(row?.status || "").trim().toLowerCase() === "published" && hasResidentCommunityEndPassed(row?.ends_at);
+}
+
 function countActivePublishedAlerts(alerts) {
   const now = Date.now();
   return (alerts || []).filter((alert) => {
@@ -12893,16 +12904,20 @@ export default function App({ onBackToHub = null }) {
     );
 
     setMapCommunityAlerts(
-      sortResidentAlerts((alertRes.data || []).map((alert) => ({
-        ...alert,
-        topic_label: topicLabelsByKey[alert.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[alert.topic_key]?.label || alert.topic_key,
-      })))
+      sortResidentAlerts((alertRes.data || [])
+        .filter((alert) => !shouldAutoArchiveResidentCommunityItem(alert))
+        .map((alert) => ({
+          ...alert,
+          topic_label: topicLabelsByKey[alert.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[alert.topic_key]?.label || alert.topic_key,
+        })))
     );
     setMapCommunityEvents(
-      sortResidentEvents((eventRes.data || []).map((event) => ({
-        ...event,
-        topic_label: topicLabelsByKey[event.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[event.topic_key]?.label || event.topic_key,
-      })))
+      sortResidentEvents((eventRes.data || [])
+        .filter((event) => !shouldAutoArchiveResidentCommunityItem(event))
+        .map((event) => ({
+          ...event,
+          topic_label: topicLabelsByKey[event.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[event.topic_key]?.label || event.topic_key,
+        })))
     );
     setMapCommunityFeedLoading(false);
   }, [authReady, resolvedCommunityFeedTenantKey, tenant?.ready]);
@@ -23725,26 +23740,30 @@ async function insertReportWithFallback(payload) {
                   alignContent: "center",
                   justifyItems: "center",
                   minWidth: 0,
+                  width: "100%",
                   paddingInline: 6,
+                  paddingBlock: 1,
                   textAlign: "center",
+                  transform: "translateY(-2px)",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
-                <span
+                <h1
                   style={{
+                    margin: 0,
                     fontSize: "var(--mobile-header-title-size)",
                     fontWeight: "var(--desktop-header-title-weight)",
                     color: "#102b46",
                     lineHeight: "var(--mobile-header-title-line-height)",
                     display: "block",
                     maxWidth: "100%",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    textWrap: "balance",
                   }}
                 >
                   {organizationName}
-                </span>
+                </h1>
               </div>
 
               </div>

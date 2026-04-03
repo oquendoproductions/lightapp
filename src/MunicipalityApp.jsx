@@ -163,6 +163,8 @@ const DEFAULT_TENANT_SECURITY_PIN_DRAFT = {
   confirm_pin: "",
 };
 
+const TENANT_SECURITY_SETTINGS_LOCAL_STORAGE_PREFIX = "cityreport:tenant-security-settings:";
+
 const TENANT_SECURITY_CHECKPOINT_OPTIONS = [
   {
     key: "require_pin_for_account_changes",
@@ -200,6 +202,76 @@ const TENANT_SECURITY_CHECKPOINT_OPTIONS = [
     note: "Protect map appearance updates and asset library changes.",
   },
 ];
+
+function normalizeTenantSecuritySettings(value) {
+  return {
+    require_pin_for_account_changes: Boolean(value?.require_pin_for_account_changes),
+    require_pin_for_report_state_changes: Boolean(value?.require_pin_for_report_state_changes),
+    require_pin_for_organization_info_changes: Boolean(value?.require_pin_for_organization_info_changes),
+    require_pin_for_contact_changes: Boolean(value?.require_pin_for_contact_changes),
+    require_pin_for_organization_user_changes: Boolean(value?.require_pin_for_organization_user_changes),
+    require_pin_for_organization_role_changes: Boolean(value?.require_pin_for_organization_role_changes),
+    require_pin_for_domain_settings_changes: Boolean(value?.require_pin_for_domain_settings_changes),
+  };
+}
+
+function tenantSecuritySettingsStorageKey(tenantKey) {
+  const normalizedTenantKey = trimOrEmpty(tenantKey).toLowerCase();
+  return normalizedTenantKey ? `${TENANT_SECURITY_SETTINGS_LOCAL_STORAGE_PREFIX}${normalizedTenantKey}` : "";
+}
+
+function readTenantSecuritySettingsFallback(tenantKey) {
+  if (typeof window === "undefined") return null;
+  const storageKey = tenantSecuritySettingsStorageKey(tenantKey);
+  if (!storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return normalizeTenantSecuritySettings(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeTenantSecuritySettingsFallback(tenantKey, settings) {
+  if (typeof window === "undefined") return;
+  const storageKey = tenantSecuritySettingsStorageKey(tenantKey);
+  if (!storageKey) return;
+  window.localStorage.setItem(storageKey, JSON.stringify(normalizeTenantSecuritySettings(settings)));
+}
+
+function hasDateTimePassed(value) {
+  if (!value) return false;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() < Date.now();
+}
+
+function shouldAutoArchiveCommunityItem(row) {
+  return trimOrEmpty(row?.status).toLowerCase() === "published" && hasDateTimePassed(row?.ends_at);
+}
+
+function normalizeCommunityItemStatus(row) {
+  if (shouldAutoArchiveCommunityItem(row)) return "archived";
+  return trimOrEmpty(row?.status).toLowerCase() || "draft";
+}
+
+function normalizeCommunityAlertRow(row, topicLabel = "") {
+  return {
+    ...row,
+    status: normalizeCommunityItemStatus(row),
+    topic_label: trimOrEmpty(topicLabel) || trimOrEmpty(row?.topic_label) || trimOrEmpty(row?.topic_key),
+  };
+}
+
+function normalizeCommunityEventRow(row, topicLabel = "") {
+  return {
+    ...row,
+    status: normalizeCommunityItemStatus(row),
+    topic_label: trimOrEmpty(topicLabel) || trimOrEmpty(row?.topic_label) || trimOrEmpty(row?.topic_key),
+  };
+}
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim().toUpperCase();
@@ -635,6 +707,23 @@ function formatDateRangeLabel(from, to) {
     year: "numeric",
   });
   return `${formatter.format(fromDate)} - ${formatter.format(toDate)}`;
+}
+
+function reportSortLabel(value) {
+  switch (trimOrEmpty(value)) {
+    case "recent_asc":
+      return "Least recently reported";
+    case "reports_desc":
+      return "Most reports";
+    case "reports_asc":
+      return "Fewest reports";
+    case "id_asc":
+      return "Incident ID (A-Z)";
+    case "id_desc":
+      return "Incident ID (Z-A)";
+    default:
+      return "Most recently reported";
+  }
 }
 
 function toDateTimeLocalValue(value) {
@@ -1150,125 +1239,226 @@ function MunicipalityReportTable({
 }) {
   if (!items.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
-    <div className="municipality-report-table-shell">
-      <table className="municipality-report-table">
-        <thead>
-          <tr>
-            <th>
-              <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "id_asc" ? "id_desc" : "id_asc")}>
-                Incident{sortPreset === "id_asc" ? " ▲" : sortPreset === "id_desc" ? " ▼" : ""}
-              </button>
-            </th>
-            <th>State</th>
-            <th>
-              <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "reports_desc" ? "reports_asc" : "reports_desc")}>
-                Reports{sortPreset === "reports_asc" ? " ▲" : sortPreset === "reports_desc" ? " ▼" : ""}
-              </button>
-            </th>
-            <th>
-              <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "recent_desc" ? "recent_asc" : "recent_desc")}>
-                Latest report{sortPreset === "recent_asc" ? " ▲" : sortPreset === "recent_desc" ? " ▼" : ""}
-              </button>
-            </th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => {
-            const isExpanded = expandedIncidentId === item.incident_id;
-            const flyToHref = typeof getFlyToHref === "function" ? getFlyToHref(item) : "";
-            return (
-              <Fragment key={`${item.domain}-${item.incident_id}`}>
-                <tr>
-                  <td>
-                    <button
-                      type="button"
-                      className="municipality-report-incident-button"
-                      onClick={() => onToggleExpand?.(item.incident_id)}
-                    >
-                      {isExpanded ? "▾ " : "▸ "}
-                      {item.incident_label || summarizeReportIncidentLabel(item)}
-                      <span
-                        className="municipality-report-state-dot"
-                        style={{ background: reportStateDotColor(item.current_state) }}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </td>
-                  <td>{incidentStateLabel(item.current_state || "reported")}</td>
-                  <td className="municipality-report-table-count">{Number(item.report_count || 0)}</td>
-                  <td>{formatDateTime(item.latest_reported_at, { dateStyle: "short", timeStyle: "short" })}</td>
-                  <td>
-                    <div className="municipality-report-table-actions">
-                      {flyToHref ? (
-                        <a
-                          className="municipality-button municipality-button--ghost municipality-report-table-button"
-                          href={flyToHref}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Fly to
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          className="municipality-button municipality-button--ghost municipality-report-table-button"
-                          disabled
-                        >
-                          Fly to
-                        </button>
-                      )}
-                      {canMutateIncidents ? (
-                        <button
-                          type="button"
-                          className={`municipality-button municipality-report-table-button${isOpenReportState(item.current_state) ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                          onClick={() => onToggleIncidentState?.(item)}
-                          disabled={busyIncidentId === item.incident_id}
-                        >
-                          {busyIncidentId === item.incident_id
-                            ? "Saving..."
-                            : isOpenReportState(item.current_state)
-                              ? "Mark fixed"
-                              : "Re-open"}
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-                {isExpanded ? (
-                  <tr className="municipality-report-table-expanded-row">
-                    <td colSpan={5}>
-                      <div className="municipality-report-table-expanded">
-                        <div className="municipality-report-table-expanded-summary">
-                          <div><strong>Domain:</strong> {reportDomainLabel(item.domain)}</div>
-                          <div><strong>First reported:</strong> {formatDateTime(item.first_reported_at, { dateStyle: "medium", timeStyle: "short" })}</div>
-                          <div><strong>Latest report #:</strong> {trimOrEmpty(item.latest_report_number) || "Not assigned"}</div>
-                        </div>
-                        {item.latest_note ? (
-                          <p className="municipality-note">
-                            <strong>Latest note:</strong> {item.latest_note}
-                          </p>
-                        ) : null}
-                        {Array.isArray(item.rows) && item.rows.length ? (
-                          <div className="municipality-report-detail-list">
-                            {item.rows.slice(0, 6).map((detail) => (
-                              <div key={`${item.incident_id}:${detail.report_id}`} className="municipality-report-detail-item">
-                                <strong>{trimOrEmpty(detail.report_number) || "Report"}</strong>
-                                <span>{formatDateTime(detail.submitted_at, { dateStyle: "medium", timeStyle: "short" })}</span>
-                                <span>{trimOrEmpty(detail.note) || "No note provided."}</span>
-                              </div>
-                            ))}
-                          </div>
+    <div className="municipality-report-results">
+      <div className="municipality-report-mobile-sort">
+        <span className="municipality-report-toolbar-label">Sort reports</span>
+        <select className="municipality-report-toolbar-select" value={sortPreset} onChange={(event) => onChangeSort?.(event.target.value)}>
+          <option value="recent_desc">Most recently reported</option>
+          <option value="recent_asc">Least recently reported</option>
+          <option value="reports_desc">Most reports</option>
+          <option value="reports_asc">Fewest reports</option>
+          <option value="id_asc">Incident ID (A-Z)</option>
+          <option value="id_desc">Incident ID (Z-A)</option>
+        </select>
+      </div>
+
+      <div className="municipality-report-table-shell municipality-report-table-shell--desktop">
+        <table className="municipality-report-table">
+          <thead>
+            <tr>
+              <th>
+                <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "id_asc" ? "id_desc" : "id_asc")}>
+                  Incident{sortPreset === "id_asc" ? " ▲" : sortPreset === "id_desc" ? " ▼" : ""}
+                </button>
+              </th>
+              <th>State</th>
+              <th>
+                <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "reports_desc" ? "reports_asc" : "reports_desc")}>
+                  Reports{sortPreset === "reports_asc" ? " ▲" : sortPreset === "reports_desc" ? " ▼" : ""}
+                </button>
+              </th>
+              <th>
+                <button type="button" className="municipality-report-table-sort" onClick={() => onChangeSort?.(sortPreset === "recent_desc" ? "recent_asc" : "recent_desc")}>
+                  Latest report{sortPreset === "recent_asc" ? " ▲" : sortPreset === "recent_desc" ? " ▼" : ""}
+                </button>
+              </th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const isExpanded = expandedIncidentId === item.incident_id;
+              const flyToHref = typeof getFlyToHref === "function" ? getFlyToHref(item) : "";
+              return (
+                <Fragment key={`${item.domain}-${item.incident_id}`}>
+                  <tr>
+                    <td>
+                      <button
+                        type="button"
+                        className="municipality-report-incident-button"
+                        onClick={() => onToggleExpand?.(item.incident_id)}
+                      >
+                        {isExpanded ? "▾ " : "▸ "}
+                        {item.incident_label || summarizeReportIncidentLabel(item)}
+                        <span
+                          className="municipality-report-state-dot"
+                          style={{ background: reportStateDotColor(item.current_state) }}
+                          aria-hidden="true"
+                        />
+                      </button>
+                    </td>
+                    <td>{incidentStateLabel(item.current_state || "reported")}</td>
+                    <td className="municipality-report-table-count">{Number(item.report_count || 0)}</td>
+                    <td>{formatDateTime(item.latest_reported_at, { dateStyle: "short", timeStyle: "short" })}</td>
+                    <td>
+                      <div className="municipality-report-table-actions">
+                        {flyToHref ? (
+                          <a
+                            className="municipality-button municipality-button--ghost municipality-report-table-button"
+                            href={flyToHref}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Fly to
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            className="municipality-button municipality-button--ghost municipality-report-table-button"
+                            disabled
+                          >
+                            Fly to
+                          </button>
+                        )}
+                        {canMutateIncidents ? (
+                          <button
+                            type="button"
+                            className={`municipality-button municipality-report-table-button${isOpenReportState(item.current_state) ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                            onClick={() => onToggleIncidentState?.(item)}
+                            disabled={busyIncidentId === item.incident_id}
+                          >
+                            {busyIncidentId === item.incident_id
+                              ? "Saving..."
+                              : isOpenReportState(item.current_state)
+                                ? "Mark fixed"
+                                : "Re-open"}
+                          </button>
                         ) : null}
                       </div>
                     </td>
                   </tr>
+                  {isExpanded ? (
+                    <tr className="municipality-report-table-expanded-row">
+                      <td colSpan={5}>
+                        <div className="municipality-report-table-expanded">
+                          <div className="municipality-report-table-expanded-summary">
+                            <div><strong>Domain:</strong> {reportDomainLabel(item.domain)}</div>
+                            <div><strong>First reported:</strong> {formatDateTime(item.first_reported_at, { dateStyle: "medium", timeStyle: "short" })}</div>
+                            <div><strong>Latest report #:</strong> {trimOrEmpty(item.latest_report_number) || "Not assigned"}</div>
+                          </div>
+                          {item.latest_note ? (
+                            <p className="municipality-note">
+                              <strong>Latest note:</strong> {item.latest_note}
+                            </p>
+                          ) : null}
+                          {Array.isArray(item.rows) && item.rows.length ? (
+                            <div className="municipality-report-detail-list">
+                              {item.rows.slice(0, 6).map((detail) => (
+                                <div key={`${item.incident_id}:${detail.report_id}`} className="municipality-report-detail-item">
+                                  <strong>{trimOrEmpty(detail.report_number) || "Report"}</strong>
+                                  <span>{formatDateTime(detail.submitted_at, { dateStyle: "medium", timeStyle: "short" })}</span>
+                                  <span>{trimOrEmpty(detail.note) || "No note provided."}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="municipality-report-mobile-list">
+        {items.map((item) => {
+          const isExpanded = expandedIncidentId === item.incident_id;
+          const flyToHref = typeof getFlyToHref === "function" ? getFlyToHref(item) : "";
+          return (
+            <article key={`${item.domain}-${item.incident_id}-mobile`} className="municipality-report-mobile-card">
+              <button
+                type="button"
+                className="municipality-report-mobile-incident"
+                onClick={() => onToggleExpand?.(item.incident_id)}
+              >
+                <span>{isExpanded ? "▾ " : "▸ "}{item.incident_label || summarizeReportIncidentLabel(item)}</span>
+                <span
+                  className="municipality-report-state-dot"
+                  style={{ background: reportStateDotColor(item.current_state) }}
+                  aria-hidden="true"
+                />
+              </button>
+              <div className="municipality-report-mobile-fields">
+                <div className="municipality-report-mobile-field"><strong>State:</strong> <span>{incidentStateLabel(item.current_state || "reported")}</span></div>
+                <div className="municipality-report-mobile-field"><strong>Reports:</strong> <span>{Number(item.report_count || 0)}</span></div>
+                <div className="municipality-report-mobile-field"><strong>Latest report:</strong> <span>{formatDateTime(item.latest_reported_at, { dateStyle: "short", timeStyle: "short" })}</span></div>
+              </div>
+              <div className="municipality-report-table-actions municipality-report-mobile-actions">
+                {flyToHref ? (
+                  <a
+                    className="municipality-button municipality-button--ghost municipality-report-table-button"
+                    href={flyToHref}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Fly to
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--ghost municipality-report-table-button"
+                    disabled
+                  >
+                    Fly to
+                  </button>
+                )}
+                {canMutateIncidents ? (
+                  <button
+                    type="button"
+                    className={`municipality-button municipality-report-table-button${isOpenReportState(item.current_state) ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                    onClick={() => onToggleIncidentState?.(item)}
+                    disabled={busyIncidentId === item.incident_id}
+                  >
+                    {busyIncidentId === item.incident_id
+                      ? "Saving..."
+                      : isOpenReportState(item.current_state)
+                        ? "Mark fixed"
+                        : "Re-open"}
+                  </button>
                 ) : null}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+              </div>
+              {isExpanded ? (
+                <div className="municipality-report-mobile-expanded">
+                  <div className="municipality-report-table-expanded-summary">
+                    <div><strong>Domain:</strong> {reportDomainLabel(item.domain)}</div>
+                    <div><strong>First reported:</strong> {formatDateTime(item.first_reported_at, { dateStyle: "medium", timeStyle: "short" })}</div>
+                    <div><strong>Latest report #:</strong> {trimOrEmpty(item.latest_report_number) || "Not assigned"}</div>
+                  </div>
+                  {item.latest_note ? (
+                    <p className="municipality-note">
+                      <strong>Latest note:</strong> {item.latest_note}
+                    </p>
+                  ) : null}
+                  {Array.isArray(item.rows) && item.rows.length ? (
+                    <div className="municipality-report-detail-list">
+                      {item.rows.slice(0, 6).map((detail) => (
+                        <div key={`${item.incident_id}:${detail.report_id}-mobile`} className="municipality-report-detail-item">
+                          <strong>{trimOrEmpty(detail.report_number) || "Report"}</strong>
+                          <span>{formatDateTime(detail.submitted_at, { dateStyle: "medium", timeStyle: "short" })}</span>
+                          <span>{trimOrEmpty(detail.note) || "No note provided."}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1575,6 +1765,7 @@ export default function MunicipalityApp() {
     map: false,
     assets: false,
   });
+  const [assetSectionExpanded, setAssetSectionExpanded] = useState({});
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
   const [teamManagementView, setTeamManagementView] = useState("list");
   const [teamAssignmentMode, setTeamAssignmentMode] = useState("existing");
@@ -1661,6 +1852,8 @@ export default function MunicipalityApp() {
     security: false,
   });
   const tenantSecurityCheckpointResolverRef = useRef(null);
+  const autoArchiveAlertIdsRef = useRef(new Set());
+  const autoArchiveEventIdsRef = useRef(new Set());
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
   const settingsMeta = useMemo(() => getSettingsPageMeta(routePath), [routePath]);
   const activeSettingsCategoryKey = settingsMeta.category.key;
@@ -1917,14 +2110,77 @@ export default function MunicipalityApp() {
   const accountRoleLabel = manageAccess ? "Municipality Staff" : "Resident Account";
 
   const publishedAlerts = useMemo(
-    () => sortAlerts(alerts.filter((alert) => String(alert?.status || "").trim().toLowerCase() === "published")),
+    () => sortAlerts(alerts.filter((alert) => normalizeCommunityItemStatus(alert) === "published")),
     [alerts]
   );
 
   const publishedEvents = useMemo(
-    () => sortEvents(events.filter((event) => String(event?.status || "").trim().toLowerCase() === "published")),
+    () => sortEvents(events.filter((event) => normalizeCommunityItemStatus(event) === "published")),
     [events]
   );
+  useEffect(() => {
+    const expiredAlertIds = (alerts || [])
+      .filter((alert) => shouldAutoArchiveCommunityItem(alert))
+      .map((alert) => Number(alert?.id))
+      .filter((id) => Number.isFinite(id));
+    const expiredEventIds = (events || [])
+      .filter((event) => shouldAutoArchiveCommunityItem(event))
+      .map((event) => Number(event?.id))
+      .filter((id) => Number.isFinite(id));
+
+    if (expiredAlertIds.length) {
+      setAlerts((prev) => sortAlerts((prev || []).map((alert) => (
+        expiredAlertIds.includes(Number(alert?.id))
+          ? { ...alert, status: "archived" }
+          : alert
+      ))));
+    }
+
+    if (expiredEventIds.length) {
+      setEvents((prev) => sortEvents((prev || []).map((event) => (
+        expiredEventIds.includes(Number(event?.id))
+          ? { ...event, status: "archived" }
+          : event
+      ))));
+    }
+
+    if (!manageAccess || !session?.user?.id || !tenantKey) return;
+
+    const nextAlertIds = expiredAlertIds.filter((id) => !autoArchiveAlertIdsRef.current.has(`${tenantKey}:${id}`));
+    const nextEventIds = expiredEventIds.filter((id) => !autoArchiveEventIdsRef.current.has(`${tenantKey}:${id}`));
+
+    if (nextAlertIds.length) {
+      nextAlertIds.forEach((id) => autoArchiveAlertIdsRef.current.add(`${tenantKey}:${id}`));
+      void supabase
+        .from("municipality_alerts")
+        .update({ status: "archived" })
+        .eq("tenant_key", tenantKey)
+        .eq("status", "published")
+        .in("id", nextAlertIds)
+        .then(({ error }) => {
+          if (error) {
+            nextAlertIds.forEach((id) => autoArchiveAlertIdsRef.current.delete(`${tenantKey}:${id}`));
+            console.warn("[municipality alerts auto-archive]", error?.message || error);
+          }
+        });
+    }
+
+    if (nextEventIds.length) {
+      nextEventIds.forEach((id) => autoArchiveEventIdsRef.current.add(`${tenantKey}:${id}`));
+      void supabase
+        .from("municipality_events")
+        .update({ status: "archived" })
+        .eq("tenant_key", tenantKey)
+        .eq("status", "published")
+        .in("id", nextEventIds)
+        .then(({ error }) => {
+          if (error) {
+            nextEventIds.forEach((id) => autoArchiveEventIdsRef.current.delete(`${tenantKey}:${id}`));
+            console.warn("[municipality events auto-archive]", error?.message || error);
+          }
+        });
+    }
+  }, [alerts, events, manageAccess, session?.user?.id, tenantKey]);
   const visibleReportDomains = useMemo(() => {
     if (!tenantVisibilityLoaded) {
       return REPORT_DOMAIN_OPTIONS.filter((row) => DEFAULT_PUBLIC_REPORT_DOMAINS.has(row.key));
@@ -2058,6 +2314,9 @@ export default function MunicipalityApp() {
 
     const settingsMissing = isMissingRelationError(settingsResult.error);
     const legacyPinMissing = isMissingRelationError(legacyTenantPinResult.error);
+    const fallbackSettings = settingsMissing
+      ? (readTenantSecuritySettingsFallback(tenantKey) || DEFAULT_TENANT_SECURITY_SETTINGS)
+      : null;
     const firstError = (!settingsMissing ? settingsResult.error : null)
       || sharedPinResult.error
       || (!legacyPinMissing ? legacyTenantPinResult.error : null);
@@ -2065,16 +2324,8 @@ export default function MunicipalityApp() {
     const legacyPinHash = trimOrEmpty(legacyTenantPinResult.data?.pin_hash);
     return {
       settings: settingsMissing
-        ? DEFAULT_TENANT_SECURITY_SETTINGS
-        : {
-          require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
-          require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
-          require_pin_for_organization_info_changes: Boolean(settingsResult.data?.require_pin_for_organization_info_changes),
-          require_pin_for_contact_changes: Boolean(settingsResult.data?.require_pin_for_contact_changes),
-          require_pin_for_organization_user_changes: Boolean(settingsResult.data?.require_pin_for_organization_user_changes),
-          require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
-          require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
-        },
+        ? fallbackSettings
+        : normalizeTenantSecuritySettings(settingsResult.data),
       pin_hash: sharedPinHash || legacyPinHash,
       pin_scope: sharedPinHash ? "shared" : (legacyPinHash ? "legacy_tenant" : "shared"),
       settings_available: !settingsMissing,
@@ -2117,7 +2368,7 @@ export default function MunicipalityApp() {
     setTenantSecurityChecksEditMode(false);
     setTenantSecurityStatus(snapshot.settings_available
       ? ""
-      : "Shared PIN is available. Municipality checkpoint rules will stay off until the tenant security settings migration is applied.");
+      : "Shared PIN is available. Municipality checkpoint rules are being kept in this browser until the tenant security settings migration is applied.");
   }, [canViewTenantSecurity, readTenantSecuritySnapshot, sessionUserId, tenantKey]);
   const closeTenantSecurityCheckpoint = useCallback((approved = false) => {
     const resolver = tenantSecurityCheckpointResolverRef.current;
@@ -2347,16 +2598,24 @@ export default function MunicipalityApp() {
     const groups = new Map();
     for (const row of permissionCatalog || []) {
       const moduleKey = trimOrEmpty(row?.module_key) || "general";
+      const actionKey = trimOrEmpty(row?.action_key).toLowerCase();
+      if (!["access", "edit", "delete"].includes(actionKey)) continue;
       const current = groups.get(moduleKey) || {
         key: moduleKey,
         label: roleKeyToLabel(moduleKey),
-        permissions: [],
+        sortOrder: Number(row?.sort_order || 0),
+        permissionsByAction: {
+          access: null,
+          edit: null,
+          delete: null,
+        },
       };
       current.label = trimOrEmpty(row?.module_key).replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase()) || current.label;
-      current.permissions.push(row);
+      current.sortOrder = Math.min(Number.isFinite(current.sortOrder) ? current.sortOrder : Number(row?.sort_order || 0), Number(row?.sort_order || 0));
+      current.permissionsByAction[actionKey] = row;
       groups.set(moduleKey, current);
     }
-    return [...groups.values()];
+    return [...groups.values()].sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
   }, [permissionCatalog]);
   const teamAssignmentsByRole = useMemo(() => {
     const lookup = {};
@@ -2851,16 +3110,14 @@ export default function MunicipalityApp() {
 
       setTopics(nextTopics);
       setAlerts(
-        sortAlerts((alertRes.data || []).map((alert) => ({
-          ...alert,
-          topic_label: labelsByTopic[alert.topic_key] || DEFAULT_TOPIC_DETAILS[alert.topic_key]?.label || alert.topic_key,
-        })))
+        sortAlerts((alertRes.data || []).map((alert) =>
+          normalizeCommunityAlertRow(alert, labelsByTopic[alert.topic_key] || DEFAULT_TOPIC_DETAILS[alert.topic_key]?.label || alert.topic_key)
+        ))
       );
       setEvents(
-        sortEvents((eventRes.data || []).map((event) => ({
-          ...event,
-          topic_label: labelsByTopic[event.topic_key] || DEFAULT_TOPIC_DETAILS[event.topic_key]?.label || event.topic_key,
-        })))
+        sortEvents((eventRes.data || []).map((event) =>
+          normalizeCommunityEventRow(event, labelsByTopic[event.topic_key] || DEFAULT_TOPIC_DETAILS[event.topic_key]?.label || event.topic_key)
+        ))
       );
       setDataLoading(false);
     }
@@ -3612,7 +3869,10 @@ export default function MunicipalityApp() {
 
     if (error) {
       if (isMissingRelationError(error)) {
-        setTenantSecurityStatus("Security checkpoint tables are not available in this environment yet. Apply the latest Supabase migrations first.");
+        writeTenantSecuritySettingsFallback(tenantKey, tenantSecuritySettingsDraft);
+        setTenantSecuritySettingsSaved(tenantSecuritySettingsDraft);
+        setTenantSecurityChecksEditMode(false);
+        setTenantSecurityStatus("Security checkpoints saved for this browser. Apply the latest Supabase migrations to sync them across staff accounts.");
         return;
       }
       setTenantSecurityStatus(String(error?.message || "Could not save security checkpoints."));
@@ -4416,8 +4676,7 @@ export default function MunicipalityApp() {
       .order("created_at", { ascending: false });
     if (data) {
       setAlerts(sortAlerts(data.map((item) => ({
-        ...item,
-        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
+        ...normalizeCommunityAlertRow(item, topicLookup[item.topic_key]?.label || item.topic_key),
       }))));
     }
   }
@@ -4431,8 +4690,7 @@ export default function MunicipalityApp() {
       .order("created_at", { ascending: false });
     if (data) {
       setEvents(sortEvents(data.map((item) => ({
-        ...item,
-        topic_label: topicLookup[item.topic_key]?.label || item.topic_key,
+        ...normalizeCommunityEventRow(item, topicLookup[item.topic_key]?.label || item.topic_key),
       }))));
     }
   }
@@ -5071,6 +5329,9 @@ export default function MunicipalityApp() {
       return key && !["logo", "boundary_geojson", "asset", "general_asset", "streetlight_inventory", "calendar_source", "contract"].includes(key);
     }),
   }), [assetFiles]);
+  const toggleAssetSection = useCallback((sectionKey) => {
+    setAssetSectionExpanded((prev) => ({ ...prev, [sectionKey]: !prev?.[sectionKey] }));
+  }, []);
 
   return (
     <div className="municipality-shell">
@@ -6228,48 +6489,59 @@ export default function MunicipalityApp() {
                                       <strong>{asset.label}</strong>
                                       <p className="municipality-note">{asset.description}</p>
                                     </div>
-                                    <span className="municipality-chip">{asset.status}</span>
-                                  </div>
-                                  {matchingFiles.length ? (
-                                    <div className="municipality-settings-sublist">
-                                      {matchingFiles.map((fileRow) => (
-                                        <div key={fileRow.id} className="municipality-settings-sublist-item">
-                                          <div>
-                                            <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
-                                            <p className="municipality-note">
-                                              {summarizeAssetCategory(fileRow.file_category)}
-                                              {trimOrEmpty(fileRow.asset_subtype) ? ` • ${trimOrEmpty(fileRow.asset_subtype)}` : ""}
-                                              {trimOrEmpty(fileRow.asset_owner_type) ? ` • ${summarizeAssetOwnership(fileRow.asset_owner_type)}` : ""}
-                                              {" • "}
-                                              {formatBytes(fileRow.size_bytes)}
-                                              {" • "}
-                                              {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
-                                            </p>
-                                            {trimOrEmpty(fileRow.notes) ? <p className="municipality-note">{trimOrEmpty(fileRow.notes)}</p> : null}
-                                          </div>
-                                          <div className="municipality-actions municipality-actions--compact">
-                                            <button
-                                              type="button"
-                                              className="municipality-button municipality-button--ghost"
-                                              onClick={() => void openAssetFile(fileRow)}
-                                            >
-                                              Open
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="municipality-button municipality-button--ghost municipality-button--danger"
-                                              onClick={() => void removeAssetFile(fileRow)}
-                                              disabled={settingsSectionSaving.assets}
-                                            >
-                                              Remove
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ))}
+                                    <div className="municipality-actions municipality-actions--compact">
+                                      <span className="municipality-chip">{asset.status}</span>
+                                      <button
+                                        type="button"
+                                        className="municipality-button municipality-button--ghost municipality-asset-toggle"
+                                        onClick={() => toggleAssetSection(asset.key)}
+                                      >
+                                        {assetSectionExpanded?.[asset.key] ? "Hide files" : `Show files (${matchingFiles.length})`}
+                                      </button>
                                     </div>
-                                  ) : (
-                                    <p className="municipality-note">No files are currently attached under this category.</p>
-                                  )}
+                                  </div>
+                                  {assetSectionExpanded?.[asset.key] ? (
+                                    <div className="municipality-settings-sublist">
+                                      {matchingFiles.length ? (
+                                        matchingFiles.map((fileRow) => (
+                                          <div key={fileRow.id} className="municipality-settings-sublist-item">
+                                            <div>
+                                              <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
+                                              <p className="municipality-note">
+                                                {summarizeAssetCategory(fileRow.file_category)}
+                                                {trimOrEmpty(fileRow.asset_subtype) ? ` • ${trimOrEmpty(fileRow.asset_subtype)}` : ""}
+                                                {trimOrEmpty(fileRow.asset_owner_type) ? ` • ${summarizeAssetOwnership(fileRow.asset_owner_type)}` : ""}
+                                                {" • "}
+                                                {formatBytes(fileRow.size_bytes)}
+                                                {" • "}
+                                                {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
+                                              </p>
+                                              {trimOrEmpty(fileRow.notes) ? <p className="municipality-note">{trimOrEmpty(fileRow.notes)}</p> : null}
+                                            </div>
+                                            <div className="municipality-actions municipality-actions--compact">
+                                              <button
+                                                type="button"
+                                                className="municipality-button municipality-button--ghost"
+                                                onClick={() => void openAssetFile(fileRow)}
+                                              >
+                                                Open
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="municipality-button municipality-button--ghost municipality-button--danger"
+                                                onClick={() => void removeAssetFile(fileRow)}
+                                                disabled={settingsSectionSaving.assets}
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))
+                                      ) : (
+                                        <p className="municipality-note">No files are currently attached under this category.</p>
+                                      )}
+                                    </div>
+                                  ) : null}
                                 </div>
                               );
                             })}
@@ -6280,26 +6552,37 @@ export default function MunicipalityApp() {
                                     <strong>Contracts</strong>
                                     <p className="municipality-note">Agreement and contract files attached to this location.</p>
                                   </div>
-                                  <span className="municipality-chip">Loaded</span>
+                                  <div className="municipality-actions municipality-actions--compact">
+                                    <span className="municipality-chip">Loaded</span>
+                                    <button
+                                      type="button"
+                                      className="municipality-button municipality-button--ghost municipality-asset-toggle"
+                                      onClick={() => toggleAssetSection("contract")}
+                                    >
+                                      {assetSectionExpanded?.contract ? "Hide files" : `Show files (${groupedAssetFiles.contract.length})`}
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="municipality-settings-sublist">
-                                  {groupedAssetFiles.contract.map((fileRow) => (
-                                    <div key={fileRow.id} className="municipality-settings-sublist-item">
-                                      <div>
-                                        <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
-                                        <p className="municipality-note">
-                                          {formatBytes(fileRow.size_bytes)}
-                                          {" • "}
-                                          {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
-                                        </p>
+                                {assetSectionExpanded?.contract ? (
+                                  <div className="municipality-settings-sublist">
+                                    {groupedAssetFiles.contract.map((fileRow) => (
+                                      <div key={fileRow.id} className="municipality-settings-sublist-item">
+                                        <div>
+                                          <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
+                                          <p className="municipality-note">
+                                            {formatBytes(fileRow.size_bytes)}
+                                            {" • "}
+                                            {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
+                                          </p>
+                                        </div>
+                                        <div className="municipality-actions municipality-actions--compact">
+                                          <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
+                                          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
+                                        </div>
                                       </div>
-                                      <div className="municipality-actions municipality-actions--compact">
-                                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
-                                        <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
+                                    ))}
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                             {groupedAssetFiles.other.length ? (
@@ -6309,28 +6592,39 @@ export default function MunicipalityApp() {
                                     <strong>Other Files</strong>
                                     <p className="municipality-note">Additional files that do not fall into the main current asset categories.</p>
                                   </div>
-                                  <span className="municipality-chip">Loaded</span>
+                                  <div className="municipality-actions municipality-actions--compact">
+                                    <span className="municipality-chip">Loaded</span>
+                                    <button
+                                      type="button"
+                                      className="municipality-button municipality-button--ghost municipality-asset-toggle"
+                                      onClick={() => toggleAssetSection("other")}
+                                    >
+                                      {assetSectionExpanded?.other ? "Hide files" : `Show files (${groupedAssetFiles.other.length})`}
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="municipality-settings-sublist">
-                                  {groupedAssetFiles.other.map((fileRow) => (
-                                    <div key={fileRow.id} className="municipality-settings-sublist-item">
-                                      <div>
-                                        <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
-                                        <p className="municipality-note">
-                                          {summarizeAssetCategory(fileRow.file_category)}
-                                          {" • "}
-                                          {formatBytes(fileRow.size_bytes)}
-                                          {" • "}
-                                          {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
-                                        </p>
+                                {assetSectionExpanded?.other ? (
+                                  <div className="municipality-settings-sublist">
+                                    {groupedAssetFiles.other.map((fileRow) => (
+                                      <div key={fileRow.id} className="municipality-settings-sublist-item">
+                                        <div>
+                                          <strong>{trimOrEmpty(fileRow.file_name) || "Unnamed file"}</strong>
+                                          <p className="municipality-note">
+                                            {summarizeAssetCategory(fileRow.file_category)}
+                                            {" • "}
+                                            {formatBytes(fileRow.size_bytes)}
+                                            {" • "}
+                                            {fileRow.uploaded_at ? formatDateTime(fileRow.uploaded_at) : "Upload date unavailable"}
+                                          </p>
+                                        </div>
+                                        <div className="municipality-actions municipality-actions--compact">
+                                          <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
+                                          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
+                                        </div>
                                       </div>
-                                      <div className="municipality-actions municipality-actions--compact">
-                                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
-                                        <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
+                                    ))}
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
@@ -6396,10 +6690,10 @@ export default function MunicipalityApp() {
                             <div className="municipality-actions">
                                 <button
                                   type="button"
-                                  className={`municipality-button${teamManagementView === "add" ? " municipality-button--ghost" : " municipality-button--primary"}`}
-                                  onClick={() => setTeamManagementView((prev) => (prev === "add" ? "list" : "add"))}
+                                  className="municipality-button municipality-button--primary"
+                                  onClick={() => setTeamManagementView("add")}
                                 >
-                                  {teamManagementView === "add" ? "Hide Add Employee" : "Add Employee"}
+                                  Add Employee
                                 </button>
                             </div>
                           </div>
@@ -6421,183 +6715,6 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">
                                 Employee and active custom roles can be assigned here. Tenant admin stays controlled from the developer dashboard.
                               </p>
-                              {teamManagementView === "add" ? (
-                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked municipality-settings-sublist">
-                                  <div className="municipality-settings-item-actions-row">
-                                    <div>
-                                      <strong>Add New Employee</strong>
-                                      <p className="municipality-note">Choose whether you are assigning an existing account or creating a new invited account.</p>
-                                    </div>
-                                  </div>
-                                  <div className="municipality-actions">
-                                    <button
-                                      type="button"
-                                      className={`municipality-button${teamAssignmentMode === "existing" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                                      onClick={() => setTeamAssignmentMode("existing")}
-                                    >
-                                      Find Existing Account
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`municipality-button${teamAssignmentMode === "invite" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                                      onClick={() => setTeamAssignmentMode("invite")}
-                                    >
-                                      Create Account
-                                    </button>
-                                  </div>
-                                  {teamAssignmentMode === "existing" ? (
-                                    <>
-                                      <form className="municipality-form-grid" onSubmit={searchTeamAccounts}>
-                                        <div className="municipality-field">
-                                          <label htmlFor="team-search-query">Find Person</label>
-                                          <input
-                                            id="team-search-query"
-                                            value={teamSearchQuery}
-                                            onChange={(event) => setTeamSearchQuery(event.target.value)}
-                                            placeholder="Exact email, exact phone, or full name"
-                                          />
-                                        </div>
-                                        <div className="municipality-actions">
-                                          <button type="submit" className="municipality-button municipality-button--primary" disabled={teamSearchLoading}>
-                                            {teamSearchLoading ? "Searching…" : "Search Accounts"}
-                                          </button>
-                                        </div>
-                                      </form>
-                                      {teamSearchResults.length ? (
-                                        <div className="municipality-settings-list">
-                                          {teamSearchResults.map((row) => {
-                                            const userId = trimOrEmpty(row?.id);
-                                            const isSelected = userId === trimOrEmpty(teamAssignForm.user_id);
-                                            return (
-                                              <button
-                                                key={userId}
-                                                type="button"
-                                                className="municipality-settings-list-item municipality-settings-list-item--stacked"
-                                                onClick={() => setTeamAssignForm((prev) => ({ ...prev, user_id: userId }))}
-                                                style={{
-                                                  width: "100%",
-                                                  textAlign: "left",
-                                                  cursor: "pointer",
-                                                  borderColor: isSelected ? "rgba(23, 109, 120, 0.55)" : undefined,
-                                                  background: isSelected ? "rgba(23, 109, 120, 0.08)" : undefined,
-                                                }}
-                                              >
-                                                <strong>{trimOrEmpty(row?.display_name) || trimOrEmpty(row?.email) || shortUserId(userId)}</strong>
-                                                <p className="municipality-note">
-                                                  {[trimOrEmpty(row?.email), trimOrEmpty(row?.phone)].filter(Boolean).join(" • ") || "No email or phone on file"}
-                                                </p>
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                      ) : null}
-                                      <div className="municipality-form-grid">
-                                        <div className="municipality-field">
-                                          <label htmlFor="team-role-select-existing">Organization Role</label>
-                                          <select
-                                            id="team-role-select-existing"
-                                            value={teamAssignForm.role}
-                                            onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
-                                          >
-                                            {assignableTeamRoles.map((row) => {
-                                              const roleKey = trimOrEmpty(row?.role);
-                                              if (!roleKey) return null;
-                                              return (
-                                                <option key={roleKey} value={roleKey}>
-                                                  {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
-                                                </option>
-                                              );
-                                            })}
-                                            {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
-                                          </select>
-                                        </div>
-                                      </div>
-                                      <div className="municipality-actions">
-                                        <button
-                                          type="button"
-                                          className="municipality-button municipality-button--primary"
-                                          onClick={() => void assignExistingTeamAccount()}
-                                          disabled={teamAssignLoading || !trimOrEmpty(teamAssignForm.user_id)}
-                                          title={trimOrEmpty(teamAssignForm.user_id) ? "Assign organization role" : "Select an account first"}
-                                        >
-                                          {teamAssignLoading ? "Assigning…" : "Assign Role"}
-                                        </button>
-                                        {trimOrEmpty(teamAssignForm.user_id) ? (
-                                          <p className="municipality-note">
-                                            Selected account: <strong>{trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || "Account selected"}</strong>
-                                          </p>
-                                        ) : (
-                                          <p className="municipality-note">For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.</p>
-                                        )}
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <form className="municipality-form-grid" onSubmit={createAndAssignTeamUser}>
-                                      <div className="municipality-field">
-                                        <label htmlFor="team-invite-first-name">First Name</label>
-                                        <input
-                                          id="team-invite-first-name"
-                                          value={teamInviteForm.first_name}
-                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, first_name: event.target.value }))}
-                                          placeholder="Jordan"
-                                        />
-                                      </div>
-                                      <div className="municipality-field">
-                                        <label htmlFor="team-invite-last-name">Last Name</label>
-                                        <input
-                                          id="team-invite-last-name"
-                                          value={teamInviteForm.last_name}
-                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, last_name: event.target.value }))}
-                                          placeholder="Rivera"
-                                        />
-                                      </div>
-                                      <div className="municipality-field">
-                                        <label htmlFor="team-invite-email">Email</label>
-                                        <input
-                                          id="team-invite-email"
-                                          type="email"
-                                          value={teamInviteForm.email}
-                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, email: event.target.value }))}
-                                          placeholder="jordan.rivera@example.gov"
-                                        />
-                                      </div>
-                                      <div className="municipality-field">
-                                        <label htmlFor="team-invite-phone">Phone Number</label>
-                                        <input
-                                          id="team-invite-phone"
-                                          value={teamInviteForm.phone}
-                                          onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, phone: event.target.value }))}
-                                          placeholder="(555) 555-0101"
-                                        />
-                                      </div>
-                                      <div className="municipality-field">
-                                        <label htmlFor="team-role-select-invite">Organization Role</label>
-                                        <select
-                                          id="team-role-select-invite"
-                                          value={teamAssignForm.role}
-                                          onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
-                                        >
-                                          {assignableTeamRoles.map((row) => {
-                                            const roleKey = trimOrEmpty(row?.role);
-                                            if (!roleKey) return null;
-                                            return (
-                                              <option key={roleKey} value={roleKey}>
-                                                {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
-                                              </option>
-                                            );
-                                          })}
-                                          {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
-                                        </select>
-                                      </div>
-                                      <div className="municipality-actions">
-                                        <button type="submit" className="municipality-button municipality-button--primary" disabled={teamInviteLoading}>
-                                          {teamInviteLoading ? "Creating…" : "Create Account + Assign Role"}
-                                        </button>
-                                      </div>
-                                    </form>
-                                  )}
-                                </div>
-                              ) : null}
                               <div className="municipality-settings-header">
                                 <div>
                                   <h4>Current Employees</h4>
@@ -6716,6 +6833,189 @@ export default function MunicipalityApp() {
                       )
                     ) : null}
 
+                    {activeSettingsItemKey === "manage-employees" && teamManagementView === "add" ? (
+                      <div className="municipality-auth-modal-backdrop" onClick={() => setTeamManagementView("list")}>
+                        <div className="municipality-auth-modal municipality-auth-modal--team" onClick={(event) => event.stopPropagation()}>
+                          <div className="municipality-auth-modal-header">
+                            <div>
+                              <h3>Add Employee</h3>
+                              <p>Choose whether you are assigning an existing account or creating a new invited account.</p>
+                            </div>
+                            <button type="button" className="municipality-auth-modal-close" onClick={() => setTeamManagementView("list")}>
+                              Close
+                            </button>
+                          </div>
+                          <div className="municipality-actions">
+                            <button
+                              type="button"
+                              className={`municipality-button${teamAssignmentMode === "existing" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                              onClick={() => setTeamAssignmentMode("existing")}
+                            >
+                              Find Existing Account
+                            </button>
+                            <button
+                              type="button"
+                              className={`municipality-button${teamAssignmentMode === "invite" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                              onClick={() => setTeamAssignmentMode("invite")}
+                            >
+                              Create Account
+                            </button>
+                          </div>
+                          {teamAssignmentMode === "existing" ? (
+                            <>
+                              <form className="municipality-form-grid" onSubmit={searchTeamAccounts}>
+                                <div className="municipality-field">
+                                  <label htmlFor="team-search-query">Find Person</label>
+                                  <input
+                                    id="team-search-query"
+                                    value={teamSearchQuery}
+                                    onChange={(event) => setTeamSearchQuery(event.target.value)}
+                                    placeholder="Exact email, exact phone, or full name"
+                                  />
+                                </div>
+                                <div className="municipality-actions">
+                                  <button type="submit" className="municipality-button municipality-button--primary" disabled={teamSearchLoading}>
+                                    {teamSearchLoading ? "Searching…" : "Search Accounts"}
+                                  </button>
+                                </div>
+                              </form>
+                              {teamSearchResults.length ? (
+                                <div className="municipality-settings-list municipality-settings-list--modal">
+                                  {teamSearchResults.map((row) => {
+                                    const userId = trimOrEmpty(row?.id);
+                                    const isSelected = userId === trimOrEmpty(teamAssignForm.user_id);
+                                    return (
+                                      <button
+                                        key={userId}
+                                        type="button"
+                                        className="municipality-settings-list-item municipality-settings-list-item--stacked"
+                                        onClick={() => setTeamAssignForm((prev) => ({ ...prev, user_id: userId }))}
+                                        style={{
+                                          width: "100%",
+                                          textAlign: "left",
+                                          cursor: "pointer",
+                                          borderColor: isSelected ? "rgba(23, 109, 120, 0.55)" : undefined,
+                                          background: isSelected ? "rgba(23, 109, 120, 0.08)" : undefined,
+                                        }}
+                                      >
+                                        <strong>{trimOrEmpty(row?.display_name) || trimOrEmpty(row?.email) || shortUserId(userId)}</strong>
+                                        <p className="municipality-note">
+                                          {[trimOrEmpty(row?.email), trimOrEmpty(row?.phone)].filter(Boolean).join(" • ") || "No email or phone on file"}
+                                        </p>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+                              <div className="municipality-form-grid">
+                                <div className="municipality-field">
+                                  <label htmlFor="team-role-select-existing">Organization Role</label>
+                                  <select
+                                    id="team-role-select-existing"
+                                    value={teamAssignForm.role}
+                                    onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                  >
+                                    {assignableTeamRoles.map((row) => {
+                                      const roleKey = trimOrEmpty(row?.role);
+                                      if (!roleKey) return null;
+                                      return (
+                                        <option key={roleKey} value={roleKey}>
+                                          {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                        </option>
+                                      );
+                                    })}
+                                    {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="municipality-actions">
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--primary"
+                                  onClick={() => void assignExistingTeamAccount()}
+                                  disabled={teamAssignLoading || !trimOrEmpty(teamAssignForm.user_id)}
+                                  title={trimOrEmpty(teamAssignForm.user_id) ? "Assign organization role" : "Select an account first"}
+                                >
+                                  {teamAssignLoading ? "Assigning…" : "Assign Role"}
+                                </button>
+                                {trimOrEmpty(teamAssignForm.user_id) ? (
+                                  <p className="municipality-note">
+                                    Selected account: <strong>{trimOrEmpty(selectedTeamSearchAccount?.display_name) || trimOrEmpty(selectedTeamSearchAccount?.email) || "Account selected"}</strong>
+                                  </p>
+                                ) : (
+                                  <p className="municipality-note">For privacy, account lookup uses exact email, exact phone, or full-name matching before assignment.</p>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <form className="municipality-form-grid" onSubmit={createAndAssignTeamUser}>
+                              <div className="municipality-field">
+                                <label htmlFor="team-invite-first-name">First Name</label>
+                                <input
+                                  id="team-invite-first-name"
+                                  value={teamInviteForm.first_name}
+                                  onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, first_name: event.target.value }))}
+                                  placeholder="Jordan"
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="team-invite-last-name">Last Name</label>
+                                <input
+                                  id="team-invite-last-name"
+                                  value={teamInviteForm.last_name}
+                                  onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, last_name: event.target.value }))}
+                                  placeholder="Rivera"
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="team-invite-email">Email</label>
+                                <input
+                                  id="team-invite-email"
+                                  type="email"
+                                  value={teamInviteForm.email}
+                                  onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, email: event.target.value }))}
+                                  placeholder="jordan.rivera@example.gov"
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="team-invite-phone">Phone Number</label>
+                                <input
+                                  id="team-invite-phone"
+                                  value={teamInviteForm.phone}
+                                  onChange={(event) => setTeamInviteForm((prev) => ({ ...prev, phone: event.target.value }))}
+                                  placeholder="(555) 555-0101"
+                                />
+                              </div>
+                              <div className="municipality-field">
+                                <label htmlFor="team-role-select-invite">Organization Role</label>
+                                <select
+                                  id="team-role-select-invite"
+                                  value={teamAssignForm.role}
+                                  onChange={(event) => setTeamAssignForm((prev) => ({ ...prev, role: event.target.value }))}
+                                >
+                                  {assignableTeamRoles.map((row) => {
+                                    const roleKey = trimOrEmpty(row?.role);
+                                    if (!roleKey) return null;
+                                    return (
+                                      <option key={roleKey} value={roleKey}>
+                                        {trimOrEmpty(row?.role_label) || roleKeyToLabel(roleKey)}
+                                      </option>
+                                    );
+                                  })}
+                                  {!assignableTeamRoles.length ? <option value="tenant_employee">Tenant Employee</option> : null}
+                                </select>
+                              </div>
+                              <div className="municipality-actions">
+                                <button type="submit" className="municipality-button municipality-button--primary" disabled={teamInviteLoading}>
+                                  {teamInviteLoading ? "Creating…" : "Create Account + Assign Role"}
+                                </button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
                     {activeSettingsItemKey === "roles-permissions" ? (
                       !manageAccess ? (
                         <div className="municipality-auth-cta">
@@ -6804,33 +7104,43 @@ export default function MunicipalityApp() {
                                   </div>
                                   {selectedSettingsRoleKey ? (
                                     <>
-                                      {permissionModules.map((moduleRow) => (
-                                        <div key={moduleRow.key} className="municipality-settings-sublist-item">
-                                          <div>
-                                            <strong>{moduleRow.label}</strong>
-                                            <p className="municipality-note">Choose which actions this role can perform in {moduleRow.label.toLowerCase()}.</p>
-                                          </div>
-                                          <div className="municipality-chip-row">
-                                            {moduleRow.permissions.map((permissionRow) => {
+                                      <div className="municipality-permission-matrix">
+                                        <div className="municipality-permission-matrix-header">Category</div>
+                                        <div className="municipality-permission-matrix-header">Access</div>
+                                        <div className="municipality-permission-matrix-header">Edit</div>
+                                        <div className="municipality-permission-matrix-header">Delete</div>
+                                        {permissionModules.map((moduleRow) => (
+                                          <Fragment key={moduleRow.key}>
+                                            <div className="municipality-permission-matrix-cell municipality-permission-matrix-cell--label">
+                                              <strong>{moduleRow.label}</strong>
+                                            </div>
+                                            {["access", "edit", "delete"].map((actionKey) => {
+                                              const permissionRow = moduleRow.permissionsByAction?.[actionKey] || null;
                                               const permissionKey = trimOrEmpty(permissionRow?.permission_key);
                                               return (
-                                                <label key={permissionKey} className="municipality-chip" style={{ gap: 8, cursor: "pointer" }}>
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={Boolean(settingsRolePermissionDraft?.[permissionKey])}
-                                                    onChange={(event) => {
-                                                      const nextChecked = event.target.checked;
-                                                      setSettingsRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextChecked }));
-                                                      setSettingsRolePermissionDirty(true);
-                                                    }}
-                                                  />
-                                                  {permissionLabelLookup[permissionKey] || permissionKey}
-                                                </label>
+                                                <div key={`${moduleRow.key}-${actionKey}`} className="municipality-permission-matrix-cell municipality-permission-matrix-cell--checkbox">
+                                                  {permissionKey ? (
+                                                    <label className="municipality-permission-toggle">
+                                                      <input
+                                                        type="checkbox"
+                                                        aria-label={`${moduleRow.label} ${actionKey}`}
+                                                        checked={Boolean(settingsRolePermissionDraft?.[permissionKey])}
+                                                        onChange={(event) => {
+                                                          const nextChecked = event.target.checked;
+                                                          setSettingsRolePermissionDraft((prev) => ({ ...prev, [permissionKey]: nextChecked }));
+                                                          setSettingsRolePermissionDirty(true);
+                                                        }}
+                                                      />
+                                                    </label>
+                                                  ) : (
+                                                    <span className="municipality-note">—</span>
+                                                  )}
+                                                </div>
                                               );
                                             })}
-                                          </div>
-                                        </div>
-                                      ))}
+                                          </Fragment>
+                                        ))}
+                                      </div>
                                       <div className="municipality-actions">
                                         <button
                                           type="button"
