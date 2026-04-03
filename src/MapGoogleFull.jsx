@@ -23692,37 +23692,14 @@ async function insertReportWithFallback(payload) {
               </div>
 
               <div
+                className="app-mobile-header-copy"
                 style={{
                   gridColumn: 2,
-                  display: "grid",
-                  gap: "var(--mobile-header-stack-gap)",
-                  alignContent: "center",
-                  justifyItems: "center",
                   minWidth: 0,
-                  height: "100%",
-                  alignSelf: "stretch",
-                  paddingInline: "var(--mobile-header-title-padding-inline)",
-                  paddingBlock: "var(--mobile-header-title-padding-block)",
-                  textAlign: "center",
-                  transform: "translateY(var(--mobile-header-title-shift-y))",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
-                <h1
-                  style={{
-                    margin: 0,
-                    fontSize: "var(--mobile-header-title-size)",
-                    fontWeight: "var(--desktop-header-title-weight)",
-                    color: "var(--mobile-header-title-color)",
-                    lineHeight: "var(--mobile-header-title-line-height)",
-                    width: "100%",
-                    maxWidth: "100%",
-                    whiteSpace: "normal",
-                    textWrap: "balance",
-                  }}
-                >
-                  {organizationName}
-                </h1>
+                <h1 className="app-mobile-header-title">{organizationName}</h1>
               </div>
 
               <div

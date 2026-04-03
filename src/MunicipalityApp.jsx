@@ -4847,9 +4847,9 @@ export default function MunicipalityApp() {
                 <img src={BRAND_LOGO_SRC} alt="CityReport.io" />
               </picture>
             </button>
-            <div className="municipality-brand-copy">
+            <div className="municipality-brand-copy app-mobile-header-copy">
               <span className="municipality-brand-eyebrow app-header-eyebrow">Municipality Hub</span>
-              <h1>{organizationDisplayName}</h1>
+              <h1 className="app-mobile-header-title">{organizationDisplayName}</h1>
             </div>
             <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
               {!session?.user?.id ? (

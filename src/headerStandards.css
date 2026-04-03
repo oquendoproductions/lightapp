@@ -32,6 +32,8 @@
   --mobile-header-title-size: 16px;
   --mobile-header-title-line-height: 1.05;
   --mobile-header-title-color: #102b46;
+  --mobile-header-title-max-width: 18ch;
+  --mobile-header-title-max-lines: 2;
   --mobile-header-title-padding-inline: 6px;
   --mobile-header-title-padding-block: 0;
   --mobile-header-title-shift-y: 0;
@@ -65,5 +67,37 @@
 @media (max-width: 760px) {
   .app-header-eyebrow {
     font-size: var(--mobile-header-eyebrow-size);
+  }
+
+  .app-mobile-header-copy {
+    display: grid;
+    gap: var(--mobile-header-stack-gap);
+    align-content: center;
+    justify-items: center;
+    min-width: 0;
+    height: 100%;
+    align-self: stretch;
+    padding-inline: var(--mobile-header-title-padding-inline);
+    padding-block: var(--mobile-header-title-padding-block);
+    text-align: center;
+    transform: translateY(var(--mobile-header-title-shift-y));
+  }
+
+  .app-mobile-header-title {
+    margin: 0;
+    width: min(100%, var(--mobile-header-title-max-width));
+    max-width: 100%;
+    font-size: var(--mobile-header-title-size);
+    font-weight: var(--desktop-header-title-weight);
+    line-height: var(--mobile-header-title-line-height);
+    color: var(--mobile-header-title-color);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    text-wrap: balance;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--mobile-header-title-max-lines);
+    overflow: hidden;
   }
 }
