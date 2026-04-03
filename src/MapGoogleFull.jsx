@@ -603,9 +603,12 @@ function readReportDeepLinkRequest(search = "") {
   const params = new URLSearchParams(String(search || ""));
   const requestedDomain = normalizeDomainKey(params.get("report_domain"));
   const focusIncidentId = String(params.get("focus_incident_id") || "").trim();
-  const flyLat = Number(params.get("fly_lat"));
-  const flyLng = Number(params.get("fly_lng"));
-  const flyZoomRaw = Number(params.get("fly_zoom"));
+  const flyLatRaw = String(params.get("fly_lat") || "").trim();
+  const flyLngRaw = String(params.get("fly_lng") || "").trim();
+  const flyZoomParam = String(params.get("fly_zoom") || "").trim();
+  const flyLat = flyLatRaw ? Number(flyLatRaw) : Number.NaN;
+  const flyLng = flyLngRaw ? Number(flyLngRaw) : Number.NaN;
+  const flyZoomRaw = flyZoomParam ? Number(flyZoomParam) : Number.NaN;
 
   return {
     requestedDomain,
