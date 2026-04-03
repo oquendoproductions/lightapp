@@ -709,7 +709,21 @@ describe("PlatformAdminApp", () => {
     await user.click(screen.getByLabelText(/return to start here/i));
 
     await screen.findByRole("heading", { name: /organization reports/i });
-    expect(screen.getByText(/platform-wide organization coverage/i)).toBeInTheDocument();
+    expect(screen.getByText(/platform-wide organization coverage and organization status reporting/i)).toBeInTheDocument();
+  });
+
+  it("filters the organization reports table from the summary cards", async () => {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /organization reports/i });
+    expect(screen.getByRole("button", { name: /scheduled for deletion/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^organizations$/i })).toBeInTheDocument();
+    expect(screen.getByText(/enabled domains/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no organizations match this report category yet/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /scheduled for deletion/i }));
+    expect(screen.getByText(/no organizations match this report category yet/i)).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {

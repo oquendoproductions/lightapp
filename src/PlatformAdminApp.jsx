@@ -756,6 +756,14 @@ const metricCard = {
   minHeight: 96,
 };
 
+const metricCardButton = {
+  ...metricCard,
+  width: "100%",
+  textAlign: "left",
+  cursor: "pointer",
+  font: "inherit",
+};
+
 const ADD_TENANT_STEPS = [
   { key: "organization", label: "Organization Contact Information" },
   { key: "contacts", label: "Primary + Additional Contacts" },
@@ -1397,6 +1405,7 @@ export default function PlatformAdminApp() {
   const [leadStatus, setLeadStatus] = useState("");
   const [leadLoading, setLeadLoading] = useState(false);
   const [leadAddModalOpen, setLeadAddModalOpen] = useState(false);
+  const [organizationReportFilter, setOrganizationReportFilter] = useState("all");
   const [leadForm, setLeadForm] = useState({
     full_name: "",
     work_email: "",
@@ -1669,14 +1678,6 @@ export default function PlatformAdminApp() {
     }
     return counts;
   }, [platformTeamAssignments]);
-  const tenantAdminAssignments = useMemo(
-    () => (tenantAdmins || []).filter((row) => String(row?.role || "").trim() === "tenant_admin"),
-    [tenantAdmins]
-  );
-  const tenantEmployeeAssignments = useMemo(
-    () => (tenantAdmins || []).filter((row) => String(row?.role || "").trim() === "tenant_employee"),
-    [tenantAdmins]
-  );
   const residentPortalCount = useMemo(
     () => (tenants || []).filter((row) => Boolean(row?.resident_portal_enabled)).length,
     [tenants]
@@ -1685,9 +1686,109 @@ export default function PlatformAdminApp() {
     () => (tenants || []).filter((row) => row?.active !== false).length,
     [tenants]
   );
+  const scheduledDeletionCount = useMemo(
+    () => (tenants || []).filter((row) => Boolean(String(row?.deletion_scheduled_for || "").trim())).length,
+    [tenants]
+  );
   const pilotOrganizationCount = useMemo(
     () => (tenants || []).filter((row) => Boolean(row?.is_pilot)).length,
     [tenants]
+  );
+  const organizationReportRows = useMemo(() => {
+    const assignmentCountsByTenant = {};
+    for (const row of tenantAdmins || []) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      if (!tenantKey) continue;
+      if (!assignmentCountsByTenant[tenantKey]) {
+        assignmentCountsByTenant[tenantKey] = { admins: 0, employees: 0 };
+      }
+      const roleKey = String(row?.role || "").trim().toLowerCase();
+      if (roleKey === "tenant_admin") assignmentCountsByTenant[tenantKey].admins += 1;
+      else assignmentCountsByTenant[tenantKey].employees += 1;
+    }
+
+    return [...(tenants || [])]
+      .map((tenant) => {
+        const tenantKey = sanitizeTenantKey(tenant?.tenant_key);
+        const visibilityConfig = tenantVisibilityByTenant?.[tenantKey] || {};
+        const enabledDomainCount = DOMAIN_OPTIONS.reduce((count, domain) => {
+          const visibility = String(visibilityConfig?.[domain.key] || "public").trim().toLowerCase();
+          if (["private", "disabled", "hidden", "internal_only"].includes(visibility)) return count;
+          return count + 1;
+        }, 0);
+        const scheduledDeletionAt = String(tenant?.deletion_scheduled_for || "").trim();
+        const statusLabel = scheduledDeletionAt
+          ? "Scheduled for deletion"
+          : tenant?.active === false
+            ? "Inactive"
+            : "Active";
+        const counts = assignmentCountsByTenant[tenantKey] || { admins: 0, employees: 0 };
+        return {
+          tenant_key: tenantKey,
+          organization_name: String(tenant?.name || tenantKey || "Unknown organization").trim(),
+          public_display_name: String(tenantProfilesByTenant?.[tenantKey]?.display_name || "").trim(),
+          admin_count: counts.admins,
+          employee_count: counts.employees,
+          is_pilot: Boolean(tenant?.is_pilot),
+          is_active: tenant?.active !== false,
+          deletion_scheduled_for: scheduledDeletionAt,
+          status_label: statusLabel,
+          enabled_domain_count: enabledDomainCount,
+          hub_enabled: Boolean(tenant?.resident_portal_enabled),
+        };
+      })
+      .sort((left, right) => left.organization_name.localeCompare(right.organization_name));
+  }, [tenantAdmins, tenantProfilesByTenant, tenantVisibilityByTenant, tenants]);
+  const filteredOrganizationReportRows = useMemo(() => {
+    switch (organizationReportFilter) {
+      case "active":
+        return organizationReportRows.filter((row) => row.is_active && !row.deletion_scheduled_for);
+      case "scheduled_deletion":
+        return organizationReportRows.filter((row) => Boolean(row.deletion_scheduled_for));
+      case "hub_enabled":
+        return organizationReportRows.filter((row) => row.hub_enabled);
+      case "pilot":
+        return organizationReportRows.filter((row) => row.is_pilot);
+      case "all":
+      default:
+        return organizationReportRows;
+    }
+  }, [organizationReportFilter, organizationReportRows]);
+  const organizationReportFilters = useMemo(() => ([
+    {
+      key: "all",
+      label: "Total Organizations",
+      value: tenants.length,
+      note: "Configured across the platform.",
+    },
+    {
+      key: "active",
+      label: "Active Organizations",
+      value: activeOrganizationCount,
+      note: "Live and available in production.",
+    },
+    {
+      key: "scheduled_deletion",
+      label: "Scheduled for Deletion",
+      value: scheduledDeletionCount,
+      note: "Organizations currently in a deletion hold window.",
+    },
+    {
+      key: "hub_enabled",
+      label: "Hubs Enabled",
+      value: residentPortalCount,
+      note: "Organizations using the resident updates homepage.",
+    },
+    {
+      key: "pilot",
+      label: "Pilot Organizations",
+      value: pilotOrganizationCount,
+      note: "Currently flagged for pilot operations.",
+    },
+  ]), [activeOrganizationCount, pilotOrganizationCount, residentPortalCount, scheduledDeletionCount, tenants.length]);
+  const activeOrganizationReportFilter = useMemo(
+    () => organizationReportFilters.find((filter) => filter.key === organizationReportFilter) || organizationReportFilters[0],
+    [organizationReportFilter, organizationReportFilters]
   );
   const leadStatusCounts = useMemo(() => {
     const counts = {};
@@ -6882,41 +6983,78 @@ export default function PlatformAdminApp() {
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
             <div style={{ fontSize: 13.5, color: palette.textMuted }}>
-              Platform-wide organization coverage, access footprint, and launch readiness.
+              Platform-wide organization coverage and organization status reporting.
             </div>
-            <div style={responsiveTwoColGrid}>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organizations</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenants.length}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Configured across the platform.</div>
-              </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Active Organizations</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{activeOrganizationCount}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Live and available in production.</div>
-              </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organization Admins</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenantAdminAssignments.length}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Primary location operators currently assigned.</div>
-              </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Organization Employees</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{tenantEmployeeAssignments.length}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Scoped staff assignments across all organizations.</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 10 }}>
+              {organizationReportFilters.map((filter) => {
+                const isActiveFilter = filter.key === activeOrganizationReportFilter?.key;
+                return (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    style={{
+                      ...metricCardButton,
+                      border: isActiveFilter ? `1px solid ${palette.mint700}` : metricCardButton.border,
+                      background: isActiveFilter ? "rgba(18,128,106,0.08)" : metricCardButton.background,
+                    }}
+                    onClick={() => setOrganizationReportFilter(filter.key)}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>{filter.label}</div>
+                    <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{filter.value}</div>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>{filter.note}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ ...card, display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <h2 style={{ margin: 0, color: palette.navy900 }}>Organizations</h2>
+              <div style={{ fontSize: 13, color: palette.textMuted }}>
+                Showing {filteredOrganizationReportRows.length} organization{filteredOrganizationReportRows.length === 1 ? "" : "s"} for {activeOrganizationReportFilter?.label?.toLowerCase() || "all organizations"}.
               </div>
             </div>
-            <div style={responsiveTwoColGrid}>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Resident Hubs Enabled</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{residentPortalCount}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Organizations using the resident updates homepage.</div>
-              </div>
-              <div style={metricCard}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: palette.textMuted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Pilot Organizations</div>
-                <div style={{ fontSize: 34, fontWeight: 900, color: palette.navy900 }}>{pilotOrganizationCount}</div>
-                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Currently flagged for pilot operations.</div>
-              </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={tableHeadCell}>Organization Name</th>
+                    <th style={tableHeadCell}>Admins</th>
+                    <th style={tableHeadCell}>Employees</th>
+                    <th style={tableHeadCell}>Pilot</th>
+                    <th style={tableHeadCell}>Status</th>
+                    <th style={tableHeadCell}>Enabled Domains</th>
+                    <th style={tableHeadCell}>Hub Enabled</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredOrganizationReportRows.map((row) => (
+                    <tr key={row.tenant_key}>
+                      <td style={{ padding: "10px 0" }}>
+                        <div style={{ display: "grid", gap: 2 }}>
+                          <span style={{ fontWeight: 800, color: palette.navy900 }}>{row.organization_name}</span>
+                          {row.public_display_name && row.public_display_name !== row.organization_name ? (
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>{row.public_display_name}</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 0" }}>{row.admin_count}</td>
+                      <td style={{ padding: "10px 0" }}>{row.employee_count}</td>
+                      <td style={{ padding: "10px 0" }}>{row.is_pilot ? "Yes" : "No"}</td>
+                      <td style={{ padding: "10px 0" }}>{row.status_label}</td>
+                      <td style={{ padding: "10px 0" }}>{row.enabled_domain_count}</td>
+                      <td style={{ padding: "10px 0" }}>{row.hub_enabled ? "Yes" : "No"}</td>
+                    </tr>
+                  ))}
+                  {!filteredOrganizationReportRows.length ? (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "10px 0", color: palette.textMuted }}>
+                        No organizations match this report category yet.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
             </div>
           </div>
         </section>
