@@ -62,6 +62,37 @@ function stripLeadingSegment(pathname) {
   return remainder ? `/${remainder}` : "/";
 }
 
+function cleanPath(pathname) {
+  const path = String(pathname || "")
+    .trim()
+    .split(/[?#]/)[0];
+  if (!path) return "/";
+  if (!path.startsWith("/")) return `/${path}`;
+  return path || "/";
+}
+
+function normalizeHubInternalPath(pathname) {
+  const path = cleanPath(pathname);
+  if (path === "/hub" || path === "/hub/") return "/";
+  if (path.startsWith("/hub/")) return path.slice(4) || "/";
+  if (path === "/home" || path.startsWith("/home/")) return "/";
+  if (path === "/report" || path.startsWith("/report/")) return "/report";
+  if (path === "/reports" || path.startsWith("/reports/")) return "/reports";
+  if (path === "/alerts/create" || path.startsWith("/alerts/create/")) return "/alerts/create";
+  if (path === "/alerts" || path.startsWith("/alerts/")) return "/alerts";
+  if (path === "/events/create" || path.startsWith("/events/create/")) return "/events/create";
+  if (path === "/events" || path.startsWith("/events/")) return "/events";
+  if (path === "/preferences" || path.startsWith("/preferences/")) return "/settings/account-notifications";
+  if (path === "/notifications" || path.startsWith("/notifications/")) return "/settings/account-notifications";
+  if (path === "/account" || path.startsWith("/account/")) return "/settings/account-info";
+  if (path === "/settings" || path.startsWith("/settings/")) return path;
+  return null;
+}
+
+function buildHubPath(internalPath) {
+  return internalPath === "/" ? "/hub" : `/hub${internalPath}`;
+}
+
 function isApexStaticPath(pathname) {
   const raw = leadingRawPathSegment(pathname).toLowerCase();
   if (!raw) return false;
@@ -78,6 +109,7 @@ function makeResult(partial = {}) {
     env: partial.env || "prod",
     reason: partial.reason || "",
     unknownSlug: partial.unknownSlug || "",
+    appScope: partial.appScope || null,
   };
 }
 
@@ -108,6 +140,7 @@ export function resolveTenantRequest(input = {}, options = {}) {
       mode: "municipality_app",
       tenantKey: defaultTenant,
       reason: "missing_hostname_default_tenant",
+      appScope: "map",
     });
   }
 
@@ -151,6 +184,25 @@ export function resolveTenantRequest(input = {}, options = {}) {
         reason: "dev_platform_admin",
       });
     }
+    const devHubInternalPath = normalizeHubInternalPath(strippedPath);
+    if (strippedPath.startsWith("/hub")) {
+      return makeResult({
+        mode: "municipality_app",
+        env: "staging",
+        tenantKey: segment,
+        reason: "dev_hub_tenant",
+        appScope: "hub",
+      });
+    }
+    if (devHubInternalPath) {
+      return makeResult({
+        mode: "redirect",
+        env: "staging",
+        tenantKey: segment,
+        reason: "dev_legacy_hub_redirect",
+        redirectTo: `https://dev.cityreport.io/${segment}${buildHubPath(devHubInternalPath)}${search || ""}`,
+      });
+    }
     if (strippedPath.startsWith("/gmaps")) {
       return makeResult({
         mode: "redirect",
@@ -165,6 +217,7 @@ export function resolveTenantRequest(input = {}, options = {}) {
       env: "staging",
       tenantKey: segment,
       reason: "dev_city_path_tenant",
+      appScope: "map",
     });
   }
 
@@ -202,10 +255,28 @@ export function resolveTenantRequest(input = {}, options = {}) {
         reason: "subdomain_platform_admin",
       });
     }
+    const subdomainHubInternalPath = normalizeHubInternalPath(pathname);
+    if (pathname.startsWith("/hub")) {
+      return makeResult({
+        mode: "municipality_app",
+        tenantKey: slug,
+        reason: "subdomain_hub_tenant",
+        appScope: "hub",
+      });
+    }
+    if (subdomainHubInternalPath) {
+      return makeResult({
+        mode: "redirect",
+        tenantKey: slug,
+        reason: "subdomain_legacy_hub_redirect",
+        redirectTo: `https://${slug}.cityreport.io${buildHubPath(subdomainHubInternalPath)}${search || ""}`,
+      });
+    }
     return makeResult({
       mode: "municipality_app",
       tenantKey: slug,
       reason: "subdomain_tenant",
+      appScope: "map",
     });
   }
 
@@ -240,12 +311,14 @@ export function resolveTenantRequest(input = {}, options = {}) {
       }
       const suffix = pathname.split("/").slice(2).join("/");
       const suffixPath = suffix ? `/${suffix}` : "/";
+      const apexHubInternalPath = normalizeHubInternalPath(suffixPath);
+      const destinationPath = apexHubInternalPath ? buildHubPath(apexHubInternalPath) : suffixPath;
       const qs = search || "";
       return makeResult({
         mode: "redirect",
         tenantKey: segment,
         reason: "apex_slug_redirect",
-        redirectTo: `https://${segment}.cityreport.io${suffixPath}${qs}`,
+        redirectTo: `https://${segment}.cityreport.io${destinationPath}${qs}`,
       });
     }
     return makeResult({
@@ -269,6 +342,7 @@ export function resolveTenantRequest(input = {}, options = {}) {
         tenantKey: defaultTenant,
         env: "staging",
         reason: "local_legacy_gmaps_municipality",
+        appScope: "map",
       });
     }
     if (segment && !RESERVED_SLUGS.has(segment)) {
@@ -280,11 +354,32 @@ export function resolveTenantRequest(input = {}, options = {}) {
           unknownSlug: segment,
         });
       }
+      const localStrippedPath = stripLeadingSegment(pathname);
+      const localHubInternalPath = normalizeHubInternalPath(localStrippedPath);
+      if (localStrippedPath.startsWith("/hub")) {
+        return makeResult({
+          mode: "municipality_app",
+          tenantKey: segment,
+          env: "staging",
+          reason: "local_hub_tenant",
+          appScope: "hub",
+        });
+      }
+      if (localHubInternalPath) {
+        return makeResult({
+          mode: "redirect",
+          tenantKey: segment,
+          env: "staging",
+          reason: "local_legacy_hub_redirect",
+          redirectTo: `/${segment}${buildHubPath(localHubInternalPath)}${search || ""}`,
+        });
+      }
       return makeResult({
         mode: "municipality_app",
         tenantKey: segment,
         env: "staging",
         reason: "local_path_tenant",
+        appScope: "map",
       });
     }
     return makeResult({

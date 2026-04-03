@@ -17,8 +17,15 @@ export function stripTenantPathPrefix(pathname, tenantKey) {
   return remainder ? `/${remainder}` : "/";
 }
 
+function stripHubPathPrefix(pathname) {
+  const path = cleanPath(pathname);
+  if (path === "/hub" || path === "/hub/") return "/";
+  if (path.startsWith("/hub/")) return path.slice(4) || "/";
+  return path;
+}
+
 export function normalizeMunicipalityAppPath(pathname, tenantKey) {
-  const stripped = stripTenantPathPrefix(pathname, tenantKey);
+  const stripped = stripHubPathPrefix(stripTenantPathPrefix(pathname, tenantKey));
   if (
     stripped === "/" ||
     stripped === "/home" ||
@@ -83,6 +90,7 @@ export function buildMunicipalityAppHref(currentPathname, tenantKey, targetPath)
   const parts = current.split("/").filter(Boolean);
   const needsTenantPrefix = key && String(parts[0] || "").trim().toLowerCase() === key;
   const prefix = needsTenantPrefix ? `/${key}` : "";
-  if (target === "/") return prefix || "/";
-  return `${prefix}${target}`;
+  const hubBase = `${prefix}/hub`;
+  if (target === "/") return hubBase;
+  return `${hubBase}${target}`;
 }

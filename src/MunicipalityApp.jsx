@@ -862,11 +862,12 @@ function buildTenantSwitchHref(env, targetTenant, currentRoutePath, session = nu
   const normalizedPath = normalizeMunicipalityAppPath(currentRoutePath || "/", tenantKey);
   const routePath = String(normalizedPath || "").startsWith("/settings") ? "/" : normalizedPath;
   if (!tenantKey) return "/";
+  const hubPath = buildMunicipalityAppHref(env === "staging" ? `/${tenantKey}/hub` : "/hub", tenantKey, routePath);
   if (env === "staging") {
-    return `https://dev.cityreport.io/${tenantKey}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
+    return `https://dev.cityreport.io${hubPath}${buildTenantSwitchHash(session)}`;
   }
   const host = subdomain || `${tenantKey}.cityreport.io`;
-  return `https://${host}${routePath === "/" ? "" : routePath}${buildTenantSwitchHash(session)}`;
+  return `https://${host}${hubPath}${buildTenantSwitchHash(session)}`;
 }
 
 function buildReportFlyToHref(currentPathname, tenantKey, row) {
@@ -1695,7 +1696,6 @@ export default function MunicipalityApp() {
   const { session, setSession, profile, setProfile, authReady, loadingProfile } = useResidentAuth();
   const tenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
   const tenantName = trimOrEmpty(tenant?.tenantConfig?.name) || "Municipality";
-  const residentPortalEnabled = Boolean(tenant?.tenantConfig?.resident_portal_enabled);
   const [routePath, setRoutePath] = useState(() => normalizeMunicipalityAppPath(window.location.pathname, tenantKey));
   const [topics, setTopics] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -1999,14 +1999,6 @@ export default function MunicipalityApp() {
   const sessionEmail = trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email);
   const canViewTenantSecurity = manageAccess;
   const canManageTenantSecurity = manageAccess;
-
-  if (!residentPortalEnabled) {
-    return (
-      <Suspense fallback={<div className="municipality-empty" style={{ margin: 16 }}>Loading reporting workspace…</div>}>
-        <MapGoogleFull />
-      </Suspense>
-    );
-  }
 
   const topicLookup = useMemo(() => {
     const lookup = {};

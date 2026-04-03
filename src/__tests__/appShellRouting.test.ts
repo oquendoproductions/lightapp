@@ -11,8 +11,9 @@ describe("municipality app shell routing", () => {
     expect(stripTenantPathPrefix("/ashtabulacity/events", "ashtabulacity")).toBe("/events");
   });
 
-  it("normalizes legacy gmaps into the report workspace and keeps hub reports on the reports page", () => {
-    expect(normalizeMunicipalityAppPath("/gmaps", "ashtabulacity")).toBe("/report");
+  it("normalizes hub-prefixed routes and keeps hub reports on the reports page", () => {
+    expect(normalizeMunicipalityAppPath("/hub/report", "ashtabulacity")).toBe("/report");
+    expect(normalizeMunicipalityAppPath("/hub/reports", "ashtabulacity")).toBe("/reports");
     expect(normalizeMunicipalityAppPath("/reports?tab=open", "ashtabulacity")).toBe("/reports");
   });
 
@@ -21,11 +22,11 @@ describe("municipality app shell routing", () => {
   });
 
   it("builds tenant-prefixed hrefs for dev path hosts", () => {
-    expect(buildMunicipalityAppHref("/ashtabulacity/", "ashtabulacity", "/events")).toBe("/ashtabulacity/events");
-    expect(buildMunicipalityAppHref("/ashtabulacity/report", "ashtabulacity", "/")).toBe("/ashtabulacity");
+    expect(buildMunicipalityAppHref("/ashtabulacity/hub", "ashtabulacity", "/events")).toBe("/ashtabulacity/hub/events");
+    expect(buildMunicipalityAppHref("/ashtabulacity/hub/report", "ashtabulacity", "/")).toBe("/ashtabulacity/hub");
   });
 
   it("builds root-relative hrefs for municipality subdomains", () => {
-    expect(buildMunicipalityAppHref("/report", "ashtabulacity", "/alerts")).toBe("/alerts");
+    expect(buildMunicipalityAppHref("/hub/report", "ashtabulacity", "/alerts")).toBe("/hub/alerts");
   });
 });

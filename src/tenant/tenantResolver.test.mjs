@@ -29,10 +29,10 @@ test("apex slug route redirects to municipality subdomain", () => {
   });
   assert.equal(res.mode, "redirect");
   assert.equal(res.tenantKey, "ashtabulacity");
-  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/reports?tab=open");
+  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/hub/reports?tab=open");
 });
 
-test("municipality subdomain resolves to municipality app", () => {
+test("municipality subdomain root resolves to public map", () => {
   const res = resolveTenantRequest({
     hostname: "ashtabulacity.cityreport.io",
     pathname: "/",
@@ -41,17 +41,19 @@ test("municipality subdomain resolves to municipality app", () => {
   assert.equal(res.mode, "municipality_app");
   assert.equal(res.tenantKey, "ashtabulacity");
   assert.equal(res.env, "prod");
+  assert.equal(res.appScope, "map");
 });
 
-test("dev slug path resolves to staging municipality app", () => {
+test("dev slug hub path resolves to staging municipality hub", () => {
   const res = resolveTenantRequest({
     hostname: "dev.cityreport.io",
-    pathname: "/ashtabulacity/reports",
+    pathname: "/ashtabulacity/hub/reports",
     search: "",
   });
   assert.equal(res.mode, "municipality_app");
   assert.equal(res.tenantKey, "ashtabulacity");
   assert.equal(res.env, "staging");
+  assert.equal(res.appScope, "hub");
 });
 
 test("legacy gmaps path redirects to Ashtabula during transition", () => {
@@ -82,9 +84,9 @@ test("ashtabula subdomain resolves as independent tenant slug (reserved for coun
     pathname: "/reports",
     search: "?tab=open",
   });
-  assert.equal(res.mode, "municipality_app");
+  assert.equal(res.mode, "redirect");
   assert.equal(res.tenantKey, "ashtabula");
-  assert.equal(res.redirectTo, null);
+  assert.equal(res.redirectTo, "https://ashtabula.cityreport.io/hub/reports?tab=open");
 });
 
 test("apex ashtabula slug redirects to its own subdomain (reserved for county)", () => {

@@ -20,20 +20,30 @@ function sanitizeTenantKey(raw) {
 }
 
 function parseKnownTenantRoutes(raw, fallbackTenant) {
-  const routes = new Map();
+  const routeToTenant = new Map();
+  const primaryHostByTenant = new Map();
 
   const value = String(raw || "").trim();
   if (value) {
     for (const entry of value.split(",")) {
       const slug = sanitizeTenantKey(entry);
-      if (slug) routes.set(slug, slug);
+      if (slug) {
+        routeToTenant.set(slug, slug);
+        primaryHostByTenant.set(slug, `${slug}.cityreport.io`);
+      }
     }
   }
 
   const fallback = sanitizeTenantKey(fallbackTenant);
-  if (fallback) routes.set(fallback, fallback);
+  if (fallback) {
+    routeToTenant.set(fallback, fallback);
+    primaryHostByTenant.set(fallback, `${fallback}.cityreport.io`);
+  }
 
-  return routes;
+  return {
+    routeToTenant,
+    primaryHostByTenant,
+  };
 }
 
 function parsePositiveInt(raw, fallback) {
@@ -80,14 +90,22 @@ async function fetchActiveTenantRoutesFromSupabase(env) {
     return null;
   }
 
-  const routes = new Map();
+  const routeToTenant = new Map();
+  const primaryHostByTenant = new Map();
   for (const row of payload) {
     const tenantKey = sanitizeTenantKey(row?.tenant_key);
     const routeSlug = sanitizeTenantKey(row?.route_slug);
-    if (tenantKey) routes.set(tenantKey, tenantKey);
-    if (routeSlug) routes.set(routeSlug, tenantKey || routeSlug);
+    const primaryHost = String(row?.primary_subdomain || "").trim().toLowerCase();
+    if (tenantKey) {
+      routeToTenant.set(tenantKey, tenantKey);
+      primaryHostByTenant.set(tenantKey, primaryHost || `${tenantKey}.cityreport.io`);
+    }
+    if (routeSlug) routeToTenant.set(routeSlug, tenantKey || routeSlug);
   }
-  return routes;
+  return {
+    routeToTenant,
+    primaryHostByTenant,
+  };
 }
 
 async function resolveTenantRouteInSupabase(env, tenantRoute) {
@@ -137,6 +155,7 @@ async function resolveTenantRouteInSupabase(env, tenantRoute) {
   return {
     tenantKey,
     routeSlug: routeSlug || slug,
+    primarySubdomain,
   };
 }
 
@@ -154,29 +173,48 @@ async function resolveKnownTenantRoutes(env, defaultTenant) {
 
   if (
     tenantRoutesCache.signature === signature &&
-    tenantRoutesCache.routes instanceof Map &&
+    tenantRoutesCache.routes &&
     tenantRoutesCache.expiresAt > now
   ) {
-    return new Map(tenantRoutesCache.routes);
+    return {
+      routeToTenant: new Map(tenantRoutesCache.routes.routeToTenant),
+      primaryHostByTenant: new Map(tenantRoutesCache.routes.primaryHostByTenant),
+    };
   }
 
   if (tenantRoutesInflight.signature === signature && tenantRoutesInflight.promise) {
     const inflight = await tenantRoutesInflight.promise;
-    return new Map(inflight);
+    return {
+      routeToTenant: new Map(inflight.routeToTenant),
+      primaryHostByTenant: new Map(inflight.primaryHostByTenant),
+    };
   }
 
   tenantRoutesInflight = {
     signature,
     promise: (async () => {
       const synced = await fetchActiveTenantRoutesFromSupabase(env);
-      const merged = new Map(fallbackRoutes);
-      if (synced instanceof Map) {
-        for (const [routeSlug, tenantKey] of synced.entries()) {
-          merged.set(routeSlug, tenantKey);
+      const merged = {
+        routeToTenant: new Map(fallbackRoutes.routeToTenant),
+        primaryHostByTenant: new Map(fallbackRoutes.primaryHostByTenant),
+      };
+      if (synced?.routeToTenant instanceof Map) {
+        for (const [routeSlug, tenantKey] of synced.routeToTenant.entries()) {
+          merged.routeToTenant.set(routeSlug, tenantKey);
+        }
+      }
+      if (synced?.primaryHostByTenant instanceof Map) {
+        for (const [tenantKey, primaryHost] of synced.primaryHostByTenant.entries()) {
+          merged.primaryHostByTenant.set(tenantKey, primaryHost);
         }
       }
       const fallback = sanitizeTenantKey(defaultTenant);
-      if (fallback) merged.set(fallback, fallback);
+      if (fallback) {
+        merged.routeToTenant.set(fallback, fallback);
+        if (!merged.primaryHostByTenant.has(fallback)) {
+          merged.primaryHostByTenant.set(fallback, `${fallback}.cityreport.io`);
+        }
+      }
 
       tenantRoutesCache = {
         routes: merged,
@@ -189,13 +227,21 @@ async function resolveKnownTenantRoutes(env, defaultTenant) {
 
   try {
     const routes = await tenantRoutesInflight.promise;
-    return new Map(routes);
+    return {
+      routeToTenant: new Map(routes.routeToTenant),
+      primaryHostByTenant: new Map(routes.primaryHostByTenant),
+    };
   } finally {
     tenantRoutesInflight = {
       signature: "",
       promise: null,
     };
   }
+}
+
+function extractSubdomainSlug(hostname) {
+  const match = String(hostname || "").trim().toLowerCase().match(/^([a-z0-9-]+)\.cityreport\.io$/);
+  return match ? sanitizeTenantKey(match[1]) : "";
 }
 
 function withTenantHeaders(headers, resolution) {
@@ -206,6 +252,11 @@ function withTenantHeaders(headers, resolution) {
     nextHeaders.delete("x-tenant-key");
   }
   nextHeaders.set("x-tenant-mode", resolution?.mode || "marketing_home");
+  if (resolution?.appScope) {
+    nextHeaders.set("x-tenant-app-scope", resolution.appScope);
+  } else {
+    nextHeaders.delete("x-tenant-app-scope");
+  }
   nextHeaders.set("x-tenant-env", resolution?.env || "prod");
   return nextHeaders;
 }
@@ -262,6 +313,9 @@ async function proxyToPages(request, resolution, env) {
   responseHeaders.set("x-cityreport-resolver-mode", resolution.mode);
   if (resolution.tenantKey) {
     responseHeaders.set("x-cityreport-tenant-key", resolution.tenantKey);
+  }
+  if (resolution.appScope) {
+    responseHeaders.set("x-cityreport-app-scope", resolution.appScope);
   }
 
   return new Response(upstreamResponse.body, {
@@ -396,7 +450,7 @@ export default {
       .trim()
       .toLowerCase();
     const tenantRoutes = await resolveKnownTenantRoutes(env, defaultTenant);
-    const knownTenantKeys = new Set(tenantRoutes.keys());
+    const knownTenantKeys = new Set(tenantRoutes.routeToTenant.keys());
 
     let resolution = resolveTenantRequest(
       {
@@ -413,16 +467,22 @@ export default {
     // Auto-promote newly added active tenants without manual allowlist edits.
     if (resolution.mode === "not_found") {
       const slug = sanitizeTenantKey(resolution.unknownSlug);
-      if (slug && !tenantRoutes.has(slug)) {
+      if (slug && !tenantRoutes.routeToTenant.has(slug)) {
         const activeTenant = await resolveTenantRouteInSupabase(env, slug);
         if (activeTenant?.tenantKey) {
-          tenantRoutes.set(slug, activeTenant.tenantKey);
+          tenantRoutes.routeToTenant.set(slug, activeTenant.tenantKey);
           if (activeTenant.routeSlug) {
-            tenantRoutes.set(activeTenant.routeSlug, activeTenant.tenantKey);
+            tenantRoutes.routeToTenant.set(activeTenant.routeSlug, activeTenant.tenantKey);
+          }
+          if (activeTenant.primarySubdomain) {
+            tenantRoutes.primaryHostByTenant.set(activeTenant.tenantKey, activeTenant.primarySubdomain);
           }
           tenantRoutesCache = {
             signature: tenantRoutesCache.signature,
-            routes: new Map(tenantRoutes),
+            routes: {
+              routeToTenant: new Map(tenantRoutes.routeToTenant),
+              primaryHostByTenant: new Map(tenantRoutes.primaryHostByTenant),
+            },
             expiresAt: tenantRoutesCache.expiresAt || (Date.now() + 30_000),
           };
           resolution = resolveTenantRequest(
@@ -433,7 +493,7 @@ export default {
             },
             {
               defaultTenant,
-              knownTenantKeys: new Set(tenantRoutes.keys()),
+              knownTenantKeys: new Set(tenantRoutes.routeToTenant.keys()),
             },
           );
         }
@@ -441,12 +501,21 @@ export default {
     }
 
     if (resolution.tenantKey) {
-      const actualTenantKey = tenantRoutes.get(sanitizeTenantKey(resolution.tenantKey));
+      const actualTenantKey = tenantRoutes.routeToTenant.get(sanitizeTenantKey(resolution.tenantKey));
       if (actualTenantKey) {
         resolution = {
           ...resolution,
           tenantKey: actualTenantKey,
         };
+        const requestSlug = extractSubdomainSlug(url.hostname);
+        const canonicalHost = String(tenantRoutes.primaryHostByTenant.get(actualTenantKey) || "").trim().toLowerCase();
+        if (
+          requestSlug &&
+          canonicalHost &&
+          canonicalHost !== url.hostname.toLowerCase()
+        ) {
+          return Response.redirect(`https://${canonicalHost}${url.pathname}${url.search || ""}`, 301);
+        }
       }
     }
 

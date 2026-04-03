@@ -35,8 +35,10 @@ test("forwards tenant headers to upstream Pages request", async () => {
     assert.equal(seen.length, 1);
     assert.equal(seen[0].headers.get("x-tenant-key"), "ashtabulacity");
     assert.equal(seen[0].headers.get("x-tenant-mode"), "municipality_app");
+    assert.equal(seen[0].headers.get("x-tenant-app-scope"), "map");
     assert.equal(seen[0].headers.get("x-tenant-env"), "prod");
     assert.equal(response.headers.get("x-cityreport-resolver-mode"), "municipality_app");
+    assert.equal(response.headers.get("x-cityreport-app-scope"), "map");
     assert.equal(response.headers.get("x-cityreport-tenant-key"), "ashtabulacity");
   } finally {
     globalThis.fetch = originalFetch;
@@ -126,7 +128,7 @@ test("custom primary subdomain proxies with the internal tenant key header", asy
   globalThis.fetch = async (req) => {
     const url = typeof req === "string" ? req : req.url;
     if (String(url).includes("/rpc/list_active_tenant_routes")) {
-      return new Response(JSON.stringify([{ tenant_key: "ashtabulacity", route_slug: "ashtabula" }]), {
+      return new Response(JSON.stringify([{ tenant_key: "ashtabulacity", primary_subdomain: "ashtabula.cityreport.io", route_slug: "ashtabula" }]), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -141,7 +143,7 @@ test("custom primary subdomain proxies with the internal tenant key header", asy
       PAGES_ORIGIN: "lightapp-ak2.pages.dev",
       DEFAULT_TENANT_KEY: "ashtabulacity",
       KNOWN_TENANT_KEYS: "ashtabulacity",
-      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_URL: "https://custom-primary.example.supabase.co",
       SUPABASE_ANON_KEY: "sb_publishable_test_123",
       TENANT_KEYS_SYNC_TTL_SEC: "1",
     });
@@ -150,6 +152,38 @@ test("custom primary subdomain proxies with the internal tenant key header", asy
     assert.equal(seen.length, 1);
     assert.equal(seen[0].headers.get("x-tenant-key"), "ashtabulacity");
     assert.equal(response.headers.get("x-cityreport-tenant-key"), "ashtabulacity");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("old tenant-key host redirects to the configured primary subdomain", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (req) => {
+    const url = typeof req === "string" ? req : req.url;
+    if (String(url).includes("/rpc/list_active_tenant_routes")) {
+      return new Response(JSON.stringify([{ tenant_key: "ashtabulacity", primary_subdomain: "ashtabula.cityreport.io", route_slug: "ashtabula" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error("upstream should not be called before canonical redirect");
+  };
+
+  try {
+    const request = new Request("https://ashtabulacity.cityreport.io/hub");
+    const response = await worker.fetch(request, {
+      PAGES_ORIGIN: "lightapp-ak2.pages.dev",
+      DEFAULT_TENANT_KEY: "ashtabulacity",
+      KNOWN_TENANT_KEYS: "ashtabulacity",
+      SUPABASE_URL: "https://canonical-redirect.example.supabase.co",
+      SUPABASE_ANON_KEY: "sb_publishable_test_123",
+      TENANT_KEYS_SYNC_TTL_SEC: "1",
+    });
+
+    assert.equal(response.status, 301);
+    assert.equal(response.headers.get("location"), "https://ashtabula.cityreport.io/hub");
   } finally {
     globalThis.fetch = originalFetch;
   }

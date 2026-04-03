@@ -51,7 +51,7 @@ test("apex slug redirects to canonical subdomain", () => {
   );
   assert.equal(res.mode, "redirect");
   assert.equal(res.tenantKey, "ashtabulacity");
-  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/reports?tab=open");
+  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/hub/reports?tab=open");
 });
 
 test("apex unknown tenant slug returns not found when known tenant set is provided", () => {
@@ -70,7 +70,7 @@ test("apex unknown tenant slug returns not found when known tenant set is provid
   assert.equal(res.unknownSlug, "unknowncity");
 });
 
-test("subdomain serves municipality app", () => {
+test("subdomain root serves public map scope", () => {
   const res = resolveTenantRequest(
     {
       hostname: "testcity1.cityreport.io",
@@ -83,6 +83,23 @@ test("subdomain serves municipality app", () => {
   );
   assert.equal(res.mode, "municipality_app");
   assert.equal(res.tenantKey, "testcity1");
+  assert.equal(res.appScope, "map");
+});
+
+test("subdomain hub path serves hub scope", () => {
+  const res = resolveTenantRequest(
+    {
+      hostname: "testcity1.cityreport.io",
+      pathname: "/hub/reports",
+      search: "",
+    },
+    {
+      knownTenantKeys: new Set(["testcity1"]),
+    },
+  );
+  assert.equal(res.mode, "municipality_app");
+  assert.equal(res.tenantKey, "testcity1");
+  assert.equal(res.appScope, "hub");
 });
 
 test("unknown subdomain returns not found when known tenant set is provided", () => {
@@ -111,7 +128,7 @@ test("legacy /gmaps redirects to tenant root", () => {
   assert.equal(res.redirectTo, "https://testcity1.cityreport.io/");
 });
 
-test("dev host path mode resolves municipality app in staging", () => {
+test("dev legacy hub path redirects into the hub namespace in staging", () => {
   const res = resolveTenantRequest(
     {
       hostname: "dev.cityreport.io",
@@ -122,9 +139,10 @@ test("dev host path mode resolves municipality app in staging", () => {
       knownTenantKeys: new Set(["testcity1"]),
     },
   );
-  assert.equal(res.mode, "municipality_app");
+  assert.equal(res.mode, "redirect");
   assert.equal(res.env, "staging");
   assert.equal(res.tenantKey, "testcity1");
+  assert.equal(res.redirectTo, "https://dev.cityreport.io/testcity1/hub/reports");
 });
 
 test("reserved slug subdomain returns not found + event", () => {

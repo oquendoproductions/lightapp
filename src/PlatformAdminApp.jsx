@@ -806,7 +806,7 @@ function initialTenantForm() {
     boundary_config_key: "",
     notification_email_potholes: "",
     notification_email_water_drain: "",
-    resident_portal_enabled: false,
+    resident_portal_enabled: true,
     is_pilot: false,
     active: true,
   };
@@ -1250,6 +1250,11 @@ function makeLiveUrl(primarySubdomain, tenantKey) {
   return `https://${sanitizeTenantKey(tenantKey)}.cityreport.io/`;
 }
 
+function makeHubUrl(primarySubdomain, tenantKey) {
+  const base = makeLiveUrl(primarySubdomain, tenantKey).replace(/\/+$/, "");
+  return `${base}/hub`;
+}
+
 function makeDevUrl(tenantKey) {
   return `https://dev.cityreport.io/${sanitizeTenantKey(tenantKey)}/`;
 }
@@ -1599,8 +1604,8 @@ export default function PlatformAdminApp() {
     });
   }, [tenantProfilesByTenant, tenantSearch, tenants]);
 
-  const selectedTenantLiveUrl = useMemo(
-    () => (selectedTenant ? makeLiveUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
+  const selectedTenantHubUrl = useMemo(
+    () => (selectedTenant ? makeHubUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
     [selectedTenant]
   );
 
@@ -4352,7 +4357,7 @@ export default function PlatformAdminApp() {
       boundary_config_key: String(tenantForm.boundary_config_key || defaultBoundaryKey).trim() || defaultBoundaryKey,
       notification_email_potholes: cleanOptional(tenantForm.notification_email_potholes),
       notification_email_water_drain: cleanOptional(tenantForm.notification_email_water_drain),
-      resident_portal_enabled: Boolean(tenantForm.resident_portal_enabled),
+      resident_portal_enabled: true,
       is_pilot: Boolean(tenantForm.is_pilot),
       active: Boolean(tenantForm.active),
     };
@@ -8293,8 +8298,8 @@ export default function PlatformAdminApp() {
                       URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
                     </div>
                   </div>
-                  {selectedTenantLiveUrl ? (
-                    <a href={selectedTenantLiveUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
+                  {selectedTenantHubUrl ? (
+                    <a href={selectedTenantHubUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
                       Open Organization Hub
                     </a>
                   ) : null}
@@ -8399,7 +8404,7 @@ export default function PlatformAdminApp() {
                           style={{ ...inputBase, background: tenantReadOnly ? "#eef4fb" : inputBase.background }}
                         />
                         <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                          Live URL: {normalizePrimarySubdomain(tenantForm.primary_subdomain) || "examplemunicipality.cityreport.io"}
+                          Public map: {normalizePrimarySubdomain(tenantForm.primary_subdomain) || "examplemunicipality.cityreport.io"} • Hub: {(normalizePrimarySubdomain(tenantForm.primary_subdomain) && `https://${normalizePrimarySubdomain(tenantForm.primary_subdomain)}/hub`) || "https://examplemunicipality.cityreport.io/hub"}
                         </span>
                       </label>
                       <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -8420,14 +8425,10 @@ export default function PlatformAdminApp() {
                     <div style={{ display: "grid", gap: 3 }}>
                       <div style={{ fontWeight: 900, color: palette.navy900 }}>Experience + Status</div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Control launch state and whether the public root opens into the resident updates experience.
+                        Control launch state for the organization workspace and public map.
                       </div>
                     </div>
                     <div style={{ ...responsiveActionGrid, marginTop: 2 }}>
-                      <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <input type="checkbox" checked={tenantForm.resident_portal_enabled} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, resident_portal_enabled: e.target.checked }))} />
-                        Resident Updates Homepage Enabled
-                      </label>
                       <label style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <input type="checkbox" checked={tenantForm.is_pilot} disabled={tenantReadOnly} onChange={(e) => setTenantForm((p) => ({ ...p, is_pilot: e.target.checked }))} />
                         Pilot Municipality
