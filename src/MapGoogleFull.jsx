@@ -12040,6 +12040,8 @@ export default function App({ onBackToHub = null }) {
   const [tenantMapFeatures, setTenantMapFeatures] = useState({
     show_boundary_border: true,
     shade_outside_boundary: true,
+    show_alert_icon: true,
+    show_event_icon: true,
     outside_shade_opacity: 0.42,
     boundary_border_color: "#e53935",
     boundary_border_width: 4,
@@ -12759,6 +12761,8 @@ export default function App({ onBackToHub = null }) {
       const fallback = {
         show_boundary_border: true,
         shade_outside_boundary: true,
+        show_alert_icon: true,
+        show_event_icon: true,
         outside_shade_opacity: 0.42,
         boundary_border_color: "#e53935",
         boundary_border_width: 4,
@@ -12767,7 +12771,7 @@ export default function App({ onBackToHub = null }) {
       const tenantKey = activeTenantKey();
       const { data, error } = await supabase
         .from("tenant_map_features")
-        .select("show_boundary_border,shade_outside_boundary,outside_shade_opacity,boundary_border_color,boundary_border_width")
+        .select("show_boundary_border,shade_outside_boundary,show_alert_icon,show_event_icon,outside_shade_opacity,boundary_border_color,boundary_border_width")
         .eq("tenant_key", tenantKey)
         .maybeSingle();
 
@@ -12799,6 +12803,8 @@ export default function App({ onBackToHub = null }) {
       setTenantMapFeatures({
         show_boundary_border: data?.show_boundary_border !== false,
         shade_outside_boundary: data?.shade_outside_boundary !== false,
+        show_alert_icon: data?.show_alert_icon !== false,
+        show_event_icon: data?.show_event_icon !== false,
         outside_shade_opacity: nextOpacity,
         boundary_border_color: nextBorderColor,
         boundary_border_width: nextBorderWidth,
@@ -14685,6 +14691,8 @@ export default function App({ onBackToHub = null }) {
   }, [cityBoundaryOuterRings]);
   const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
   const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
+  const showMapAlertIcon = tenantMapFeatures?.show_alert_icon !== false;
+  const showMapEventIcon = tenantMapFeatures?.show_event_icon !== false;
   const cityOutsideShadeOpacity = Number.isFinite(Number(tenantMapFeatures?.outside_shade_opacity))
     ? Math.max(0, Math.min(1, Number(tenantMapFeatures.outside_shade_opacity)))
     : 0.42;
