@@ -460,6 +460,42 @@ function toDateInputValue(date = new Date()) {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
+function toLocalIsoDate(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseLocalIsoDate(value) {
+  const raw = trimOrEmpty(value);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function defaultReportFromDate() {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return toLocalIsoDate(date);
+}
+
+function defaultReportToDate() {
+  return toLocalIsoDate(new Date());
+}
+
+function formatDateRangeLabel(from, to) {
+  if (!trimOrEmpty(from) && !trimOrEmpty(to)) return "All dates";
+  const fromDate = parseLocalIsoDate(from);
+  const toDate = parseLocalIsoDate(to);
+  if (!fromDate || !toDate) return "Custom range";
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${formatter.format(fromDate)} - ${formatter.format(toDate)}`;
+}
+
 function toDateTimeLocalValue(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -1059,6 +1095,13 @@ export default function MunicipalityApp() {
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
   const [reportActivityRows, setReportActivityRows] = useState([]);
   const [reportActivityStatus, setReportActivityStatus] = useState("");
+  const [reportDomainFilter, setReportDomainFilter] = useState("all");
+  const [reportStatusFilter, setReportStatusFilter] = useState("open");
+  const [reportSearchDraft, setReportSearchDraft] = useState("");
+  const [reportSearchQuery, setReportSearchQuery] = useState("");
+  const [reportFromDate, setReportFromDate] = useState(() => defaultReportFromDate());
+  const [reportToDate, setReportToDate] = useState(() => defaultReportToDate());
+  const [reportSortPreset, setReportSortPreset] = useState("recent_desc");
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
@@ -1357,19 +1400,72 @@ export default function MunicipalityApp() {
     () => new Set((visibleReportDomains || []).map((row) => row.key)),
     [visibleReportDomains]
   );
+  const filteredReportActivityRows = useMemo(() => {
+    const normalizedQuery = trimOrEmpty(reportSearchQuery).toLowerCase();
+    const fromDate = parseLocalIsoDate(reportFromDate);
+    const toDate = parseLocalIsoDate(reportToDate);
+    const toDateExclusive = toDate ? new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate() + 1) : null;
+    const filtered = (reportActivityRows || []).filter((row) => {
+      if (reportDomainFilter !== "all" && row.domain !== reportDomainFilter) return false;
+      if (reportStatusFilter === "open" && !isOpenReportState(row?.current_state)) return false;
+      if (reportStatusFilter === "closed" && isOpenReportState(row?.current_state)) return false;
+
+      const latestDate = row?.latest_reported_at ? new Date(row.latest_reported_at) : null;
+      if (fromDate && (!latestDate || latestDate < fromDate)) return false;
+      if (toDateExclusive && (!latestDate || latestDate >= toDateExclusive)) return false;
+
+      if (!normalizedQuery) return true;
+      const searchHaystack = [
+        reportDomainLabel(row?.domain),
+        trimOrEmpty(row?.incident_id),
+        trimOrEmpty(row?.latest_report_number),
+        trimOrEmpty(row?.latest_note),
+        trimOrEmpty(row?.current_state),
+      ].join(" ").toLowerCase();
+      return searchHaystack.includes(normalizedQuery);
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (reportSortPreset === "recent_asc") {
+        return String(a?.latest_reported_at || "").localeCompare(String(b?.latest_reported_at || ""));
+      }
+      if (reportSortPreset === "reports_desc") {
+        return Number(b?.report_count || 0) - Number(a?.report_count || 0)
+          || String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || ""));
+      }
+      if (reportSortPreset === "reports_asc") {
+        return Number(a?.report_count || 0) - Number(b?.report_count || 0)
+          || String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || ""));
+      }
+      if (reportSortPreset === "id_asc") {
+        return trimOrEmpty(a?.incident_id).localeCompare(trimOrEmpty(b?.incident_id));
+      }
+      if (reportSortPreset === "id_desc") {
+        return trimOrEmpty(b?.incident_id).localeCompare(trimOrEmpty(a?.incident_id));
+      }
+      return String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || ""));
+    });
+  }, [reportActivityRows, reportDomainFilter, reportFromDate, reportSearchQuery, reportSortPreset, reportStatusFilter, reportToDate]);
   const reportActivitySummary = useMemo(() => {
-    return visibleReportDomains.map((domain) => {
-      const matchingRows = reportActivityRows.filter((row) => row.domain === domain.key);
+    const domainRows = reportDomainFilter === "all"
+      ? visibleReportDomains
+      : visibleReportDomains.filter((domain) => domain.key === reportDomainFilter);
+    return domainRows.map((domain) => {
+      const matchingRows = filteredReportActivityRows.filter((row) => row.domain === domain.key);
+      const openCount = matchingRows.filter((row) => isOpenReportState(row?.current_state)).length;
       return {
         ...domain,
-        open_incidents: matchingRows.length,
+        incident_count: matchingRows.length,
+        open_incidents: openCount,
+        closed_incidents: Math.max(0, matchingRows.length - openCount),
         total_reports: matchingRows.reduce((sum, row) => sum + Number(row?.report_count || 0), 0),
         latest_activity_at: matchingRows[0]?.latest_reported_at || "",
       };
     });
-  }, [reportActivityRows, visibleReportDomains]);
-  const latestReportActivityAt = reportActivityRows[0]?.latest_reported_at || "";
-  const activeReportDomainCount = reportActivitySummary.filter((row) => Number(row?.open_incidents || 0) > 0).length;
+  }, [filteredReportActivityRows, reportDomainFilter, visibleReportDomains]);
+  const latestReportActivityAt = filteredReportActivityRows[0]?.latest_reported_at || "";
+  const filteredOpenIncidentCount = filteredReportActivityRows.filter((row) => isOpenReportState(row?.current_state)).length;
+  const filteredClosedIncidentCount = Math.max(0, filteredReportActivityRows.length - filteredOpenIncidentCount);
   const permissionLabelLookup = useMemo(
     () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
     [permissionCatalog]
@@ -1701,7 +1797,6 @@ export default function MunicipalityApp() {
       }
 
       const nextIncidentRows = [...grouped.values()]
-        .filter((row) => isOpenReportState(row?.current_state))
         .sort((a, b) => String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || "")));
 
       setReportActivityRows(nextIncidentRows);
@@ -3016,11 +3111,11 @@ export default function MunicipalityApp() {
   }
 
   function downloadActivityExport() {
-    if (!reportActivityRows.length) {
-      setSettingsStatus("No active domain reports are available to export yet.");
+    if (!filteredReportActivityRows.length) {
+      setSettingsStatus("No domain reports match the current filters yet.");
       return;
     }
-    const rows = reportActivityRows.map((row) => [
+    const rows = filteredReportActivityRows.map((row) => [
       reportDomainLabel(row?.domain),
       trimOrEmpty(row?.incident_id),
       trimOrEmpty(row?.current_state) || "reported",
@@ -3955,22 +4050,131 @@ export default function MunicipalityApp() {
         {routePath === "/reports" ? (
           <HomeCard title="Domain Reports" subtitle="Review live reported incidents across the same map domains and reported items used in the reporting workspace.">
             <div className="municipality-admin-panel">
+              <div className="municipality-report-filters">
+                <div className="municipality-form-grid municipality-form-grid--reports">
+                  <div className="municipality-field municipality-field--search">
+                    <label htmlFor="report-search">Search reports</label>
+                    <div className="municipality-report-search-row">
+                      <input
+                        id="report-search"
+                        type="search"
+                        value={reportSearchDraft}
+                        onChange={(event) => setReportSearchDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            setReportSearchQuery(trimOrEmpty(reportSearchDraft));
+                          }
+                        }}
+                        placeholder="Search by domain, incident ID, report #, note, or status"
+                      />
+                      <button
+                        type="button"
+                        className="municipality-button municipality-button--ghost"
+                        onClick={() => setReportSearchQuery(trimOrEmpty(reportSearchDraft))}
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                  <div className="municipality-field">
+                    <label htmlFor="report-domain-filter">Domain</label>
+                    <select
+                      id="report-domain-filter"
+                      value={reportDomainFilter}
+                      onChange={(event) => setReportDomainFilter(event.target.value)}
+                    >
+                      <option value="all">All visible domains</option>
+                      {visibleReportDomains.map((domain) => (
+                        <option key={domain.key} value={domain.key}>{domain.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="municipality-field">
+                    <label htmlFor="report-status-filter">Status</label>
+                    <select
+                      id="report-status-filter"
+                      value={reportStatusFilter}
+                      onChange={(event) => setReportStatusFilter(event.target.value)}
+                    >
+                      <option value="open">Open</option>
+                      <option value="closed">Closed</option>
+                      <option value="all">All</option>
+                    </select>
+                  </div>
+                  <div className="municipality-field">
+                    <label htmlFor="report-from-date">From</label>
+                    <input
+                      id="report-from-date"
+                      type="date"
+                      value={reportFromDate}
+                      onChange={(event) => setReportFromDate(event.target.value)}
+                    />
+                  </div>
+                  <div className="municipality-field">
+                    <label htmlFor="report-to-date">To</label>
+                    <input
+                      id="report-to-date"
+                      type="date"
+                      value={reportToDate}
+                      onChange={(event) => setReportToDate(event.target.value)}
+                    />
+                  </div>
+                  <div className="municipality-field">
+                    <label htmlFor="report-sort">Sort reports</label>
+                    <select
+                      id="report-sort"
+                      value={reportSortPreset}
+                      onChange={(event) => setReportSortPreset(event.target.value)}
+                    >
+                      <option value="recent_desc">Most recently reported</option>
+                      <option value="recent_asc">Least recently reported</option>
+                      <option value="reports_desc">Most reports</option>
+                      <option value="reports_asc">Fewest reports</option>
+                      <option value="id_asc">Incident ID (A-Z)</option>
+                      <option value="id_desc">Incident ID (Z-A)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="municipality-actions municipality-actions--toolbar">
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--ghost"
+                    onClick={() => {
+                      setReportSearchDraft("");
+                      setReportSearchQuery("");
+                      setReportDomainFilter("all");
+                      setReportStatusFilter("open");
+                      setReportFromDate(defaultReportFromDate());
+                      setReportToDate(defaultReportToDate());
+                      setReportSortPreset("recent_desc");
+                    }}
+                  >
+                    Reset Filters
+                  </button>
+                  <p className="municipality-note municipality-note--inline">
+                    {formatDateRangeLabel(reportFromDate, reportToDate)}
+                    {" • "}
+                    {filteredReportActivityRows.length} incident{filteredReportActivityRows.length === 1 ? "" : "s"} in view
+                  </p>
+                </div>
+              </div>
               <div className="municipality-detail-grid">
                 <div className="municipality-detail-item">
-                  <span>Open Incidents</span>
-                  <strong>{reportActivityRows.length}</strong>
+                  <span>Incidents In View</span>
+                  <strong>{filteredReportActivityRows.length}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Visible Domains</span>
-                  <strong>{visibleReportDomains.length}</strong>
+                  <span>Open</span>
+                  <strong>{filteredOpenIncidentCount}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Domains With Activity</span>
-                  <strong>{activeReportDomainCount}</strong>
+                  <span>Closed</span>
+                  <strong>{filteredClosedIncidentCount}</strong>
                 </div>
                 <div className="municipality-detail-item">
-                  <span>Total Open Reports</span>
-                  <strong>{reportActivityRows.reduce((sum, row) => sum + Number(row?.report_count || 0), 0)}</strong>
+                  <span>Total Reports</span>
+                  <strong>{filteredReportActivityRows.reduce((sum, row) => sum + Number(row?.report_count || 0), 0)}</strong>
                 </div>
               </div>
               <div className="municipality-actions">
@@ -3999,8 +4203,9 @@ export default function MunicipalityApp() {
                   <div className="municipality-meta-row">
                     <span className="municipality-badge municipality-badge--info">{domain.label}</span>
                   </div>
-                  <strong>{domain.open_incidents}</strong>
-                  <p>Open incident{domain.open_incidents === 1 ? "" : "s"}</p>
+                  <strong>{domain.incident_count}</strong>
+                  <p>Incident{domain.incident_count === 1 ? "" : "s"} in view</p>
+                  <p className="municipality-note">{domain.open_incidents} open • {domain.closed_incidents} closed</p>
                   <p className="municipality-note">{domain.total_reports} total report{domain.total_reports === 1 ? "" : "s"}</p>
                   <p className="municipality-note">
                     {domain.latest_activity_at
@@ -4012,8 +4217,8 @@ export default function MunicipalityApp() {
             </div>
             {reportActivityLoading ? <div className="municipality-empty">Loading domain reports…</div> : (
               <DomainReportFeed
-                items={reportActivityRows}
-                emptyText="No active domain reports are open right now."
+                items={filteredReportActivityRows}
+                emptyText="No domain reports match the current filters."
               />
             )}
           </HomeCard>

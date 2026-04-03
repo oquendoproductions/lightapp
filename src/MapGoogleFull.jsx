@@ -1,11 +1,12 @@
 // ==================================================
 // App.jsx — Full file
 // ==================================================
-import React, { Fragment, forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import React, { Fragment, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
 import "./headerStandards.css";
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
+import { TenantContext } from "./tenant/contextObject";
 import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
 import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } from "./auth/loginFieldStandards";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
@@ -10349,6 +10350,7 @@ function normalizeOfficialSignRow(row) {
 // SECTION 8 — Main App
 // ==================================================
 export default function App({ onBackToHub = null }) {
+  const tenant = useContext(TenantContext);
   const mapRef = useRef(null);
   const flyAnimRef = useRef(null);
   const flyInfoTimerRef = useRef(null);
@@ -10372,6 +10374,16 @@ export default function App({ onBackToHub = null }) {
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
+  const organizationName = useMemo(() => {
+    const explicit = String(tenant?.tenantConfig?.display_name || tenant?.tenantConfig?.name || "").trim();
+    if (explicit) return explicit;
+
+    const tenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim();
+    if (!tenantKey) return "Municipality";
+    return tenantKey
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }, [tenant?.tenantConfig?.display_name, tenant?.tenantConfig?.name, tenant?.tenantKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
@@ -21867,7 +21879,7 @@ async function insertReportWithFallback(payload) {
                   color: "#102b46",
                 }}
               >
-                <span className="app-header-eyebrow">Municipality Hub</span>
+                <span className="app-header-eyebrow">Reporting Map</span>
                 <h1
                   style={{
                     margin: 0,
@@ -21877,7 +21889,7 @@ async function insertReportWithFallback(payload) {
                     color: "#102b46",
                   }}
                 >
-                  Reporting Map
+                  {organizationName}
                 </h1>
               </div>
 
@@ -21932,17 +21944,14 @@ async function insertReportWithFallback(payload) {
 
           <div
             style={{
-              padding: "0 var(--desktop-header-horizontal-padding)",
+              padding: "10px var(--desktop-header-horizontal-padding) 0",
               pointerEvents: "none",
             }}
           >
             <div
               style={{
                 width: "100%",
-                padding: "var(--app-tab-rail-shell-padding)",
-                border: "1px solid rgba(23, 49, 79, 0.08)",
-                borderTop: 0,
-                background: "rgba(255, 255, 255, 0.92)",
+                padding: 0,
                 pointerEvents: "auto",
               }}
             >
