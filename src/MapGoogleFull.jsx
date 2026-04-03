@@ -12778,7 +12778,7 @@ export default function App({ onBackToHub = null }) {
 
     const eventQuery = supabase
       .from("municipality_events")
-      .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
+      .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at")
       .eq("tenant_key", tenantKey)
       .eq("status", "published")
       .order("starts_at", { ascending: true })

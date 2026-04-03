@@ -202,9 +202,16 @@ const TENANT_SECURITY_CHECKPOINT_OPTIONS = [
 ];
 
 function isMissingRelationError(error) {
-  const code = String(error?.code || "").trim();
+  const code = String(error?.code || "").trim().toUpperCase();
   const msg = String(error?.message || "").toLowerCase();
-  return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
+  return (
+    code === "42P01"
+    || code === "PGRST205"
+    || msg.includes("relation")
+    || msg.includes("does not exist")
+    || msg.includes("schema cache")
+    || msg.includes("could not find the table")
+  );
 }
 
 function isMissingFunctionError(error) {
@@ -2810,7 +2817,7 @@ export default function MunicipalityApp() {
 
       const eventQuery = supabase
         .from("municipality_events")
-        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
+        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
         .eq("tenant_key", tenantKey)
         .order("starts_at", { ascending: true })
         .order("created_at", { ascending: false });
