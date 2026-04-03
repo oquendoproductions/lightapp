@@ -1268,7 +1268,13 @@ function formatDateTimeDisplay(value) {
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim().toUpperCase();
   const msg = String(error?.message || "").toLowerCase();
-  return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
+  return (
+    code === "42P01"
+    || msg.includes("relation")
+    || msg.includes("does not exist")
+    || msg.includes("schema cache")
+    || msg.includes("could not find the table")
+  );
 }
 
 function normalizeBoundedDecimalInput(value, { min = 0, max = 1 } = {}) {
@@ -3319,6 +3325,10 @@ export default function PlatformAdminApp() {
       }], { onConflict: "user_id" });
     setPlatformSecuritySaving((prev) => ({ ...prev, pin: false }));
     if (error) {
+      if (isMissingRelationError(error)) {
+        setPlatformSecurityStatus("Security PIN tables are not available in this environment yet. Apply the latest Supabase migrations, then try saving your PIN again.");
+        return;
+      }
       setPlatformSecurityStatus(statusText(error, ""));
       return;
     }
