@@ -10373,19 +10373,6 @@ export default function App({ onBackToHub = null }) {
       .replace(/\b\w/g, (char) => char.toUpperCase());
   }, [tenant?.tenantConfig?.display_name, tenant?.tenantConfig?.name, tenant?.tenantKey]);
 
-  const handleAccountMenuToggle = useCallback((event) => {
-    event?.preventDefault?.();
-    event?.stopPropagation?.();
-    if (!session?.user?.id) {
-      setAccountMenuOpen(false);
-      setAccountView("menu");
-      setAuthGateStep("welcome");
-      setAuthGateOpen(true);
-      return;
-    }
-    setAccountMenuOpen((prev) => !prev);
-  }, [session?.user?.id]);
-
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -10424,30 +10411,6 @@ export default function App({ onBackToHub = null }) {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
-
-    const handlePointerDown = (event) => {
-      const root = desktopAccountMenuAnchorRef.current;
-      if (root && root.contains(event.target)) return;
-      setAccountMenuOpen(false);
-      setAccountView("menu");
-    };
-
-    const handleEscape = (event) => {
-      if (event.key !== "Escape") return;
-      setAccountMenuOpen(false);
-      setAccountView("menu");
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
-    };
-  }, [accountMenuOpen, isMobile]);
 
   function cancelFlyAnimation() {
     if (flyAnimRef.current) {
@@ -11491,6 +11454,43 @@ export default function App({ onBackToHub = null }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
+
+  const handleAccountMenuToggle = useCallback((event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (!session?.user?.id) {
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+      setAuthGateStep("welcome");
+      setAuthGateOpen(true);
+      return;
+    }
+    setAccountMenuOpen((prev) => !prev);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
+
+    const handlePointerDown = (event) => {
+      const root = desktopAccountMenuAnchorRef.current;
+      if (root && root.contains(event.target)) return;
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+    };
+
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setAccountMenuOpen(false);
+      setAccountView("menu");
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [accountMenuOpen, isMobile]);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageEditing, setManageEditing] = useState(false);
