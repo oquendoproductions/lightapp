@@ -801,6 +801,20 @@ describe("PlatformAdminApp", () => {
     await screen.findByText(/created account invitation for taylor\.admin@cityreport\.io/i);
   });
 
+  it("shows the selected platform account name in the add team member modal", async () => {
+    const { user } = await openManageTeam();
+
+    await user.click(screen.getByRole("button", { name: /add team member/i }));
+    await screen.findByRole("heading", { name: /add platform team member/i });
+
+    await user.type(screen.getByLabelText(/find internal account/i), "jordan.rivera@example.gov");
+    await user.click(screen.getByRole("button", { name: /search accounts/i }));
+    await user.click(await screen.findByRole("button", { name: /jordan rivera/i }));
+
+    const selectedAccountText = screen.getByText(/selected account:/i, { selector: "span" });
+    expect(selectedAccountText).toHaveTextContent("Selected account: Jordan Rivera");
+  });
+
   it("lets the PCP user edit and save account name and phone", async () => {
     const { user } = await openAccountInfo();
 

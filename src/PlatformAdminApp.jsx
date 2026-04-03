@@ -1921,6 +1921,16 @@ export default function PlatformAdminApp() {
   const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
   const selectedPlatformSearchAccount = platformTeamForm.user_id ? platformUserSearchResultById?.[platformTeamForm.user_id] || null : null;
+  const formatUserSummaryLabel = useCallback((summary) => {
+    if (!summary) return "Selected account";
+    const displayName = String(summary?.display_name || summary?.full_name || summary?.name || "").trim();
+    if (displayName) return displayName;
+    const firstName = String(summary?.first_name || "").trim();
+    const lastName = String(summary?.last_name || "").trim();
+    const combinedName = `${firstName} ${lastName}`.trim();
+    if (combinedName) return combinedName;
+    return String(summary?.email || "").trim() || "Selected account";
+  }, []);
   const changePasswordRequirements = useMemo(() => {
     const nextPassword = String(changePasswordDraft.new_password || "");
     const confirmPassword = String(changePasswordDraft.confirm_new_password || "");
@@ -1998,14 +2008,14 @@ export default function PlatformAdminApp() {
   }, [assignmentUserSummariesById, userSearchResultById]);
   const formatKnownUserLabel = useCallback((userId) => {
     const summary = resolveKnownUserSummary(userId);
-    return String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "Selected account";
-  }, [resolveKnownUserSummary]);
+    return formatUserSummaryLabel(summary);
+  }, [formatUserSummaryLabel, resolveKnownUserSummary]);
   const formatPlatformUserLabel = useCallback((userId) => {
     const key = String(userId || "").trim();
     if (!key) return "Selected account";
-    const summary = platformTeamUserSummariesById?.[key];
-    return String(summary?.display_name || "").trim() || String(summary?.email || "").trim() || "Selected account";
-  }, [platformTeamUserSummariesById]);
+    const summary = platformTeamUserSummariesById?.[key] || platformUserSearchResultById?.[key] || null;
+    return formatUserSummaryLabel(summary);
+  }, [formatUserSummaryLabel, platformTeamUserSummariesById, platformUserSearchResultById]);
 
   const updateAdditionalContact = useCallback((index, field, value) => {
     setProfileForm((prev) => ({
@@ -6033,7 +6043,7 @@ export default function PlatformAdminApp() {
                             background: selected ? "rgba(18,128,106,0.08)" : listActionButton.background,
                           }}
                         >
-                          <span>{String(row?.display_name || "").trim() || row?.email || "Unnamed account"}</span>
+                          <span>{formatUserSummaryLabel(row)}</span>
                           <span style={{ fontSize: 11.5, color: palette.textMuted }}>
                             {[row?.email, row?.phone].filter(Boolean).join(" • ") || "No email or phone on file"}
                           </span>
@@ -6065,7 +6075,7 @@ export default function PlatformAdminApp() {
                   </button>
                   {platformTeamForm.user_id ? (
                     <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Selected account: <b>{String(selectedPlatformSearchAccount?.display_name || "").trim() || selectedPlatformSearchAccount?.email || "Account selected"}</b>
+                      Selected account: <b>{formatPlatformUserLabel(platformTeamForm.user_id) || formatUserSummaryLabel(selectedPlatformSearchAccount)}</b>
                     </span>
                   ) : (
                     <span style={{ fontSize: 12.5, color: palette.textMuted }}>
