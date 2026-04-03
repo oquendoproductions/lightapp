@@ -62,6 +62,7 @@ const STREETLIGHT_STALENESS_ROLLOUT_START = new Date(2026, 2, 24, 0, 0, 0, 0).ge
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
+const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
 const ENABLE_TENANT_VISIBILITY_CONFIG = true;
 const ENABLE_LEGACY_PLACES_SERVICE =
   String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
@@ -11046,6 +11047,7 @@ export default function App({ onBackToHub = null }) {
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
+  const mobileTitleLogoSrc = MOBILE_TITLE_LOGO_SRC;
   const organizationName = useMemo(() => {
     const explicit = String(tenant?.tenantConfig?.display_name || tenant?.tenantConfig?.name || "").trim();
     if (explicit) return explicit;
@@ -23701,7 +23703,7 @@ async function insertReportWithFallback(payload) {
                   </span>
                 ) : (
                   <img
-                    src={titleLogoSrc}
+                    src={mobileTitleLogoSrc}
                     alt={TITLE_LOGO_ALT}
                     onError={() => setTitleLogoError(true)}
                     style={{
