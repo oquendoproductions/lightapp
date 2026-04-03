@@ -246,7 +246,28 @@ function trimOrEmpty(value) {
   return String(value || "").trim();
 }
 
-async function hashTenantSecurityPin(userId, tenantKey, pin) {
+async function hashSharedSecurityPin(userId, pin) {
+  const normalizedUserId = trimOrEmpty(userId).toLowerCase();
+  const normalizedPin = trimOrEmpty(pin);
+  if (!normalizedUserId || !normalizedPin) return "";
+  const payload = `platform-pin:${normalizedUserId}:${normalizedPin}`;
+  try {
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+      return Array.from(new Uint8Array(digest)).map((part) => part.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fallback below
+  }
+  let hash = 0;
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = ((hash << 5) - hash) + payload.charCodeAt(index);
+    hash |= 0;
+  }
+  return `fallback_${Math.abs(hash)}`;
+}
+
+async function hashLegacyTenantSecurityPin(userId, tenantKey, pin) {
   const normalizedUserId = trimOrEmpty(userId).toLowerCase();
   const normalizedTenantKey = trimOrEmpty(tenantKey).toLowerCase();
   const normalizedPin = trimOrEmpty(pin);
@@ -1593,7 +1614,7 @@ export default function MunicipalityApp() {
   const [tenantSecuritySettingsSaved, setTenantSecuritySettingsSaved] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
   const [tenantSecuritySettingsDraft, setTenantSecuritySettingsDraft] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
   const [tenantSecurityPinDraft, setTenantSecurityPinDraft] = useState(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
-  const [tenantSecurityPinMeta, setTenantSecurityPinMeta] = useState({ pin_hash: "" });
+  const [tenantSecurityPinMeta, setTenantSecurityPinMeta] = useState({ pin_hash: "", pin_scope: "shared" });
   const [tenantSecurityStatus, setTenantSecurityStatus] = useState("");
   const [tenantSecuritySaving, setTenantSecuritySaving] = useState({ pin: false, checks: false });
   const [tenantSecurityPinEditMode, setTenantSecurityPinEditMode] = useState(false);
@@ -2003,15 +2024,21 @@ export default function MunicipalityApp() {
       return {
         settings: DEFAULT_TENANT_SECURITY_SETTINGS,
         pin_hash: "",
+        pin_scope: "shared",
         error: null,
       };
     }
 
-    const [settingsResult, pinResult] = await Promise.all([
+    const [settingsResult, sharedPinResult, legacyTenantPinResult] = await Promise.all([
       supabase
         .from("tenant_security_settings")
         .select("tenant_key,require_pin_for_account_changes,require_pin_for_report_state_changes,require_pin_for_organization_info_changes,require_pin_for_contact_changes,require_pin_for_organization_user_changes,require_pin_for_organization_role_changes,require_pin_for_domain_settings_changes")
         .eq("tenant_key", tenantKey)
+        .maybeSingle(),
+      supabase
+        .from("platform_user_security_profiles")
+        .select("user_id,pin_enabled,pin_hash")
+        .eq("user_id", sessionUserId)
         .maybeSingle(),
       supabase
         .from("tenant_user_security_profiles")
@@ -2021,7 +2048,9 @@ export default function MunicipalityApp() {
         .maybeSingle(),
     ]);
 
-    const firstError = settingsResult.error || pinResult.error;
+    const firstError = settingsResult.error || sharedPinResult.error || legacyTenantPinResult.error;
+    const sharedPinHash = trimOrEmpty(sharedPinResult.data?.pin_hash);
+    const legacyPinHash = trimOrEmpty(legacyTenantPinResult.data?.pin_hash);
     return {
       settings: {
         require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
@@ -2032,7 +2061,8 @@ export default function MunicipalityApp() {
         require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
         require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
       },
-      pin_hash: trimOrEmpty(pinResult.data?.pin_hash),
+      pin_hash: sharedPinHash || legacyPinHash,
+      pin_scope: sharedPinHash ? "shared" : (legacyPinHash ? "legacy_tenant" : "shared"),
       error: firstError || null,
     };
   }, [sessionUserId, tenantKey]);
@@ -2041,7 +2071,7 @@ export default function MunicipalityApp() {
       setTenantSecuritySettingsSaved(DEFAULT_TENANT_SECURITY_SETTINGS);
       setTenantSecuritySettingsDraft(DEFAULT_TENANT_SECURITY_SETTINGS);
       setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
-      setTenantSecurityPinMeta({ pin_hash: "" });
+      setTenantSecurityPinMeta({ pin_hash: "", pin_scope: "shared" });
       setTenantSecurityPinEditMode(false);
       setTenantSecurityChecksEditMode(false);
       setTenantSecurityStatus("");
@@ -2054,10 +2084,10 @@ export default function MunicipalityApp() {
         setTenantSecuritySettingsSaved(DEFAULT_TENANT_SECURITY_SETTINGS);
         setTenantSecuritySettingsDraft(DEFAULT_TENANT_SECURITY_SETTINGS);
         setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
-        setTenantSecurityPinMeta({ pin_hash: "" });
+        setTenantSecurityPinMeta({ pin_hash: "", pin_scope: "shared" });
         setTenantSecurityPinEditMode(false);
         setTenantSecurityChecksEditMode(false);
-        setTenantSecurityStatus("Security PIN tables are not available yet. Run the latest migrations to enable municipality checkpoints.");
+        setTenantSecurityStatus("Security PIN tables are not available yet. Run the latest migrations to enable shared checkpoints.");
         return;
       }
       setTenantSecurityStatus(String(snapshot.error?.message || "Could not load security settings."));
@@ -2067,7 +2097,7 @@ export default function MunicipalityApp() {
     setTenantSecuritySettingsSaved(snapshot.settings);
     setTenantSecuritySettingsDraft(snapshot.settings);
     setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
-    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash });
+    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash, pin_scope: snapshot.pin_scope || "shared" });
     setTenantSecurityPinEditMode(false);
     setTenantSecurityChecksEditMode(false);
     setTenantSecurityStatus("");
@@ -2100,7 +2130,9 @@ export default function MunicipalityApp() {
 
     setTenantSecurityCheckpointVerifying(true);
     setTenantSecurityCheckpointStatus("");
-    const providedHash = await hashTenantSecurityPin(sessionUserId, tenantKey, pin);
+    const providedHash = tenantSecurityCheckpointRequest.hash_scope === "legacy_tenant"
+      ? await hashLegacyTenantSecurityPin(sessionUserId, tenantKey, pin)
+      : await hashSharedSecurityPin(sessionUserId, pin);
     setTenantSecurityCheckpointVerifying(false);
     if (providedHash !== trimOrEmpty(tenantSecurityCheckpointRequest.expected_hash)) {
       setTenantSecurityCheckpointStatus("PIN is incorrect.");
@@ -2131,7 +2163,7 @@ export default function MunicipalityApp() {
     }
 
     setTenantSecuritySettingsDraft(snapshot.settings);
-    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash });
+    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash, pin_scope: snapshot.pin_scope || "shared" });
     if (!normalizedKeys.some((key) => Boolean(snapshot.settings?.[key]))) return true;
 
     if (!snapshot.pin_hash) {
@@ -2153,6 +2185,7 @@ export default function MunicipalityApp() {
         title,
         description,
         expected_hash: snapshot.pin_hash,
+        hash_scope: snapshot.pin_scope || "shared",
       });
     });
   }, [closeTenantSecurityCheckpoint, readTenantSecuritySnapshot]);
@@ -3462,6 +3495,7 @@ export default function MunicipalityApp() {
     const pin = trimOrEmpty(tenantSecurityPinDraft.pin);
     const confirmPin = trimOrEmpty(tenantSecurityPinDraft.confirm_pin);
     const existingPinHash = trimOrEmpty(tenantSecurityPinMeta.pin_hash);
+    const existingPinScope = trimOrEmpty(tenantSecurityPinMeta.pin_scope) || "shared";
     const hasExistingPin = Boolean(existingPinHash);
 
     if (!/^\d{4}$/.test(pin)) {
@@ -3481,7 +3515,9 @@ export default function MunicipalityApp() {
 
       let verified = false;
       if (currentPin) {
-        const currentPinHash = await hashTenantSecurityPin(sessionUserId, tenantKey, currentPin);
+        const currentPinHash = existingPinScope === "legacy_tenant"
+          ? await hashLegacyTenantSecurityPin(sessionUserId, tenantKey, currentPin)
+          : await hashSharedSecurityPin(sessionUserId, currentPin);
         verified = currentPinHash === existingPinHash;
       }
 
@@ -3507,21 +3543,20 @@ export default function MunicipalityApp() {
 
     setTenantSecuritySaving((prev) => ({ ...prev, pin: true }));
     setTenantSecurityStatus("");
-    const pin_hash = await hashTenantSecurityPin(sessionUserId, tenantKey, pin);
+    const pin_hash = await hashSharedSecurityPin(sessionUserId, pin);
     const { error } = await supabase
-      .from("tenant_user_security_profiles")
+      .from("platform_user_security_profiles")
       .upsert([{
-        tenant_key: tenantKey,
         user_id: sessionUserId,
         pin_hash,
         pin_enabled: true,
         updated_by: sessionUserId,
-      }], { onConflict: "tenant_key,user_id" });
+      }], { onConflict: "user_id" });
     setTenantSecuritySaving((prev) => ({ ...prev, pin: false }));
 
     if (error) {
       if (isMissingRelationError(error)) {
-        setTenantSecurityStatus("Security PIN tables are not available in this environment yet. Apply the latest Supabase migrations, then try saving your PIN again.");
+        setTenantSecurityStatus("Shared security PIN tables are not available in this environment yet. Apply the latest Supabase migrations, then try saving your PIN again.");
         return;
       }
       setTenantSecurityStatus(String(error?.message || "Could not save your security PIN."));
@@ -3535,7 +3570,7 @@ export default function MunicipalityApp() {
     setShowTenantSecurityPinConfirm(false);
     setShowTenantSecurityCurrentPin(false);
     setShowTenantSecurityAccountPassword(false);
-    setTenantSecurityStatus("Security PIN saved.");
+    setTenantSecurityStatus("Security PIN saved and synced to your user account.");
   }
 
   async function saveTenantSecurityChecks() {
@@ -5485,7 +5520,7 @@ export default function MunicipalityApp() {
                               <div className="municipality-settings-header">
                                 <div>
                                   <h4>PIN Security Checkpoint</h4>
-                                  <p className="municipality-note">Manage your personal municipality PIN here. Existing PIN changes require your current PIN or your account password.</p>
+                                  <p className="municipality-note">Manage your personal user PIN here. This PIN follows your account across workspaces. Existing PIN changes require your current PIN or your account password.</p>
                                 </div>
                                 {tenantSecurityPinEditMode ? (
                                   <div className="municipality-actions">
@@ -5532,15 +5567,19 @@ export default function MunicipalityApp() {
                               <div className="municipality-detail-grid">
                                 <div className="municipality-detail-item">
                                   <span>PIN Status</span>
-                                  <strong>{tenantSecurityPinMeta.pin_hash ? "Configured" : "Not set yet"}</strong>
+                                  <strong>
+                                    {tenantSecurityPinMeta.pin_hash
+                                      ? (tenantSecurityPinMeta.pin_scope === "legacy_tenant" ? "Legacy municipality PIN detected" : "Configured")
+                                      : "Not set yet"}
+                                  </strong>
                                 </div>
                                 <div className="municipality-detail-item">
                                   <span>Checkpoint Coverage</span>
                                   <strong>{enabledTenantSecurityCheckpointCount ? `${enabledTenantSecurityCheckpointCount} active checkpoint${enabledTenantSecurityCheckpointCount === 1 ? "" : "s"}` : "No checkpoint rules enabled yet"}</strong>
                                 </div>
                                 <div className="municipality-detail-item">
-                                  <span>PIN Format</span>
-                                  <strong>4 digits</strong>
+                                  <span>PIN Scope</span>
+                                  <strong>{tenantSecurityPinMeta.pin_scope === "legacy_tenant" ? "Upgrade this PIN to shared by saving it again" : "Shared across your workspaces"}</strong>
                                 </div>
                               </div>
                               {tenantSecurityPinEditMode ? (
