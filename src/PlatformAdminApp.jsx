@@ -9515,9 +9515,17 @@ export default function PlatformAdminApp() {
                       cursor: "not-allowed",
                       background: "#edf2f7",
                     };
+                    const checkboxFieldStyle = {
+                      fontSize: 12.5,
+                      display: "inline-flex",
+                      gap: 6,
+                      alignItems: "center",
+                      justifySelf: "start",
+                      width: "fit-content",
+                    };
                     return (
                       <>
-                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <label style={checkboxFieldStyle}>
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.show_boundary_border)}
@@ -9578,7 +9586,7 @@ export default function PlatformAdminApp() {
                             style={borderEnabled ? inputBase : disabledFieldStyle}
                           />
                         </label>
-                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <label style={checkboxFieldStyle}>
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.shade_outside_boundary)}
@@ -9586,24 +9594,6 @@ export default function PlatformAdminApp() {
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
                           />
                           Shade outside boundary
-                        </label>
-                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(mapFeaturesForm.show_alert_icon)}
-                            disabled={mapFeaturesReadOnly}
-                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_alert_icon: e.target.checked }))}
-                          />
-                          Show alert icon on map
-                        </label>
-                        <label style={{ fontSize: 12.5, display: "inline-flex", gap: 6, alignItems: "center" }}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(mapFeaturesForm.show_event_icon)}
-                            disabled={mapFeaturesReadOnly}
-                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_event_icon: e.target.checked }))}
-                          />
-                          Show event icon on map
                         </label>
                         <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: shadeEnabled ? 1 : 0.65 }}>
                           <span>Outside shade opacity (0.0 - 1.0)</span>
@@ -9628,6 +9618,24 @@ export default function PlatformAdminApp() {
                             placeholder="0.42"
                             style={shadeEnabled ? inputBase : disabledFieldStyle}
                           />
+                        </label>
+                        <label style={checkboxFieldStyle}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.show_alert_icon)}
+                            disabled={mapFeaturesReadOnly}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_alert_icon: e.target.checked }))}
+                          />
+                          Show alert icon on map
+                        </label>
+                        <label style={checkboxFieldStyle}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(mapFeaturesForm.show_event_icon)}
+                            disabled={mapFeaturesReadOnly}
+                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_event_icon: e.target.checked }))}
+                          />
+                          Show event icon on map
                         </label>
                       </>
                     );
