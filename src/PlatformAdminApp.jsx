@@ -4506,6 +4506,8 @@ export default function PlatformAdminApp() {
       is_pilot: Boolean(selectedTenant.is_pilot),
       active: Boolean(selectedTenant.active),
     });
+    setDeleteConfirmOpen(false);
+    setDeleteConfirmText("");
     setIsEditingTenant(false);
   }, [selectedTenant]);
 
@@ -8372,7 +8374,7 @@ export default function PlatformAdminApp() {
                         </button>
                       ) : null}
                     </div>
-                    {!inAddTenantFlow ? (
+                    {!inAddTenantFlow && !tenantReadOnly ? (
                       selectedTenantPendingDeletion ? (
                         <button
                           type="button"
@@ -8407,7 +8409,7 @@ export default function PlatformAdminApp() {
                     The record is being held for {ORGANIZATION_DELETION_HOLD_DAYS} days before removal.
                   </div>
                 ) : null}
-                {!inAddTenantFlow && deleteConfirmOpen ? (
+                {!inAddTenantFlow && !tenantReadOnly && deleteConfirmOpen ? (
                   <div style={{ ...subPanel, display: "grid", gap: 8, borderColor: "rgba(209, 67, 67, 0.3)" }}>
                     <div style={{ fontSize: 13.5, fontWeight: 800, color: palette.navy900 }}>
                       Schedule organization deletion

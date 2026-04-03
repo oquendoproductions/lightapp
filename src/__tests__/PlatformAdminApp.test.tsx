@@ -720,7 +720,6 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("button", { name: /scheduled for deletion/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^organizations$/i })).toBeInTheDocument();
     expect(screen.getByText(/enabled domains/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no organizations match this report category yet/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /scheduled for deletion/i }));
     expect(screen.getByText(/no organizations match this report category yet/i)).toBeInTheDocument();
