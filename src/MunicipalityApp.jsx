@@ -1825,7 +1825,6 @@ export default function MunicipalityApp() {
   const [tenantSecurityCheckpointPin, setTenantSecurityCheckpointPin] = useState("");
   const [tenantSecurityCheckpointStatus, setTenantSecurityCheckpointStatus] = useState("");
   const [tenantSecurityCheckpointVerifying, setTenantSecurityCheckpointVerifying] = useState(false);
-  const [showTenantSecurityCheckpointPin, setShowTenantSecurityCheckpointPin] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
     profile: false,
@@ -2377,10 +2376,9 @@ export default function MunicipalityApp() {
     setTenantSecurityCheckpointPin("");
     setTenantSecurityCheckpointStatus("");
     setTenantSecurityCheckpointVerifying(false);
-    setShowTenantSecurityCheckpointPin(false);
     if (typeof resolver === "function") resolver(approved);
   }, []);
-  const submitTenantSecurityCheckpoint = useCallback(async () => {
+  const submitTenantSecurityCheckpoint = useCallback(async (pinOverride = "") => {
     if (!tenantSecurityCheckpointRequest?.expected_hash) {
       closeTenantSecurityCheckpoint(false);
       return;
@@ -2390,7 +2388,7 @@ export default function MunicipalityApp() {
       return;
     }
 
-    const pin = trimOrEmpty(tenantSecurityCheckpointPin);
+    const pin = trimOrEmpty(pinOverride || tenantSecurityCheckpointPin);
     if (!/^\d{4}$/.test(pin)) {
       setTenantSecurityCheckpointStatus("Enter your 4-digit PIN to continue.");
       return;
@@ -2448,7 +2446,6 @@ export default function MunicipalityApp() {
       setTenantSecurityCheckpointPin("");
       setTenantSecurityCheckpointStatus("");
       setTenantSecurityCheckpointVerifying(false);
-      setShowTenantSecurityCheckpointPin(false);
       setTenantSecurityCheckpointRequest({
         title,
         description,
@@ -5071,40 +5068,29 @@ export default function MunicipalityApp() {
                 </button>
               </div>
               <div className="municipality-form-grid">
-                <div className="municipality-field">
-                  <label htmlFor="tenant-security-checkpoint-pin">Security PIN</label>
-                  <div className="municipality-password-row">
+                  <div className="municipality-field">
+                    <label htmlFor="tenant-security-checkpoint-pin">Security PIN</label>
                     <input
                       id="tenant-security-checkpoint-pin"
-                      type={showTenantSecurityCheckpointPin ? "text" : "password"}
+                      type="password"
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       value={tenantSecurityCheckpointPin}
-                      onChange={(event) => setTenantSecurityCheckpointPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                      onChange={(event) => {
+                        const nextPin = event.target.value.replace(/\D/g, "").slice(0, 4);
+                        setTenantSecurityCheckpointPin(nextPin);
+                        if (tenantSecurityCheckpointStatus) setTenantSecurityCheckpointStatus("");
+                        if (nextPin.length === 4 && !tenantSecurityCheckpointVerifying) {
+                          void submitTenantSecurityCheckpoint(nextPin);
+                        }
+                      }}
                       placeholder="4-digit PIN"
                       disabled={tenantSecurityCheckpointVerifying}
                     />
-                    <button
-                      type="button"
-                      className="municipality-password-toggle"
-                      onClick={() => setShowTenantSecurityCheckpointPin((prev) => !prev)}
-                      aria-label={showTenantSecurityCheckpointPin ? "Hide security PIN" : "Show security PIN"}
-                    >
-                      {showTenantSecurityCheckpointPin ? "Hide" : "Show"}
-                    </button>
                   </div>
                 </div>
-              </div>
               {tenantSecurityCheckpointStatus ? <p className="municipality-inline-status is-error">{tenantSecurityCheckpointStatus}</p> : null}
               <div className="municipality-actions">
-                <button
-                  type="button"
-                  className="municipality-button municipality-button--primary"
-                  disabled={tenantSecurityCheckpointVerifying}
-                  onClick={() => void submitTenantSecurityCheckpoint()}
-                >
-                  {tenantSecurityCheckpointVerifying ? "Checking PIN…" : "Confirm PIN"}
-                </button>
                 <button
                   type="button"
                   className="municipality-button municipality-button--ghost"
