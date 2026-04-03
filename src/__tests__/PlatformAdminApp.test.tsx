@@ -634,6 +634,22 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+  async function openDomainsAndAssets() {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /manage organizations/i }));
+    await screen.findByRole("heading", { name: /start here/i });
+
+    await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
+    await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
+    await user.selectOptions(screen.getByLabelText(/workspace section/i), "domains");
+
+    await screen.findByRole("heading", { name: /domains \+ assets/i });
+    return { user };
+  }
+
 
   async function openManageTeam() {
     const user = userEvent.setup();
@@ -723,6 +739,19 @@ describe("PlatformAdminApp", () => {
 
     await user.click(screen.getByRole("button", { name: /scheduled for deletion/i }));
     expect(screen.getByText(/no organizations match this report category yet/i)).toBeInTheDocument();
+  });
+
+  it("keeps map features behind an explicit edit flow in domains and assets", async () => {
+    const { user } = await openDomainsAndAssets();
+
+    expect(screen.queryByRole("button", { name: /save domains \+ assets settings/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit map features/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save map features/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /edit map features/i }));
+
+    expect(screen.getByRole("button", { name: /save map features/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {

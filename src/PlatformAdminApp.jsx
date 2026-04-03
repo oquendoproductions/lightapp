@@ -954,6 +954,17 @@ function initialMapFeaturesForm() {
   };
 }
 
+function buildMapFeaturesForm(features) {
+  if (!features) return initialMapFeaturesForm();
+  return {
+    show_boundary_border: features.show_boundary_border !== false,
+    shade_outside_boundary: features.shade_outside_boundary !== false,
+    outside_shade_opacity: String(Number.isFinite(Number(features.outside_shade_opacity)) ? Number(features.outside_shade_opacity) : 0.42),
+    boundary_border_color: sanitizeHexColor(features.boundary_border_color, "#e53935"),
+    boundary_border_width: String(Number.isFinite(Number(features.boundary_border_width)) ? Math.max(0.5, Math.min(8, Number(features.boundary_border_width))) : 4),
+  };
+}
+
 function sanitizeTenantKey(value) {
   return String(value || "")
     .trim()
@@ -1055,6 +1066,8 @@ function buildAuditActionLabel(row) {
 
   if (action === "tenant_upsert") return "Saved organization details";
   if (action === "tenant_profile_upsert") return "Saved contact profile";
+  if (action === "tenant_domain_settings_upsert") return "Saved domain settings";
+  if (action === "tenant_map_features_upsert") return "Saved map features";
   if (action === "tenant_domains_features_upsert") return "Saved domains and map features";
   if (action === "tenant_user_role_assigned") {
     return roleLabel ? `Assigned ${roleLabel} role` : "Assigned organization role";
@@ -1444,6 +1457,8 @@ export default function PlatformAdminApp() {
   const [editingDomainKey, setEditingDomainKey] = useState("");
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
+  const [mapFeaturesEditMode, setMapFeaturesEditMode] = useState(false);
+  const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
   const [tenantRoleManagementView, setTenantRoleManagementView] = useState("list");
@@ -4181,17 +4196,9 @@ export default function PlatformAdminApp() {
     setDomainConfigForm(nextDomainConfig);
 
     const features = tenantMapFeaturesByTenant?.[key] || null;
-    if (features) {
-      setMapFeaturesForm({
-        show_boundary_border: features.show_boundary_border !== false,
-        shade_outside_boundary: features.shade_outside_boundary !== false,
-        outside_shade_opacity: String(Number.isFinite(Number(features.outside_shade_opacity)) ? Number(features.outside_shade_opacity) : 0.42),
-        boundary_border_color: sanitizeHexColor(features.boundary_border_color, "#e53935"),
-        boundary_border_width: String(Number.isFinite(Number(features.boundary_border_width)) ? Math.max(0.5, Math.min(8, Number(features.boundary_border_width))) : 4),
-      });
-    } else {
-      setMapFeaturesForm(initialMapFeaturesForm());
-    }
+    setMapFeaturesForm(buildMapFeaturesForm(features));
+    setMapFeaturesEditMode(false);
+    setMapFeaturesSnapshot(null);
 
     void loadTenantFiles(key).catch((error) => {
       setStatus((prev) => ({ ...prev, files: statusText(error, "") }));
@@ -4315,6 +4322,12 @@ export default function PlatformAdminApp() {
     }
     if (activeTab !== "files") {
       setTenantAssetsManagementView("list");
+    }
+    if (activeTab !== "domains") {
+      setEditingDomainKey("");
+      setEditingDomainSnapshot(null);
+      setMapFeaturesEditMode(false);
+      setMapFeaturesSnapshot(null);
     }
   }, [activeTab]);
 
@@ -4723,7 +4736,7 @@ export default function PlatformAdminApp() {
   const saveDomainAndFeatureSettings = useCallback(async (event, options = {}) => {
     event?.preventDefault?.();
     if (!canEditTenantDomains) {
-      setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update organization domains and map settings." }));
+      setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update organization domain settings." }));
       return;
     }
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -4754,6 +4767,61 @@ export default function PlatformAdminApp() {
       updated_by: cleanOptional(sessionUserId),
     }));
 
+    const tenantPayload = {
+      notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
+      notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
+    };
+
+    const [{ error: visError }, { error: domainConfigError }, { error: tenantError }] = await Promise.all([
+      supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
+      supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" }),
+      supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
+    ]);
+
+    if (visError || domainConfigError || tenantError) {
+      setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || tenantError, "") }));
+      return;
+    }
+
+    await logAudit({
+      tenant_key: key,
+      action: "tenant_domain_settings_upsert",
+      entity_type: "tenant_config",
+      entity_id: key,
+      details: {
+        visibility: visibilityRows,
+        domain_configurations: domainConfigRows,
+        notification_emails: tenantPayload,
+      },
+    });
+
+    setStatus((prev) => ({ ...prev, domains: `Saved domain types and notification routing for ${key}.` }));
+    if (String(options?.closeEditingDomain || "").trim()) {
+      setEditingDomainKey((current) => current === options.closeEditingDomain ? "" : current);
+      setEditingDomainSnapshot((current) => current?.key === options.closeEditingDomain ? null : current);
+    }
+    await refreshControlPlaneData();
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
+
+  const saveMapFeaturesSettings = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canEditTenantDomains) {
+      setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update map features." }));
+      return;
+    }
+    const key = sanitizeTenantKey(selectedTenantKey);
+    if (!key) {
+      setStatus((prev) => ({ ...prev, domains: "Select a tenant first." }));
+      return;
+    }
+    const checkpointApproved = await requirePlatformSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Enter Security PIN",
+      description: "Enter your PIN to save map feature settings.",
+      onBlocked: (message) => setStatus((prev) => ({ ...prev, domains: message })),
+    });
+    if (!checkpointApproved) return;
+
     const opacityRaw = Number(mapFeaturesForm?.outside_shade_opacity);
     const opacity = Number.isFinite(opacityRaw) ? Math.max(0, Math.min(1, opacityRaw)) : 0.42;
     const borderColor = sanitizeHexColor(mapFeaturesForm?.boundary_border_color, "#e53935");
@@ -4768,43 +4836,27 @@ export default function PlatformAdminApp() {
       boundary_border_width: borderWidth,
     };
 
-    const tenantPayload = {
-      notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
-      notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
-    };
-
-    const [{ error: visError }, { error: domainConfigError }, { error: featureError }, { error: tenantError }] = await Promise.all([
-      supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
-      supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" }),
-      supabase.from("tenant_map_features").upsert([mapPayload], { onConflict: "tenant_key" }),
-      supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
-    ]);
-
-    if (visError || domainConfigError || featureError || tenantError) {
-      setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || featureError || tenantError, "") }));
+    const { error } = await supabase.from("tenant_map_features").upsert([mapPayload], { onConflict: "tenant_key" });
+    if (error) {
+      setStatus((prev) => ({ ...prev, domains: statusText(error, "") }));
       return;
     }
 
     await logAudit({
       tenant_key: key,
-      action: "tenant_domains_features_upsert",
-      entity_type: "tenant_config",
+      action: "tenant_map_features_upsert",
+      entity_type: "tenant_map_features",
       entity_id: key,
       details: {
-        visibility: visibilityRows,
-        domain_configurations: domainConfigRows,
         map_features: mapPayload,
-        notification_emails: tenantPayload,
       },
     });
 
-    setStatus((prev) => ({ ...prev, domains: `Saved domain types, notification routing, and map settings for ${key}.` }));
-    if (String(options?.closeEditingDomain || "").trim()) {
-      setEditingDomainKey((current) => current === options.closeEditingDomain ? "" : current);
-      setEditingDomainSnapshot((current) => current?.key === options.closeEditingDomain ? null : current);
-    }
+    setMapFeaturesEditMode(false);
+    setMapFeaturesSnapshot(null);
+    setStatus((prev) => ({ ...prev, domains: `Saved map features for ${key}.` }));
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, mapFeaturesForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
+  }, [canEditTenantDomains, logAudit, mapFeaturesForm, refreshControlPlaneData, requirePlatformSecurityCheckpoint, selectedTenantKey]);
 
   const assignTenantAdmin = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -5343,6 +5395,21 @@ export default function PlatformAdminApp() {
     setEditingDomainKey("");
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
+
+  const beginMapFeaturesEdit = useCallback(() => {
+    if (!canEditTenantDomains) return;
+    setMapFeaturesSnapshot({ ...mapFeaturesForm });
+    setMapFeaturesEditMode(true);
+    setStatus((prev) => ({ ...prev, domains: "" }));
+  }, [canEditTenantDomains, mapFeaturesForm]);
+
+  const cancelMapFeaturesEdit = useCallback(() => {
+    const key = sanitizeTenantKey(selectedTenantKey);
+    const configuredFeatures = tenantMapFeaturesByTenant?.[key] || null;
+    setMapFeaturesForm(mapFeaturesSnapshot ? { ...mapFeaturesSnapshot } : buildMapFeaturesForm(configuredFeatures));
+    setMapFeaturesEditMode(false);
+    setMapFeaturesSnapshot(null);
+  }, [mapFeaturesSnapshot, selectedTenantKey, tenantMapFeaturesByTenant]);
 
   const openTenantFile = useCallback(async (row) => {
     const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
@@ -9204,7 +9271,7 @@ export default function PlatformAdminApp() {
                   Manage domain visibility, notification routing, map behavior, and supporting organization assets in one place.
                 </p>
               </div>
-              <form onSubmit={saveDomainAndFeatureSettings} style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gap: 12 }}>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gap: 3 }}>
                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
@@ -9221,7 +9288,16 @@ export default function PlatformAdminApp() {
                       const domainFieldsReadOnly = !canEditTenantDomains || !isEditingDomain;
                       const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
                       return (
-                        <div key={d.key} style={{ ...subPanel, display: "grid", gap: 10, background: "#f8fbff" }}>
+                        <div
+                          key={d.key}
+                          style={{
+                            ...subPanel,
+                            display: "grid",
+                            gap: 10,
+                            background: "linear-gradient(180deg, rgba(18,128,106,0.14) 0%, rgba(18,128,106,0.09) 100%)",
+                            borderColor: "rgba(18,128,106,0.26)",
+                          }}
+                        >
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                             <div style={{ display: "grid", gap: 4 }}>
                               <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>{d.label}</div>
@@ -9384,15 +9460,47 @@ export default function PlatformAdminApp() {
                 </div>
 
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Features</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Configure how the organization boundary and map framing behave for the public map and the hub.
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Features</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Configure how the organization boundary and map framing behave for the public map and the hub.
+                      </div>
                     </div>
+                    {!mapFeaturesEditMode ? (
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                        disabled={!canEditTenantDomains}
+                        onClick={beginMapFeaturesEdit}
+                        title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
+                      >
+                        Edit Map Features
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                          disabled={!canEditTenantDomains}
+                          onClick={() => void saveMapFeaturesSettings()}
+                        >
+                          Save Map Features
+                        </button>
+                        <button
+                          type="button"
+                          style={buttonAlt}
+                          onClick={cancelMapFeaturesEdit}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {(() => {
-                    const borderEnabled = canEditTenantDomains && Boolean(mapFeaturesForm.show_boundary_border);
-                    const shadeEnabled = canEditTenantDomains && Boolean(mapFeaturesForm.shade_outside_boundary);
+                    const mapFeaturesReadOnly = !canEditTenantDomains || !mapFeaturesEditMode;
+                    const borderEnabled = !mapFeaturesReadOnly && Boolean(mapFeaturesForm.show_boundary_border);
+                    const shadeEnabled = !mapFeaturesReadOnly && Boolean(mapFeaturesForm.shade_outside_boundary);
                     const disabledFieldStyle = {
                       ...inputBase,
                       opacity: 0.55,
@@ -9405,7 +9513,7 @@ export default function PlatformAdminApp() {
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.show_boundary_border)}
-                            disabled={!canEditTenantDomains}
+                            disabled={mapFeaturesReadOnly}
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
                           />
                           Show boundary border
@@ -9416,7 +9524,7 @@ export default function PlatformAdminApp() {
                             <input
                               type="color"
                               value={sanitizeHexColor(mapFeaturesForm.boundary_border_color, "#e53935")}
-                              disabled={!canEditTenantDomains || !borderEnabled}
+                              disabled={mapFeaturesReadOnly || !borderEnabled}
                               onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
                               style={borderEnabled ? { ...inputBase, padding: 4, height: 42 } : { ...disabledFieldStyle, padding: 4, height: 42 }}
                             />
@@ -9424,7 +9532,7 @@ export default function PlatformAdminApp() {
                               type="text"
                               inputMode="text"
                               value={mapFeaturesForm.boundary_border_color}
-                              disabled={!canEditTenantDomains || !borderEnabled}
+                              disabled={mapFeaturesReadOnly || !borderEnabled}
                               onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, boundary_border_color: e.target.value }))}
                               onBlur={(e) => setMapFeaturesForm((prev) => ({
                                 ...prev,
@@ -9444,7 +9552,7 @@ export default function PlatformAdminApp() {
                             type="text"
                             inputMode="decimal"
                             value={mapFeaturesForm.boundary_border_width}
-                            disabled={!canEditTenantDomains || !borderEnabled}
+                            disabled={mapFeaturesReadOnly || !borderEnabled}
                             onChange={(e) => {
                               const nextValue = e.target.value;
                               if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
@@ -9466,7 +9574,7 @@ export default function PlatformAdminApp() {
                           <input
                             type="checkbox"
                             checked={Boolean(mapFeaturesForm.shade_outside_boundary)}
-                            disabled={!canEditTenantDomains}
+                            disabled={mapFeaturesReadOnly}
                             onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, shade_outside_boundary: e.target.checked }))}
                           />
                           Shade outside boundary
@@ -9477,7 +9585,7 @@ export default function PlatformAdminApp() {
                             type="text"
                             inputMode="decimal"
                             value={mapFeaturesForm.outside_shade_opacity}
-                            disabled={!canEditTenantDomains || !shadeEnabled}
+                            disabled={mapFeaturesReadOnly || !shadeEnabled}
                             onChange={(e) => {
                               const nextValue = e.target.value;
                               if (nextValue === "" || /^-?\d*\.?\d*$/.test(nextValue)) {
@@ -9499,11 +9607,7 @@ export default function PlatformAdminApp() {
                     );
                   })()}
                 </div>
-
-                <button type="submit" style={{ ...buttonBase, width: "fit-content", opacity: canEditTenantDomains ? 1 : 0.55 }} disabled={!canEditTenantDomains}>
-                  Save Domains + Assets Settings
-                </button>
-              </form>
+              </div>
               {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.domains)}</div> : null}
             </div>
 
