@@ -23641,6 +23641,7 @@ async function insertReportWithFallback(payload) {
                   gridTemplateColumns: "var(--mobile-header-side-column) 1fr var(--mobile-header-side-column)",
                   alignItems: "center",
                   gap: 0,
+                  height: "var(--mobile-header-height)",
                   minHeight: "var(--mobile-header-height)",
                   padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
                   border: "var(--mobile-header-border)",
@@ -23766,7 +23767,7 @@ async function insertReportWithFallback(payload) {
                   minWidth: 0,
                   paddingInline: "var(--mobile-header-title-padding-inline)",
                   textAlign: "center",
-                  transform: "translateY(-2px)",
+                  transform: "translateY(-4px)",
                 }}
               >
                 <span className="app-header-eyebrow">Reporting Map</span>
@@ -23792,7 +23793,7 @@ async function insertReportWithFallback(payload) {
 
             <div
               style={{
-                marginTop: 7,
+                marginTop: 12,
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
