@@ -84,6 +84,8 @@ const UI_ICON_SRC = {
   headingReset: "/heading_reset_icon.png",
   info: "/info_icon.png",
   location: "/location_icon.png",
+  calendar: "/calendar_icon.png",
+  notification: "/notification_icon.png",
   satellite: "/satellite_icon.png",
   streetMap: "/street_map_icon.png",
 };
@@ -191,6 +193,97 @@ function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
   return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
+}
+
+function formatResidentFeedDateTime(value, opts = {}) {
+  if (!value) return "TBD";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "TBD";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: opts.dateStyle || "medium",
+    timeStyle: opts.timeStyle || "short",
+  }).format(parsed);
+}
+
+function formatResidentEventRange(event) {
+  if (!event?.starts_at) return "Date TBD";
+  const start = new Date(event.starts_at);
+  const end = event?.ends_at ? new Date(event.ends_at) : null;
+  if (event?.all_day) {
+    return new Intl.DateTimeFormat("en-US", { dateStyle: "full" }).format(start);
+  }
+  if (!end || Number.isNaN(end.getTime())) return formatResidentFeedDateTime(start.toISOString());
+  const sameDay = start.toDateString() === end.toDateString();
+  if (sameDay) {
+    return `${new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(start)} • ${new Intl.DateTimeFormat("en-US", {
+      timeStyle: "short",
+    }).format(start)} - ${new Intl.DateTimeFormat("en-US", { timeStyle: "short" }).format(end)}`;
+  }
+  return `${formatResidentFeedDateTime(start.toISOString())} - ${formatResidentFeedDateTime(end.toISOString())}`;
+}
+
+function formatResidentAlertWindow(alert) {
+  if (!alert?.starts_at && !alert?.ends_at) return "Effective immediately";
+  if (alert?.starts_at && alert?.ends_at) {
+    return `${formatResidentFeedDateTime(alert.starts_at)} - ${formatResidentFeedDateTime(alert.ends_at)}`;
+  }
+  if (alert?.starts_at) return `Starts ${formatResidentFeedDateTime(alert.starts_at)}`;
+  return `Runs until ${formatResidentFeedDateTime(alert.ends_at)}`;
+}
+
+function residentAlertSeverityRank(severity) {
+  switch (String(severity || "").trim().toLowerCase()) {
+    case "emergency":
+      return 4;
+    case "urgent":
+      return 3;
+    case "advisory":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function sortResidentAlerts(rows = []) {
+  return [...rows].sort((a, b) => {
+    const aPinned = a?.pinned ? 1 : 0;
+    const bPinned = b?.pinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned;
+    const aSeverity = residentAlertSeverityRank(a?.severity);
+    const bSeverity = residentAlertSeverityRank(b?.severity);
+    if (aSeverity !== bSeverity) return bSeverity - aSeverity;
+    return new Date(b?.starts_at || b?.published_at || b?.created_at || 0).getTime()
+      - new Date(a?.starts_at || a?.published_at || a?.created_at || 0).getTime();
+  });
+}
+
+function sortResidentEvents(rows = []) {
+  return [...rows].sort((a, b) => {
+    const aStart = new Date(a?.starts_at || a?.created_at || 0).getTime();
+    const bStart = new Date(b?.starts_at || b?.created_at || 0).getTime();
+    return aStart - bStart;
+  });
+}
+
+function countActivePublishedAlerts(alerts) {
+  const now = Date.now();
+  return (alerts || []).filter((alert) => {
+    if (String(alert?.status || "").trim().toLowerCase() !== "published") return false;
+    const startsAt = alert?.starts_at ? new Date(alert.starts_at).getTime() : null;
+    const endsAt = alert?.ends_at ? new Date(alert.ends_at).getTime() : null;
+    if (startsAt && startsAt > now) return false;
+    if (endsAt && endsAt < now) return false;
+    return true;
+  }).length;
+}
+
+function countUpcomingPublishedEvents(events) {
+  const now = Date.now();
+  return (events || []).filter((event) => {
+    if (String(event?.status || "").trim().toLowerCase() !== "published") return false;
+    const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
+    return !startsAt || startsAt >= now - (60 * 60 * 1000);
+  }).length;
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -3135,6 +3228,8 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
     { iconSrc: UI_ICON_SRC.satellite, label: "Map View", desc: "Toggle street map and satellite imagery." },
     { iconSrc: UI_ICON_SRC.headingReset, label: "Reset Heading", desc: "Realign map orientation to north-up." },
     { iconSrc: UI_ICON_SRC.location, label: "My Location", desc: "Center map on your current device location." },
+    { iconSrc: UI_ICON_SRC.notification, label: "Alerts", desc: "Open published location alerts from the hub." },
+    { iconSrc: UI_ICON_SRC.calendar, label: "Events", desc: "Open published location events from the hub." },
     { iconSrc: UI_ICON_SRC.streetlight, label: "Domain Selector", desc: "Switch active reporting domain on the map." },
     { iconSrc: UI_ICON_SRC.bulk, label: "Bulk Save (Streetlights)", desc: "Select and save multiple streetlights to My Reports." },
     { iconSrc: UI_ICON_SRC.info, label: "Info", desc: "Open this help modal with legend and policy links." },
@@ -10238,6 +10333,308 @@ function NotificationPreferencesModal({
   );
 }
 
+function residentFeedBadgeStyle({ bg = "rgba(22, 109, 120, 0.12)", border = "rgba(22, 109, 120, 0.18)", color = "#124c57" } = {}) {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: `1px solid ${border}`,
+    background: bg,
+    color,
+    fontSize: 11.5,
+    fontWeight: 800,
+    lineHeight: 1.1,
+    textTransform: "capitalize",
+  };
+}
+
+function ResidentFeedWindow({
+  open,
+  onClose,
+  eyebrow,
+  title,
+  subtitle,
+  iconSrc,
+  countLabel,
+  loading,
+  error,
+  emptyText,
+  items,
+  renderItem,
+}) {
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10055}
+      panelStyle={{
+        width: "min(860px, 100%)",
+        maxHeight: "min(88vh, 900px)",
+        borderRadius: 24,
+        padding: 0,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(0, 1fr)",
+          maxHeight: "min(88vh, 900px)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 14,
+            padding: "22px 22px 18px",
+            borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
+          }}
+        >
+          <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.10)", border: "rgba(17, 61, 95, 0.14)", color: "#113d5f" })}>
+                {eyebrow}
+              </div>
+              {countLabel ? (
+                <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+                  {countLabel}
+                </div>
+              ) : null}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+              <div
+                style={{
+                  width: 46,
+                  height: 46,
+                  borderRadius: 16,
+                  background: "linear-gradient(180deg, rgba(242, 247, 251, 0.98) 0%, rgba(232, 240, 247, 0.98) 100%)",
+                  border: "1px solid rgba(23, 49, 79, 0.08)",
+                  display: "grid",
+                  placeItems: "center",
+                  flex: "0 0 auto",
+                }}
+              >
+                <AppIcon src={iconSrc} size={26} />
+              </div>
+              <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>{title}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>{subtitle}</div>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 999,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              flex: "0 0 auto",
+            }}
+            aria-label={`Close ${title}`}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ overflowY: "auto", padding: "18px 18px 20px 22px", marginRight: 4 }}>
+          {loading ? (
+            <div style={{ fontSize: 13, opacity: 0.82 }}>Loading updates…</div>
+          ) : error ? (
+            <div style={{ fontSize: 13, color: "#b23a48", lineHeight: 1.45 }}>{error}</div>
+          ) : !items.length ? (
+            <div style={{ fontSize: 13, opacity: 0.82 }}>{emptyText}</div>
+          ) : (
+            <div style={{ display: "grid", gap: 14, paddingBottom: 2 }}>
+              {items.map(renderItem)}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function AlertsWindow({ open, onClose, alerts, loading, error }) {
+  const activeCount = useMemo(() => countActivePublishedAlerts(alerts), [alerts]);
+  const countLabel = activeCount === 1 ? "1 active alert" : `${activeCount} active alerts`;
+  return (
+    <ResidentFeedWindow
+      open={open}
+      onClose={onClose}
+      eyebrow="Hub Alerts"
+      title="Location Alerts"
+      subtitle="Published resident alerts from the organization hub."
+      iconSrc={UI_ICON_SRC.notification}
+      countLabel={countLabel}
+      loading={loading}
+      error={error}
+      emptyText="No active alerts are published right now."
+      items={alerts}
+      renderItem={(alert) => {
+        const severityKey = String(alert?.severity || "info").trim().toLowerCase();
+        const severityTone =
+          severityKey === "emergency"
+            ? { bg: "rgba(183, 28, 28, 0.10)", border: "rgba(183, 28, 28, 0.16)", color: "#8f1d1d" }
+            : severityKey === "urgent"
+              ? { bg: "rgba(239, 108, 0, 0.10)", border: "rgba(239, 108, 0, 0.16)", color: "#b25600" }
+              : severityKey === "advisory"
+                ? { bg: "rgba(245, 190, 28, 0.12)", border: "rgba(245, 190, 28, 0.18)", color: "#8c6a00" }
+                : { bg: "rgba(30, 136, 229, 0.10)", border: "rgba(30, 136, 229, 0.16)", color: "#1b6fb4" };
+        return (
+          <article
+            key={`map-alert-${alert.id}`}
+            style={{
+              padding: 18,
+              borderRadius: 20,
+              border: "1px solid rgba(23, 49, 79, 0.08)",
+              background: "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)",
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div style={residentFeedBadgeStyle(severityTone)}>{alert.severity || "info"}</div>
+              {alert?.pinned ? (
+                <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+                  Pinned
+                </div>
+              ) : null}
+              {alert?.topic_label ? (
+                <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" })}>
+                  {alert.topic_label}
+                </div>
+              ) : null}
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: "#17314f" }}>{alert.title || "Untitled alert"}</h3>
+              {alert.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: "#35516d" }}>{alert.summary}</p> : null}
+              {alert.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#58718a" }}>{alert.body}</p> : null}
+            </div>
+            <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#4f6983", lineHeight: 1.45 }}>
+              <div>{formatResidentAlertWindow(alert)}</div>
+              {alert.location_name || alert.location_address ? (
+                <div>{[alert.location_name, alert.location_address].filter(Boolean).join(" • ")}</div>
+              ) : null}
+            </div>
+            {alert.cta_url ? (
+              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                <a
+                  href={alert.cta_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(23, 49, 79, 0.15)",
+                    background: "rgba(255, 255, 255, 0.92)",
+                    color: "#17314f",
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  {alert.cta_label || "More details"}
+                </a>
+              </div>
+            ) : null}
+          </article>
+        );
+      }}
+    />
+  );
+}
+
+function EventsWindow({ open, onClose, events, loading, error }) {
+  const upcomingCount = useMemo(() => countUpcomingPublishedEvents(events), [events]);
+  const countLabel = upcomingCount === 1 ? "1 upcoming event" : `${upcomingCount} upcoming events`;
+  return (
+    <ResidentFeedWindow
+      open={open}
+      onClose={onClose}
+      eyebrow="Hub Events"
+      title="Location Events"
+      subtitle="Published resident events from the organization hub."
+      iconSrc={UI_ICON_SRC.calendar}
+      countLabel={countLabel}
+      loading={loading}
+      error={error}
+      emptyText="No upcoming events are published yet."
+      items={events}
+      renderItem={(event) => (
+        <article
+          key={`map-event-${event.id}`}
+          style={{
+            padding: 18,
+            borderRadius: 20,
+            border: "1px solid rgba(23, 49, 79, 0.08)",
+            background: "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)",
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" })}>
+              {event.topic_label || event.topic_key || "Event"}
+            </div>
+            {event.all_day ? (
+              <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+                All day
+              </div>
+            ) : null}
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: "#17314f" }}>{event.title || "Untitled event"}</h3>
+            {event.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: "#35516d" }}>{event.summary}</p> : null}
+            {event.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#58718a" }}>{event.body}</p> : null}
+          </div>
+          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#4f6983", lineHeight: 1.45 }}>
+            <div>{formatResidentEventRange(event)}</div>
+            {event.location_name || event.location_address ? (
+              <div>{[event.location_name, event.location_address].filter(Boolean).join(" • ")}</div>
+            ) : null}
+          </div>
+          {event.cta_url ? (
+            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              <a
+                href={event.cta_url}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(23, 49, 79, 0.15)",
+                  background: "rgba(255, 255, 255, 0.92)",
+                  color: "#17314f",
+                  textDecoration: "none",
+                  fontSize: 13,
+                  fontWeight: 800,
+                }}
+              >
+                {event.cta_label || "Event details"}
+              </a>
+            </div>
+          ) : null}
+        </article>
+      )}
+    />
+  );
+}
+
 
 function useIsMobile(breakpointPx = 640) {
   const [isMobile, setIsMobile] = useState(() => {
@@ -11067,6 +11464,12 @@ export default function App({ onBackToHub = null }) {
   const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
   const [selectedDomainMarker, setSelectedDomainMarker] = useState(null);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
+  const [alertsWindowOpen, setAlertsWindowOpen] = useState(false);
+  const [eventsWindowOpen, setEventsWindowOpen] = useState(false);
+  const [mapCommunityAlerts, setMapCommunityAlerts] = useState([]);
+  const [mapCommunityEvents, setMapCommunityEvents] = useState([]);
+  const [mapCommunityFeedLoading, setMapCommunityFeedLoading] = useState(false);
+  const [mapCommunityFeedError, setMapCommunityFeedError] = useState("");
 
 
   function toggleMyReportsExpanded(lightId) {
@@ -12338,6 +12741,95 @@ export default function App({ onBackToHub = null }) {
       cancelled = true;
     };
   }, [authReady]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMapCommunityFeed() {
+      if (!authReady) return;
+      const tenantKey = activeTenantKey();
+      if (!tenantKey) {
+        if (!cancelled) {
+          setMapCommunityAlerts([]);
+          setMapCommunityEvents([]);
+          setMapCommunityFeedLoading(false);
+          setMapCommunityFeedError("");
+        }
+        return;
+      }
+
+      setMapCommunityFeedLoading(true);
+      setMapCommunityFeedError("");
+
+      const topicQuery = supabase
+        .from("notification_topics")
+        .select("topic_key,label")
+        .eq("active", true)
+        .order("sort_order", { ascending: true });
+
+      const alertQuery = supabase
+        .from("municipality_alerts")
+        .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,status,starts_at,ends_at,published_at,created_at,updated_at")
+        .eq("tenant_key", tenantKey)
+        .eq("status", "published")
+        .order("pinned", { ascending: false })
+        .order("starts_at", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      const eventQuery = supabase
+        .from("municipality_events")
+        .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at,source_type,source_ref")
+        .eq("tenant_key", tenantKey)
+        .eq("status", "published")
+        .order("starts_at", { ascending: true })
+        .order("created_at", { ascending: false });
+
+      const [topicRes, alertRes, eventRes] = await Promise.all([topicQuery, alertQuery, eventQuery]);
+
+      if (cancelled) return;
+
+      const firstError = alertRes.error || eventRes.error;
+      if (firstError) {
+        if (!isMissingRelationError(firstError)) {
+          console.warn("[map community feed]", firstError?.message || firstError);
+          setMapCommunityFeedError("Could not load alerts and events right now.");
+        } else {
+          setMapCommunityFeedError("");
+        }
+        setMapCommunityAlerts([]);
+        setMapCommunityEvents([]);
+        setMapCommunityFeedLoading(false);
+        return;
+      }
+
+      if (topicRes.error && !isMissingRelationError(topicRes.error)) {
+        console.warn("[map community topics]", topicRes.error?.message || topicRes.error);
+      }
+
+      const topicLabelsByKey = Object.fromEntries(
+        (topicRes.data || []).map((topic) => [topic.topic_key, String(topic?.label || "").trim() || topic?.topic_key])
+      );
+
+      setMapCommunityAlerts(
+        sortResidentAlerts((alertRes.data || []).map((alert) => ({
+          ...alert,
+          topic_label: topicLabelsByKey[alert.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[alert.topic_key]?.label || alert.topic_key,
+        })))
+      );
+      setMapCommunityEvents(
+        sortResidentEvents((eventRes.data || []).map((event) => ({
+          ...event,
+          topic_label: topicLabelsByKey[event.topic_key] || RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[event.topic_key]?.label || event.topic_key,
+        })))
+      );
+      setMapCommunityFeedLoading(false);
+    }
+
+    void loadMapCommunityFeed();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, tenant?.tenantKey]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
@@ -18926,6 +19418,8 @@ async function insertReportWithFallback(payload) {
     fontWeight: 900,
     cursor: "pointer",
   };
+  const mapAlertsActiveCount = useMemo(() => countActivePublishedAlerts(mapCommunityAlerts), [mapCommunityAlerts]);
+  const mapEventsUpcomingCount = useMemo(() => countUpcomingPublishedEvents(mapCommunityEvents), [mapCommunityEvents]);
   const markerPopupCardStyle = {
     minWidth: 210,
     display: "grid",
@@ -21825,6 +22319,98 @@ async function insertReportWithFallback(payload) {
             <AppIcon src={UI_ICON_SRC.location} size={38} />
           </button>
 
+        <button
+          type="button"
+          className={`sl-map-tool-mini ${alertsWindowOpen ? "is-on" : ""}`}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setAdminDomainMenuOpen(false);
+            setAdminToolboxOpen(false);
+            setEventsWindowOpen(false);
+            setAlertsWindowOpen((prev) => {
+              const next = !prev;
+              if (next) showToolHint("Alerts", 1100, 3);
+              return next;
+            });
+          }}
+          title="Alerts"
+          aria-label="Open alerts"
+          style={{ position: "relative" }}
+        >
+          <AppIcon src={UI_ICON_SRC.notification} size={38} />
+          {mapAlertsActiveCount > 0 ? (
+            <span
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                minWidth: 18,
+                height: 18,
+                padding: "0 5px",
+                borderRadius: 999,
+                background: "#c62828",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.88)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10.5,
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              {mapAlertsActiveCount > 99 ? "99+" : mapAlertsActiveCount}
+            </span>
+          ) : null}
+        </button>
+
+        <button
+          type="button"
+          className={`sl-map-tool-mini ${eventsWindowOpen ? "is-on" : ""}`}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setAdminDomainMenuOpen(false);
+            setAdminToolboxOpen(false);
+            setAlertsWindowOpen(false);
+            setEventsWindowOpen((prev) => {
+              const next = !prev;
+              if (next) showToolHint("Events", 1100, 4);
+              return next;
+            });
+          }}
+          title="Events"
+          aria-label="Open events"
+          style={{ position: "relative" }}
+        >
+          <AppIcon src={UI_ICON_SRC.calendar} size={38} />
+          {mapEventsUpcomingCount > 0 ? (
+            <span
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                minWidth: 18,
+                height: 18,
+                padding: "0 5px",
+                borderRadius: 999,
+                background: "#176d78",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.88)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10.5,
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              {mapEventsUpcomingCount > 99 ? "99+" : mapEventsUpcomingCount}
+            </span>
+          ) : null}
+        </button>
+
         {
           <div style={{ position: "relative" }}>
             <button
@@ -21840,7 +22426,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminToolboxOpen(false);
                   return next;
                 });
-                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 3);
+                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 5);
               }}
             >
               <AppIcon src={adminDomainMeta.iconSrc} size={38} />
@@ -21919,7 +22505,7 @@ async function insertReportWithFallback(payload) {
 
               setBulkMode((on) => {
                 const next = !on;
-                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 4);
+                showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 6);
 
                 if (next) {
                   setDeleteCircleMode(false);
@@ -21959,7 +22545,7 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminDomainMenuOpen(false);
                   return next;
                 });
-                showToolHint("Admin tools", 1000, 5);
+                showToolHint("Admin tools", 1000, 7);
               }}
             >
               <AppIcon src={UI_ICON_SRC.toolbox} size={38} />
@@ -22145,6 +22731,20 @@ async function insertReportWithFallback(payload) {
         loading={notificationPreferencesLoading}
         status={notificationPreferencesStatus}
       />
+      <AlertsWindow
+        open={alertsWindowOpen}
+        onClose={() => setAlertsWindowOpen(false)}
+        alerts={mapCommunityAlerts}
+        loading={mapCommunityFeedLoading}
+        error={mapCommunityFeedError}
+      />
+      <EventsWindow
+        open={eventsWindowOpen}
+        onClose={() => setEventsWindowOpen(false)}
+        events={mapCommunityEvents}
+        loading={mapCommunityFeedLoading}
+        error={mapCommunityFeedError}
+      />
 
       {/* =========================
           Mobile UI overlays
@@ -22306,10 +22906,10 @@ async function insertReportWithFallback(payload) {
                 <button
                   type="button"
                   onClick={handleAccountMenuToggle}
-                  aria-label={session?.user?.id ? "Open account menu" : "Open login"}
-                  title={session?.user?.id ? "Account" : "Login"}
+                  aria-label={session?.user?.id ? "Open account menu" : "Log in"}
+                  title={session?.user?.id ? "Account" : "Log in"}
                   style={{
-                    width: 40,
+                    width: session?.user?.id ? 40 : "auto",
                     height: 40,
                     borderRadius: 999,
                     border: "1px solid rgba(23, 49, 79, 0.14)",
@@ -22318,16 +22918,24 @@ async function insertReportWithFallback(payload) {
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    padding: session?.user?.id ? 0 : "0 14px",
                     cursor: "pointer",
                     lineHeight: 1,
                     boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+                    fontSize: session?.user?.id ? undefined : 13,
+                    fontWeight: session?.user?.id ? undefined : 900,
+                    letterSpacing: session?.user?.id ? undefined : "0.01em",
                   }}
                 >
-                  <span style={{ display: "grid", gap: 4 }}>
-                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                    <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                  </span>
+                  {session?.user?.id ? (
+                    <span style={{ display: "grid", gap: 4 }}>
+                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                    </span>
+                  ) : (
+                    "Log in"
+                  )}
                 </button>
               </div>
             </div>
@@ -22951,31 +23559,38 @@ async function insertReportWithFallback(payload) {
             <button
               type="button"
               onClick={handleAccountMenuToggle}
-              aria-label="Open map menu"
-              title="Open map menu"
+              aria-label={session?.user?.id ? "Open map menu" : "Log in"}
+              title={session?.user?.id ? "Open map menu" : "Log in"}
               style={{
                 position: "absolute",
                 top: "50%",
                 right: 9,
                 transform: "translateY(-50%)",
-                width: 32,
+                width: session?.user?.id ? 32 : "auto",
                 height: 32,
                 border: "1px solid rgba(23, 49, 79, 0.14)",
                 background: "rgba(255,255,255,0.94)",
                 color: "var(--sl-ui-text)",
                 borderRadius: 999,
-                padding: 0,
-                display: "grid",
-                placeItems: "center",
+                padding: session?.user?.id ? 0 : "0 10px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 cursor: "pointer",
                 boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+                fontSize: session?.user?.id ? undefined : 12,
+                fontWeight: session?.user?.id ? undefined : 900,
               }}
             >
-              <span style={{ display: "grid", gap: 3 }}>
-                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-              </span>
+              {session?.user?.id ? (
+                <span style={{ display: "grid", gap: 3 }}>
+                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                  <span style={{ width: 14, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                </span>
+              ) : (
+                "Log in"
+              )}
             </button>
 
 	              {titleLogoError ? (
