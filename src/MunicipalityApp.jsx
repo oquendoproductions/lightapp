@@ -146,6 +146,61 @@ const REPORT_DOMAIN_OPTIONS = [
 
 const DEFAULT_PUBLIC_REPORT_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
 
+const DEFAULT_TENANT_SECURITY_SETTINGS = {
+  require_pin_for_account_changes: false,
+  require_pin_for_report_state_changes: false,
+  require_pin_for_organization_info_changes: false,
+  require_pin_for_contact_changes: false,
+  require_pin_for_organization_user_changes: false,
+  require_pin_for_organization_role_changes: false,
+  require_pin_for_domain_settings_changes: false,
+};
+
+const DEFAULT_TENANT_SECURITY_PIN_DRAFT = {
+  current_pin: "",
+  account_password: "",
+  pin: "",
+  confirm_pin: "",
+};
+
+const TENANT_SECURITY_CHECKPOINT_OPTIONS = [
+  {
+    key: "require_pin_for_account_changes",
+    label: "Require PIN for account changes",
+    note: "Protect profile updates and password or email changes.",
+  },
+  {
+    key: "require_pin_for_report_state_changes",
+    label: "Require PIN for report-state changes",
+    note: "Protect mark-fixed and re-open report actions.",
+  },
+  {
+    key: "require_pin_for_organization_info_changes",
+    label: "Require PIN for organization info changes",
+    note: "Protect organization identity, legal details, website, address, and timezone updates.",
+  },
+  {
+    key: "require_pin_for_contact_changes",
+    label: "Require PIN for organization contact changes",
+    note: "Protect primary contact email and phone changes.",
+  },
+  {
+    key: "require_pin_for_organization_user_changes",
+    label: "Require PIN for employee access changes",
+    note: "Protect employee invites, assignments, status changes, and removals.",
+  },
+  {
+    key: "require_pin_for_organization_role_changes",
+    label: "Require PIN for role and permission changes",
+    note: "Protect organization role creation and permission edits.",
+  },
+  {
+    key: "require_pin_for_domain_settings_changes",
+    label: "Require PIN for domain and asset setting changes",
+    note: "Protect map appearance updates and asset library changes.",
+  },
+];
+
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
@@ -189,6 +244,28 @@ function normalizeHexDraft(value, fallback = "#e53935") {
 
 function trimOrEmpty(value) {
   return String(value || "").trim();
+}
+
+async function hashTenantSecurityPin(userId, tenantKey, pin) {
+  const normalizedUserId = trimOrEmpty(userId).toLowerCase();
+  const normalizedTenantKey = trimOrEmpty(tenantKey).toLowerCase();
+  const normalizedPin = trimOrEmpty(pin);
+  if (!normalizedUserId || !normalizedTenantKey || !normalizedPin) return "";
+  const payload = `tenant-pin:${normalizedTenantKey}:${normalizedUserId}:${normalizedPin}`;
+  try {
+    if (typeof crypto !== "undefined" && crypto?.subtle) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+      return Array.from(new Uint8Array(digest)).map((part) => part.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fallback below
+  }
+  let hash = 0;
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = ((hash << 5) - hash) + payload.charCodeAt(index);
+    hash |= 0;
+  }
+  return `fallback_${Math.abs(hash)}`;
 }
 
 function normalizeReportDomainKey(value) {
@@ -1513,6 +1590,23 @@ export default function MunicipalityApp() {
   const [reportIncidentActionBusyId, setReportIncidentActionBusyId] = useState("");
   const [reportIncidentActionStatus, setReportIncidentActionStatus] = useState("");
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
+  const [tenantSecuritySettingsSaved, setTenantSecuritySettingsSaved] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
+  const [tenantSecuritySettingsDraft, setTenantSecuritySettingsDraft] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
+  const [tenantSecurityPinDraft, setTenantSecurityPinDraft] = useState(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+  const [tenantSecurityPinMeta, setTenantSecurityPinMeta] = useState({ pin_hash: "" });
+  const [tenantSecurityStatus, setTenantSecurityStatus] = useState("");
+  const [tenantSecuritySaving, setTenantSecuritySaving] = useState({ pin: false, checks: false });
+  const [tenantSecurityPinEditMode, setTenantSecurityPinEditMode] = useState(false);
+  const [tenantSecurityChecksEditMode, setTenantSecurityChecksEditMode] = useState(false);
+  const [showTenantSecurityPin, setShowTenantSecurityPin] = useState(false);
+  const [showTenantSecurityPinConfirm, setShowTenantSecurityPinConfirm] = useState(false);
+  const [showTenantSecurityCurrentPin, setShowTenantSecurityCurrentPin] = useState(false);
+  const [showTenantSecurityAccountPassword, setShowTenantSecurityAccountPassword] = useState(false);
+  const [tenantSecurityCheckpointRequest, setTenantSecurityCheckpointRequest] = useState(null);
+  const [tenantSecurityCheckpointPin, setTenantSecurityCheckpointPin] = useState("");
+  const [tenantSecurityCheckpointStatus, setTenantSecurityCheckpointStatus] = useState("");
+  const [tenantSecurityCheckpointVerifying, setTenantSecurityCheckpointVerifying] = useState(false);
+  const [showTenantSecurityCheckpointPin, setShowTenantSecurityCheckpointPin] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState("");
   const [accountSectionEdit, setAccountSectionEdit] = useState({
     profile: false,
@@ -1538,6 +1632,7 @@ export default function MunicipalityApp() {
     notifications: false,
     security: false,
   });
+  const tenantSecurityCheckpointResolverRef = useRef(null);
   const authPasswordAutoComplete = authMode === "login" ? "current-password" : "new-password";
   const settingsMeta = useMemo(() => getSettingsPageMeta(routePath), [routePath]);
   const activeSettingsCategoryKey = settingsMeta.category.key;
@@ -1678,6 +1773,11 @@ export default function MunicipalityApp() {
   useEffect(() => {
     setMapAppearanceDraft(buildMapAppearanceDraft(mapAppearance));
   }, [mapAppearance]);
+
+  const sessionUserId = trimOrEmpty(session?.user?.id);
+  const sessionEmail = trimOrEmpty(profile?.email) || trimOrEmpty(session?.user?.email);
+  const canViewTenantSecurity = manageAccess;
+  const canManageTenantSecurity = manageAccess;
 
   if (!residentPortalEnabled) {
     return (
@@ -1894,6 +1994,172 @@ export default function MunicipalityApp() {
       ].join(" ").toLowerCase().includes(normalizedQuery);
     });
   }, [filteredReportActivityRows, reportActivityDetailRows, reportFromDate, reportSearchQuery, reportToDate]);
+  const enabledTenantSecurityCheckpointCount = useMemo(
+    () => TENANT_SECURITY_CHECKPOINT_OPTIONS.filter((item) => Boolean(tenantSecuritySettingsSaved?.[item.key])).length,
+    [tenantSecuritySettingsSaved]
+  );
+  const readTenantSecuritySnapshot = useCallback(async () => {
+    if (!sessionUserId || !tenantKey) {
+      return {
+        settings: DEFAULT_TENANT_SECURITY_SETTINGS,
+        pin_hash: "",
+        error: null,
+      };
+    }
+
+    const [settingsResult, pinResult] = await Promise.all([
+      supabase
+        .from("tenant_security_settings")
+        .select("tenant_key,require_pin_for_account_changes,require_pin_for_report_state_changes,require_pin_for_organization_info_changes,require_pin_for_contact_changes,require_pin_for_organization_user_changes,require_pin_for_organization_role_changes,require_pin_for_domain_settings_changes")
+        .eq("tenant_key", tenantKey)
+        .maybeSingle(),
+      supabase
+        .from("tenant_user_security_profiles")
+        .select("tenant_key,user_id,pin_enabled,pin_hash")
+        .eq("tenant_key", tenantKey)
+        .eq("user_id", sessionUserId)
+        .maybeSingle(),
+    ]);
+
+    const firstError = settingsResult.error || pinResult.error;
+    return {
+      settings: {
+        require_pin_for_account_changes: Boolean(settingsResult.data?.require_pin_for_account_changes),
+        require_pin_for_report_state_changes: Boolean(settingsResult.data?.require_pin_for_report_state_changes),
+        require_pin_for_organization_info_changes: Boolean(settingsResult.data?.require_pin_for_organization_info_changes),
+        require_pin_for_contact_changes: Boolean(settingsResult.data?.require_pin_for_contact_changes),
+        require_pin_for_organization_user_changes: Boolean(settingsResult.data?.require_pin_for_organization_user_changes),
+        require_pin_for_organization_role_changes: Boolean(settingsResult.data?.require_pin_for_organization_role_changes),
+        require_pin_for_domain_settings_changes: Boolean(settingsResult.data?.require_pin_for_domain_settings_changes),
+      },
+      pin_hash: trimOrEmpty(pinResult.data?.pin_hash),
+      error: firstError || null,
+    };
+  }, [sessionUserId, tenantKey]);
+  const loadTenantSecurityConfig = useCallback(async () => {
+    if (!sessionUserId || !tenantKey || !canViewTenantSecurity) {
+      setTenantSecuritySettingsSaved(DEFAULT_TENANT_SECURITY_SETTINGS);
+      setTenantSecuritySettingsDraft(DEFAULT_TENANT_SECURITY_SETTINGS);
+      setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+      setTenantSecurityPinMeta({ pin_hash: "" });
+      setTenantSecurityPinEditMode(false);
+      setTenantSecurityChecksEditMode(false);
+      setTenantSecurityStatus("");
+      return;
+    }
+
+    const snapshot = await readTenantSecuritySnapshot();
+    if (snapshot.error) {
+      if (isMissingRelationError(snapshot.error)) {
+        setTenantSecuritySettingsSaved(DEFAULT_TENANT_SECURITY_SETTINGS);
+        setTenantSecuritySettingsDraft(DEFAULT_TENANT_SECURITY_SETTINGS);
+        setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+        setTenantSecurityPinMeta({ pin_hash: "" });
+        setTenantSecurityPinEditMode(false);
+        setTenantSecurityChecksEditMode(false);
+        setTenantSecurityStatus("Security PIN tables are not available yet. Run the latest migrations to enable municipality checkpoints.");
+        return;
+      }
+      setTenantSecurityStatus(String(snapshot.error?.message || "Could not load security settings."));
+      return;
+    }
+
+    setTenantSecuritySettingsSaved(snapshot.settings);
+    setTenantSecuritySettingsDraft(snapshot.settings);
+    setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash });
+    setTenantSecurityPinEditMode(false);
+    setTenantSecurityChecksEditMode(false);
+    setTenantSecurityStatus("");
+  }, [canViewTenantSecurity, readTenantSecuritySnapshot, sessionUserId, tenantKey]);
+  const closeTenantSecurityCheckpoint = useCallback((approved = false) => {
+    const resolver = tenantSecurityCheckpointResolverRef.current;
+    tenantSecurityCheckpointResolverRef.current = null;
+    setTenantSecurityCheckpointRequest(null);
+    setTenantSecurityCheckpointPin("");
+    setTenantSecurityCheckpointStatus("");
+    setTenantSecurityCheckpointVerifying(false);
+    setShowTenantSecurityCheckpointPin(false);
+    if (typeof resolver === "function") resolver(approved);
+  }, []);
+  const submitTenantSecurityCheckpoint = useCallback(async () => {
+    if (!tenantSecurityCheckpointRequest?.expected_hash) {
+      closeTenantSecurityCheckpoint(false);
+      return;
+    }
+    if (!sessionUserId) {
+      setTenantSecurityCheckpointStatus("Sign in again and retry.");
+      return;
+    }
+
+    const pin = trimOrEmpty(tenantSecurityCheckpointPin);
+    if (!/^\d{4}$/.test(pin)) {
+      setTenantSecurityCheckpointStatus("Enter your 4-digit PIN to continue.");
+      return;
+    }
+
+    setTenantSecurityCheckpointVerifying(true);
+    setTenantSecurityCheckpointStatus("");
+    const providedHash = await hashTenantSecurityPin(sessionUserId, tenantKey, pin);
+    setTenantSecurityCheckpointVerifying(false);
+    if (providedHash !== trimOrEmpty(tenantSecurityCheckpointRequest.expected_hash)) {
+      setTenantSecurityCheckpointStatus("PIN is incorrect.");
+      return;
+    }
+
+    closeTenantSecurityCheckpoint(true);
+  }, [closeTenantSecurityCheckpoint, sessionUserId, tenantKey, tenantSecurityCheckpointPin, tenantSecurityCheckpointRequest]);
+  const requireTenantSecurityCheckpoint = useCallback(async ({
+    settingKey,
+    settingKeys,
+    title,
+    description,
+    onBlocked,
+  }) => {
+    const normalizedKeys = [
+      ...new Set([...(Array.isArray(settingKeys) ? settingKeys : []), settingKey].map((key) => trimOrEmpty(key)).filter(Boolean)),
+    ];
+    if (!normalizedKeys.length) return true;
+
+    const snapshot = await readTenantSecuritySnapshot();
+    if (snapshot.error) {
+      const message = isMissingRelationError(snapshot.error)
+        ? "Security PIN tables are not available in this environment yet. Apply the latest Supabase migrations first."
+        : String(snapshot.error?.message || "Could not verify your security checkpoint.");
+      onBlocked?.(message);
+      return false;
+    }
+
+    setTenantSecuritySettingsDraft(snapshot.settings);
+    setTenantSecurityPinMeta({ pin_hash: snapshot.pin_hash });
+    if (!normalizedKeys.some((key) => Boolean(snapshot.settings?.[key]))) return true;
+
+    if (!snapshot.pin_hash) {
+      onBlocked?.("This action requires a PIN, but your account does not have one set yet. Set your PIN under Account Info first.");
+      return false;
+    }
+
+    if (tenantSecurityCheckpointResolverRef.current) {
+      closeTenantSecurityCheckpoint(false);
+    }
+
+    return new Promise((resolve) => {
+      tenantSecurityCheckpointResolverRef.current = resolve;
+      setTenantSecurityCheckpointPin("");
+      setTenantSecurityCheckpointStatus("");
+      setTenantSecurityCheckpointVerifying(false);
+      setShowTenantSecurityCheckpointPin(false);
+      setTenantSecurityCheckpointRequest({
+        title,
+        description,
+        expected_hash: snapshot.pin_hash,
+      });
+    });
+  }, [closeTenantSecurityCheckpoint, readTenantSecuritySnapshot]);
+  useEffect(() => {
+    if (!String(routePath || "").startsWith(SETTINGS_PATH)) return;
+    void loadTenantSecurityConfig();
+  }, [loadTenantSecurityConfig, routePath]);
   const handleReportIncidentStateToggle = useCallback(async (row) => {
     if (!manageAccess) return;
     const incidentId = trimOrEmpty(row?.incident_id);
@@ -1911,6 +2177,16 @@ export default function MunicipalityApp() {
       );
       if (!confirmed) return;
     }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_report_state_changes",
+      title: nextAction === "fix" ? "Confirm mark fixed" : "Confirm re-open",
+      description: nextAction === "fix"
+        ? `Enter your 4-digit PIN to mark ${incidentLabel} fixed.`
+        : `Enter your 4-digit PIN to re-open ${incidentLabel}.`,
+      onBlocked: (message) => setReportIncidentActionStatus(message),
+    });
+    if (!checkpointApproved) return;
 
     setReportIncidentActionBusyId(incidentId);
     setReportIncidentActionStatus("");
@@ -1966,7 +2242,7 @@ export default function MunicipalityApp() {
     )));
     setReportIncidentActionBusyId("");
     setReportIncidentActionStatus(nextAction === "fix" ? "Incident marked fixed." : "Incident re-opened.");
-  }, [manageAccess, session?.user?.id]);
+  }, [manageAccess, requireTenantSecurityCheckpoint, session?.user?.id]);
   const permissionLabelLookup = useMemo(
     () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
     [permissionCatalog]
@@ -2936,6 +3212,14 @@ export default function MunicipalityApp() {
       return;
     }
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_account_changes",
+      title: "Confirm account profile update",
+      description: "Enter your 4-digit PIN to save updates to your account profile.",
+      onBlocked: (message) => setAccountSectionStatus((prev) => ({ ...prev, profile: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSavingSection((prev) => ({ ...prev, profile: true }));
     setAccountSectionStatus((prev) => ({ ...prev, profile: "" }));
     const { error: profileError } = await supabase
@@ -2997,6 +3281,14 @@ export default function MunicipalityApp() {
       return;
     }
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_account_changes",
+      title: "Confirm email or password update",
+      description: "Enter your 4-digit PIN before changing your municipality account email or password.",
+      onBlocked: (message) => setAccountSectionStatus((prev) => ({ ...prev, security: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSavingSection((prev) => ({ ...prev, security: true }));
     setAccountSectionStatus((prev) => ({ ...prev, security: "" }));
 
@@ -3057,6 +3349,14 @@ export default function MunicipalityApp() {
       return;
     }
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKeys: ["require_pin_for_organization_info_changes", "require_pin_for_contact_changes"],
+      title: "Confirm organization settings update",
+      description: "Enter your 4-digit PIN to save organization details and contact changes.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, organization: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSettingsSectionSaving((prev) => ({ ...prev, organization: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, organization: "" }));
 
@@ -3113,6 +3413,14 @@ export default function MunicipalityApp() {
       boundary_border_width: borderWidth,
     };
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Confirm map settings update",
+      description: "Enter your 4-digit PIN to save map appearance settings.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, map: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSettingsSectionSaving((prev) => ({ ...prev, map: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, map: "" }));
 
@@ -3137,6 +3445,128 @@ export default function MunicipalityApp() {
     setMapAppearanceDraft(buildMapAppearanceDraft(nextMapAppearance));
     setSettingsSectionEdit((prev) => ({ ...prev, map: false }));
     setSettingsSectionStatus((prev) => ({ ...prev, map: "Map appearance settings saved." }));
+  }
+
+  async function saveTenantSecurityPin() {
+    if (!sessionUserId) {
+      setTenantSecurityStatus("Sign in again and retry.");
+      return;
+    }
+    if (!canManageTenantSecurity) {
+      setTenantSecurityStatus("Security PIN management is limited to municipality staff.");
+      return;
+    }
+
+    const currentPin = trimOrEmpty(tenantSecurityPinDraft.current_pin);
+    const accountPassword = String(tenantSecurityPinDraft.account_password || "");
+    const pin = trimOrEmpty(tenantSecurityPinDraft.pin);
+    const confirmPin = trimOrEmpty(tenantSecurityPinDraft.confirm_pin);
+    const existingPinHash = trimOrEmpty(tenantSecurityPinMeta.pin_hash);
+    const hasExistingPin = Boolean(existingPinHash);
+
+    if (!/^\d{4}$/.test(pin)) {
+      setTenantSecurityStatus("Use a 4-digit PIN.");
+      return;
+    }
+    if (pin !== confirmPin) {
+      setTenantSecurityStatus("PIN and confirmation do not match.");
+      return;
+    }
+
+    if (hasExistingPin) {
+      if (!currentPin && !accountPassword) {
+        setTenantSecurityStatus("Enter your current PIN or your account password to change this PIN.");
+        return;
+      }
+
+      let verified = false;
+      if (currentPin) {
+        const currentPinHash = await hashTenantSecurityPin(sessionUserId, tenantKey, currentPin);
+        verified = currentPinHash === existingPinHash;
+      }
+
+      if (!verified && accountPassword) {
+        if (!sessionEmail) {
+          setTenantSecurityStatus("No account email is available for password verification.");
+          return;
+        }
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: sessionEmail,
+          password: accountPassword,
+        });
+        if (!signInError) {
+          verified = true;
+        }
+      }
+
+      if (!verified) {
+        setTenantSecurityStatus("Current PIN or account password is incorrect.");
+        return;
+      }
+    }
+
+    setTenantSecuritySaving((prev) => ({ ...prev, pin: true }));
+    setTenantSecurityStatus("");
+    const pin_hash = await hashTenantSecurityPin(sessionUserId, tenantKey, pin);
+    const { error } = await supabase
+      .from("tenant_user_security_profiles")
+      .upsert([{
+        tenant_key: tenantKey,
+        user_id: sessionUserId,
+        pin_hash,
+        pin_enabled: true,
+        updated_by: sessionUserId,
+      }], { onConflict: "tenant_key,user_id" });
+    setTenantSecuritySaving((prev) => ({ ...prev, pin: false }));
+
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantSecurityStatus("Security PIN tables are not available in this environment yet. Apply the latest Supabase migrations, then try saving your PIN again.");
+        return;
+      }
+      setTenantSecurityStatus(String(error?.message || "Could not save your security PIN."));
+      return;
+    }
+
+    setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+    await loadTenantSecurityConfig();
+    setTenantSecurityPinEditMode(false);
+    setShowTenantSecurityPin(false);
+    setShowTenantSecurityPinConfirm(false);
+    setShowTenantSecurityCurrentPin(false);
+    setShowTenantSecurityAccountPassword(false);
+    setTenantSecurityStatus("Security PIN saved.");
+  }
+
+  async function saveTenantSecurityChecks() {
+    if (!canManageTenantSecurity) {
+      setTenantSecurityStatus("Security checkpoint rules are limited to municipality staff.");
+      return;
+    }
+
+    setTenantSecuritySaving((prev) => ({ ...prev, checks: true }));
+    setTenantSecurityStatus("");
+    const { error } = await supabase
+      .from("tenant_security_settings")
+      .upsert([{
+        tenant_key: tenantKey,
+        ...tenantSecuritySettingsDraft,
+        updated_by: sessionUserId || null,
+      }], { onConflict: "tenant_key" });
+    setTenantSecuritySaving((prev) => ({ ...prev, checks: false }));
+
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantSecurityStatus("Security checkpoint tables are not available in this environment yet. Apply the latest Supabase migrations first.");
+        return;
+      }
+      setTenantSecurityStatus(String(error?.message || "Could not save security checkpoints."));
+      return;
+    }
+
+    setTenantSecuritySettingsSaved(tenantSecuritySettingsDraft);
+    setTenantSecurityChecksEditMode(false);
+    setTenantSecurityStatus("Security checkpoints saved.");
   }
 
   async function reloadAssetFiles() {
@@ -3229,6 +3659,14 @@ export default function MunicipalityApp() {
       return;
     }
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Confirm employee assignment",
+      description: "Enter your 4-digit PIN to assign municipality access to this account.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
     setTeamAssignLoading(true);
 
@@ -3273,6 +3711,14 @@ export default function MunicipalityApp() {
       }));
       return;
     }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Confirm employee invite",
+      description: "Enter your 4-digit PIN to create and assign a municipality employee account.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
+    });
+    if (!checkpointApproved) return;
 
     setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
     setTeamInviteLoading(true);
@@ -3320,19 +3766,27 @@ export default function MunicipalityApp() {
       return;
     }
 
-    setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
-    setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
-
     const category = trimOrEmpty(assetUploadDraft.category).toLowerCase() || "asset";
     const assetSubtype = trimOrEmpty(assetUploadDraft.asset_subtype);
     const assetOwnerType = category === "asset"
       ? (trimOrEmpty(assetUploadDraft.asset_owner_type).toLowerCase() || "organization_owned")
       : null;
     if (category === "asset" && !assetSubtype) {
-      setSettingsSectionSaving((prev) => ({ ...prev, assets: false }));
       setSettingsSectionStatus((prev) => ({ ...prev, assets: "Enter an asset subtype like streetlights or fire hydrants." }));
       return;
     }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Confirm asset upload",
+      description: "Enter your 4-digit PIN to upload or register a municipality asset file.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, assets: message })),
+    });
+    if (!checkpointApproved) return;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
+
     const now = Date.now();
     const subtypeSegment = category === "asset" ? `/${sanitizeFileNameSegment(assetSubtype.toLowerCase())}` : "";
     const path = `${tenantKey}/${category}${subtypeSegment}/${toDatePath(new Date())}/${now}_${sanitizeFileNameSegment(file.name)}`;
@@ -3400,6 +3854,14 @@ export default function MunicipalityApp() {
     const path = String(row?.storage_path || "").trim();
     if (!fileId || !path) return;
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Confirm asset removal",
+      description: `Enter your 4-digit PIN to remove ${trimOrEmpty(row?.file_name) || "this asset file"}.`,
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, assets: message })),
+    });
+    if (!checkpointApproved) return;
+
     setSettingsSectionSaving((prev) => ({ ...prev, assets: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
 
@@ -3433,6 +3895,15 @@ export default function MunicipalityApp() {
 
   async function updateTeamAssignmentStatus(assignment, nextStatus) {
     const assignmentKey = `${assignment.user_id}-${assignment.role}`;
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Confirm employee access update",
+      description: `Enter your 4-digit PIN to change this employee assignment to ${trimOrEmpty(nextStatus) || "the new status"}.`,
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
+    });
+    if (!checkpointApproved) return;
+
     setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
 
@@ -3463,6 +3934,15 @@ export default function MunicipalityApp() {
 
   async function removeTeamAssignment(assignment) {
     const assignmentKey = `${assignment.user_id}-${assignment.role}`;
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Confirm employee removal",
+      description: "Enter your 4-digit PIN to remove this employee assignment.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
+    });
+    if (!checkpointApproved) return;
+
     setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
 
@@ -3500,6 +3980,14 @@ export default function MunicipalityApp() {
       setEditingTeamAssignmentRole("");
       return;
     }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_user_changes",
+      title: "Confirm employee role update",
+      description: "Enter your 4-digit PIN to change this employee's municipality role.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
+    });
+    if (!checkpointApproved) return;
 
     setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
     setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
@@ -3558,6 +4046,14 @@ export default function MunicipalityApp() {
       setSettingsSectionStatus((prev) => ({ ...prev, roles: `The role ${role} already exists for this organization.` }));
       return;
     }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_role_changes",
+      title: "Confirm role creation",
+      description: `Enter your 4-digit PIN to create the ${roleLabel} role.`,
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, roles: message })),
+    });
+    if (!checkpointApproved) return;
 
     setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
     const { error: roleInsertError } = await supabase
@@ -3623,6 +4119,14 @@ export default function MunicipalityApp() {
       };
     }).filter((row) => row.permission_key);
 
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_organization_role_changes",
+      title: "Confirm permission changes",
+      description: "Enter your 4-digit PIN to save organization role permissions.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, roles: message })),
+    });
+    if (!checkpointApproved) return;
+
     const { error } = await supabase
       .from("tenant_role_permissions")
       .upsert(rows, { onConflict: "tenant_key,role,permission_key" });
@@ -3643,6 +4147,12 @@ export default function MunicipalityApp() {
   function focusSettingsSection(routeTarget) {
     if (!routeTarget) return;
     navigate(routeTarget);
+  }
+
+  function openReportWorkspaceInNewTab() {
+    if (typeof window === "undefined") return;
+    const targetHref = buildMunicipalityAppHref(window.location.pathname, tenantKey, "/report");
+    window.open(targetHref, "_blank", "noopener,noreferrer");
   }
 
   function downloadSummaryExport() {
@@ -4196,7 +4706,7 @@ export default function MunicipalityApp() {
                 className={`${reportDesktopItem.primary ? "municipality-button municipality-button--primary municipality-nav-link--primary" : "municipality-nav-link"}${reportDesktopItem.active ? " is-active" : ""}`}
                 onClick={(event) => {
                   event.preventDefault();
-                  navigate(reportDesktopItem.path);
+                  openReportWorkspaceInNewTab();
                 }}
               >
                 {reportDesktopItem.label}
@@ -4223,11 +4733,75 @@ export default function MunicipalityApp() {
           <button
             type="button"
             className={`municipality-mobile-nav-link${reportNavItem.path === routePath ? " is-active" : ""}${reportNavItem.primary ? " municipality-mobile-nav-link--primary" : ""}`}
-            onClick={() => navigate(reportNavItem.path)}
+            onClick={openReportWorkspaceInNewTab}
           >
             {reportNavItem.label}
           </button>
         </nav>
+        {tenantSecurityCheckpointRequest ? (
+          <div className="municipality-auth-modal-backdrop" onClick={() => closeTenantSecurityCheckpoint(false)}>
+            <div className="municipality-auth-modal municipality-auth-modal--checkpoint" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-auth-modal-header">
+                <div>
+                  <h3>{tenantSecurityCheckpointRequest.title || "Security Checkpoint"}</h3>
+                  <p>{tenantSecurityCheckpointRequest.description || "Enter your 4-digit PIN to continue."}</p>
+                </div>
+                <button
+                  type="button"
+                  className="municipality-auth-modal-close"
+                  onClick={() => closeTenantSecurityCheckpoint(false)}
+                  aria-label="Close security checkpoint dialog"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="municipality-form-grid">
+                <div className="municipality-field">
+                  <label htmlFor="tenant-security-checkpoint-pin">Security PIN</label>
+                  <div className="municipality-password-row">
+                    <input
+                      id="tenant-security-checkpoint-pin"
+                      type={showTenantSecurityCheckpointPin ? "text" : "password"}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={tenantSecurityCheckpointPin}
+                      onChange={(event) => setTenantSecurityCheckpointPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="4-digit PIN"
+                      disabled={tenantSecurityCheckpointVerifying}
+                    />
+                    <button
+                      type="button"
+                      className="municipality-password-toggle"
+                      onClick={() => setShowTenantSecurityCheckpointPin((prev) => !prev)}
+                      aria-label={showTenantSecurityCheckpointPin ? "Hide security PIN" : "Show security PIN"}
+                    >
+                      {showTenantSecurityCheckpointPin ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {tenantSecurityCheckpointStatus ? <p className="municipality-inline-status is-error">{tenantSecurityCheckpointStatus}</p> : null}
+              <div className="municipality-actions">
+                <button
+                  type="button"
+                  className="municipality-button municipality-button--primary"
+                  disabled={tenantSecurityCheckpointVerifying}
+                  onClick={() => void submitTenantSecurityCheckpoint()}
+                >
+                  {tenantSecurityCheckpointVerifying ? "Checking PIN…" : "Confirm PIN"}
+                </button>
+                <button
+                  type="button"
+                  className="municipality-button municipality-button--ghost"
+                  disabled={tenantSecurityCheckpointVerifying}
+                  onClick={() => closeTenantSecurityCheckpoint(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {authModalOpen && !session?.user?.id ? (
           <div className="municipality-auth-modal-backdrop" onClick={closeAuthModal}>
             <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
@@ -4469,7 +5043,7 @@ export default function MunicipalityApp() {
                   </button>
                 </div>
                 <div className="municipality-hero-actions">
-                  <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/report")}>
+                  <button type="button" className="municipality-button municipality-button--primary" onClick={openReportWorkspaceInNewTab}>
                     Open Map Workspace
                   </button>
                 </div>
@@ -4757,7 +5331,7 @@ export default function MunicipalityApp() {
                     >
                       Reset Filters
                     </button>
-                    <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/report")}>
+                    <button type="button" className="municipality-button municipality-button--primary" onClick={openReportWorkspaceInNewTab}>
                       Open Map Workspace
                     </button>
                   </div>
@@ -4903,13 +5477,170 @@ export default function MunicipalityApp() {
                                 <span>Phone</span>
                                 <strong>{trimOrEmpty(profile?.phone) || trimOrEmpty(session?.user?.user_metadata?.phone) || "Not provided"}</strong>
                               </div>
-                              <div className="municipality-detail-item">
-                                <span>PIN</span>
-                                <strong>Security checkpoint setup coming next</strong>
-                              </div>
                             </div>
                           )}
                           {accountSectionStatus.profile ? <p className={`municipality-inline-status${accountSectionStatus.profile.toLowerCase().includes("could not") || accountSectionStatus.profile.toLowerCase().includes("please") ? " is-error" : ""}`}>{accountSectionStatus.profile}</p> : null}
+                          {canViewTenantSecurity ? (
+                            <div className="municipality-settings-list-item municipality-settings-list-item--stacked municipality-security-card">
+                              <div className="municipality-settings-header">
+                                <div>
+                                  <h4>PIN Security Checkpoint</h4>
+                                  <p className="municipality-note">Manage your personal municipality PIN here. Existing PIN changes require your current PIN or your account password.</p>
+                                </div>
+                                {tenantSecurityPinEditMode ? (
+                                  <div className="municipality-actions">
+                                    <button
+                                      type="button"
+                                      className="municipality-button municipality-button--ghost"
+                                      disabled={tenantSecuritySaving.pin}
+                                      onClick={() => {
+                                        setTenantSecurityPinEditMode(false);
+                                        setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+                                        setShowTenantSecurityPin(false);
+                                        setShowTenantSecurityPinConfirm(false);
+                                        setShowTenantSecurityCurrentPin(false);
+                                        setShowTenantSecurityAccountPassword(false);
+                                        setTenantSecurityStatus("");
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="municipality-button municipality-button--primary"
+                                      onClick={() => void saveTenantSecurityPin()}
+                                      disabled={tenantSecuritySaving.pin}
+                                    >
+                                      {tenantSecuritySaving.pin ? "Saving…" : "Save PIN"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="municipality-button municipality-button--ghost"
+                                    onClick={() => {
+                                      setTenantSecurityPinEditMode(true);
+                                      setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
+                                      setTenantSecurityStatus("");
+                                    }}
+                                  >
+                                    Edit PIN
+                                  </button>
+                                )}
+                              </div>
+                              {tenantSecurityStatus ? <p className={`municipality-inline-status${/could not|incorrect|required|enter|use|not available|apply/i.test(tenantSecurityStatus.toLowerCase()) ? " is-error" : ""}`}>{tenantSecurityStatus}</p> : null}
+                              <div className="municipality-detail-grid">
+                                <div className="municipality-detail-item">
+                                  <span>PIN Status</span>
+                                  <strong>{tenantSecurityPinMeta.pin_hash ? "Configured" : "Not set yet"}</strong>
+                                </div>
+                                <div className="municipality-detail-item">
+                                  <span>Checkpoint Coverage</span>
+                                  <strong>{enabledTenantSecurityCheckpointCount ? `${enabledTenantSecurityCheckpointCount} active checkpoint${enabledTenantSecurityCheckpointCount === 1 ? "" : "s"}` : "No checkpoint rules enabled yet"}</strong>
+                                </div>
+                                <div className="municipality-detail-item">
+                                  <span>PIN Format</span>
+                                  <strong>4 digits</strong>
+                                </div>
+                              </div>
+                              {tenantSecurityPinEditMode ? (
+                                <div className="municipality-form-grid">
+                                  {tenantSecurityPinMeta.pin_hash ? (
+                                    <>
+                                      <div className="municipality-field">
+                                        <label htmlFor="tenant-security-current-pin">Current PIN</label>
+                                        <div className="municipality-password-row">
+                                          <input
+                                            id="tenant-security-current-pin"
+                                            type={showTenantSecurityCurrentPin ? "text" : "password"}
+                                            inputMode="numeric"
+                                            autoComplete="one-time-code"
+                                            value={tenantSecurityPinDraft.current_pin}
+                                            onChange={(event) => setTenantSecurityPinDraft((prev) => ({ ...prev, current_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                                            placeholder="Current 4-digit PIN"
+                                          />
+                                          <button
+                                            type="button"
+                                            className="municipality-password-toggle"
+                                            onClick={() => setShowTenantSecurityCurrentPin((prev) => !prev)}
+                                            aria-label={showTenantSecurityCurrentPin ? "Hide current PIN" : "Show current PIN"}
+                                          >
+                                            {showTenantSecurityCurrentPin ? "Hide" : "Show"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div className="municipality-field">
+                                        <label htmlFor="tenant-security-account-password">Account Password</label>
+                                        <div className="municipality-password-row">
+                                          <input
+                                            id="tenant-security-account-password"
+                                            type={showTenantSecurityAccountPassword ? "text" : "password"}
+                                            autoComplete="current-password"
+                                            value={tenantSecurityPinDraft.account_password}
+                                            onChange={(event) => setTenantSecurityPinDraft((prev) => ({ ...prev, account_password: event.target.value }))}
+                                            placeholder="Use if you do not have your current PIN"
+                                          />
+                                          <button
+                                            type="button"
+                                            className="municipality-password-toggle"
+                                            onClick={() => setShowTenantSecurityAccountPassword((prev) => !prev)}
+                                            aria-label={showTenantSecurityAccountPassword ? "Hide account password" : "Show account password"}
+                                          >
+                                            {showTenantSecurityAccountPassword ? "Hide" : "Show"}
+                                          </button>
+                                        </div>
+                                        <small>Provide either your current PIN or your account password to rotate an existing PIN.</small>
+                                      </div>
+                                    </>
+                                  ) : null}
+                                  <div className="municipality-field">
+                                    <label htmlFor="tenant-security-pin">New PIN</label>
+                                    <div className="municipality-password-row">
+                                      <input
+                                        id="tenant-security-pin"
+                                        type={showTenantSecurityPin ? "text" : "password"}
+                                        inputMode="numeric"
+                                        autoComplete="new-password"
+                                        value={tenantSecurityPinDraft.pin}
+                                        onChange={(event) => setTenantSecurityPinDraft((prev) => ({ ...prev, pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                                        placeholder="4-digit PIN"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="municipality-password-toggle"
+                                        onClick={() => setShowTenantSecurityPin((prev) => !prev)}
+                                        aria-label={showTenantSecurityPin ? "Hide new PIN" : "Show new PIN"}
+                                      >
+                                        {showTenantSecurityPin ? "Hide" : "Show"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="municipality-field">
+                                    <label htmlFor="tenant-security-pin-confirm">Confirm PIN</label>
+                                    <div className="municipality-password-row">
+                                      <input
+                                        id="tenant-security-pin-confirm"
+                                        type={showTenantSecurityPinConfirm ? "text" : "password"}
+                                        inputMode="numeric"
+                                        autoComplete="new-password"
+                                        value={tenantSecurityPinDraft.confirm_pin}
+                                        onChange={(event) => setTenantSecurityPinDraft((prev) => ({ ...prev, confirm_pin: event.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                                        placeholder="Confirm 4-digit PIN"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="municipality-password-toggle"
+                                        onClick={() => setShowTenantSecurityPinConfirm((prev) => !prev)}
+                                        aria-label={showTenantSecurityPinConfirm ? "Hide PIN confirmation" : "Show PIN confirmation"}
+                                      >
+                                        {showTenantSecurityPinConfirm ? "Hide" : "Show"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
 
                         <div className="municipality-account-card municipality-account-card--section">
@@ -5135,7 +5866,15 @@ export default function MunicipalityApp() {
                             </div>
                             <div className="municipality-detail-item">
                               <span>PIN Checkpoint</span>
-                              <strong>Password challenge required when PIN management is introduced.</strong>
+                              <strong>
+                                {canViewTenantSecurity
+                                  ? (tenantSecurityPinMeta.pin_hash
+                                    ? (enabledTenantSecurityCheckpointCount
+                                      ? `Enabled for ${enabledTenantSecurityCheckpointCount} checkpoint${enabledTenantSecurityCheckpointCount === 1 ? "" : "s"}.`
+                                      : "PIN is saved and ready for future checkpoint rules.")
+                                    : "Set your 4-digit PIN under Account Info.")
+                                  : "Password challenge required for account changes."}
+                              </strong>
                             </div>
                           </div>
                         )}
@@ -6083,32 +6822,62 @@ export default function MunicipalityApp() {
                           <div className="municipality-settings-header">
                             <div>
                               <h4>Security Checks</h4>
-                              <p className="municipality-note">PIN-based security triggers will live here for fixed-status changes, account changes, and employee updates.</p>
+                              <p className="municipality-note">Choose which municipality actions should require a 4-digit PIN checkpoint before completing.</p>
                             </div>
+                            {!tenantSecurityChecksEditMode ? (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setTenantSecurityChecksEditMode(true);
+                                  setTenantSecurityStatus("");
+                                }}
+                              >
+                                Edit
+                              </button>
+                            ) : null}
                           </div>
+                          {tenantSecurityStatus ? <p className={`municipality-inline-status${/could not|incorrect|required|enter|use|not available|apply/i.test(tenantSecurityStatus.toLowerCase()) ? " is-error" : ""}`}>{tenantSecurityStatus}</p> : null}
                           <div className="municipality-settings-list">
-                            <div className="municipality-settings-list-item">
-                              <div>
-                                <strong>Require PIN for report status changes</strong>
-                                <p className="municipality-note">Recommended before staff begin closing reports in volume.</p>
-                              </div>
-                              <span className="municipality-chip">Next</span>
-                            </div>
-                            <div className="municipality-settings-list-item">
-                              <div>
-                                <strong>Require PIN for employee access changes</strong>
-                                <p className="municipality-note">Protect team-access edits and sensitive organization changes.</p>
-                              </div>
-                              <span className="municipality-chip">Next</span>
-                            </div>
-                            <div className="municipality-settings-list-item">
-                              <div>
-                                <strong>Require PIN for organization setting changes</strong>
-                                <p className="municipality-note">Adds a checkpoint when sensitive organization details are edited.</p>
-                              </div>
-                              <span className="municipality-chip">Next</span>
-                            </div>
+                            {TENANT_SECURITY_CHECKPOINT_OPTIONS.map((item) => (
+                              <label key={item.key} className="municipality-settings-list-item municipality-settings-list-item--checkbox">
+                                <div>
+                                  <strong>{item.label}</strong>
+                                  <p className="municipality-note">{item.note}</p>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(tenantSecuritySettingsDraft?.[item.key])}
+                                  onChange={(event) => setTenantSecuritySettingsDraft((prev) => ({ ...prev, [item.key]: event.target.checked }))}
+                                  disabled={!tenantSecurityChecksEditMode || tenantSecuritySaving.checks}
+                                />
+                              </label>
+                            ))}
                           </div>
+                          {tenantSecurityChecksEditMode ? (
+                            <div className="municipality-actions">
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                disabled={tenantSecuritySaving.checks}
+                                onClick={() => {
+                                  setTenantSecuritySettingsDraft(tenantSecuritySettingsSaved);
+                                  setTenantSecurityChecksEditMode(false);
+                                  setTenantSecurityStatus("");
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--primary"
+                                onClick={() => void saveTenantSecurityChecks()}
+                                disabled={tenantSecuritySaving.checks}
+                              >
+                                {tenantSecuritySaving.checks ? "Saving…" : "Save Security Checks"}
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       )
                     ) : null}
