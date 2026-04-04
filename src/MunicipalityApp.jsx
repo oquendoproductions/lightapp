@@ -5343,6 +5343,54 @@ export default function MunicipalityApp() {
     );
   }
 
+  const alertsCreateMode = routePath === "/alerts/create";
+  const eventsCreateMode = routePath === "/events/create";
+  const settingsRouteActive = String(routePath || "").startsWith("/settings");
+  const organizationInfo = organizationProfile || {};
+  const organizationGeneralFields = [
+    { label: "Organization Name", value: tenantName },
+    { label: "Public Display Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
+    { label: "Email", value: trimOrEmpty(organizationInfo.contact_primary_email) || "Not provided" },
+    { label: "Phone", value: trimOrEmpty(organizationInfo.contact_primary_phone) || "Not provided" },
+    { label: "Website", value: trimOrEmpty(organizationInfo.website_url) || "Not provided" },
+    {
+      label: "Address",
+      value: [
+        trimOrEmpty(organizationInfo.mailing_address_1),
+        trimOrEmpty(organizationInfo.mailing_address_2),
+        trimOrEmpty(organizationInfo.mailing_city),
+        trimOrEmpty(organizationInfo.mailing_state),
+        trimOrEmpty(organizationInfo.mailing_zip),
+      ].filter(Boolean).join(", ") || trimOrEmpty(organizationInfo.mailing_address) || "Not provided",
+    },
+    { label: "Time Zone", value: trimOrEmpty(organizationInfo.timezone) || "America/New_York" },
+  ];
+  const mapAppearanceFields = [
+    { label: "Boundary Border", value: mapAppearance?.show_boundary_border === false ? "Hidden" : "Visible" },
+    { label: "Outside Boundary Shade", value: mapAppearance?.shade_outside_boundary === false ? "Off" : "On" },
+    { label: "Border Color", value: trimOrEmpty(mapAppearance?.boundary_border_color) || "#e53935" },
+    { label: "Border Width", value: `${mapAppearance?.boundary_border_width || 4}px` },
+  ];
+  const manageableTeamAssignments = teamAssignments.filter((assignment) => {
+    const roleKey = trimOrEmpty(assignment?.role);
+    const roleRow = roleDefinitionLookup[roleKey];
+    return Boolean(roleRow) && (roleRow?.is_system !== true || roleKey === "tenant_employee");
+  });
+  const groupedAssetFiles = useMemo(() => ({
+    logo: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "logo"),
+    boundary: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "boundary_geojson"),
+    assetLibrary: assetFiles.filter((row) => isAssetLibraryFile(row)),
+    calendar: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "calendar_source"),
+    contract: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "contract"),
+    other: assetFiles.filter((row) => {
+      const key = trimOrEmpty(row?.file_category).toLowerCase();
+      return key && !["logo", "boundary_geojson", "asset", "general_asset", "streetlight_inventory", "calendar_source", "contract"].includes(key);
+    }),
+  }), [assetFiles]);
+  const toggleAssetSection = useCallback((sectionKey) => {
+    setAssetSectionExpanded((prev) => ({ ...prev, [sectionKey]: !prev?.[sectionKey] }));
+  }, []);
+
   if (routePath === "/report") {
     return (
       <div className="municipality-shell">
@@ -5533,54 +5581,6 @@ export default function MunicipalityApp() {
       </div>
     );
   }
-
-  const alertsCreateMode = routePath === "/alerts/create";
-  const eventsCreateMode = routePath === "/events/create";
-  const settingsRouteActive = String(routePath || "").startsWith("/settings");
-  const organizationInfo = organizationProfile || {};
-  const organizationGeneralFields = [
-    { label: "Organization Name", value: tenantName },
-    { label: "Public Display Name", value: trimOrEmpty(organizationInfo.display_name) || tenantName },
-    { label: "Email", value: trimOrEmpty(organizationInfo.contact_primary_email) || "Not provided" },
-    { label: "Phone", value: trimOrEmpty(organizationInfo.contact_primary_phone) || "Not provided" },
-    { label: "Website", value: trimOrEmpty(organizationInfo.website_url) || "Not provided" },
-    {
-      label: "Address",
-      value: [
-        trimOrEmpty(organizationInfo.mailing_address_1),
-        trimOrEmpty(organizationInfo.mailing_address_2),
-        trimOrEmpty(organizationInfo.mailing_city),
-        trimOrEmpty(organizationInfo.mailing_state),
-        trimOrEmpty(organizationInfo.mailing_zip),
-      ].filter(Boolean).join(", ") || trimOrEmpty(organizationInfo.mailing_address) || "Not provided",
-    },
-    { label: "Time Zone", value: trimOrEmpty(organizationInfo.timezone) || "America/New_York" },
-  ];
-  const mapAppearanceFields = [
-    { label: "Boundary Border", value: mapAppearance?.show_boundary_border === false ? "Hidden" : "Visible" },
-    { label: "Outside Boundary Shade", value: mapAppearance?.shade_outside_boundary === false ? "Off" : "On" },
-    { label: "Border Color", value: trimOrEmpty(mapAppearance?.boundary_border_color) || "#e53935" },
-    { label: "Border Width", value: `${mapAppearance?.boundary_border_width || 4}px` },
-  ];
-  const manageableTeamAssignments = teamAssignments.filter((assignment) => {
-    const roleKey = trimOrEmpty(assignment?.role);
-    const roleRow = roleDefinitionLookup[roleKey];
-    return Boolean(roleRow) && (roleRow?.is_system !== true || roleKey === "tenant_employee");
-  });
-  const groupedAssetFiles = useMemo(() => ({
-    logo: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "logo"),
-    boundary: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "boundary_geojson"),
-    assetLibrary: assetFiles.filter((row) => isAssetLibraryFile(row)),
-    calendar: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "calendar_source"),
-    contract: assetFiles.filter((row) => trimOrEmpty(row?.file_category).toLowerCase() === "contract"),
-    other: assetFiles.filter((row) => {
-      const key = trimOrEmpty(row?.file_category).toLowerCase();
-      return key && !["logo", "boundary_geojson", "asset", "general_asset", "streetlight_inventory", "calendar_source", "contract"].includes(key);
-    }),
-  }), [assetFiles]);
-  const toggleAssetSection = useCallback((sectionKey) => {
-    setAssetSectionExpanded((prev) => ({ ...prev, [sectionKey]: !prev?.[sectionKey] }));
-  }, []);
 
   return (
     <div className="municipality-shell">

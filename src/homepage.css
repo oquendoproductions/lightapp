@@ -133,38 +133,40 @@ body {
   position: sticky;
   top: calc(var(--sticky-top) + var(--top-bar-height) + var(--rail-gap));
   z-index: 50;
-  margin-top: 0.75rem;
-  margin-inline: -0.4rem;
+  margin-top: 0;
+  margin-inline: 0;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.55rem;
-  padding: 0.45rem;
-  border: 1px solid rgba(20, 57, 95, 0.28);
-  border-radius: 999px;
-  background: linear-gradient(110deg, rgba(232, 243, 255, 0.9), rgba(219, 236, 232, 0.88));
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 22px rgba(9, 27, 50, 0.16);
+  gap: var(--app-tab-rail-gap);
+  padding: var(--app-tab-rail-shell-padding);
+  border: 1px solid rgba(23, 49, 79, 0.08);
+  border-top: 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 .rail-link {
-  border: 1px solid rgba(22, 54, 90, 0.24);
+  border: 1px solid rgba(23, 49, 79, 0.15);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--brand-navy);
   width: 100%;
-  font-size: 0.78rem;
-  font-weight: 800;
+  font-size: var(--workspace-rail-tab-font-size);
+  font-weight: var(--workspace-rail-tab-font-weight);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 0.44rem 0.72rem;
+  padding: var(--workspace-rail-tab-padding-y) var(--workspace-rail-tab-padding-x);
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
 }
 
 .rail-link:hover {
   transform: translateY(-1px);
-  border-color: rgba(42, 114, 98, 0.5);
+  border-color: rgba(23, 49, 79, 0.28);
   background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 24px rgba(17, 49, 79, 0.08);
 }
 
 .rail-link:focus-visible {
