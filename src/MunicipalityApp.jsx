@@ -16,6 +16,7 @@ import {
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
 import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
+import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import "./headerStandards.css";
 import "./municipality-app.css";
 
@@ -1739,8 +1740,9 @@ export default function MunicipalityApp() {
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
   const [organizationProfile, setOrganizationProfile] = useState(null);
+  const headerOrganizationProfile = useHeaderOrganizationProfile(tenantKey);
   const organizationDisplayName = resolveHeaderDisplayName({
-    organizationProfile,
+    organizationProfile: headerOrganizationProfile,
     tenantConfig: tenant?.tenantConfig,
     tenantKey,
   });

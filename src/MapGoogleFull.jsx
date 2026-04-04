@@ -12,6 +12,7 @@ import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } 
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
 import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
+import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
@@ -11054,7 +11055,6 @@ export default function App({ onBackToHub = null }) {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
-  const [headerOrganizationProfile, setHeaderOrganizationProfile] = useState(null);
   const [titleLogoError, setTitleLogoError] = useState(false);
   const [googleMapsAuthError, setGoogleMapsAuthError] = useState("");
   const suppressMapClickRef = useRef({ until: 0 });
@@ -11062,6 +11062,7 @@ export default function App({ onBackToHub = null }) {
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
   const mobileTitleLogoSrc = MOBILE_TITLE_LOGO_SRC;
   const headerTenantKey = useMemo(() => String(tenant?.tenantKey || activeTenantKey() || "").trim(), [tenant?.tenantKey]);
+  const headerOrganizationProfile = useHeaderOrganizationProfile(headerTenantKey);
   const organizationDisplayName = useMemo(
     () =>
       resolveHeaderDisplayName({
@@ -11075,41 +11076,6 @@ export default function App({ onBackToHub = null }) {
     () => Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, value]) => ({ topic_key, ...value })),
     []
   );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadHeaderOrganizationProfile() {
-      if (!headerTenantKey) {
-        setHeaderOrganizationProfile(null);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("tenant_profiles")
-        .select("display_name")
-        .eq("tenant_key", headerTenantKey)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      if (error) {
-        if (isMissingRelationError(error)) {
-          setHeaderOrganizationProfile(null);
-          return;
-        }
-        setHeaderOrganizationProfile(null);
-        return;
-      }
-
-      setHeaderOrganizationProfile(data || null);
-    }
-
-    void loadHeaderOrganizationProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [headerTenantKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
@@ -22850,6 +22816,7 @@ async function insertReportWithFallback(payload) {
             right: 0,
             zIndex: 1600,
             pointerEvents: "none",
+            fontFamily: "var(--app-header-font-family)",
           }}
         >
           <div
@@ -23606,6 +23573,7 @@ async function insertReportWithFallback(payload) {
             display: "grid",
             placeItems: "center",
             padding: "0 10px",
+            fontFamily: "var(--app-header-font-family)",
           }}
         >
             <div
