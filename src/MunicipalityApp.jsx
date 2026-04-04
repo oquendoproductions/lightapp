@@ -708,23 +708,6 @@ function formatDateRangeLabel(from, to) {
   return `${formatter.format(fromDate)} - ${formatter.format(toDate)}`;
 }
 
-function reportSortLabel(value) {
-  switch (trimOrEmpty(value)) {
-    case "recent_asc":
-      return "Least recently reported";
-    case "reports_desc":
-      return "Most reports";
-    case "reports_asc":
-      return "Fewest reports";
-    case "id_asc":
-      return "Incident ID (A-Z)";
-    case "id_desc":
-      return "Incident ID (Z-A)";
-    default:
-      return "Most recently reported";
-  }
-}
-
 function toDateTimeLocalValue(value) {
   if (!value) return "";
   const parsed = new Date(value);
@@ -1010,7 +993,7 @@ function useResidentAuth() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.id, session?.user?.email]);
+  }, [session?.user?.id, session?.user?.email, session?.user?.user_metadata?.full_name, session?.user?.user_metadata?.phone]);
 
   return { session, setSession, profile, setProfile, authReady, loadingProfile };
 }
@@ -1031,7 +1014,7 @@ function HomeCard({ title, children, subtitle, onTitleClick = null }) {
   );
 }
 
-function ReportDomainIcon({ domainKey, label, size = 28 }) {
+function ReportDomainIcon({ domainKey, size = 28 }) {
   const src = REPORT_DOMAIN_OPTIONS.find((row) => row.key === normalizeReportDomainKey(domainKey))?.iconSrc || "";
   if (!src) return null;
   return <img src={src} alt="" aria-hidden="true" width={size} height={size} className="municipality-report-domain-icon" />;
@@ -1233,7 +1216,7 @@ function MunicipalityDateRangePicker({ fromDate, toDate, onApply }) {
                 <div key={`${monthDate.getFullYear()}-${monthDate.getMonth()}`} className="municipality-report-calendar-month">
                   <div className="municipality-report-calendar-month-title">{formatMonthLabel(monthDate)}</div>
                   <div className="municipality-report-calendar-weekdays">
-                    {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((label) => <span key={label}>{label}</span>)}
+                    {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((weekdayLabel) => <span key={weekdayLabel}>{weekdayLabel}</span>)}
                   </div>
                   <div className="municipality-report-calendar-days">
                     {cells.map((iso, index) => {
@@ -1769,8 +1752,8 @@ export default function MunicipalityApp() {
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState("");
-  const [showAlertComposer, setShowAlertComposer] = useState(false);
-  const [showEventComposer, setShowEventComposer] = useState(false);
+  const [, setShowAlertComposer] = useState(false);
+  const [, setShowEventComposer] = useState(false);
   const [editingAlertId, setEditingAlertId] = useState(null);
   const [editingEventId, setEditingEventId] = useState(null);
   const [openNavMenu, setOpenNavMenu] = useState("");
@@ -2594,10 +2577,6 @@ export default function MunicipalityApp() {
     setReportIncidentActionBusyId("");
     setReportIncidentActionStatus(nextAction === "fix" ? "Incident marked fixed." : "Incident re-opened.");
   }, [manageAccess, requireTenantSecurityCheckpoint, session?.user?.id]);
-  const permissionLabelLookup = useMemo(
-    () => Object.fromEntries((permissionCatalog || []).map((row) => [row.permission_key, trimOrEmpty(row?.label) || row.permission_key])),
-    [permissionCatalog]
-  );
   const roleDefinitionLookup = useMemo(
     () => Object.fromEntries((roleDefinitions || []).map((row) => [trimOrEmpty(row?.role), row])),
     [roleDefinitions]
@@ -2620,16 +2599,6 @@ export default function MunicipalityApp() {
     const summary = resolveKnownTeamUserSummary(userId);
     return trimOrEmpty(summary?.display_name) || trimOrEmpty(summary?.email) || shortUserId(userId);
   }, [resolveKnownTeamUserSummary]);
-  const permissionsByRole = useMemo(() => {
-    const lookup = {};
-    for (const row of rolePermissions || []) {
-      const roleKey = trimOrEmpty(row?.role);
-      if (!roleKey || !row?.allowed) continue;
-      if (!lookup[roleKey]) lookup[roleKey] = [];
-      lookup[roleKey].push(row);
-    }
-    return lookup;
-  }, [rolePermissions]);
   const rolePermissionMap = useMemo(() => {
     const lookup = {};
     for (const row of rolePermissions || []) {
@@ -4260,45 +4229,6 @@ export default function MunicipalityApp() {
     await reloadAssetFiles();
   }
 
-  async function updateTeamAssignmentStatus(assignment, nextStatus) {
-    const assignmentKey = `${assignment.user_id}-${assignment.role}`;
-
-    const checkpointApproved = await requireTenantSecurityCheckpoint({
-      settingKey: "require_pin_for_organization_user_changes",
-      title: "Confirm employee access update",
-      description: `Enter your 4-digit PIN to change this employee assignment to ${trimOrEmpty(nextStatus) || "the new status"}.`,
-      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, team: message })),
-    });
-    if (!checkpointApproved) return;
-
-    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: true }));
-    setSettingsSectionStatus((prev) => ({ ...prev, team: "" }));
-
-    const { error } = await supabase
-      .from("tenant_user_roles")
-      .update({ status: nextStatus })
-      .eq("tenant_key", tenantKey)
-      .eq("user_id", assignment.user_id)
-      .eq("role", assignment.role);
-
-    setTeamAssignmentBusy((prev) => ({ ...prev, [assignmentKey]: false }));
-
-    if (error) {
-      setSettingsSectionStatus((prev) => ({
-        ...prev,
-        team: error.message || "Could not update this employee assignment.",
-      }));
-      return;
-    }
-
-    setTeamAssignments((prev) =>
-      prev.map((row) => ((row.user_id === assignment.user_id && row.role === assignment.role)
-        ? { ...row, status: nextStatus }
-        : row))
-    );
-    setSettingsSectionStatus((prev) => ({ ...prev, team: "Employee access updated." }));
-  }
-
   async function removeTeamAssignment(assignment) {
     const assignmentKey = `${assignment.user_id}-${assignment.role}`;
 
@@ -4512,11 +4442,6 @@ export default function MunicipalityApp() {
     setSettingsSectionStatus((prev) => ({ ...prev, roles: "Role permissions saved." }));
   }
 
-  function focusSettingsSection(routeTarget) {
-    if (!routeTarget) return;
-    navigate(routeTarget);
-  }
-
   function openReportWorkspaceInNewTab() {
     if (typeof window === "undefined") return;
     const targetHref = buildMunicipalityAppHref(window.location.pathname, tenantKey, "/report");
@@ -4578,77 +4503,18 @@ export default function MunicipalityApp() {
     setSettingsStatus("Report detail CSV downloaded.");
   }
 
-  function downloadRoleAccessExport() {
-    const rows = (roleDefinitions || []).map((roleRow) => {
-      const allowedPermissions = (permissionsByRole[roleRow.role] || []).map((permissionRow) =>
-        permissionLabelLookup[permissionRow.permission_key] || permissionRow.permission_key
-      );
-      return [
-        trimOrEmpty(roleRow?.role_label) || trimOrEmpty(roleRow?.role),
-        roleRow?.active ? "active" : "inactive",
-        roleRow?.is_system ? "system" : "custom",
-        String(allowedPermissions.length),
-        allowedPermissions.join(" | "),
-      ];
-    });
-    downloadTextFile(
-      `${tenantKey || "location"}-role-access.csv`,
-      buildCsvFile(["role", "status", "type", "allowed_permissions", "permission_labels"], rows),
-      "text/csv;charset=utf-8"
-    );
-    setSettingsStatus("Role and permission export downloaded.");
-  }
-
   function downloadLocationCalendar() {
     if (!publishedEvents.length) {
       setSettingsStatus("Publish an event first, then download the location calendar.");
       return;
     }
+
     downloadTextFile(
       `${tenantKey || "location"}-events.ics`,
       buildIcsFile(publishedEvents, organizationDisplayName),
       "text/calendar;charset=utf-8"
     );
     setSettingsStatus("Location calendar downloaded.");
-  }
-
-  function handleLocationSettingsAction(actionKey) {
-    switch (actionKey) {
-      case "run-reports":
-        focusSettingsSection("/reports");
-        setSettingsStatus("Reports are ready below.");
-        return;
-      case "export-activity":
-        focusSettingsSection("/reports");
-        downloadSummaryExport();
-        return;
-      case "add-users":
-        focusSettingsSection("/settings/manage-employees");
-        setSettingsStatus("Team access tools are ready below. New account creation will plug into this section next.");
-        return;
-      case "view-team-access":
-        focusSettingsSection("/settings/manage-employees");
-        setSettingsStatus("Current location access is listed below.");
-        return;
-      case "assign-roles":
-        focusSettingsSection("/settings/roles-permissions");
-        setSettingsStatus("Role assignments and permission coverage are ready below.");
-        return;
-      case "review-permissions":
-        focusSettingsSection("/settings/roles-permissions");
-        setSettingsStatus("Permission coverage is ready below.");
-        return;
-      case "sync-calendars":
-        focusSettingsSection("/settings/calendar");
-        downloadLocationCalendar();
-        return;
-      case "review-sources":
-        focusSettingsSection("/settings/calendar");
-        setSettingsStatus("Calendar sources are summarized below.");
-        return;
-      default:
-        return;
-    }
   }
 
   async function handleAuthSubmit(event) {

@@ -61,10 +61,6 @@ export default function App() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, []);
-
   function onBookDemo() {
     trackEvent("hero_primary_cta_click", { target: "lead" });
     smoothScrollTo("lead");

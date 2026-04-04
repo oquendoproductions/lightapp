@@ -10623,7 +10623,27 @@ function ResidentFeedWindow({
   emptyText,
   items,
   renderItem,
+  darkMode = false,
 }) {
+  const headerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
+  const eyebrowBadgeTone = darkMode
+    ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
+    : { bg: "rgba(17, 61, 95, 0.10)", border: "rgba(17, 61, 95, 0.14)", color: "#113d5f" };
+  const countBadgeTone = darkMode
+    ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
+    : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
+  const iconShellStyle = darkMode
+    ? {
+        background: "linear-gradient(180deg, rgba(24, 38, 55, 0.98) 0%, rgba(16, 27, 39, 0.98) 100%)",
+        border: "1px solid rgba(143, 170, 198, 0.18)",
+      }
+    : {
+        background: "linear-gradient(180deg, rgba(242, 247, 251, 0.98) 0%, rgba(232, 240, 247, 0.98) 100%)",
+        border: "1px solid rgba(23, 49, 79, 0.08)",
+      };
+  const subtitleColor = darkMode ? "#c4d6e8" : undefined;
+  const errorColor = darkMode ? "#ffb4b4" : "#b23a48";
+
   return (
     <ModalShell
       open={open}
@@ -10650,16 +10670,16 @@ function ResidentFeedWindow({
             alignItems: "flex-start",
             gap: 14,
             padding: "22px 22px 18px",
-            borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
+            borderBottom: headerBorder,
           }}
         >
           <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.10)", border: "rgba(17, 61, 95, 0.14)", color: "#113d5f" })}>
+              <div style={residentFeedBadgeStyle(eyebrowBadgeTone)}>
                 {eyebrow}
               </div>
               {countLabel ? (
-                <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+                <div style={residentFeedBadgeStyle(countBadgeTone)}>
                   {countLabel}
                 </div>
               ) : null}
@@ -10670,8 +10690,7 @@ function ResidentFeedWindow({
                   width: 46,
                   height: 46,
                   borderRadius: 16,
-                  background: "linear-gradient(180deg, rgba(242, 247, 251, 0.98) 0%, rgba(232, 240, 247, 0.98) 100%)",
-                  border: "1px solid rgba(23, 49, 79, 0.08)",
+                  ...iconShellStyle,
                   display: "grid",
                   placeItems: "center",
                   flex: "0 0 auto",
@@ -10681,7 +10700,7 @@ function ResidentFeedWindow({
               </div>
               <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
                 <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>{title}</div>
-                <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>{subtitle}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82, color: subtitleColor }}>{subtitle}</div>
               </div>
             </div>
           </div>
@@ -10707,11 +10726,11 @@ function ResidentFeedWindow({
 
         <div style={{ overflowY: "auto", padding: "18px 18px 20px 22px", marginRight: 4 }}>
           {loading ? (
-            <div style={{ fontSize: 13, opacity: 0.82 }}>Loading updates…</div>
+            <div style={{ fontSize: 13, opacity: 0.82, color: subtitleColor }}>Loading updates…</div>
           ) : error ? (
-            <div style={{ fontSize: 13, color: "#b23a48", lineHeight: 1.45 }}>{error}</div>
+            <div style={{ fontSize: 13, color: errorColor, lineHeight: 1.45 }}>{error}</div>
           ) : !items.length ? (
-            <div style={{ fontSize: 13, opacity: 0.82 }}>{emptyText}</div>
+            <div style={{ fontSize: 13, opacity: 0.82, color: subtitleColor }}>{emptyText}</div>
           ) : (
             <div style={{ display: "grid", gap: 14, paddingBottom: 2 }}>
               {items.map(renderItem)}
@@ -10723,9 +10742,28 @@ function ResidentFeedWindow({
   );
 }
 
-function AlertsWindow({ open, onClose, alerts, loading, error }) {
+function AlertsWindow({ open, onClose, alerts, loading, error, darkMode = false }) {
   const activeCount = useMemo(() => countActivePublishedAlerts(alerts), [alerts]);
   const countLabel = activeCount === 1 ? "1 active alert" : `${activeCount} active alerts`;
+  const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
+  const cardBackground = darkMode
+    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
+    : "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)";
+  const titleColor = darkMode ? "#edf6ff" : "#17314f";
+  const summaryColor = darkMode ? "#d4e0ec" : "#35516d";
+  const bodyColor = darkMode ? "#b9cadd" : "#58718a";
+  const metaColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const ctaStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.22)",
+        background: "rgba(28, 43, 60, 0.92)",
+        color: "#edf6ff",
+      }
+    : {
+        border: "1px solid rgba(23, 49, 79, 0.15)",
+        background: "rgba(255, 255, 255, 0.92)",
+        color: "#17314f",
+      };
   return (
     <ResidentFeedWindow
       open={open}
@@ -10739,24 +10777,39 @@ function AlertsWindow({ open, onClose, alerts, loading, error }) {
       error={error}
       emptyText="No active alerts are published right now."
       items={alerts}
+      darkMode={darkMode}
       renderItem={(alert) => {
         const severityKey = String(alert?.severity || "info").trim().toLowerCase();
         const severityTone =
           severityKey === "emergency"
-            ? { bg: "rgba(183, 28, 28, 0.10)", border: "rgba(183, 28, 28, 0.16)", color: "#8f1d1d" }
+            ? (darkMode
+              ? { bg: "rgba(143, 29, 29, 0.32)", border: "rgba(255, 132, 132, 0.2)", color: "#ffb4b4" }
+              : { bg: "rgba(183, 28, 28, 0.10)", border: "rgba(183, 28, 28, 0.16)", color: "#8f1d1d" })
             : severityKey === "urgent"
-              ? { bg: "rgba(239, 108, 0, 0.10)", border: "rgba(239, 108, 0, 0.16)", color: "#b25600" }
+              ? (darkMode
+                ? { bg: "rgba(178, 86, 0, 0.28)", border: "rgba(255, 193, 125, 0.18)", color: "#ffd6a6" }
+                : { bg: "rgba(239, 108, 0, 0.10)", border: "rgba(239, 108, 0, 0.16)", color: "#b25600" })
               : severityKey === "advisory"
-                ? { bg: "rgba(245, 190, 28, 0.12)", border: "rgba(245, 190, 28, 0.18)", color: "#8c6a00" }
-                : { bg: "rgba(30, 136, 229, 0.10)", border: "rgba(30, 136, 229, 0.16)", color: "#1b6fb4" };
+                ? (darkMode
+                  ? { bg: "rgba(140, 106, 0, 0.24)", border: "rgba(255, 227, 132, 0.16)", color: "#ffe79a" }
+                  : { bg: "rgba(245, 190, 28, 0.12)", border: "rgba(245, 190, 28, 0.18)", color: "#8c6a00" })
+                : (darkMode
+                  ? { bg: "rgba(27, 111, 180, 0.24)", border: "rgba(143, 196, 242, 0.18)", color: "#c8e6ff" }
+                  : { bg: "rgba(30, 136, 229, 0.10)", border: "rgba(30, 136, 229, 0.16)", color: "#1b6fb4" });
+        const pinnedTone = darkMode
+          ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
+          : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
+        const topicTone = darkMode
+          ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
+          : { bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" };
         return (
           <article
             key={`map-alert-${alert.id}`}
             style={{
               padding: 18,
               borderRadius: 20,
-              border: "1px solid rgba(23, 49, 79, 0.08)",
-              background: "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)",
+              border: cardBorder,
+              background: cardBackground,
               display: "grid",
               gap: 12,
             }}
@@ -10764,22 +10817,22 @@ function AlertsWindow({ open, onClose, alerts, loading, error }) {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <div style={residentFeedBadgeStyle(severityTone)}>{alert.severity || "info"}</div>
               {alert?.pinned ? (
-                <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+                <div style={residentFeedBadgeStyle(pinnedTone)}>
                   Pinned
                 </div>
               ) : null}
               {alert?.topic_label ? (
-                <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" })}>
+                <div style={residentFeedBadgeStyle(topicTone)}>
                   {alert.topic_label}
                 </div>
               ) : null}
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: "#17314f" }}>{alert.title || "Untitled alert"}</h3>
-              {alert.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: "#35516d" }}>{alert.summary}</p> : null}
-              {alert.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#58718a" }}>{alert.body}</p> : null}
+              <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: titleColor }}>{alert.title || "Untitled alert"}</h3>
+              {alert.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: summaryColor }}>{alert.summary}</p> : null}
+              {alert.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: bodyColor }}>{alert.body}</p> : null}
             </div>
-            <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#4f6983", lineHeight: 1.45 }}>
+            <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: metaColor, lineHeight: 1.45 }}>
               <div>{formatResidentAlertWindow(alert)}</div>
               {alert.location_name || alert.location_address ? (
                 <div>{[alert.location_name, alert.location_address].filter(Boolean).join(" • ")}</div>
@@ -10797,9 +10850,7 @@ function AlertsWindow({ open, onClose, alerts, loading, error }) {
                     justifyContent: "center",
                     padding: "10px 14px",
                     borderRadius: 999,
-                    border: "1px solid rgba(23, 49, 79, 0.15)",
-                    background: "rgba(255, 255, 255, 0.92)",
-                    color: "#17314f",
+                    ...ctaStyle,
                     textDecoration: "none",
                     fontSize: 13,
                     fontWeight: 800,
@@ -10816,9 +10867,34 @@ function AlertsWindow({ open, onClose, alerts, loading, error }) {
   );
 }
 
-function EventsWindow({ open, onClose, events, loading, error }) {
+function EventsWindow({ open, onClose, events, loading, error, darkMode = false }) {
   const upcomingCount = useMemo(() => countUpcomingPublishedEvents(events), [events]);
   const countLabel = upcomingCount === 1 ? "1 upcoming event" : `${upcomingCount} upcoming events`;
+  const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
+  const cardBackground = darkMode
+    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
+    : "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)";
+  const titleColor = darkMode ? "#edf6ff" : "#17314f";
+  const summaryColor = darkMode ? "#d4e0ec" : "#35516d";
+  const bodyColor = darkMode ? "#b9cadd" : "#58718a";
+  const metaColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const topicTone = darkMode
+    ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
+    : { bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" };
+  const allDayTone = darkMode
+    ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
+    : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
+  const ctaStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.22)",
+        background: "rgba(28, 43, 60, 0.92)",
+        color: "#edf6ff",
+      }
+    : {
+        border: "1px solid rgba(23, 49, 79, 0.15)",
+        background: "rgba(255, 255, 255, 0.92)",
+        color: "#17314f",
+      };
   return (
     <ResidentFeedWindow
       open={open}
@@ -10832,34 +10908,35 @@ function EventsWindow({ open, onClose, events, loading, error }) {
       error={error}
       emptyText="No upcoming events are published yet."
       items={events}
+      darkMode={darkMode}
       renderItem={(event) => (
         <article
           key={`map-event-${event.id}`}
           style={{
             padding: 18,
             borderRadius: 20,
-            border: "1px solid rgba(23, 49, 79, 0.08)",
-            background: "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)",
+            border: cardBorder,
+            background: cardBackground,
             display: "grid",
             gap: 12,
           }}
         >
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <div style={residentFeedBadgeStyle({ bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" })}>
+            <div style={residentFeedBadgeStyle(topicTone)}>
               {event.topic_label || event.topic_key || "Event"}
             </div>
             {event.all_day ? (
-              <div style={residentFeedBadgeStyle({ bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" })}>
+              <div style={residentFeedBadgeStyle(allDayTone)}>
                 All day
               </div>
             ) : null}
           </div>
           <div style={{ display: "grid", gap: 6 }}>
-            <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: "#17314f" }}>{event.title || "Untitled event"}</h3>
-            {event.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: "#35516d" }}>{event.summary}</p> : null}
-            {event.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#58718a" }}>{event.body}</p> : null}
+            <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: titleColor }}>{event.title || "Untitled event"}</h3>
+            {event.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: summaryColor }}>{event.summary}</p> : null}
+            {event.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: bodyColor }}>{event.body}</p> : null}
           </div>
-          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: "#4f6983", lineHeight: 1.45 }}>
+          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: metaColor, lineHeight: 1.45 }}>
             <div>{formatResidentEventRange(event)}</div>
             {event.location_name || event.location_address ? (
               <div>{[event.location_name, event.location_address].filter(Boolean).join(" • ")}</div>
@@ -10877,9 +10954,7 @@ function EventsWindow({ open, onClose, events, loading, error }) {
                   justifyContent: "center",
                   padding: "10px 14px",
                   borderRadius: 999,
-                  border: "1px solid rgba(23, 49, 79, 0.15)",
-                  background: "rgba(255, 255, 255, 0.92)",
-                  color: "#17314f",
+                  ...ctaStyle,
                   textDecoration: "none",
                   fontSize: 13,
                   fontWeight: 800,
@@ -23035,6 +23110,7 @@ async function insertReportWithFallback(payload) {
         alerts={mapCommunityAlerts}
         loading={mapCommunityFeedLoading}
         error={mapCommunityFeedError}
+        darkMode={prefersDarkMode}
       />
       <EventsWindow
         open={eventsWindowOpen}
@@ -23042,6 +23118,7 @@ async function insertReportWithFallback(payload) {
         events={mapCommunityEvents}
         loading={mapCommunityFeedLoading}
         error={mapCommunityFeedError}
+        darkMode={prefersDarkMode}
       />
 
       {/* =========================

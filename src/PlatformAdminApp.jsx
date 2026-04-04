@@ -426,12 +426,6 @@ const responsiveActionGrid = {
   alignItems: "start",
 };
 
-const responsiveDomainGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))",
-  gap: 8,
-};
-
 const listActionButton = {
   ...buttonAlt,
   textAlign: "left",
@@ -1025,10 +1019,6 @@ function domainKeyToLabel(domainKey) {
   return DOMAIN_OPTIONS.find((entry) => entry.key === domainKey)?.label || roleKeyToLabel(domainKey);
 }
 
-function domainTypeToLabel(domainType) {
-  return DOMAIN_TYPE_OPTIONS.find((entry) => entry.key === domainType)?.label || roleKeyToLabel(domainType);
-}
-
 function buildAssignmentRowKey(row) {
   return `${String(row?.tenant_key || "").trim()}:${String(row?.user_id || "").trim()}:${String(row?.role || "").trim()}`;
 }
@@ -1248,10 +1238,6 @@ function makeHubUrl(primarySubdomain, tenantKey) {
   return `${base}/hub`;
 }
 
-function makeDevUrl(tenantKey) {
-  return `https://dev.cityreport.io/${sanitizeTenantKey(tenantKey)}/`;
-}
-
 function sanitizeFileNameSegment(value) {
   const normalized = String(value || "")
     .trim()
@@ -1352,7 +1338,7 @@ export default function PlatformAdminApp() {
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
-  const [platformAccessRoles, setPlatformAccessRoles] = useState([]);
+  const [, setPlatformAccessRoles] = useState([]);
   const [platformAccessPermissionKeys, setPlatformAccessPermissionKeys] = useState([]);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -1373,7 +1359,7 @@ export default function PlatformAdminApp() {
   const [tenantAdmins, setTenantAdmins] = useState([]);
   const [platformTeamAssignments, setPlatformTeamAssignments] = useState([]);
   const [platformTeamUserSummariesById, setPlatformTeamUserSummariesById] = useState({});
-  const [platformPermissionCatalog, setPlatformPermissionCatalog] = useState([]);
+  const [, setPlatformPermissionCatalog] = useState([]);
   const [platformRoleDefinitions, setPlatformRoleDefinitions] = useState([]);
   const [platformRolePermissions, setPlatformRolePermissions] = useState([]);
   const [platformUserSearchQuery, setPlatformUserSearchQuery] = useState("");
@@ -1577,10 +1563,6 @@ export default function PlatformAdminApp() {
     () => resolvePublicDisplayName(selectedTenant, selectedTenantProfile),
     [selectedTenant, selectedTenantProfile]
   );
-  const selectedTenantLegalOrganizationName = useMemo(
-    () => resolveLegalOrganizationName(selectedTenantProfile),
-    [selectedTenantProfile]
-  );
   const selectedTenantDeletionScheduledFor = String(selectedTenant?.deletion_scheduled_for || "").trim();
   const selectedTenantPendingDeletion = Boolean(selectedTenantDeletionScheduledFor);
 
@@ -1600,11 +1582,6 @@ export default function PlatformAdminApp() {
 
   const selectedTenantHubUrl = useMemo(
     () => (selectedTenant ? makeHubUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
-    [selectedTenant]
-  );
-
-  const selectedTenantDevUrl = useMemo(
-    () => (selectedTenant ? makeDevUrl(selectedTenant.tenant_key) : ""),
     [selectedTenant]
   );
 
@@ -1933,8 +1910,6 @@ export default function PlatformAdminApp() {
     ? null
     : (Array.isArray(profileForm.additional_contacts) ? profileForm.additional_contacts[contactDeleteConfirmIndex] || null : null);
   const canCreateOrganizations = canEditTenantSetup;
-  const canEditTenantCore = canEditTenantSetup;
-  const canEditTenantOperational = canEditTenantSetup || canEditTenantDomains || canEditTenantFiles;
   const currentPlatformRoleKey = platformAccessRole || (isPlatformOwner ? "platform_owner" : isPlatformStaff ? "platform_staff" : "");
   const platformRoleLabel = platformRoleLabelByKey[currentPlatformRoleKey] || platformRoleToLabel(platformAccessRole);
   const selectedLead = useMemo(
@@ -2015,10 +1990,6 @@ export default function PlatformAdminApp() {
     ),
     [canAccessControlPlanePage]
   );
-  const currentSectionPages = useMemo(
-    () => visibleControlPlanePagesBySection[controlPlaneSection] || [],
-    [controlPlaneSection, visibleControlPlanePagesBySection]
-  );
   const visibleControlPlaneTopNavItems = useMemo(
     () => CONTROL_PLANE_TOP_NAV_ITEMS.filter((item) => {
       if (item.type === "page") return canAccessControlPlanePage(item.key);
@@ -2036,7 +2007,6 @@ export default function PlatformAdminApp() {
     [controlPlanePage, selectedLead, fallbackLeadNumberById]
   );
   const addTenantStepIndex = Math.max(0, ADD_TENANT_STEPS.findIndex((step) => step.key === addTenantStep));
-  const currentAddTenantStep = ADD_TENANT_STEPS[addTenantStepIndex] || ADD_TENANT_STEPS[0];
   const selectedSearchAccount = assignForm.user_id ? userSearchResultById?.[assignForm.user_id] || null : null;
   const selectedPlatformSearchAccount = platformTeamForm.user_id ? platformUserSearchResultById?.[platformTeamForm.user_id] || null : null;
   const formatUserSummaryLabel = useCallback((summary) => {
@@ -2073,10 +2043,6 @@ export default function PlatformAdminApp() {
       canSubmit: strongEnough && matches && hasCurrentPassword,
     };
   }, [changePasswordDraft.confirm_new_password, changePasswordDraft.current_password, changePasswordDraft.new_password]);
-  const billingAddressDisplay = useMemo(
-    () => composeMailingAddress(selectedTenantProfile || {}),
-    [selectedTenantProfile]
-  );
   const groupedTenantFiles = useMemo(() => {
     const grouped = Object.fromEntries(TENANT_ASSET_CATEGORIES.map((category) => [category.key, []]));
     for (const row of tenantFiles || []) {

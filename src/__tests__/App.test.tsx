@@ -3,12 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 
-const scrollIntoViewMock = vi.fn();
+const scrollToMock = vi.fn();
 
 describe("App", () => {
   beforeEach(() => {
-    scrollIntoViewMock.mockReset();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
+    scrollToMock.mockReset();
+    window.scrollTo = scrollToMock;
   });
 
   it("renders homepage sections in expected order", () => {
@@ -34,6 +34,6 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: /view platform workflow/i }));
 
-    expect(scrollIntoViewMock).toHaveBeenCalled();
+    expect(scrollToMock).toHaveBeenCalled();
   });
 });

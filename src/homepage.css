@@ -131,14 +131,14 @@ body {
 
 .section-rail {
   position: sticky;
-  top: calc(var(--sticky-top) + var(--top-bar-height) + var(--rail-gap));
+  top: calc(var(--sticky-top) + var(--top-bar-height));
   z-index: 50;
   margin-top: 0;
-  margin-inline: 0;
+  margin-inline: calc(50% - 50vw);
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--app-tab-rail-gap);
-  padding: var(--app-tab-rail-shell-padding);
+  padding: var(--app-tab-rail-shell-padding) var(--desktop-header-horizontal-padding);
   border: 1px solid rgba(23, 49, 79, 0.08);
   border-top: 0;
   border-radius: 0;
