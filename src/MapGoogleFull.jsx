@@ -11178,6 +11178,40 @@ export default function App({ onBackToHub = null }) {
       }),
     [headerOrganizationProfile, headerTenantKey, tenant?.tenantConfig]
   );
+  const mapHeaderTheme = useMemo(
+    () => (
+      prefersDarkMode
+        ? {
+            eyebrowColor: "#5fd0b4",
+            textColor: "#edf6ff",
+            subtleText: "#c4d6e8",
+            desktopBackground: "rgba(11, 18, 29, 0.88)",
+            desktopBorder: "1px solid rgba(143, 170, 198, 0.16)",
+            desktopMenuBorder: "1px solid rgba(143, 170, 198, 0.28)",
+            desktopMenuBackground: "rgba(18, 29, 43, 0.92)",
+            desktopMenuShadow: "0 10px 24px rgba(0,0,0,0.22)",
+            mobileBackground: "linear-gradient(112deg, rgba(17, 27, 40, 0.94), rgba(20, 39, 49, 0.92))",
+            mobileBorder: "1px solid rgba(143, 170, 198, 0.24)",
+            mobileMenuBorder: "1px solid rgba(143, 170, 198, 0.28)",
+            mobileMenuBackground: "rgba(18, 29, 43, 0.92)",
+          }
+        : {
+            eyebrowColor: "#13856e",
+            textColor: "#102b46",
+            subtleText: "#4f6983",
+            desktopBackground: "rgba(248, 251, 255, 0.88)",
+            desktopBorder: "1px solid rgba(23, 49, 79, 0.08)",
+            desktopMenuBorder: "1px solid rgba(26, 49, 83, 0.22)",
+            desktopMenuBackground: "rgba(255,255,255,0.92)",
+            desktopMenuShadow: "none",
+            mobileBackground: "var(--mobile-header-background)",
+            mobileBorder: "var(--mobile-header-border)",
+            mobileMenuBorder: "var(--mobile-header-menu-border)",
+            mobileMenuBackground: "var(--mobile-header-menu-background)",
+          }
+    ),
+    [prefersDarkMode]
+  );
   const notificationTopics = useMemo(
     () => Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, value]) => ({ topic_key, ...value })),
     []
@@ -22931,9 +22965,9 @@ async function insertReportWithFallback(payload) {
           <div
             style={{
               padding: "0 var(--desktop-header-horizontal-padding)",
-              borderBottom: "1px solid rgba(23, 49, 79, 0.08)",
+              borderBottom: mapHeaderTheme.desktopBorder,
               backdropFilter: "blur(14px)",
-              background: "rgba(248, 251, 255, 0.88)",
+              background: mapHeaderTheme.desktopBackground,
               pointerEvents: "auto",
             }}
           >
@@ -22963,7 +22997,7 @@ async function insertReportWithFallback(payload) {
                       fontSize: 24,
                       fontWeight: 950,
                       lineHeight: 1.05,
-                      color: "#102b46",
+                      color: mapHeaderTheme.textColor,
                     }}
                   >
                     CityReport.io
@@ -22992,17 +23026,17 @@ async function insertReportWithFallback(payload) {
                   minWidth: 0,
                   textAlign: "center",
                   justifyItems: "center",
-                  color: "#102b46",
+                  color: mapHeaderTheme.textColor,
                 }}
               >
-                <span className="app-header-eyebrow">Reporting Map</span>
+                <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor }}>Reporting Map</span>
                 <h1
                   style={{
                     margin: 0,
                     fontSize: "var(--desktop-header-title-size)",
                     fontWeight: "var(--desktop-header-title-weight)",
                     lineHeight: "var(--desktop-header-title-line-height)",
-                    color: "#102b46",
+                    color: mapHeaderTheme.textColor,
                   }}
                 >
                   {organizationDisplayName}
@@ -23025,19 +23059,19 @@ async function insertReportWithFallback(payload) {
                   aria-label={session?.user?.id ? "Open account menu" : "Log in"}
                   title={session?.user?.id ? "Account" : "Log in"}
                   style={{
-                    width: session?.user?.id ? 40 : "auto",
-                    height: 40,
+                    width: session?.user?.id ? "var(--desktop-header-menu-size)" : "auto",
+                    height: "var(--desktop-header-menu-size)",
                     borderRadius: 999,
-                    border: "1px solid rgba(23, 49, 79, 0.14)",
-                    background: "rgba(255,255,255,0.94)",
-                    color: "var(--sl-ui-text)",
+                    border: mapHeaderTheme.desktopMenuBorder,
+                    background: mapHeaderTheme.desktopMenuBackground,
+                    color: mapHeaderTheme.textColor,
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
                     padding: session?.user?.id ? 0 : "0 14px",
                     cursor: "pointer",
                     lineHeight: 1,
-                    boxShadow: "0 8px 18px rgba(0,0,0,0.12)",
+                    boxShadow: mapHeaderTheme.desktopMenuShadow,
                     fontSize: session?.user?.id ? undefined : 13,
                     fontWeight: session?.user?.id ? undefined : 900,
                     letterSpacing: session?.user?.id ? undefined : "0.01em",
@@ -23045,9 +23079,9 @@ async function insertReportWithFallback(payload) {
                 >
                   {session?.user?.id ? (
                     <span style={{ display: "grid", gap: 4 }}>
-                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                      <span style={{ width: 16, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
+                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
                     </span>
                   ) : (
                     "Log in"
@@ -23762,11 +23796,11 @@ async function insertReportWithFallback(payload) {
                   height: "var(--mobile-header-height)",
                   minHeight: "var(--mobile-header-height)",
                   padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
-                  border: "var(--mobile-header-border)",
+                  border: mapHeaderTheme.mobileBorder,
                   borderRadius: "var(--mobile-header-radius)",
-                  background: "var(--mobile-header-background)",
+                  background: mapHeaderTheme.mobileBackground,
                   boxShadow: "var(--mobile-header-shadow)",
-                  color: "var(--sl-ui-text)",
+                  color: mapHeaderTheme.textColor,
                   overflow: "hidden",
                 }}
             >
@@ -23788,7 +23822,7 @@ async function insertReportWithFallback(payload) {
                       fontSize: 14,
                       fontWeight: 950,
                       lineHeight: 1.05,
-                      color: "var(--mobile-header-title-color)",
+                      color: mapHeaderTheme.textColor,
                     }}
                   >
                     CR
@@ -23816,8 +23850,8 @@ async function insertReportWithFallback(payload) {
                   minWidth: 0,
                 }}
               >
-                <span className="app-header-eyebrow">Reporting Map</span>
-                <h1 className="app-mobile-header-title">{organizationDisplayName}</h1>
+                <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor }}>Reporting Map</span>
+                <h1 className="app-mobile-header-title" style={{ color: mapHeaderTheme.textColor }}>{organizationDisplayName}</h1>
               </div>
 
               <div
@@ -23842,9 +23876,9 @@ async function insertReportWithFallback(payload) {
                     width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
                     minWidth: "var(--mobile-header-side-column)",
                     height: "var(--mobile-header-menu-size)",
-                    border: session?.user?.id ? "1px solid rgba(26, 49, 83, 0.22)" : "1px solid rgba(23, 49, 79, 0.15)",
-                    background: session?.user?.id ? "rgba(255, 255, 255, 0.92)" : "rgba(255, 255, 255, 0.82)",
-                    color: session?.user?.id ? "#102b46" : "#17314f",
+                    border: session?.user?.id ? mapHeaderTheme.mobileMenuBorder : mapHeaderTheme.mobileMenuBorder,
+                    background: session?.user?.id ? mapHeaderTheme.mobileMenuBackground : mapHeaderTheme.mobileMenuBackground,
+                    color: mapHeaderTheme.textColor,
                     borderRadius: 999,
                     padding: session?.user?.id ? 0 : "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
                     display: "inline-flex",

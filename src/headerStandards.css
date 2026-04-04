@@ -72,7 +72,7 @@
   display: grid;
   gap: 12px;
   padding: 24px 28px 28px;
-  border-radius: 32px;
+  border-radius: 18px;
   border: 1px solid rgba(173, 198, 224, 0.9);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(246, 251, 255, 0.98) 100%);
   box-shadow: 0 22px 42px rgba(17, 49, 79, 0.15);
@@ -124,7 +124,7 @@
 .workspace-menu-button {
   display: block;
   width: 100%;
-  border: 1px solid rgba(23, 49, 79, 0.08);
+  border: 1px solid rgba(23, 49, 79, 0.16);
   border-radius: 14px;
   background: rgba(246, 250, 255, 0.96);
   color: #17314f;
@@ -141,7 +141,7 @@
 
 .workspace-menu-button:hover {
   transform: translateY(-1px);
-  border-color: rgba(23, 49, 79, 0.18);
+  border-color: rgba(23, 49, 79, 0.26);
   background: rgba(238, 246, 255, 1);
   box-shadow: 0 10px 24px rgba(17, 49, 79, 0.08);
 }
