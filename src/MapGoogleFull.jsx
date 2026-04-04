@@ -311,17 +311,38 @@ function mapCommunityFeedStorageKey(tenantKey, viewerKey) {
 }
 
 function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
-  if (typeof window === "undefined") return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+  if (typeof window === "undefined") {
+    return {
+      alertsLastViewedAt: 0,
+      eventsLastViewedAt: 0,
+      alertsReadKeys: [],
+      eventsReadKeys: [],
+    };
+  }
   try {
     const raw = window.localStorage.getItem(mapCommunityFeedStorageKey(tenantKey, viewerKey));
-    if (!raw) return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+    if (!raw) {
+      return {
+        alertsLastViewedAt: 0,
+        eventsLastViewedAt: 0,
+        alertsReadKeys: [],
+        eventsReadKeys: [],
+      };
+    }
     const parsed = JSON.parse(raw);
     return {
       alertsLastViewedAt: Math.max(0, Number(parsed?.alertsLastViewedAt || 0)),
       eventsLastViewedAt: Math.max(0, Number(parsed?.eventsLastViewedAt || 0)),
+      alertsReadKeys: Array.isArray(parsed?.alertsReadKeys) ? parsed.alertsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
+      eventsReadKeys: Array.isArray(parsed?.eventsReadKeys) ? parsed.eventsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
     };
   } catch {
-    return { alertsLastViewedAt: 0, eventsLastViewedAt: 0 };
+    return {
+      alertsLastViewedAt: 0,
+      eventsLastViewedAt: 0,
+      alertsReadKeys: [],
+      eventsReadKeys: [],
+    };
   }
 }
 
@@ -333,6 +354,8 @@ function saveMapCommunityFeedReadState(tenantKey, viewerKey, value) {
       JSON.stringify({
         alertsLastViewedAt: Math.max(0, Number(value?.alertsLastViewedAt || 0)),
         eventsLastViewedAt: Math.max(0, Number(value?.eventsLastViewedAt || 0)),
+        alertsReadKeys: Array.isArray(value?.alertsReadKeys) ? value.alertsReadKeys.slice(-300) : [],
+        eventsReadKeys: Array.isArray(value?.eventsReadKeys) ? value.eventsReadKeys.slice(-300) : [],
       })
     );
   } catch {
@@ -353,9 +376,27 @@ function maxMapCommunityFeedTs(items) {
   return (items || []).reduce((max, item) => Math.max(max, mapCommunityFeedItemTs(item)), 0);
 }
 
-function countUnreadMapCommunityFeedItems(items, lastViewedAt = 0) {
+function mapCommunityFeedItemReadKey(item) {
+  const id = String(item?.id || "").trim();
+  if (!id) return "";
+  return `${id}:${mapCommunityFeedItemTs(item)}`;
+}
+
+function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts") {
+  const lastViewedAt = kind === "events"
+    ? Number(readState?.eventsLastViewedAt || 0)
+    : Number(readState?.alertsLastViewedAt || 0);
+  const readKeys = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsReadKeys) ? readState.eventsReadKeys : [])
+      : (Array.isArray(readState?.alertsReadKeys) ? readState.alertsReadKeys : [])
+  );
   const threshold = Math.max(0, Number(lastViewedAt || 0));
-  return (items || []).filter((item) => mapCommunityFeedItemTs(item) > threshold).length;
+  return (items || []).filter((item) => {
+    const itemKey = mapCommunityFeedItemReadKey(item);
+    if (itemKey && readKeys.has(itemKey)) return false;
+    return mapCommunityFeedItemTs(item) > threshold;
+  }).length;
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -11725,7 +11766,12 @@ export default function App({ onBackToHub = null }) {
   const [mapCommunityEvents, setMapCommunityEvents] = useState([]);
   const [mapCommunityFeedLoading, setMapCommunityFeedLoading] = useState(false);
   const [mapCommunityFeedError, setMapCommunityFeedError] = useState("");
-  const [mapCommunityFeedReadState, setMapCommunityFeedReadState] = useState({ alertsLastViewedAt: 0, eventsLastViewedAt: 0 });
+  const [mapCommunityFeedReadState, setMapCommunityFeedReadState] = useState({
+    alertsLastViewedAt: 0,
+    eventsLastViewedAt: 0,
+    alertsReadKeys: [],
+    eventsReadKeys: [],
+  });
 
 
   function toggleMyReportsExpanded(lightId) {
@@ -13011,11 +13057,20 @@ export default function App({ onBackToHub = null }) {
   const markMapCommunityFeedViewed = useCallback((kind) => {
     const tenantKey = resolvedCommunityFeedTenantKey;
     if (!tenantKey) return;
-    const nextTs = kind === "alerts"
-      ? maxMapCommunityFeedTs(mapCommunityAlerts)
-      : maxMapCommunityFeedTs(mapCommunityEvents);
+    const sourceItems = kind === "alerts" ? mapCommunityAlerts : mapCommunityEvents;
+    const nextTs = maxMapCommunityFeedTs(sourceItems);
     if (!nextTs) return;
+    const nextReadKeys = sourceItems
+      .map((item) => mapCommunityFeedItemReadKey(item))
+      .filter(Boolean);
     setMapCommunityFeedReadState((prev) => {
+      const mergedAlertKeys = new Set(Array.isArray(prev?.alertsReadKeys) ? prev.alertsReadKeys : []);
+      const mergedEventKeys = new Set(Array.isArray(prev?.eventsReadKeys) ? prev.eventsReadKeys : []);
+      if (kind === "alerts") {
+        nextReadKeys.forEach((key) => mergedAlertKeys.add(key));
+      } else {
+        nextReadKeys.forEach((key) => mergedEventKeys.add(key));
+      }
       const next = {
         alertsLastViewedAt: kind === "alerts"
           ? Math.max(Number(prev?.alertsLastViewedAt || 0), nextTs)
@@ -13023,6 +13078,8 @@ export default function App({ onBackToHub = null }) {
         eventsLastViewedAt: kind === "events"
           ? Math.max(Number(prev?.eventsLastViewedAt || 0), nextTs)
           : Math.max(0, Number(prev?.eventsLastViewedAt || 0)),
+        alertsReadKeys: Array.from(mergedAlertKeys).slice(-300),
+        eventsReadKeys: Array.from(mergedEventKeys).slice(-300),
       };
       saveMapCommunityFeedReadState(tenantKey, communityFeedViewerKey, next);
       return next;
@@ -19736,12 +19793,12 @@ async function insertReportWithFallback(payload) {
     cursor: "pointer",
   };
   const mapAlertsUnreadCount = useMemo(
-    () => countUnreadMapCommunityFeedItems(mapCommunityAlerts, mapCommunityFeedReadState.alertsLastViewedAt),
-    [mapCommunityAlerts, mapCommunityFeedReadState.alertsLastViewedAt]
+    () => countUnreadMapCommunityFeedItems(mapCommunityAlerts, mapCommunityFeedReadState, "alerts"),
+    [mapCommunityAlerts, mapCommunityFeedReadState]
   );
   const mapEventsUnreadCount = useMemo(
-    () => countUnreadMapCommunityFeedItems(mapCommunityEvents, mapCommunityFeedReadState.eventsLastViewedAt),
-    [mapCommunityEvents, mapCommunityFeedReadState.eventsLastViewedAt]
+    () => countUnreadMapCommunityFeedItems(mapCommunityEvents, mapCommunityFeedReadState, "events"),
+    [mapCommunityEvents, mapCommunityFeedReadState]
   );
   const markerPopupCardStyle = {
     minWidth: 210,

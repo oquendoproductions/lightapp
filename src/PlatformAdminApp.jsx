@@ -607,9 +607,9 @@ const controlPlaneTabButton = {
   borderRadius: 999,
   background: "rgba(255, 255, 255, 0.92)",
   color: palette.text,
-  padding: "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
-  fontSize: "var(--app-tab-button-font-size)",
-  fontWeight: "var(--app-tab-button-font-weight)",
+  padding: "var(--workspace-rail-tab-padding-y) var(--workspace-rail-tab-padding-x)",
+  fontSize: "var(--workspace-rail-tab-font-size)",
+  fontWeight: "var(--workspace-rail-tab-font-weight)",
   cursor: "pointer",
   transition: "transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease",
 };

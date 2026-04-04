@@ -20,6 +20,10 @@
   --app-tab-button-padding-x: 16px;
   --app-tab-button-font-size: 14px;
   --app-tab-button-font-weight: 700;
+  --workspace-rail-tab-padding-y: 0.44rem;
+  --workspace-rail-tab-padding-x: 0.72rem;
+  --workspace-rail-tab-font-size: 0.78rem;
+  --workspace-rail-tab-font-weight: 800;
   --app-tab-rail-title-gap: 12px;
   --mobile-header-top-offset: 10px;
   --mobile-header-horizontal-inset: 10px;

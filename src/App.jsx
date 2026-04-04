@@ -23,7 +23,14 @@ const SECTION_LINKS = [
 function smoothScrollTo(sectionId) {
   const target = document.getElementById(sectionId);
   if (!target) return;
-  target.scrollIntoView({ behavior: "smooth", block: "start" });
+  const topBar = document.querySelector(".top-bar");
+  const sectionRail = document.querySelector(".section-rail");
+  const topBarHeight = topBar ? topBar.getBoundingClientRect().height : 0;
+  const railVisible = sectionRail && window.getComputedStyle(sectionRail).display !== "none";
+  const railHeight = railVisible && sectionRail ? sectionRail.getBoundingClientRect().height : 0;
+  const offset = topBarHeight + railHeight + 16;
+  const top = target.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
 }
 
 export default function App() {
