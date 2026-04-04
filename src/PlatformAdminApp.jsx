@@ -6,6 +6,7 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
+import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
@@ -554,14 +555,6 @@ const menuSheet = {
   position: "absolute",
   top: "calc(100% + 10px)",
   right: 0,
-  width: "min(320px, calc(100vw - 36px))",
-  background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(244,249,255,0.98) 100%)",
-  border: `1px solid ${palette.border}`,
-  borderRadius: 18,
-  boxShadow: "0 20px 36px rgba(8,24,42,0.18)",
-  padding: 14,
-  display: "grid",
-  gap: 12,
 };
 
 const tabSelectBase = {
@@ -1352,6 +1345,7 @@ export default function PlatformAdminApp() {
   const [changePasswordError, setChangePasswordError] = useState("");
   const [changePasswordSaving, setChangePasswordSaving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const bannerMenuRef = useRef(null);
   const controlPlaneNavRef = useRef(null);
@@ -5633,26 +5627,37 @@ export default function PlatformAdminApp() {
             </span>
           </button>
           {menuOpen ? (
-            <div style={menuSheet}>
-              <div style={{ display: "grid", gap: 2 }}>
-                <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
+            <div className="workspace-menu-panel" style={menuSheet}>
+              <div className="workspace-menu-account">
+                <div className="workspace-menu-eyebrow">
                   Signed In
                 </div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: palette.navy900 }}>
+                <div className="workspace-menu-title">
                   {sessionDisplayName || "Platform User"}
                 </div>
-                <div style={{ fontSize: 13, color: palette.textMuted }}>
+                <div className="workspace-menu-subtitle">
                   {platformRoleLabel}
                 </div>
                 {sessionEmail ? (
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                  <div className="workspace-menu-meta">
                     {sessionEmail}
                   </div>
                 ) : null}
               </div>
+              <div className="workspace-menu-actions">
               <button
                 type="button"
-                style={{ ...signOutButton, width: "fit-content" }}
+                className="workspace-menu-button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setHelpOpen(true);
+                }}
+              >
+                Help
+              </button>
+              <button
+                type="button"
+                className="workspace-menu-button"
                 onClick={() => {
                   setMenuOpen(false);
                   openControlPlanePage(DEFAULT_SETTINGS_CONTROL_PLANE_PAGE);
@@ -5660,15 +5665,79 @@ export default function PlatformAdminApp() {
               >
                 Settings
               </button>
-              <button type="button" style={{ ...signOutButton, width: "fit-content" }} onClick={() => void signOutPlatformAdmin()}>
+              <button type="button" className="workspace-menu-button" onClick={() => void signOutPlatformAdmin()}>
                 Sign out
               </button>
+              </div>
             </div>
           ) : null}
         </div>
       ) : null}
     </div>
   );
+
+  const helpSupportHref = buildMailtoHref({
+    to: CITYREPORT_SUPPORT_EMAIL,
+    subject: "PCP Help Request",
+    body: [
+      "Workspace: Platform Control Plane",
+      `Page: ${controlPlanePage || "unknown"}`,
+      "",
+      "What do you need help with?",
+    ].join("\n"),
+  });
+
+  const helpFeedbackHref = buildMailtoHref({
+    to: CITYREPORT_SUPPORT_EMAIL,
+    subject: "PCP Product Feedback",
+    body: [
+      "Workspace: Platform Control Plane",
+      `Page: ${controlPlanePage || "unknown"}`,
+      "",
+      "What product feedback or feature request would you like to share?",
+    ].join("\n"),
+  });
+
+  const helpModal = helpOpen ? (
+    <div style={authModalBackdrop} onClick={() => setHelpOpen(false)}>
+      <div style={authModalCard} onClick={(event) => event.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Help</h2>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+              Reach CityReport for platform help or share product feedback for the control plane.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setHelpOpen(false)}
+            style={{
+              ...buttonAlt,
+              minWidth: 0,
+              width: 34,
+              height: 34,
+              padding: 0,
+              borderRadius: 10,
+              fontSize: 18,
+              lineHeight: 1,
+            }}
+            aria-label="Close help dialog"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <a href={helpSupportHref} style={{ ...buttonBase, minHeight: 44, padding: "0 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+            Get Help
+          </a>
+          <a href={helpFeedbackHref} style={{ ...buttonAlt, minHeight: 44, padding: "0 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+            Share Product Feedback
+          </a>
+          <div style={{ fontSize: 12.5, color: palette.textMuted }}>Messages will open in your email app and send to {CITYREPORT_SUPPORT_EMAIL}.</div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const settingsPageActive = controlPlaneSection === "settings";
   const controlPlaneSettingsLayoutStyle = isCompactViewport ? { display: "grid", gap: 14 } : controlPlaneSettingsLayout;
@@ -5963,6 +6032,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
+        {helpModal}
         <section style={{ ...fullWidthSection, ...card }}>
           <h1 style={{ marginTop: 0, marginBottom: 8, color: palette.navy900 }}>Loading Session</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>Loading session...</p>
@@ -5975,6 +6045,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
+        {helpModal}
         <section style={{ ...fullWidthSection, ...card, display: "grid", gap: 10 }}>
           <h1 style={{ marginTop: 0, marginBottom: 6, color: palette.navy900 }}>Sign In</h1>
           <p style={{ margin: 0, color: palette.textMuted }}>
@@ -6089,6 +6160,7 @@ export default function PlatformAdminApp() {
     return (
       <main style={shellStyle}>
         {fixedBanner}
+        {helpModal}
         <section style={{ ...fullWidthSection, ...card }}>
           <h1 style={{ marginTop: 0, color: palette.navy900 }}>Access Denied</h1>
           <p style={{ marginBottom: 0 }}>
@@ -6110,6 +6182,7 @@ export default function PlatformAdminApp() {
   return (
     <main style={shellStyle}>
       {fixedBanner}
+      {helpModal}
       {contactAddModalOpen ? (
         <div style={authModalBackdrop} onClick={() => setContactAddModalOpen(false)}>
           <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>

@@ -17,6 +17,7 @@ import {
 } from "./auth/loginFieldStandards";
 import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
+import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 import "./headerStandards.css";
 import "./municipality-app.css";
 
@@ -896,6 +897,57 @@ function getSettingsPageMeta(routePath) {
   return { category: SETTINGS_NAV[0], item: SETTINGS_NAV[0].items[0] };
 }
 
+function SupportFeedbackModal({ open, onClose, organizationDisplayName }) {
+  if (!open) return null;
+
+  const supportHref = buildMailtoHref({
+    to: CITYREPORT_SUPPORT_EMAIL,
+    subject: `Hub Support Request - ${organizationDisplayName || "Organization"}`,
+    body: [
+      "Workspace: Municipality Hub",
+      `Organization: ${organizationDisplayName || "Unknown organization"}`,
+      "",
+      "What do you need help with?",
+    ].join("\n"),
+  });
+
+  const feedbackHref = buildMailtoHref({
+    to: CITYREPORT_SUPPORT_EMAIL,
+    subject: `Hub Product Feedback - ${organizationDisplayName || "Organization"}`,
+    body: [
+      "Workspace: Municipality Hub",
+      `Organization: ${organizationDisplayName || "Unknown organization"}`,
+      "",
+      "What suggestion, idea, or product feedback would you like to share?",
+    ].join("\n"),
+  });
+
+  return (
+    <div className="municipality-auth-modal-backdrop" onClick={onClose}>
+      <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="municipality-auth-modal-header">
+          <div>
+            <h3>Support & Feedback</h3>
+            <p>Reach CityReport for hands-on support or share suggestions and product input for this location workspace.</p>
+          </div>
+          <button type="button" className="municipality-auth-modal-close" onClick={onClose} aria-label="Close support and feedback dialog">
+            Close
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <a className="municipality-button municipality-button--primary" href={supportHref}>
+            Get Support
+          </a>
+          <a className="municipality-button municipality-button--ghost" href={feedbackHref}>
+            Share Product Feedback
+          </a>
+          <div className="municipality-note">Messages will open in your email app and send to {CITYREPORT_SUPPORT_EMAIL}.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function useResidentAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -1723,6 +1775,7 @@ export default function MunicipalityApp() {
   const [editingEventId, setEditingEventId] = useState(null);
   const [openNavMenu, setOpenNavMenu] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [supportFeedbackOpen, setSupportFeedbackOpen] = useState(false);
   const [availableHubTenants, setAvailableHubTenants] = useState([]);
   const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
@@ -4871,15 +4924,17 @@ export default function MunicipalityApp() {
                   {accountMenuOpen ? (
                     <div className="municipality-account-menu">
                       <div className="municipality-account-menu-card">
-                        <div className="municipality-account-menu-eyebrow">Signed In</div>
-                        <div className="municipality-account-menu-name">{accountDisplayName}</div>
-                        <div className="municipality-account-menu-role">{accountRoleLabel}</div>
-                        {accountEmail ? <div className="municipality-account-menu-email">{accountEmail}</div> : null}
-                        <div className="municipality-account-menu-actions">
+                        <div className="workspace-menu-account">
+                          <div className="workspace-menu-eyebrow">Signed In</div>
+                          <div className="workspace-menu-title">{accountDisplayName}</div>
+                          <div className="workspace-menu-subtitle">{accountRoleLabel}</div>
+                          {accountEmail ? <div className="workspace-menu-meta">{accountEmail}</div> : null}
+                        </div>
+                        <div className="workspace-menu-actions">
                           {session?.user?.id && switchableTenants.length ? (
                             <button
                               type="button"
-                              className="municipality-nav-menu-item"
+                              className="workspace-menu-button"
                               onClick={() => {
                                 setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
                               }}
@@ -4889,7 +4944,18 @@ export default function MunicipalityApp() {
                           ) : null}
                           <button
                             type="button"
-                            className="municipality-nav-menu-item"
+                            className="workspace-menu-button"
+                            onClick={() => {
+                              setOpenNavMenu("");
+                              setAccountMenuOpen(false);
+                              setSupportFeedbackOpen(true);
+                            }}
+                          >
+                            Support & Feedback
+                          </button>
+                          <button
+                            type="button"
+                            className="workspace-menu-button"
                             onClick={() => {
                               setAccountMenuOpen(false);
                               navigate(SETTINGS_DEFAULT_PAGE);
@@ -4899,7 +4965,7 @@ export default function MunicipalityApp() {
                           </button>
                           <button
                             type="button"
-                            className="municipality-nav-menu-item municipality-account-menu-signout"
+                            className="workspace-menu-button"
                             onClick={() => {
                               setAccountMenuOpen(false);
                               void handleResidentSignOut();
@@ -4910,7 +4976,7 @@ export default function MunicipalityApp() {
                         </div>
                         {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
                           <div className="municipality-account-submenu">
-                            <div className="municipality-account-menu-eyebrow">Switch Location</div>
+                            <div className="workspace-menu-eyebrow">Switch Location</div>
                             <div className="municipality-account-submenu-list">
                               {switchableTenants.map((city) => {
                                 const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
@@ -4919,7 +4985,7 @@ export default function MunicipalityApp() {
                                   <a
                                     key={cityKey}
                                     href={targetHref}
-                                    className="municipality-nav-menu-item municipality-nav-menu-item--link"
+                                    className="workspace-menu-button"
                                     onClick={() => {
                                       setOpenNavMenu("");
                                       setAccountMenuOpen(false);
@@ -5254,6 +5320,11 @@ export default function MunicipalityApp() {
             </div>
           </div>
         ) : null}
+        <SupportFeedbackModal
+          open={supportFeedbackOpen}
+          onClose={() => setSupportFeedbackOpen(false)}
+          organizationDisplayName={organizationDisplayName}
+        />
       </>
     );
   }

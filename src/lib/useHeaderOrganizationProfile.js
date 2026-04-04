@@ -22,7 +22,7 @@ export function useHeaderOrganizationProfile(tenantKey) {
 
       const { data, error } = await supabase
         .from("tenant_profiles")
-        .select("display_name")
+        .select("display_name,contact_primary_email,contact_primary_phone,website_url")
         .eq("tenant_key", normalizedTenantKey)
         .maybeSingle();
 

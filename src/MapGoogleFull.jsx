@@ -13,6 +13,7 @@ import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
 import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
+import { buildMailtoHref, hasNonEmptyValue, normalizePhoneHref, normalizeWebsiteHref } from "./lib/workspaceSupport";
 
 // ✅ Google Maps API key
 const GMAPS_KEY =
@@ -10031,6 +10032,7 @@ function AccountMenuPanel({
   onManage,
   onMyReports,
   onNotificationPreferences,
+  onContactUs,
   onLogout,
   variant = "modal",
   containerRef = null,
@@ -10050,67 +10052,55 @@ function AccountMenuPanel({
     sessionEmail ||
     "—";
 
-  const actionButtonStyle = {
-    padding: 10,
-    width: "100%",
-    borderRadius: 999,
-    border: "1px solid rgba(23, 49, 79, 0.15)",
-    background: "rgba(255, 255, 255, 0.92)",
-    color: "#17314f",
-    fontSize: 14,
-    fontWeight: 800,
-    cursor: "pointer",
-  };
-
-  const primaryActionButtonStyle = {
-    ...actionButtonStyle,
-    border: "1px solid transparent",
-    background: "linear-gradient(135deg, #113d5f 0%, #176d78 100%)",
-    color: "#f7fbff",
-  };
-
   const menuBody = session ? (
     <>
-      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
-        Signed In
+      <div className="workspace-menu-account">
+        <div className="workspace-menu-eyebrow">
+          Signed In
+        </div>
+        <div className="workspace-menu-title">{displayName}</div>
+        <div className="workspace-menu-meta">{displayEmail}</div>
       </div>
-      <div style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.05, color: "#17314f" }}>{displayName}</div>
-      <div style={{ color: "#4b6784", fontSize: 14, lineHeight: 1.35, overflowWrap: "anywhere" }}>{displayEmail}</div>
 
-      <div style={{ display: "grid", gap: 10, marginTop: 6 }}>
-        <button onClick={onManage} style={primaryActionButtonStyle}>
+      <div className="workspace-menu-actions">
+        <button onClick={onManage} className="workspace-menu-button">
           Manage Account
         </button>
-        <button onClick={onNotificationPreferences} style={actionButtonStyle}>
+        <button onClick={onNotificationPreferences} className="workspace-menu-button">
           Notification Preferences
         </button>
-        <button onClick={onMyReports} style={actionButtonStyle}>
+        <button onClick={onMyReports} className="workspace-menu-button">
           My Reports
         </button>
-        <button onClick={onLogout} style={actionButtonStyle}>
+        <button onClick={onContactUs} className="workspace-menu-button">
+          Contact Us
+        </button>
+        <button onClick={onLogout} className="workspace-menu-button">
           Logout
         </button>
       </div>
     </>
   ) : (
     <>
-      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
-        Account
-      </div>
-      <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.15, color: "#17314f" }}>
-        Login or create an account
-      </div>
-      <div style={{ fontSize: 12.5, color: "#4b6784", lineHeight: 1.35 }}>
-        Sign in to view your report history and manage your account.
+      <div className="workspace-menu-account">
+        <div className="workspace-menu-eyebrow">
+          Account
+        </div>
+        <div className="workspace-menu-title">
+          Log in or create an account
+        </div>
+        <div className="workspace-menu-subtitle">
+          Sign in to view your report history and manage your account.
+        </div>
       </div>
 
-      <div style={{ display: "grid", gap: 10, marginTop: 6 }}>
+      <div className="workspace-menu-actions">
         <button
           onClick={() => {
             onClose();
             window.__openAuthGate?.("login");
           }}
-          style={primaryActionButtonStyle}
+          className="workspace-menu-button"
         >
           Log in
         </button>
@@ -10119,12 +10109,15 @@ function AccountMenuPanel({
             onClose();
             window.__openAuthGate?.("signup");
           }}
-          style={actionButtonStyle}
+          className="workspace-menu-button"
         >
           Create account
         </button>
+        <button onClick={onContactUs} className="workspace-menu-button">
+          Contact Us
+        </button>
         {variant === "modal" ? (
-          <button onClick={onClose} style={actionButtonStyle}>
+          <button onClick={onClose} className="workspace-menu-button">
             Close
           </button>
         ) : null}
@@ -10147,17 +10140,7 @@ function AccountMenuPanel({
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            padding: "24px 28px 28px",
-            borderRadius: 32,
-            border: "1px solid rgba(173, 198, 224, 0.9)",
-            background: "linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(246, 251, 255, 0.98) 100%)",
-            boxShadow: "0 22px 42px rgba(17, 49, 79, 0.15)",
-          }}
-        >
+        <div className="workspace-menu-panel">
           {menuBody}
         </div>
       </div>
@@ -10178,15 +10161,10 @@ function AccountMenuPanel({
       }}
     >
       <div
+        className="workspace-menu-panel"
         style={{
-          width: "min(260px, calc(100vw - 112px))",
-          background: "var(--sl-ui-modal-bg)",
-          border: "1px solid var(--sl-ui-modal-border)",
-          borderRadius: 12,
-          boxShadow: "var(--sl-ui-modal-shadow)",
-          padding: 12,
+          width: "min(320px, calc(100vw - 112px))",
           pointerEvents: "auto",
-          color: "var(--sl-ui-text)",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -10214,6 +10192,134 @@ function AccountMenuPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function ContactUsModal({
+  open,
+  onClose,
+  organizationDisplayName,
+  contactEmail,
+  contactPhone,
+  websiteUrl,
+}) {
+  const emailValue = String(contactEmail || "").trim();
+  const phoneValue = String(contactPhone || "").trim();
+  const websiteValue = String(websiteUrl || "").trim();
+
+  const contactItems = [
+    hasNonEmptyValue(emailValue)
+      ? {
+          label: "Email",
+          value: emailValue,
+          href: buildMailtoHref({ to: emailValue }),
+        }
+      : null,
+    hasNonEmptyValue(phoneValue)
+      ? {
+          label: "Phone",
+          value: phoneValue,
+          href: normalizePhoneHref(phoneValue),
+        }
+      : null,
+    hasNonEmptyValue(websiteValue)
+      ? {
+          label: "Website",
+          value: websiteValue,
+          href: normalizeWebsiteHref(websiteValue),
+        }
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10055}
+      panelStyle={{
+        width: "min(480px, 100%)",
+        borderRadius: 24,
+        padding: 0,
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ display: "grid", gap: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "22px 22px 18px" }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+              Contact Us
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+              {organizationDisplayName || "Organization"}
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+              Reach this organization using the contact options they have made available for the reporting map.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 999,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              flex: "0 0 auto",
+            }}
+            aria-label="Close contact us"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 12, padding: "0 22px 22px" }}>
+          {contactItems.length ? (
+            contactItems.map((item) => (
+              <a
+                key={item.label}
+                href={item.href}
+                target={item.label === "Website" ? "_blank" : undefined}
+                rel={item.label === "Website" ? "noreferrer" : undefined}
+                style={{
+                  display: "grid",
+                  gap: 4,
+                  textDecoration: "none",
+                  color: "inherit",
+                  padding: "14px 16px",
+                  borderRadius: 18,
+                  border: "1px solid rgba(23, 49, 79, 0.12)",
+                  background: "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)",
+                }}
+              >
+                <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+                  {item.label}
+                </span>
+                <span style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.35, color: "var(--sl-ui-text)", overflowWrap: "anywhere" }}>
+                  {item.value}
+                </span>
+              </a>
+            ))
+          ) : (
+            <div
+              style={{
+                padding: "16px 18px",
+                borderRadius: 18,
+                border: "1px solid rgba(23, 49, 79, 0.12)",
+                background: "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)",
+                fontSize: 14,
+                lineHeight: 1.5,
+                color: "#4b6784",
+              }}
+            >
+              Contact information is not available for this organization yet.
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -12167,6 +12273,7 @@ export default function App({ onBackToHub = null }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
+  const [contactUsOpen, setContactUsOpen] = useState(false);
   const [notificationPreferencesOpen, setNotificationPreferencesOpen] = useState(false);
   const [notificationPreferencesByTopic, setNotificationPreferencesByTopic] = useState({});
   const [savedNotificationPreferencesByTopic, setSavedNotificationPreferencesByTopic] = useState({});
@@ -12177,15 +12284,9 @@ export default function App({ onBackToHub = null }) {
   const handleAccountMenuToggle = useCallback((event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    if (!session?.user?.id) {
-      setAccountMenuOpen(false);
-      setAccountView("menu");
-      setAuthGateStep("welcome");
-      setAuthGateOpen(true);
-      return;
-    }
     setAccountMenuOpen((prev) => !prev);
-  }, [session?.user?.id]);
+    setAccountView("menu");
+  }, []);
 
   useEffect(() => {
     if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
@@ -22783,6 +22884,14 @@ async function insertReportWithFallback(payload) {
         loading={notificationPreferencesLoading}
         status={notificationPreferencesStatus}
       />
+      <ContactUsModal
+        open={contactUsOpen}
+        onClose={() => setContactUsOpen(false)}
+        organizationDisplayName={organizationDisplayName}
+        contactEmail={headerOrganizationProfile?.contact_primary_email}
+        contactPhone={headerOrganizationProfile?.contact_primary_phone}
+        websiteUrl={headerOrganizationProfile?.website_url}
+      />
       <AlertsWindow
         open={alertsWindowOpen}
         onClose={() => setAlertsWindowOpen(false)}
@@ -23311,6 +23420,10 @@ async function insertReportWithFallback(payload) {
             setAccountMenuOpen(false);
             openMyReports();
           }}
+          onContactUs={() => {
+            setAccountMenuOpen(false);
+            setContactUsOpen(true);
+          }}
           onLogout={() => {
             signOut();
             setAccountMenuOpen(false);
@@ -23781,6 +23894,10 @@ async function insertReportWithFallback(payload) {
               onMyReports={() => {
                 setAccountMenuOpen(false);
                 openMyReports();
+              }}
+              onContactUs={() => {
+                setAccountMenuOpen(false);
+                setContactUsOpen(true);
               }}
               onLogout={() => {
                 signOut();
