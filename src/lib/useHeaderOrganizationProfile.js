@@ -10,13 +10,16 @@ function isMissingRelationError(error) {
 export function useHeaderOrganizationProfile(tenantKey) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
   const [headerOrganizationProfile, setHeaderOrganizationProfile] = useState(null);
+  const [headerOrganizationProfileLoaded, setHeaderOrganizationProfileLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadHeaderOrganizationProfile() {
+      setHeaderOrganizationProfileLoaded(false);
       if (!normalizedTenantKey) {
         setHeaderOrganizationProfile(null);
+        setHeaderOrganizationProfileLoaded(true);
         return;
       }
 
@@ -31,13 +34,16 @@ export function useHeaderOrganizationProfile(tenantKey) {
       if (error) {
         if (isMissingRelationError(error)) {
           setHeaderOrganizationProfile(null);
+          setHeaderOrganizationProfileLoaded(true);
           return;
         }
         setHeaderOrganizationProfile(null);
+        setHeaderOrganizationProfileLoaded(true);
         return;
       }
 
       setHeaderOrganizationProfile(data || null);
+      setHeaderOrganizationProfileLoaded(true);
     }
 
     void loadHeaderOrganizationProfile();
@@ -46,5 +52,5 @@ export function useHeaderOrganizationProfile(tenantKey) {
     };
   }, [normalizedTenantKey]);
 
-  return headerOrganizationProfile;
+  return { profile: headerOrganizationProfile, loaded: headerOrganizationProfileLoaded };
 }

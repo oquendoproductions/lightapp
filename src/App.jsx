@@ -97,7 +97,7 @@ export default function App() {
           </a>
           <button className="btn btn-secondary marketing-header-cta" onClick={onBookDemo}>
             <span className="marketing-header-cta-desktop">Book Pilot Demo</span>
-            <span className="marketing-header-cta-mobile">Book Demo</span>
+            <span className="marketing-header-cta-mobile">Demo</span>
           </button>
         </div>
         {mobileMenuOpen ? (

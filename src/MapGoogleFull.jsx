@@ -66,6 +66,8 @@ const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.
 const TITLE_LOGO_DARK_SRC =
   import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
 const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+const MOBILE_TITLE_LOGO_DARK_SRC =
+  import.meta.env.VITE_MOBILE_TITLE_LOGO_DARK_SRC || "/CityReport-pin-logo-dark-mode.png";
 const ENABLE_TENANT_VISIBILITY_CONFIG = true;
 const ENABLE_LEGACY_PLACES_SERVICE =
   String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
@@ -2419,6 +2421,7 @@ function ModalShell({ open, children, zIndex = 9999, panelStyle }) {
           background: "var(--sl-ui-modal-bg)",
           border: "1px solid var(--sl-ui-modal-border)",
           color: "var(--sl-ui-text)",
+          fontFamily: "var(--app-header-font-family)",
           padding: 18,
           borderRadius: 10,
           width: "min(360px, 100%)",
@@ -10036,6 +10039,7 @@ function AccountMenuPanel({
   onLogout,
   variant = "modal",
   containerRef = null,
+  darkMode = false,
 }) {
   if (!open) return null;
 
@@ -10052,30 +10056,50 @@ function AccountMenuPanel({
     sessionEmail ||
     "—";
 
+  const panelStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.22)",
+        background: "linear-gradient(180deg, rgba(16, 25, 37, 0.98) 0%, rgba(20, 33, 47, 0.98) 100%)",
+        boxShadow: "0 22px 42px rgba(0, 0, 0, 0.32)",
+        color: "#edf6ff",
+      }
+    : null;
+
+  const eyebrowStyle = darkMode ? { color: "#9cb6cf" } : null;
+  const titleStyle = darkMode ? { color: "#edf6ff" } : null;
+  const subtitleStyle = darkMode ? { color: "#c4d6e8" } : null;
+  const buttonStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.24)",
+        background: "rgba(28, 43, 60, 0.92)",
+        color: "#edf6ff",
+      }
+    : null;
+
   const menuBody = session ? (
     <>
       <div className="workspace-menu-account">
-        <div className="workspace-menu-eyebrow">
+        <div className="workspace-menu-eyebrow" style={eyebrowStyle}>
           Signed In
         </div>
-        <div className="workspace-menu-title">{displayName}</div>
-        <div className="workspace-menu-meta">{displayEmail}</div>
+        <div className="workspace-menu-title" style={titleStyle}>{displayName}</div>
+        <div className="workspace-menu-meta" style={subtitleStyle}>{displayEmail}</div>
       </div>
 
       <div className="workspace-menu-actions">
-        <button onClick={onManage} className="workspace-menu-button">
+        <button onClick={onManage} className="workspace-menu-button" style={buttonStyle}>
           Manage Account
         </button>
-        <button onClick={onNotificationPreferences} className="workspace-menu-button">
+        <button onClick={onNotificationPreferences} className="workspace-menu-button" style={buttonStyle}>
           Notification Preferences
         </button>
-        <button onClick={onMyReports} className="workspace-menu-button">
+        <button onClick={onMyReports} className="workspace-menu-button" style={buttonStyle}>
           My Reports
         </button>
-        <button onClick={onContactUs} className="workspace-menu-button">
+        <button onClick={onContactUs} className="workspace-menu-button" style={buttonStyle}>
           Contact Us
         </button>
-        <button onClick={onLogout} className="workspace-menu-button">
+        <button onClick={onLogout} className="workspace-menu-button" style={buttonStyle}>
           Logout
         </button>
       </div>
@@ -10083,13 +10107,13 @@ function AccountMenuPanel({
   ) : (
     <>
       <div className="workspace-menu-account">
-        <div className="workspace-menu-eyebrow">
+        <div className="workspace-menu-eyebrow" style={eyebrowStyle}>
           Account
         </div>
-        <div className="workspace-menu-title">
+        <div className="workspace-menu-title" style={titleStyle}>
           Log in or create an account
         </div>
-        <div className="workspace-menu-subtitle">
+        <div className="workspace-menu-subtitle" style={subtitleStyle}>
           Sign in to view your report history and manage your account.
         </div>
       </div>
@@ -10101,6 +10125,7 @@ function AccountMenuPanel({
             window.__openAuthGate?.("login");
           }}
           className="workspace-menu-button"
+          style={buttonStyle}
         >
           Log in
         </button>
@@ -10110,14 +10135,15 @@ function AccountMenuPanel({
             window.__openAuthGate?.("signup");
           }}
           className="workspace-menu-button"
+          style={buttonStyle}
         >
           Create account
         </button>
-        <button onClick={onContactUs} className="workspace-menu-button">
+        <button onClick={onContactUs} className="workspace-menu-button" style={buttonStyle}>
           Contact Us
         </button>
         {variant === "modal" ? (
-          <button onClick={onClose} className="workspace-menu-button">
+          <button onClick={onClose} className="workspace-menu-button" style={buttonStyle}>
             Close
           </button>
         ) : null}
@@ -10140,7 +10166,7 @@ function AccountMenuPanel({
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="workspace-menu-panel">
+        <div className="workspace-menu-panel" style={panelStyle}>
           {menuBody}
         </div>
       </div>
@@ -10165,19 +10191,20 @@ function AccountMenuPanel({
         style={{
           width: "min(320px, calc(100vw - 112px))",
           pointerEvents: "auto",
+          ...(panelStyle || {}),
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 950 }}>Account</div>
+          <div style={{ fontSize: 13, fontWeight: 950, color: darkMode ? "#edf6ff" : undefined }}>Account</div>
           <button
             onClick={onClose}
             style={{
               width: 34,
               height: 34,
               borderRadius: 10,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
+              border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
+              color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
               fontWeight: 900,
               cursor: "pointer",
             }}
@@ -10202,6 +10229,7 @@ function ContactUsModal({
   contactEmail,
   contactPhone,
   websiteUrl,
+  darkMode = false,
 }) {
   const emailValue = String(contactEmail || "").trim();
   const phoneValue = String(contactPhone || "").trim();
@@ -10231,6 +10259,13 @@ function ContactUsModal({
       : null,
   ].filter(Boolean);
 
+  const contactEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const contactTileBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.12)";
+  const contactTileBackground = darkMode
+    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
+    : "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)";
+  const contactMutedColor = darkMode ? "#c4d6e8" : "#4b6784";
+
   return (
     <ModalShell
       open={open}
@@ -10245,7 +10280,7 @@ function ContactUsModal({
       <div style={{ display: "grid", gap: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "22px 22px 18px" }}>
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: contactEyebrowColor }}>
               Contact Us
             </div>
             <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
@@ -10290,11 +10325,11 @@ function ContactUsModal({
                   color: "inherit",
                   padding: "14px 16px",
                   borderRadius: 18,
-                  border: "1px solid rgba(23, 49, 79, 0.12)",
-                  background: "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)",
+                  border: contactTileBorder,
+                  background: contactTileBackground,
                 }}
               >
-                <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+                <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: contactEyebrowColor }}>
                   {item.label}
                 </span>
                 <span style={{ fontSize: 16, fontWeight: 800, lineHeight: 1.35, color: "var(--sl-ui-text)", overflowWrap: "anywhere" }}>
@@ -10307,11 +10342,11 @@ function ContactUsModal({
               style={{
                 padding: "16px 18px",
                 borderRadius: 18,
-                border: "1px solid rgba(23, 49, 79, 0.12)",
-                background: "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)",
+                border: contactTileBorder,
+                background: contactTileBackground,
                 fontSize: 14,
                 lineHeight: 1.5,
-                color: "#4b6784",
+                color: contactMutedColor,
               }}
             >
               Contact information is not available for this organization yet.
@@ -10333,8 +10368,17 @@ function NotificationPreferencesModal({
   saving,
   loading,
   status,
+  darkMode = false,
 }) {
   const hasError = String(status || "").toLowerCase().includes("could not");
+  const sectionEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const topicCardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
+  const topicCardBackground = darkMode
+    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
+    : "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)";
+  const topicDescriptionColor = darkMode ? "#c4d6e8" : "#58718a";
+  const footerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
+  const checkboxLabelColor = darkMode ? "#edf6ff" : "var(--sl-ui-text)";
 
   return (
     <ModalShell
@@ -10357,7 +10401,7 @@ function NotificationPreferencesModal({
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "22px 22px 18px" }}>
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#4f6983" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
               Notification Preferences
             </div>
             <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
@@ -10410,18 +10454,18 @@ function NotificationPreferencesModal({
                     style={{
                       padding: 18,
                       borderRadius: 20,
-                      border: "1px solid rgba(23, 49, 79, 0.08)",
-                      background: "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)",
+                      border: topicCardBorder,
+                      background: topicCardBackground,
                       display: "grid",
                       gap: 12,
                     }}
                   >
                     <div style={{ display: "grid", gap: 6 }}>
                       <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.2 }}>{topic.label}</h4>
-                      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: "#58718a" }}>{topic.description}</p>
+                      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: topicDescriptionColor }}>{topic.description}</p>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: checkboxLabelColor }}>
                         <input
                           type="checkbox"
                           checked={Boolean(current.in_app_enabled)}
@@ -10429,7 +10473,7 @@ function NotificationPreferencesModal({
                         />
                         In-app
                       </label>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: checkboxLabelColor }}>
                         <input
                           type="checkbox"
                           checked={Boolean(current.email_enabled)}
@@ -10437,7 +10481,7 @@ function NotificationPreferencesModal({
                         />
                         Email
                       </label>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7 }}>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7, color: checkboxLabelColor }}>
                         <input
                           type="checkbox"
                           checked={Boolean(current.web_push_enabled)}
@@ -10454,7 +10498,7 @@ function NotificationPreferencesModal({
           )}
         </div>
 
-        <div style={{ display: "grid", gap: 12, padding: "14px 22px 22px", borderTop: "1px solid rgba(23, 49, 79, 0.08)" }}>
+        <div style={{ display: "grid", gap: 12, padding: "14px 22px 22px", borderTop: footerBorder }}>
           {status ? (
             <div
               style={{
@@ -11166,9 +11210,9 @@ export default function App({ onBackToHub = null }) {
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
-  const mobileTitleLogoSrc = MOBILE_TITLE_LOGO_SRC;
+  const mobileTitleLogoSrc = prefersDarkMode ? MOBILE_TITLE_LOGO_DARK_SRC : MOBILE_TITLE_LOGO_SRC;
   const headerTenantKey = useMemo(() => String(tenant?.tenantKey || activeTenantKey() || "").trim(), [tenant?.tenantKey]);
-  const headerOrganizationProfile = useHeaderOrganizationProfile(headerTenantKey);
+  const { profile: headerOrganizationProfile } = useHeaderOrganizationProfile(headerTenantKey);
   const organizationDisplayName = useMemo(
     () =>
       resolveHeaderDisplayName({
@@ -22917,6 +22961,7 @@ async function insertReportWithFallback(payload) {
         saving={notificationPreferencesSaving}
         loading={notificationPreferencesLoading}
         status={notificationPreferencesStatus}
+        darkMode={prefersDarkMode}
       />
       <ContactUsModal
         open={contactUsOpen}
@@ -22925,6 +22970,7 @@ async function insertReportWithFallback(payload) {
         contactEmail={headerOrganizationProfile?.contact_primary_email}
         contactPhone={headerOrganizationProfile?.contact_primary_phone}
         websiteUrl={headerOrganizationProfile?.website_url}
+        darkMode={prefersDarkMode}
       />
       <AlertsWindow
         open={alertsWindowOpen}
@@ -23454,6 +23500,7 @@ async function insertReportWithFallback(payload) {
             setAccountMenuOpen(false);
             openMyReports();
           }}
+          darkMode={prefersDarkMode}
           onContactUs={() => {
             setAccountMenuOpen(false);
             setContactUsOpen(true);
@@ -23929,6 +23976,7 @@ async function insertReportWithFallback(payload) {
                 setAccountMenuOpen(false);
                 openMyReports();
               }}
+              darkMode={prefersDarkMode}
               onContactUs={() => {
                 setAccountMenuOpen(false);
                 setContactUsOpen(true);

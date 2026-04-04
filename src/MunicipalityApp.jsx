@@ -1793,12 +1793,16 @@ export default function MunicipalityApp() {
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
   const [organizationProfile, setOrganizationProfile] = useState(null);
-  const headerOrganizationProfile = useHeaderOrganizationProfile(tenantKey);
+  const { profile: headerOrganizationProfile, loaded: headerOrganizationProfileLoaded } = useHeaderOrganizationProfile(tenantKey);
   const organizationDisplayName = resolveHeaderDisplayName({
     organizationProfile: headerOrganizationProfile,
     tenantConfig: tenant?.tenantConfig,
     tenantKey,
   });
+  const lockedHeaderDisplayName =
+    !session?.user?.id && !headerOrganizationProfileLoaded
+      ? trimOrEmpty(tenant?.tenantConfig?.display_name) || "Loading location..."
+      : organizationDisplayName;
   const [organizationProfileDraft, setOrganizationProfileDraft] = useState(() => buildOrganizationProfileDraft(null, tenantName));
   const [mapAppearance, setMapAppearance] = useState(null);
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));
@@ -4869,7 +4873,7 @@ export default function MunicipalityApp() {
     );
   }
 
-  function renderHeader(floating = false) {
+  function renderHeader(floating = false, { authLocked = false } = {}) {
     const mobileNavItems = [
       { key: "home", label: "Home", path: "/" },
       { key: "events", label: "Events", path: "/events" },
@@ -4897,16 +4901,22 @@ export default function MunicipalityApp() {
             </button>
             <div className="municipality-brand-copy app-mobile-header-copy">
               <span className="municipality-brand-eyebrow app-header-eyebrow">Municipality Hub</span>
-              <h1 className="app-mobile-header-title">{organizationDisplayName}</h1>
+              <h1 className="app-mobile-header-title">{authLocked ? lockedHeaderDisplayName : organizationDisplayName}</h1>
             </div>
             <div className="municipality-account-anchor" onClick={(event) => event.stopPropagation()}>
               {!session?.user?.id ? (
                 <button
                   type="button"
                   className="municipality-button municipality-button--ghost"
-                  onClick={() => openAuthModal("login")}
+                  onClick={() => {
+                    setAuthMode("login");
+                    setAuthStatus("");
+                    setShowAuthPassword(false);
+                    setForgotPasswordOpen(false);
+                    setForgotPasswordError("");
+                  }}
                 >
-                  Login
+                  Sign In
                 </button>
               ) : (
                 <>
@@ -5006,10 +5016,12 @@ export default function MunicipalityApp() {
             </div>
           </div>
         </header>
-        <div className="municipality-tabs-shell">
-          <div className="municipality-tabs-bar">
-            <nav className="municipality-nav" aria-label="Municipality navigation">
-            {standardNavItems.map((item) => {
+        {!authLocked ? (
+          <>
+            <div className="municipality-tabs-shell">
+              <div className="municipality-tabs-bar">
+                <nav className="municipality-nav" aria-label="Municipality navigation">
+                {standardNavItems.map((item) => {
               const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
               if (!showManageMenu) {
                 return (
@@ -5089,33 +5101,35 @@ export default function MunicipalityApp() {
                 {reportDesktopItem.label}
               </a>
             ) : null}
-            </nav>
-          </div>
-        </div>
-        <nav
-          className="municipality-mobile-nav"
-          aria-label="Municipality mobile navigation"
-          style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}
-        >
-          {mobileNavItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`municipality-mobile-nav-link${routePath === item.path || (item.path === "/alerts" && routePath.startsWith("/alerts")) || (item.path === "/events" && routePath.startsWith("/events")) || (item.path === "/reports" && routePath.startsWith("/reports")) ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
-              onClick={() => navigate(item.path)}
+                </nav>
+              </div>
+            </div>
+            <nav
+              className="municipality-mobile-nav"
+              aria-label="Municipality mobile navigation"
+              style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}
             >
-              {item.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            className={`municipality-mobile-nav-link${reportNavItem.path === routePath ? " is-active" : ""}${reportNavItem.primary ? " municipality-mobile-nav-link--primary" : ""}`}
-            onClick={openReportWorkspaceInNewTab}
-          >
-            {reportNavItem.label}
-          </button>
-        </nav>
-        {tenantSecurityCheckpointRequest ? (
+              {mobileNavItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`municipality-mobile-nav-link${routePath === item.path || (item.path === "/alerts" && routePath.startsWith("/alerts")) || (item.path === "/events" && routePath.startsWith("/events")) || (item.path === "/reports" && routePath.startsWith("/reports")) ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+                  onClick={() => navigate(item.path)}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`municipality-mobile-nav-link${reportNavItem.path === routePath ? " is-active" : ""}${reportNavItem.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+                onClick={openReportWorkspaceInNewTab}
+              >
+                {reportNavItem.label}
+              </button>
+            </nav>
+          </>
+        ) : null}
+        {!authLocked && tenantSecurityCheckpointRequest ? (
           <div className="municipality-auth-modal-backdrop" onClick={() => closeTenantSecurityCheckpoint(false)}>
             <div className="municipality-auth-modal municipality-auth-modal--checkpoint" onClick={(event) => event.stopPropagation()}>
               <div className="municipality-auth-modal-header">
@@ -5168,7 +5182,7 @@ export default function MunicipalityApp() {
             </div>
           </div>
         ) : null}
-        {authModalOpen && !session?.user?.id ? (
+        {!authLocked && authModalOpen && !session?.user?.id ? (
           <div className="municipality-auth-modal-backdrop" onClick={closeAuthModal}>
             <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
               <div className="municipality-auth-modal-header">
@@ -5282,7 +5296,7 @@ export default function MunicipalityApp() {
             </div>
           </div>
         ) : null}
-        {forgotPasswordOpen && !session?.user?.id ? (
+        {!authLocked && forgotPasswordOpen && !session?.user?.id ? (
           <div className="municipality-auth-modal-backdrop" onClick={closeForgotPasswordModal}>
             <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
               <div className="municipality-auth-modal-header">
@@ -5337,6 +5351,185 @@ export default function MunicipalityApp() {
             <MapGoogleFull onBackToHub={() => navigate("/")} />
           </Suspense>
         </div>
+      </div>
+    );
+  }
+
+  if (!authReady) {
+    return (
+      <div className="municipality-shell">
+        {renderHeader(false, { authLocked: true })}
+        <main className="municipality-main">
+          <section className="municipality-hero municipality-hero--single">
+            <div className="municipality-card municipality-hero-copy">
+              <h2>Loading secure workspace...</h2>
+              <p>Checking your account before opening the municipality hub.</p>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (!session?.user?.id) {
+    return (
+      <div className="municipality-shell">
+        {renderHeader(false, { authLocked: true })}
+        <main className="municipality-main">
+          <section className="municipality-hero municipality-hero--single">
+            <div className="municipality-card municipality-hero-copy">
+              <h2>Sign in to continue</h2>
+              <p>
+                Use your authorized organization account to enter the municipality hub and access alerts, events, reports, and settings.
+              </p>
+              <form
+                className="municipality-auth-panel"
+                onSubmit={handleAuthSubmit}
+                key={`page-auth-${authMode}`}
+                {...STANDARD_LOGIN_FORM_PROPS}
+              >
+                {authMode === "login" ? (
+                  <div className="municipality-auth-login-fields">
+                    <input
+                      id="resident-auth-page-email"
+                      {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                      value={authForm.email}
+                      onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                    />
+                    <div className="municipality-password-row">
+                      <input
+                        id="resident-auth-page-password"
+                        {...getStandardLoginPasswordInputProps(showAuthPassword)}
+                        value={authForm.password}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        className="municipality-password-toggle"
+                        onClick={() => setShowAuthPassword((prev) => !prev)}
+                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                      >
+                        {showAuthPassword ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="municipality-auth-password-toggle-link"
+                      onClick={openForgotPasswordModal}
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                ) : (
+                  <div className="municipality-form-grid">
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-page-name">Full name</label>
+                      <input
+                        id="resident-auth-page-name"
+                        name="name"
+                        autoComplete="name"
+                        value={authForm.full_name}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, full_name: event.target.value }))}
+                        placeholder="Your name"
+                      />
+                    </div>
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-page-email-signup">Email</label>
+                      <input
+                        id="resident-auth-page-email-signup"
+                        name="email"
+                        type="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck="false"
+                        value={authForm.email}
+                        onChange={(event) => setAuthForm((prev) => ({ ...prev, email: event.target.value }))}
+                        placeholder="you@example.com"
+                      />
+                    </div>
+                    <div className="municipality-field">
+                      <label htmlFor="resident-auth-page-password-signup">Password</label>
+                      <div className="municipality-password-row">
+                        <input
+                          id="resident-auth-page-password-signup"
+                          type={showAuthPassword ? "text" : "password"}
+                          name="new-password"
+                          autoComplete={authPasswordAutoComplete}
+                          placeholder="Password"
+                          value={authForm.password}
+                          onChange={(event) => setAuthForm((prev) => ({ ...prev, password: event.target.value }))}
+                        />
+                        <button
+                          type="button"
+                          className="municipality-password-toggle"
+                          onClick={() => setShowAuthPassword((prev) => !prev)}
+                          aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        >
+                          {showAuthPassword ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="municipality-actions">
+                  <button type="submit" className="municipality-button municipality-button--primary" disabled={authBusy}>
+                    {authBusy ? "Working…" : authMode === "login" ? "Sign In" : "Create Account"}
+                  </button>
+                  <button
+                    type="button"
+                    className="municipality-button municipality-button--ghost"
+                    onClick={() => {
+                      setAuthMode((prev) => (prev === "login" ? "signup" : "login"));
+                      setAuthStatus("");
+                    }}
+                  >
+                    {authMode === "login" ? "Create Account Instead" : "Use Existing Account"}
+                  </button>
+                </div>
+                {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
+              </form>
+            </div>
+          </section>
+        </main>
+        {forgotPasswordOpen ? (
+          <div className="municipality-auth-modal-backdrop" onClick={closeForgotPasswordModal}>
+            <div className="municipality-auth-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="municipality-auth-modal-header">
+                <div>
+                  <h3>Reset Password</h3>
+                  <p>Enter your account email and we&apos;ll send a password reset link.</p>
+                </div>
+                <button type="button" className="municipality-auth-modal-close" onClick={closeForgotPasswordModal} aria-label="Close password reset dialog">
+                  Close
+                </button>
+              </div>
+              <div className="municipality-auth-login-fields">
+                <input
+                  id="resident-auth-page-reset-email"
+                  {...STANDARD_LOGIN_EMAIL_INPUT_PROPS}
+                  value={forgotPasswordEmail}
+                  onChange={(event) => setForgotPasswordEmail(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !authResetLoading) {
+                      event.preventDefault();
+                      void sendPasswordReset();
+                    }
+                  }}
+                />
+              </div>
+              {forgotPasswordError ? <p className="municipality-inline-status is-error">{forgotPasswordError}</p> : null}
+              <div className="municipality-actions">
+                <button type="button" className="municipality-button municipality-button--primary" disabled={authResetLoading} onClick={() => void sendPasswordReset()}>
+                  {authResetLoading ? "Sending reset…" : "Send Reset Email"}
+                </button>
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={closeForgotPasswordModal}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
