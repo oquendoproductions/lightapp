@@ -8563,6 +8563,16 @@ function OpenReportsModal({
                           )}
                         </div>
                       )}
+                      <div
+                        style={{
+                          color: "var(--sl-ui-text)",
+                          fontSize: 12,
+                          fontWeight: 900,
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        Submitted Reports
+                      </div>
                       {r.rows.map((detail) => {
                         const rawNotes = String(detail.raw_notes || detail.notes || "");
                         const imageUrl = readImageUrlFromNote(rawNotes);
@@ -9108,6 +9118,16 @@ function OpenReportsModal({
                                   )}
                                 </div>
                               )}
+                              <div
+                                style={{
+                                  color: "var(--sl-ui-text)",
+                                  fontSize: 12,
+                                  fontWeight: 900,
+                                  lineHeight: 1.3,
+                                }}
+                              >
+                                Submitted Reports
+                              </div>
                               {r.rows.map((detail) => (
                                 <div
                                   key={`${r.incident_id}:${detail.report_id}`}
