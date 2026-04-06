@@ -118,7 +118,7 @@ Status: AWAITING CITY MANAGER RESPONSE
 Target follow-up date: March 24, 2026
 
 Checklist:
-- [ ] Follow-up sent to Ashtabula City Manager.
+- [x] Follow-up sent to Ashtabula City Manager.
 - [ ] Follow-up timestamp recorded.
 - [ ] Proposed demo windows provided.
 - [ ] Public Works attendee targets listed.
@@ -126,6 +126,7 @@ Checklist:
 
 Notes:
 - Proof pack prepared: `docs/governance/week5/07-pilot-readiness-proof-pack-2026-03-22.md`
+- Follow-up email sent on March 24, 2026; exact ET timestamp was not captured in this tracker.
 - Follow-up status from operator context: awaiting city-manager response for second-demo scheduling.
 
 ## Daily Operating Rhythm
