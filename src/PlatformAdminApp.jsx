@@ -9461,43 +9461,41 @@ export default function PlatformAdminApp() {
                                 style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               />
                             </label>
-                            {!isAssetBacked && (
-                              <div style={{ ...modalField, justifyContent: "center" }}>
-                                <span>Repair Verification</span>
-                                <label
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    minHeight: 48,
-                                    padding: "0 14px",
-                                    borderRadius: 14,
-                                    border: "1px solid rgba(17, 36, 69, 0.14)",
-                                    background: domainFieldsReadOnly ? "#eef4fb" : "rgba(255,255,255,0.92)",
-                                    color: palette.navy900,
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
-                                    disabled={domainFieldsReadOnly}
-                                    onChange={(e) => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        organization_monitored_repairs: e.target.checked,
-                                      },
-                                    }))}
-                                  />
-                                  <span>
-                                    {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false
-                                      ? "Organization monitored repairs"
-                                      : "Public repair confirmations enabled"}
-                                  </span>
-                                </label>
-                              </div>
-                            )}
+                            <div style={{ ...modalField, justifyContent: "center" }}>
+                              <span>Repair Verification</span>
+                              <label
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  minHeight: 48,
+                                  padding: "0 14px",
+                                  borderRadius: 14,
+                                  border: "1px solid rgba(17, 36, 69, 0.14)",
+                                  background: domainFieldsReadOnly ? "#eef4fb" : "rgba(255,255,255,0.92)",
+                                  color: palette.navy900,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
+                                  disabled={domainFieldsReadOnly}
+                                  onChange={(e) => setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      organization_monitored_repairs: e.target.checked,
+                                    },
+                                  }))}
+                                />
+                                <span>
+                                  {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false
+                                    ? "Organization monitored repairs"
+                                    : "Public repair confirmations enabled"}
+                                </span>
+                              </label>
+                            </div>
                           </div>
                           {isAssetBacked ? (
                             <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>

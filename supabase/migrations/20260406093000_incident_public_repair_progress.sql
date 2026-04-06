@@ -88,7 +88,7 @@ as $$
   with report_rows as (
     select
       r.tenant_key,
-      public.map_incident_domain_from_report(r.light_id, r.report_domain, coalesce(r.report_type, r.type)) as domain,
+      public.map_incident_domain_from_report(r.light_id, null, r.report_type) as domain,
       trim(coalesce(r.light_id, '')) as incident_id,
       case
         when r.reporter_user_id is not null then 'uid:' || r.reporter_user_id::text
@@ -101,14 +101,14 @@ as $$
     where r.tenant_key = public.request_tenant_key()
       and trim(coalesce(r.light_id, '')) <> ''
       and lower(trim(coalesce(r.report_quality, 'bad'))) <> 'good'
-      and lower(trim(coalesce(r.report_type, r.type, ''))) not in ('working', 'reported_working', 'is_working')
+      and lower(trim(coalesce(r.report_type, ''))) not in ('working', 'reported_working', 'is_working')
 
     union all
 
     select
       p.tenant_key,
       'potholes'::public.incident_domain as domain,
-      'pothole:' || trim(coalesce(p.pothole_id, '')) as incident_id,
+      'pothole:' || trim(coalesce(p.pothole_id::text, '')) as incident_id,
       case
         when p.reporter_user_id is not null then 'uid:' || p.reporter_user_id::text
         when nullif(lower(trim(coalesce(p.reporter_email, ''))), '') is not null then 'email:' || lower(trim(p.reporter_email))
@@ -118,7 +118,7 @@ as $$
       p.created_at as submitted_at
     from public.pothole_reports p
     where p.tenant_key = public.request_tenant_key()
-      and trim(coalesce(p.pothole_id, '')) <> ''
+      and trim(coalesce(p.pothole_id::text, '')) <> ''
   ),
   fixed_cutoffs as (
     select
