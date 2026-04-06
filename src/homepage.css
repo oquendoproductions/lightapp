@@ -752,41 +752,62 @@ h3 {
 }
 
 .marketing-mobile-menu {
-  width: min(320px, calc(100vw - 24px));
+  width: min(420px, calc(100vw - 24px));
   display: grid;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid rgba(20, 57, 95, 0.28);
-  border-radius: 22px;
-  background: linear-gradient(112deg, rgba(236, 245, 255, 0.98), rgba(221, 239, 233, 0.96));
-  box-shadow: 0 18px 36px rgba(9, 27, 50, 0.2);
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid rgba(23, 49, 79, 0.12);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 36px rgba(17, 49, 79, 0.16);
+  backdrop-filter: blur(14px);
 }
 
 .marketing-mobile-menu-header {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-700);
+  padding: 4px 10px 0;
 }
 
 .marketing-mobile-menu-list {
   display: grid;
   gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .marketing-mobile-menu-item {
-  border: 1px solid rgba(22, 54, 90, 0.24);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
   color: var(--brand-navy);
   width: 100%;
   font: inherit;
-  font-size: 0.92rem;
+  font-size: 12px;
   font-weight: 800;
-  padding: 0.75rem 0.9rem;
-  text-align: left;
+  min-height: 48px;
+  padding: 8px 10px;
+  line-height: 1.1;
+  text-align: center;
   cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.marketing-mobile-menu-item:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.marketing-mobile-menu-item:hover {
+  transform: translateY(-1px);
+  background: rgba(23, 109, 120, 0.10);
+  color: #0e5d67;
+}
+
+.marketing-mobile-menu-item:focus-visible {
+  outline: 2px solid rgba(19, 133, 110, 0.35);
+  outline-offset: 2px;
 }
 
 @media (max-width: 1120px) {

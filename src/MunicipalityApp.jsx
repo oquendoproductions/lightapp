@@ -15,7 +15,7 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
-import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
+import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 import "./headerStandards.css";
@@ -1782,10 +1782,11 @@ export default function MunicipalityApp() {
     tenantConfig: tenant?.tenantConfig,
     tenantKey,
   });
-  const lockedHeaderDisplayName =
-    !session?.user?.id && !headerOrganizationProfileLoaded
-      ? trimOrEmpty(tenant?.tenantConfig?.display_name) || "Loading location..."
-      : organizationDisplayName;
+  const lockedHeaderDisplayName = resolvePublicHeaderDisplayName({
+    organizationProfile: headerOrganizationProfileLoaded ? headerOrganizationProfile : null,
+    tenantConfig: tenant?.tenantConfig,
+    tenantKey,
+  });
   const [organizationProfileDraft, setOrganizationProfileDraft] = useState(() => buildOrganizationProfileDraft(null, tenantName));
   const [mapAppearance, setMapAppearance] = useState(null);
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));

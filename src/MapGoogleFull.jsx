@@ -11,7 +11,7 @@ import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthSt
 import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } from "./auth/loginFieldStandards";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
-import { resolveHeaderDisplayName } from "./lib/headerDisplayName";
+import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import { buildMailtoHref, hasNonEmptyValue, normalizePhoneHref, normalizeWebsiteHref } from "./lib/workspaceSupport";
 
@@ -10214,6 +10214,60 @@ function AccountMenuPanel({
     );
   }
 
+  if (variant === "mobile-popout") {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 10010,
+          display: "grid",
+          alignItems: "start",
+          justifyItems: "end",
+          pointerEvents: "auto",
+          padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 8px) var(--mobile-header-horizontal-inset) 16px",
+          background: "transparent",
+        }}
+        onClick={onClose}
+      >
+        <div
+          className="workspace-menu-panel"
+          style={{
+            width: "min(320px, calc(100vw - (var(--mobile-header-horizontal-inset) * 2)))",
+            maxWidth: "calc(100vw - (var(--mobile-header-horizontal-inset) * 2))",
+            pointerEvents: "auto",
+            ...(panelStyle || {}),
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 950, color: darkMode ? "#edf6ff" : undefined }}>Account</div>
+            <button
+              onClick={onClose}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
+                color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Close account menu"
+              title="Close"
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+            {menuBody}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="sl-overlay-pass"
@@ -11328,15 +11382,15 @@ export default function App({ onBackToHub = null }) {
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
   const mobileTitleLogoSrc = prefersDarkMode ? MOBILE_TITLE_LOGO_DARK_SRC : MOBILE_TITLE_LOGO_SRC;
   const headerTenantKey = useMemo(() => String(tenant?.tenantKey || activeTenantKey() || "").trim(), [tenant?.tenantKey]);
-  const { profile: headerOrganizationProfile } = useHeaderOrganizationProfile(headerTenantKey);
+  const { profile: headerOrganizationProfile, loaded: headerOrganizationProfileLoaded } = useHeaderOrganizationProfile(headerTenantKey);
   const organizationDisplayName = useMemo(
     () =>
-      resolveHeaderDisplayName({
-        organizationProfile: headerOrganizationProfile,
+      resolvePublicHeaderDisplayName({
+        organizationProfile: headerOrganizationProfileLoaded ? headerOrganizationProfile : null,
         tenantConfig: tenant?.tenantConfig,
         tenantKey: headerTenantKey,
       }),
-    [headerOrganizationProfile, headerTenantKey, tenant?.tenantConfig]
+    [headerOrganizationProfile, headerOrganizationProfileLoaded, headerTenantKey, tenant?.tenantConfig]
   );
   const mapHeaderTheme = useMemo(
     () => (
@@ -15005,8 +15059,9 @@ export default function App({ onBackToHub = null }) {
   }, [cityBoundaryOuterRings]);
   const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
   const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
-  const showMapAlertIcon = tenantMapFeatures?.show_alert_icon !== false;
-  const showMapEventIcon = tenantMapFeatures?.show_event_icon !== false;
+  const hasMapSession = Boolean(session?.user?.id);
+  const showMapAlertIcon = hasMapSession && tenantMapFeatures?.show_alert_icon !== false;
+  const showMapEventIcon = hasMapSession && tenantMapFeatures?.show_event_icon !== false;
   const cityOutsideShadeOpacity = Number.isFinite(Number(tenantMapFeatures?.outside_shade_opacity))
     ? Math.max(0, Math.min(1, Number(tenantMapFeatures.outside_shade_opacity)))
     : 0.42;
@@ -24092,6 +24147,7 @@ async function insertReportWithFallback(payload) {
               open={accountMenuOpen}
               session={session}
               profile={profile}
+              variant="mobile-popout"
               onClose={() => {
                 setAccountMenuOpen(false);
                 setAccountView("menu");

@@ -19,3 +19,12 @@ export function resolveHeaderDisplayName({ organizationProfile = null, tenantCon
     "Municipality"
   );
 }
+
+export function resolvePublicHeaderDisplayName({ organizationProfile = null, tenantConfig = null, tenantKey = "" } = {}) {
+  return (
+    trimOrEmpty(organizationProfile?.display_name) ||
+    trimOrEmpty(tenantConfig?.display_name) ||
+    formatTenantKeyLabel(tenantKey) ||
+    "Municipality"
+  );
+}
