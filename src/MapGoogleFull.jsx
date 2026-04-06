@@ -259,6 +259,88 @@ function residentAlertSeverityRank(severity) {
   }
 }
 
+function splitStreetlightAddressParts(rawAddress) {
+  const raw = String(rawAddress || "").trim();
+  if (!raw) {
+    return { houseNumber: "", street: "", city: "", state: "", zip: "" };
+  }
+  const parts = raw
+    .split(",")
+    .map((s) => String(s || "").trim())
+    .filter(Boolean)
+    .filter((s) => s.toLowerCase() !== "usa");
+  if (!parts.length) {
+    return { houseNumber: "", street: "", city: "", state: "", zip: "" };
+  }
+  const line1 = parts[0] || "";
+  const line2 = parts[1] || "";
+  const line3 = parts[2] || "";
+  const line1Match = line1.match(/^\s*(\d+[A-Za-z0-9\-]*)\s+(.+)\s*$/);
+  const houseNumber = String(line1Match?.[1] || "").trim();
+  const street = String(line1Match?.[2] || line1 || "").trim();
+  const city = line2 || line3 || "";
+  const stateZipSource = parts.find((part) => /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(part)) || "";
+  const stateZipMatch = stateZipSource.match(/\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/);
+  return {
+    houseNumber,
+    street: street || "Address unavailable",
+    city,
+    state: stateZipMatch?.[1] || "",
+    zip: stateZipMatch?.[2] || "",
+  };
+}
+
+function deriveStreetlightCrossStreet(onStreetRaw, intersectionRaw, nearestCrossStreetRaw) {
+  if (String(nearestCrossStreetRaw || "").trim()) return String(nearestCrossStreetRaw || "").trim();
+  if (!String(intersectionRaw || "").trim()) return "";
+  const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const onStreetKey = normalizeRoad(onStreetRaw);
+  const cleaned = String(intersectionRaw || "")
+    .replace(/\b(at|on|between|near|of|north|south|east|west|n|s|e|w)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const tokens = cleaned
+    .split(/&|\/|,|\band\b|\bnear\b|\bbetween\b|\bof\b/i)
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  for (const token of tokens) {
+    const tokenKey = normalizeRoad(token);
+    if (!tokenKey) continue;
+    if (!onStreetKey) return token;
+    if (tokenKey === onStreetKey) continue;
+    if (tokenKey.includes(onStreetKey) || onStreetKey.includes(tokenKey)) continue;
+    return token;
+  }
+  return "";
+}
+
+function buildStreetlightUtilityRows(util, coords) {
+  const latVal = Number(coords?.lat);
+  const lngVal = Number(coords?.lng);
+  const coordsText =
+    Number.isFinite(latVal) && Number.isFinite(lngVal)
+      ? `${latVal.toFixed(6)}, ${lngVal.toFixed(6)}`
+      : "Unavailable";
+  const parts = splitStreetlightAddressParts(String(util?.nearestAddress || util?.nearest_address || "").trim());
+  const onStreet = String(util?.nearestStreet || util?.nearest_street || "").trim();
+  const intersectionRaw = String(util?.nearestIntersection || util?.nearest_intersection || "").trim();
+  const nearestCrossStreetRaw = String(util?.nearestCrossStreet || util?.nearest_cross_street || "").trim();
+  const nearestLandmark = String(util?.nearestLandmark || util?.nearest_landmark || "").trim();
+  return [
+    { label: "City", value: parts.city || "Unavailable" },
+    { label: "State", value: parts.state || "Unavailable" },
+    { label: "Zip", value: parts.zip || "Unavailable" },
+    { label: "House Number", value: parts.houseNumber || "Unavailable" },
+    { label: "Street", value: parts.street || "Unavailable" },
+    {
+      label: "Cross Street",
+      value: deriveStreetlightCrossStreet(onStreet, intersectionRaw, nearestCrossStreetRaw) || "Unavailable",
+    },
+    { label: "Landmark", value: nearestLandmark || "Unavailable" },
+    { label: "Coordinates", value: coordsText },
+  ];
+}
+
 function sortResidentAlerts(rows = []) {
   return [...rows].sort((a, b) => {
     const aPinned = a?.pinned ? 1 : 0;
@@ -2865,174 +2947,190 @@ function DomainReportModal({
       ? "Add details (size, lane, nearby landmark)"
       : "Add details (what you observed)";
   return (
-    <ModalShell open={open} zIndex={10012}>
-      <div style={{ display: "grid", gap: 6 }}>
+    <ModalShell
+      open={open}
+      zIndex={10012}
+      panelStyle={{
+        width: "min(420px, 100%)",
+        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        padding: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        gap: 0,
+      }}
+    >
+      <div style={{ padding: "16px 16px 12px", display: "grid", gap: 6, borderBottom: "1px solid var(--sl-ui-modal-border)" }}>
         <div style={{ fontSize: 16, fontWeight: 900 }}>Report {domainLabel}</div>
         <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
           <b>Location:</b> {locationLabel || "Map location"}
         </div>
       </div>
 
-      {requiresStreetSignIssue && (
-        <label style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-            What issue are you seeing?
-          </div>
-          <select
-            value={streetSignIssue}
-            onChange={(e) => setStreetSignIssue(e.target.value)}
-            style={{
-              padding: 10,
-              height: 40,
-              boxSizing: "border-box",
-              borderRadius: 8,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontSize: 14,
-              lineHeight: 1.2,
-            }}
-            disabled={saving}
-          >
-            {STREET_SIGN_ISSUE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+      <div style={{ padding: 16, overflow: "auto", display: "grid", gap: 12, minHeight: 0 }}>
+        {requiresStreetSignIssue && (
+          <label style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+              What issue are you seeing?
+            </div>
+            <select
+              value={streetSignIssue}
+              onChange={(e) => setStreetSignIssue(e.target.value)}
+              style={{
+                padding: 10,
+                height: 40,
+                boxSizing: "border-box",
+                borderRadius: 8,
+                border: "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontSize: 14,
+                lineHeight: 1.2,
+              }}
+              disabled={saving}
+            >
+              {STREET_SIGN_ISSUE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
-      {requiresWaterDrainIssue && (
-        <label style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-            What issue are you seeing?
-          </div>
-          <select
-            value={streetSignIssue}
-            onChange={(e) => setStreetSignIssue(e.target.value)}
-            style={{
-              padding: 10,
-              height: 40,
-              boxSizing: "border-box",
-              borderRadius: 8,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontSize: 14,
-              lineHeight: 1.2,
-            }}
-            disabled={saving}
-          >
-            {WATER_DRAIN_ISSUE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+        {requiresWaterDrainIssue && (
+          <label style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+              What issue are you seeing?
+            </div>
+            <select
+              value={streetSignIssue}
+              onChange={(e) => setStreetSignIssue(e.target.value)}
+              style={{
+                padding: 10,
+                height: 40,
+                boxSizing: "border-box",
+                borderRadius: 8,
+                border: "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontSize: 14,
+                lineHeight: 1.2,
+              }}
+              disabled={saving}
+            >
+              {WATER_DRAIN_ISSUE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
-      <label style={{ display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={notesPlaceholder}
-          style={{
-            minHeight: 90,
-            resize: "vertical",
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-input-border)",
-            background: "var(--sl-ui-modal-input-bg)",
-            color: "var(--sl-ui-text)",
-            padding: 10,
-            fontSize: 14,
-            lineHeight: 1.35,
-          }}
-        />
-      </label>
-
-      {(domain === "potholes" || domain === "water_drain_issues") && (
         <label style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Image (optional)</div>
-          <input
-            type="file"
-            accept="image/*"
-            disabled={saving}
-            onChange={(e) => {
-              const f = e.target.files?.[0] || null;
-              setImageFile(f);
-            }}
+          <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={notesPlaceholder}
             style={{
-              width: "100%",
-              padding: 8,
+              minHeight: 90,
+              resize: "vertical",
               borderRadius: 10,
               border: "1px solid var(--sl-ui-modal-input-border)",
               background: "var(--sl-ui-modal-input-bg)",
               color: "var(--sl-ui-text)",
+              padding: 10,
+              fontSize: 14,
+              lineHeight: 1.35,
             }}
           />
-          {imageFile && (
-            <div style={{ display: "grid", gap: 6 }}>
-              {imagePreviewUrl ? (
-                <img
-                  src={imagePreviewUrl}
-                  alt="Report attachment preview"
-                  style={{
-                    width: "100%",
-                    maxHeight: 180,
-                    objectFit: "cover",
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-modal-border)",
-                  }}
-                />
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setImageFile(null)}
-                disabled={saving}
-                style={btnSecondary}
-              >
-                Remove image
-              </button>
-            </div>
-          )}
         </label>
-      )}
 
-      {requiresConsent && (
-        <label
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "flex-start",
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-border)",
-            background: "var(--sl-ui-modal-input-bg)",
-            cursor: saving ? "default" : "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={Boolean(consentChecked)}
-            onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
-            disabled={saving}
-            style={{ marginTop: 2 }}
-          />
-          <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
-            I agree to allow CityReport.io to submit this {domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and my provided contact
-            information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.
-          </span>
-        </label>
-      )}
+        {(domain === "potholes" || domain === "water_drain_issues") && (
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Image (optional)</div>
+            <input
+              type="file"
+              accept="image/*"
+              disabled={saving}
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null;
+                setImageFile(f);
+              }}
+              style={{
+                width: "100%",
+                padding: 8,
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+              }}
+            />
+            {imageFile && (
+              <div style={{ display: "grid", gap: 6 }}>
+                {imagePreviewUrl ? (
+                  <img
+                    src={imagePreviewUrl}
+                    alt="Report attachment preview"
+                    style={{
+                      width: "100%",
+                      maxHeight: 112,
+                      objectFit: "cover",
+                      borderRadius: 10,
+                      border: "1px solid var(--sl-ui-modal-border)",
+                    }}
+                  />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setImageFile(null)}
+                  disabled={saving}
+                  style={btnSecondary}
+                >
+                  Remove image
+                </button>
+              </div>
+            )}
+          </label>
+        )}
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={onCancel} disabled={saving} style={btnSecondary}>Cancel</button>
-        <button onClick={onSubmit} disabled={!canSubmitFinal} style={{ ...btnPrimary, opacity: canSubmitFinal ? 1 : 0.6 }}>
-          {saving ? "Submitting..." : "Report"}
-        </button>
+        {requiresConsent && (
+          <label
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "flex-start",
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              cursor: saving ? "default" : "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(consentChecked)}
+              onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
+              disabled={saving}
+              style={{ marginTop: 2 }}
+            />
+            <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+              I agree to allow CityReport.io to submit this {domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and my provided contact
+              information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.
+            </span>
+          </label>
+        )}
+      </div>
+
+      <div style={{ padding: 16, borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} disabled={saving} style={btnSecondary}>Cancel</button>
+          <button onClick={onSubmit} disabled={!canSubmitFinal} style={{ ...btnPrimary, opacity: canSubmitFinal ? 1 : 0.6 }}>
+            {saving ? "Submitting..." : "Report"}
+          </button>
+        </div>
       </div>
     </ModalShell>
   );
@@ -5441,6 +5539,8 @@ function OpenReportsModal({
   const [tableSort, setTableSort] = useState({ key: "submitted_at", dir: "desc" });
   const [adminExpandedSet, setAdminExpandedSet] = useState(() => new Set());
   const [streetlightReportInfoByIncident, setStreetlightReportInfoByIncident] = useState({});
+  const [streetlightUtilityExpandedSet, setStreetlightUtilityExpandedSet] = useState(() => new Set());
+  const [streetlightUtilityLoadingByIncident, setStreetlightUtilityLoadingByIncident] = useState({});
   const [copyToast, setCopyToast] = useState(null);
   const copyToastTimerRef = useRef(null);
   const isLikelyPermanentViewError = useCallback((err) => {
@@ -5475,30 +5575,6 @@ function OpenReportsModal({
     return incidentRepairProgressByKey?.[key] || null;
   }, [activeDomain, incidentRepairProgressByKey]);
 
-  const splitAddressParts = useCallback((rawAddress) => {
-    const raw = String(rawAddress || "").trim();
-    if (!raw) {
-      return { houseNumber: "", street: "", ruralRoute: "", city: "", state: "", zip: "" };
-    }
-    const parts = raw.split(",").map((s) => String(s || "").trim()).filter(Boolean);
-    const first = parts[0] || "";
-    const second = parts[1] || "";
-    const third = parts[2] || "";
-    const firstMatch = first.match(/^(\d+)\s+(.+)$/);
-    const houseNumber = firstMatch ? String(firstMatch[1]).trim() : "";
-    const street = firstMatch ? String(firstMatch[2]).trim() : first;
-    const isRural = /^(rr|rural route)\b/i.test(first);
-    const ruralRoute = isRural ? first : "";
-    const stateZipMatch = third.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
-    return {
-      houseNumber: houseNumber || (isRural ? "" : ""),
-      street: isRural ? "" : street,
-      ruralRoute,
-      city: second,
-      state: stateZipMatch ? String(stateZipMatch[1]).trim() : "",
-      zip: stateZipMatch ? String(stateZipMatch[2]).trim() : "",
-    };
-  }, []);
   const isMyReportsModal = String(modalTitle || "").trim().toLowerCase() === "my reports";
   const isStreetlightMyReports = activeDomain === "streetlights" && !canMutateIncidents;
   const utilityReportUserId = String(session?.user?.id || "").trim();
@@ -5550,53 +5626,7 @@ function OpenReportsModal({
       copyToastTimerRef.current = null;
     }, 1200);
   }, []);
-  const getStreetlightUtilityRows = useCallback((util, coords) => {
-    const latVal = Number(coords?.lat);
-    const lngVal = Number(coords?.lng);
-    const coordsText =
-      Number.isFinite(latVal) && Number.isFinite(lngVal)
-        ? `${latVal.toFixed(6)}, ${lngVal.toFixed(6)}`
-        : "Unavailable";
-    const nearestAddressRaw = String(util?.nearestAddress || util?.nearest_address || "").trim();
-    const parts = splitAddressParts(nearestAddressRaw);
-    const onStreet = String(util?.nearestStreet || util?.nearest_street || "").trim();
-    const intersectionRaw = String(util?.nearestIntersection || util?.nearest_intersection || "").trim();
-    const nearestCrossStreetRaw = String(util?.nearestCrossStreet || util?.nearest_cross_street || "").trim();
-    const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const onStreetKey = normalizeRoad(onStreet);
-    const crossStreet = (() => {
-      if (nearestCrossStreetRaw) return nearestCrossStreetRaw;
-      if (!intersectionRaw) return "";
-      const cleaned = intersectionRaw
-        .replace(/\b(at|on|between|near|of|north|south|east|west|n|s|e|w)\b/gi, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const tokens = cleaned
-        .split(/&|\/|,|\band\b|\bnear\b|\bbetween\b|\bof\b/i)
-        .map((x) => String(x || "").trim())
-        .filter(Boolean);
-      for (const token of tokens) {
-        const tokenKey = normalizeRoad(token);
-        if (!tokenKey) continue;
-        if (!onStreetKey) return token;
-        if (tokenKey === onStreetKey) continue;
-        if (tokenKey.includes(onStreetKey) || onStreetKey.includes(tokenKey)) continue;
-        return token;
-      }
-      return "";
-    })();
-    return [
-      { label: "House Number", value: parts.houseNumber || "Unavailable" },
-      { label: "Street", value: parts.street || "Unavailable" },
-      ...(parts.ruralRoute ? [{ label: "Rural Route", value: parts.ruralRoute }] : []),
-      { label: "City", value: parts.city || "Unavailable" },
-      { label: "State", value: parts.state || "Unavailable" },
-      { label: "ZIP", value: parts.zip || "Unavailable" },
-      { label: "Cross Street", value: crossStreet || "Unavailable" },
-      { label: "Nearest Landmark", value: String(util?.nearestLandmark || util?.nearest_landmark || "").trim() || "Unavailable" },
-      { label: "Coordinates", value: coordsText },
-    ];
-  }, [splitAddressParts]);
+  const getStreetlightUtilityRows = useCallback((util, coords) => buildStreetlightUtilityRows(util, coords), []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -5831,6 +5861,61 @@ function OpenReportsModal({
       nearestIntersection: "",
     };
   }, [streetlightReportInfoByIncident, officialLights]);
+
+  const ensureStreetlightUtilityForIncident = useCallback(async (incidentId, coords) => {
+    const key = String(incidentId || "").trim();
+    const lat = Number(coords?.lat);
+    const lng = Number(coords?.lng);
+    if (!key || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const existing = getStreetlightUtilityForIncident(key);
+    const hasSavedLocation = Boolean(
+      String(existing?.nearestAddress || "").trim() ||
+      String(existing?.nearestCrossStreet || "").trim() ||
+      String(existing?.nearestLandmark || "").trim()
+    );
+    if (hasSavedLocation || typeof getStreetlightUtilityDetails !== "function") return;
+
+    setStreetlightUtilityLoadingByIncident((prev) => ({ ...(prev || {}), [key]: true }));
+    try {
+      const geo = await getStreetlightUtilityDetails(lat, lng, { mode: "full" });
+      setStreetlightReportInfoByIncident((prev) => ({
+        ...(prev || {}),
+        [key]: {
+          ...(prev?.[key] || {}),
+          nearestAddress: String(geo?.nearestAddress || "").trim(),
+          nearestStreet: String(geo?.nearestStreet || "").trim(),
+          nearestCrossStreet: String(geo?.nearestCrossStreet || "").trim(),
+          nearestIntersection: String(geo?.nearestIntersection || "").trim(),
+          nearestLandmark: String(geo?.nearestLandmark || "").trim(),
+        },
+      }));
+    } catch {
+      // best-effort detail lookup for utility info
+    } finally {
+      setStreetlightUtilityLoadingByIncident((prev) => ({ ...(prev || {}), [key]: false }));
+    }
+  }, [getStreetlightUtilityDetails, getStreetlightUtilityForIncident]);
+
+  const toggleStreetlightUtilityExpanded = useCallback((incidentId, coords) => {
+    const key = String(incidentId || "").trim();
+    if (!key) return;
+    setStreetlightUtilityExpandedSet((prev) => {
+      const next = new Set(prev || []);
+      const opening = !next.has(key);
+      if (opening) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    void ensureStreetlightUtilityForIncident(key, coords);
+  }, [ensureStreetlightUtilityForIncident]);
+
+  useEffect(() => {
+    if (!open) {
+      setStreetlightUtilityExpandedSet(new Set());
+      setStreetlightUtilityLoadingByIncident({});
+    }
+  }, [open]);
 
   const selectedDomainMeta = useMemo(() => {
     const opts = Array.isArray(domainOptions) && domainOptions.length
@@ -8373,56 +8458,6 @@ function OpenReportsModal({
                   )}
                   {adminExpandedSet.has(r.incident_id) && (
                     <div style={{ display: "grid", gap: 6 }}>
-                      {activeDomain === "streetlights" && (() => {
-                        const util = getStreetlightUtilityForIncident(r.incident_id);
-                        const items = getStreetlightUtilityRows(util, r?.coords || null);
-                        return (
-                          <div
-                            style={{
-                              border: "1px solid var(--sl-ui-open-reports-item-border)",
-                              borderRadius: 8,
-                              padding: "7px 8px",
-                              display: "grid",
-                              gap: 4,
-                              background: "rgba(255,255,255,0.04)",
-                              fontSize: 12,
-                              lineHeight: 1.3,
-                            }}
-                          >
-                            <div style={{ fontWeight: 900 }}>Streetlight Utility Information</div>
-                            {items.map((item) => (
-                              <button
-                                key={`mobile-streetlight-${r.incident_id}-${item.label}`}
-                                type="button"
-                                onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
-                                style={{
-                                  border: "none",
-                                  background: "transparent",
-                                  padding: 0,
-                                  margin: 0,
-                                  textAlign: "left",
-                                  color: "var(--sl-ui-text)",
-                                  cursor: "copy",
-                                  fontSize: 12,
-                                  lineHeight: 1.3,
-                                }}
-                              >
-                                <b>{item.label}:</b>{" "}
-                                <span
-                                  style={{
-                                    textDecoration: "underline",
-                                    textUnderlineOffset: "2px",
-                                    color: "#7fd7ff",
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {item.value}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        );
-                      })()}
                       {Array.isArray(r.reopen_events) && r.reopen_events.map((ev) => (
                         <div
                           key={`reopen-${r.incident_id}-${ev.ts || 0}`}
@@ -8625,6 +8660,80 @@ function OpenReportsModal({
                           </div>
                         );
                       })}
+                      {activeDomain === "streetlights" && (() => {
+                        const utilityOpen = streetlightUtilityExpandedSet.has(r.incident_id);
+                        const utilityLoading = Boolean(streetlightUtilityLoadingByIncident?.[r.incident_id]);
+                        const util = getStreetlightUtilityForIncident(r.incident_id);
+                        const items = getStreetlightUtilityRows(util, r?.coords || null);
+                        return (
+                          <div
+                            style={{
+                              border: "1px solid var(--sl-ui-open-reports-item-border)",
+                              borderRadius: 8,
+                              padding: "7px 8px",
+                              display: "grid",
+                              gap: 6,
+                              background: "rgba(255,255,255,0.04)",
+                              fontSize: 12,
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleStreetlightUtilityExpanded(r.incident_id, r?.coords || null)}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                margin: 0,
+                                textAlign: "left",
+                                color: "var(--sl-ui-text)",
+                                cursor: "pointer",
+                                fontSize: 12,
+                                fontWeight: 900,
+                              }}
+                            >
+                              {utilityOpen ? "▾ " : "▸ "}Streetlight Utility Information
+                            </button>
+                            {utilityOpen ? (
+                              utilityLoading ? (
+                                <div style={{ opacity: 0.82 }}>Loading location info...</div>
+                              ) : (
+                                items.map((item) => (
+                                  <button
+                                    key={`mobile-streetlight-${r.incident_id}-${item.label}`}
+                                    type="button"
+                                    onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
+                                    style={{
+                                      border: "none",
+                                      background: "transparent",
+                                      padding: 0,
+                                      margin: 0,
+                                      textAlign: "left",
+                                      color: "var(--sl-ui-text)",
+                                      cursor: "copy",
+                                      fontSize: 12,
+                                      lineHeight: 1.3,
+                                    }}
+                                  >
+                                    <b>{item.label}:</b>{" "}
+                                    <span
+                                      style={{
+                                        textDecoration: "underline",
+                                        textUnderlineOffset: "2px",
+                                        color: "#7fd7ff",
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      {item.value}
+                                    </span>
+                                  </button>
+                                ))
+                              )
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -8894,56 +9003,6 @@ function OpenReportsModal({
                                   )}
                                 </div>
                               )}
-                              {activeDomain === "streetlights" && (() => {
-                                const util = getStreetlightUtilityForIncident(r.incident_id);
-                                const items = getStreetlightUtilityRows(util, r?.coords || null);
-                                return (
-                                  <div
-                                    style={{
-                                      border: "1px solid var(--sl-ui-open-reports-item-border)",
-                                      borderRadius: 8,
-                                      padding: "7px 8px",
-                                      display: "grid",
-                                      gap: 4,
-                                      background: "rgba(255,255,255,0.04)",
-                                      fontSize: 12,
-                                      lineHeight: 1.3,
-                                    }}
-                                  >
-                                    <div style={{ fontWeight: 900 }}>Streetlight Utility Information</div>
-                                    {items.map((item) => (
-                                      <button
-                                        key={`desktop-streetlight-${r.incident_id}-${item.label}`}
-                                        type="button"
-                                        onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
-                                        style={{
-                                          border: "none",
-                                          background: "transparent",
-                                          padding: 0,
-                                          margin: 0,
-                                          textAlign: "left",
-                                          color: "var(--sl-ui-text)",
-                                          cursor: "copy",
-                                          fontSize: 12,
-                                          lineHeight: 1.3,
-                                        }}
-                                      >
-                                        <b>{item.label}:</b>{" "}
-                                        <span
-                                          style={{
-                                            textDecoration: "underline",
-                                            textUnderlineOffset: "2px",
-                                            color: "#7fd7ff",
-                                            fontWeight: 700,
-                                          }}
-                                        >
-                                          {item.value}
-                                        </span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
                               {Array.isArray(r.reopen_events) && r.reopen_events.map((ev) => (
                                 <div
                                   key={`reopen-${r.incident_id}-${ev.ts || 0}`}
@@ -9151,6 +9210,80 @@ function OpenReportsModal({
                                   })()}
                                 </div>
                               ))}
+                              {activeDomain === "streetlights" && (() => {
+                                const utilityOpen = streetlightUtilityExpandedSet.has(r.incident_id);
+                                const utilityLoading = Boolean(streetlightUtilityLoadingByIncident?.[r.incident_id]);
+                                const util = getStreetlightUtilityForIncident(r.incident_id);
+                                const items = getStreetlightUtilityRows(util, r?.coords || null);
+                                return (
+                                  <div
+                                    style={{
+                                      border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                      borderRadius: 8,
+                                      padding: "7px 8px",
+                                      display: "grid",
+                                      gap: 6,
+                                      background: "rgba(255,255,255,0.04)",
+                                      fontSize: 12,
+                                      lineHeight: 1.3,
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleStreetlightUtilityExpanded(r.incident_id, r?.coords || null)}
+                                      style={{
+                                        border: "none",
+                                        background: "transparent",
+                                        padding: 0,
+                                        margin: 0,
+                                        textAlign: "left",
+                                        color: "var(--sl-ui-text)",
+                                        cursor: "pointer",
+                                        fontSize: 12,
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      {utilityOpen ? "▾ " : "▸ "}Streetlight Utility Information
+                                    </button>
+                                    {utilityOpen ? (
+                                      utilityLoading ? (
+                                        <div style={{ opacity: 0.82 }}>Loading location info...</div>
+                                      ) : (
+                                        items.map((item) => (
+                                          <button
+                                            key={`desktop-streetlight-${r.incident_id}-${item.label}`}
+                                            type="button"
+                                            onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
+                                            style={{
+                                              border: "none",
+                                              background: "transparent",
+                                              padding: 0,
+                                              margin: 0,
+                                              textAlign: "left",
+                                              color: "var(--sl-ui-text)",
+                                              cursor: "copy",
+                                              fontSize: 12,
+                                              lineHeight: 1.3,
+                                            }}
+                                          >
+                                            <b>{item.label}:</b>{" "}
+                                            <span
+                                              style={{
+                                                textDecoration: "underline",
+                                                textUnderlineOffset: "2px",
+                                                color: "#7fd7ff",
+                                                fontWeight: 700,
+                                              }}
+                                            >
+                                              {item.value}
+                                            </span>
+                                          </button>
+                                        ))
+                                      )
+                                    ) : null}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </td>
                         </tr>
@@ -11809,6 +11942,7 @@ export default function App({ onBackToHub = null }) {
   const dbConnectionStartedAtRef = useRef(Date.now());
   const dbConnectionNoticeAtRef = useRef(0);
   const dbConnectionFailureStreakRef = useRef(0);
+  const dbConnectionResumeAtRef = useRef(Date.now());
   const placesLookupBlockedRef = useRef(false);
   const placesBlockedNoticeShownRef = useRef(false);
   const [toolHintText, setToolHintText] = useState("");
@@ -11965,9 +12099,11 @@ export default function App({ onBackToHub = null }) {
   function notifyDbConnectionIssue(errOrStatus) {
     if (!isConnectionLikeDbError(errOrStatus)) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
     const now = Date.now();
     if (now - dbConnectionStartedAtRef.current < 6000) return; // startup grace period
+    if (now - dbConnectionResumeAtRef.current < 5000) return; // tab/app return grace period
     dbConnectionFailureStreakRef.current += 1;
     if (dbConnectionFailureStreakRef.current < 2) return; // require 2 consecutive failures
     if (now - dbConnectionNoticeAtRef.current < 15000) return; // avoid notice spam
@@ -11983,6 +12119,23 @@ export default function App({ onBackToHub = null }) {
   function resetDbConnectionIssueStreak() {
     dbConnectionFailureStreakRef.current = 0;
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return undefined;
+    const markResume = () => {
+      dbConnectionResumeAtRef.current = Date.now();
+      resetDbConnectionIssueStreak();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") markResume();
+    };
+    window.addEventListener("online", markResume);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("online", markResume);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   const [allReportsModal, setAllReportsModal] = useState({
     open: false,
@@ -15967,48 +16120,12 @@ export default function App({ onBackToHub = null }) {
     selectedOfficialLightForPopup?.nearest_landmark,
   ]);
 
-  const streetlightAddressParts = useMemo(() => {
-    const raw = String(streetlightUtilityContext?.nearestAddress || "").trim();
-    const fallback = {
-      houseNumber: "",
-      street: "Address unavailable",
-      ruralRoute: "",
-      city: "",
-      state: "",
-      zip: "",
-    };
-    if (!raw) return fallback;
-
-    const tokens = raw
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .filter((x) => x.toLowerCase() !== "usa");
-    if (!tokens.length) return fallback;
-
-    const line1 = tokens[0] || "";
-    const line2 = tokens[1] || "";
-    const line3 = tokens[2] || "";
-    const line1Match = line1.match(/^\s*(\d+[A-Za-z0-9\-]*)\s+(.+)\s*$/);
-    const houseNumber = String(line1Match?.[1] || "").trim();
-    const street = String(line1Match?.[2] || line1 || "").trim() || "Address unavailable";
-    const ruralRouteSource = [line1, line2].find((part) => /\b(rr|rural route|county road|cr)\b/i.test(part)) || "";
-    const ruralRoute = ruralRouteSource && ruralRouteSource !== line1 ? ruralRouteSource : "";
-    const city = line2 && line2 !== ruralRoute ? line2 : (line3 || "");
-    const stateZipSource = tokens.find((part) => /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(part)) || "";
-    const stateZipMatch = stateZipSource.match(/\b([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\b/);
-    const state = stateZipMatch?.[1] || "";
-    const zip = stateZipMatch?.[2] || "";
-
-    return {
-      houseNumber,
-      street,
-      ruralRoute,
-      city,
-      state,
-      zip,
-    };
-  }, [streetlightUtilityContext?.nearestAddress]);
+  const streetlightLocationRows = useMemo(() => {
+    const coords = selectedOfficialLightForPopup
+      ? { lat: selectedOfficialLightForPopup.lat, lng: selectedOfficialLightForPopup.lng }
+      : null;
+    return buildStreetlightUtilityRows(streetlightUtilityContext, coords);
+  }, [streetlightUtilityContext, selectedOfficialLightForPopup?.lat, selectedOfficialLightForPopup?.lng]);
 
   const ensureStreetlightLocationInfoForPopup = useCallback(async (light) => {
     const lid = String(light?.id || "").trim();
@@ -21716,12 +21833,100 @@ async function insertReportWithFallback(payload) {
         officialSignIdSetForExport={officialSignIdSet}
         cityBoundaryLoaded={cityLimitPolygons.length > 0}
         isWithinCityLimits={isWithinAshtabulaCityLimits}
+        getStreetlightUtilityDetails={reverseGeocodeRoadLabel}
         onUtilityReportedChange={handleUtilityReportedChange}
         streetlightConfidenceByLightId={streetlightConfidenceByLightId}
         incidentRepairProgressByKey={incidentRepairProgressByKey}
         canShowPublicRepairAction={canShowPublicRepairAction}
         onConfirmRepairIncident={submitIncidentRepairConfirmation}
       />
+
+      <ModalShell
+        open={streetlightLocationInfoOpen}
+        zIndex={10018}
+        panelStyle={{
+          width: "min(420px, 100%)",
+          maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          gap: 0,
+          padding: 0,
+        }}
+      >
+        <div style={{ padding: "16px 16px 12px", display: "grid", gap: 6, borderBottom: "1px solid var(--sl-ui-modal-border)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>Streetlight Location Info</div>
+              <div style={{ fontSize: 12.5, opacity: 0.84, lineHeight: 1.35 }}>
+                Use this location information to submit directly to the electric utility.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStreetlightLocationInfoOpen(false)}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Close location info"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        <div style={{ padding: 16, overflow: "auto", display: "grid", gap: 8, minHeight: 0 }}>
+          {streetlightUtilityContext.loading ? (
+            <div style={{ fontSize: 12.5, opacity: 0.82 }}>Loading location details...</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11.5, opacity: 0.72 }}>(Tap or click any line below to copy)</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {streetlightLocationRows.map((item) => (
+                  <button
+                    key={`location-modal-${item.label}`}
+                    type="button"
+                    onClick={() => copyTextToClipboard(item.label, item.value)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      margin: 0,
+                      textAlign: "left",
+                      color: "var(--sl-ui-text)",
+                      cursor: "copy",
+                      fontSize: 12.5,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    <b>{item.label}:</b>{" "}
+                    <span
+                      style={{
+                        wordBreak: "break-word",
+                        textDecoration: "underline",
+                        textUnderlineOffset: "2px",
+                        color: "#7fd7ff",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {item.value}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11.5, opacity: 0.8, lineHeight: 1.35 }}>
+                Verify all information before submitting to the utility company. CityReport.io provides reference data and is not responsible for submission errors.
+              </div>
+            </>
+          )}
+        </div>
+      </ModalShell>
 
       <ManageAccountModal
         open={manageOpen}
@@ -22206,15 +22411,12 @@ async function insertReportWithFallback(payload) {
             <button
               type="button"
               onClick={() => {
-                const nextOpen = !streetlightLocationInfoOpen;
-                setStreetlightLocationInfoOpen(nextOpen);
-                if (nextOpen) {
-                  void ensureStreetlightLocationInfoForPopup(selectedOfficialLightForPopup);
-                }
+                setStreetlightLocationInfoOpen(true);
+                void ensureStreetlightLocationInfoForPopup(selectedOfficialLightForPopup);
               }}
               style={btnPopupSecondary}
             >
-              {streetlightLocationInfoOpen ? "Hide Location Info" : "Location Info"}
+              Location Info
             </button>
             <button
               type="button"
@@ -22327,118 +22529,6 @@ async function insertReportWithFallback(payload) {
             <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd27d", lineHeight: 1.35 }}>
               Immediate danger? Call 911.
             </div>
-
-            {streetlightLocationInfoOpen && (
-              <div style={{ display: "grid", gap: 6 }}>
-                {streetlightUtilityContext.loading ? (
-                  <div style={{ fontSize: 12, opacity: 0.85 }}>Loading location details...</div>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 11, opacity: 0.72, fontWeight: 400 }}>
-                      (Tap or click any line below to copy)
-                    </div>
-                    <div style={{ display: "grid", gap: 1, fontSize: 12, opacity: 0.95, lineHeight: 1.2 }}>
-                      {(() => {
-                        const latVal = Number(selectedOfficialLightForPopup?.lat);
-                        const lngVal = Number(selectedOfficialLightForPopup?.lng);
-                        const coordsText =
-                          Number.isFinite(latVal) && Number.isFinite(lngVal)
-                            ? `${latVal.toFixed(6)}, ${lngVal.toFixed(6)}`
-                            : "Unavailable";
-                        const onStreet = String(streetlightUtilityContext.nearestStreet || "").trim();
-                        const intersectionRaw = String(streetlightUtilityContext.nearestIntersection || "").trim();
-                        const nearestCrossStreetRaw = String(streetlightUtilityContext.nearestCrossStreet || "").trim();
-                        const normalizeRoad = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                        const onStreetKey = normalizeRoad(onStreet);
-                        const crossStreet = (() => {
-                          if (nearestCrossStreetRaw) return nearestCrossStreetRaw;
-                          if (!intersectionRaw) return "";
-                          const cleaned = intersectionRaw
-                            .replace(/\b(at|on|between|near|of|north|south|east|west|n|s|e|w)\b/gi, " ")
-                            .replace(/\s+/g, " ")
-                            .trim();
-                          const tokens = cleaned
-                            .split(/&|\/|,|\band\b|\bnear\b|\bbetween\b|\bof\b/i)
-                            .map((x) => String(x || "").trim())
-                            .filter(Boolean);
-                          for (const token of tokens) {
-                            const tokenKey = normalizeRoad(token);
-                            if (!tokenKey) continue;
-                            if (!onStreetKey) return token;
-                            if (tokenKey === onStreetKey) continue;
-                            if (tokenKey.includes(onStreetKey) || onStreetKey.includes(tokenKey)) continue;
-                            return token;
-                          }
-                          return "";
-                        })();
-
-                        const items = [
-                          { label: "House Number", value: streetlightAddressParts.houseNumber || "Unavailable" },
-                          { label: "Street", value: streetlightAddressParts.street || "Unavailable" },
-                          ...(streetlightAddressParts.ruralRoute
-                            ? [{ label: "Rural Route", value: streetlightAddressParts.ruralRoute }]
-                            : []),
-                          { label: "City", value: streetlightAddressParts.city || "Unavailable" },
-                          { label: "State", value: streetlightAddressParts.state || "Unavailable" },
-                          { label: "ZIP", value: streetlightAddressParts.zip || "Unavailable" },
-                          {
-                            label: "Cross Street",
-                            value: crossStreet || "Unavailable",
-                          },
-                          {
-                            label: "Nearest Landmark",
-                            value: streetlightUtilityContext.nearestLandmark || "Unavailable",
-                          },
-                          { label: "Coordinates", value: coordsText },
-                        ];
-
-                        return items.map((item) => (
-                          <div
-                            key={item.label}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => copyTextToClipboard(item.label, item.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                copyTextToClipboard(item.label, item.value);
-                              }
-                            }}
-                            title={`Click to copy ${item.label}`}
-                            style={{
-                              borderRadius: 7,
-                              padding: "2px 4px",
-                              cursor: "copy",
-                              userSelect: "text",
-                            }}
-                          >
-                            <span style={{ fontWeight: 800, opacity: 0.9 }}>{item.label}:</span>{" "}
-                            <span
-                              style={{
-                                wordBreak: "break-word",
-                                textDecoration: "underline",
-                                textUnderlineOffset: "2px",
-                                color: "#7fd7ff",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {item.value}
-                            </span>
-                          </div>
-                        ));
-                      })()}
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
-                      Use this location information to submit directly to the electric utility.
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1.3 }}>
-                      Verify all information before submitting to the utility company. CityReport.io provides reference data
-                      and is not responsible for submission errors.
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
 
             {Number(mapZoom) < REPORTING_MIN_ZOOM && (
               <div style={{ fontSize: 11.5, opacity: 0.78, lineHeight: 1.25 }}>

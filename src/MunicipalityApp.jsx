@@ -1766,10 +1766,10 @@ export default function MunicipalityApp() {
   const [settingsStatus, setSettingsStatus] = useState("");
   const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
   const [openSettingsGroups, setOpenSettingsGroups] = useState({
-    account: true,
-    organization: true,
-    team: true,
-    map: true,
+    account: false,
+    organization: false,
+    team: false,
+    map: false,
   });
   const [teamAssignments, setTeamAssignments] = useState([]);
   const [roleDefinitions, setRoleDefinitions] = useState([]);

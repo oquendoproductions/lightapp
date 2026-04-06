@@ -1444,7 +1444,10 @@ export default function PlatformAdminApp() {
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [domainConfigForm, setDomainConfigForm] = useState(initialDomainConfigForm);
   const [editingDomainKey, setEditingDomainKey] = useState("");
+  const [editingOrganizationSection, setEditingOrganizationSection] = useState("");
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
+  const [compactDomainSettingsKey, setCompactDomainSettingsKey] = useState("");
+  const [compactDomainEnableKey, setCompactDomainEnableKey] = useState("");
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [mapFeaturesEditMode, setMapFeaturesEditMode] = useState(false);
   const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
@@ -4297,8 +4300,13 @@ export default function PlatformAdminApp() {
     if (activeTab !== "domains") {
       setEditingDomainKey("");
       setEditingDomainSnapshot(null);
+      setCompactDomainSettingsKey("");
+      setCompactDomainEnableKey("");
       setMapFeaturesEditMode(false);
       setMapFeaturesSnapshot(null);
+    }
+    if (activeTab !== "organization") {
+      setEditingOrganizationSection("");
     }
   }, [activeTab]);
 
@@ -4499,6 +4507,7 @@ export default function PlatformAdminApp() {
     const key = sanitizeTenantKey(selectedTenantKey);
     setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
     setIsEditingProfile(false);
+    setEditingOrganizationSection("");
     setEditingPrimaryContact(false);
     setEditingAdditionalContactIndex(null);
     setContactAddModalOpen(false);
@@ -4508,13 +4517,14 @@ export default function PlatformAdminApp() {
   }, [selectedTenantKey, tenantProfilesByTenant]);
 
   const saveTenantProfile = useCallback(async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     const result = await persistTenantProfileRecord({
       checkpointSettingKey: entryStep === "tenant" ? "require_pin_for_organization_info_changes" : "",
       checkpointDescription: "Enter your PIN to save organization information changes.",
     });
     if (!result.ok) return;
     setIsEditingProfile(false);
+    setEditingOrganizationSection("");
     await refreshControlPlaneData();
   }, [entryStep, persistTenantProfileRecord, refreshControlPlaneData]);
 
@@ -5370,6 +5380,15 @@ export default function PlatformAdminApp() {
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
 
+  const enableDomainFromCompactPicker = useCallback(() => {
+    const key = String(compactDomainEnableKey || "").trim().toLowerCase();
+    if (!key) return;
+    beginDomainEdit(key);
+    setDomainVisibilityForm((prev) => ({ ...prev, [key]: "enabled" }));
+    setCompactDomainSettingsKey(key);
+    setStatus((prev) => ({ ...prev, domains: "" }));
+  }, [beginDomainEdit, compactDomainEnableKey]);
+
   const beginMapFeaturesEdit = useCallback(() => {
     if (!canEditTenantDomains) return;
     setMapFeaturesSnapshot({ ...mapFeaturesForm });
@@ -5493,6 +5512,20 @@ export default function PlatformAdminApp() {
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const isCompactViewport = viewportWidth <= 760;
+  const activeCompactDomainOptions = useMemo(
+    () => DOMAIN_OPTIONS.filter((d) => String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() !== "disabled"),
+    [domainVisibilityForm]
+  );
+  const inactiveCompactDomainOptions = useMemo(
+    () => DOMAIN_OPTIONS.filter((d) => String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled"),
+    [domainVisibilityForm]
+  );
+  const compactVisibleDomainCards = useMemo(() => {
+    if (!isCompactViewport) return DOMAIN_OPTIONS;
+    const selectedKey = String(compactDomainSettingsKey || "").trim();
+    const selected = DOMAIN_OPTIONS.find((d) => d.key === selectedKey && String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() !== "disabled");
+    return selected ? [selected] : [];
+  }, [isCompactViewport, compactDomainSettingsKey, domainVisibilityForm]);
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
@@ -5531,6 +5564,36 @@ export default function PlatformAdminApp() {
     : menuToggleButton;
   const menuLineWidth = isCompactViewport ? "var(--mobile-header-menu-line-width)" : 18;
   const menuLineGap = isCompactViewport ? "var(--mobile-header-menu-line-gap)" : 4;
+  const organizationSectionReadOnly = useCallback(
+    (sectionKey) => (inTenantWorkspace ? editingOrganizationSection !== sectionKey : false),
+    [editingOrganizationSection, inTenantWorkspace]
+  );
+
+  useEffect(() => {
+    if (!isCompactViewport) return;
+    if (!activeCompactDomainOptions.length) {
+      setCompactDomainSettingsKey("");
+      return;
+    }
+    setCompactDomainSettingsKey((prev) => {
+      const current = String(prev || "").trim();
+      if (current && activeCompactDomainOptions.some((domain) => domain.key === current)) return current;
+      return activeCompactDomainOptions[0].key;
+    });
+  }, [isCompactViewport, activeCompactDomainOptions]);
+
+  useEffect(() => {
+    if (!isCompactViewport) return;
+    if (!inactiveCompactDomainOptions.length) {
+      setCompactDomainEnableKey("");
+      return;
+    }
+    setCompactDomainEnableKey((prev) => {
+      const current = String(prev || "").trim();
+      if (current && inactiveCompactDomainOptions.some((domain) => domain.key === current)) return current;
+      return inactiveCompactDomainOptions[0].key;
+    });
+  }, [isCompactViewport, inactiveCompactDomainOptions]);
 
   const fixedBanner = (
     <div style={bannerStyle}>
@@ -8577,65 +8640,76 @@ export default function PlatformAdminApp() {
 
             {(inAddTenantFlow ? addTenantStep === "organization" : true) ? (
               <div style={{ ...card, display: "grid", gap: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <h2 style={{ margin: 0, color: palette.navy900 }}>
-                      {inAddTenantFlow ? "Organization Information" : "Organization Information"}
-                    </h2>
-                    <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                      Public identity, mailing address, billing, and contract details for the organization.
-                    </p>
-                  </div>
-                  {!inAddTenantFlow ? (
-                    profileReadOnly ? (
-                      <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} onClick={() => setIsEditingProfile(true)} disabled={!canEditTenantSetup}>
-                        Edit Organization Information
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        onClick={() => {
-                          const key = sanitizeTenantKey(selectedTenantKey);
-                          setProfileForm(profileRowToForm(tenantProfilesByTenant?.[key] || null));
-                          setIsEditingProfile(false);
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    )
-                  ) : null}
+                <div style={{ display: "grid", gap: 4 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>
+                    {inAddTenantFlow ? "Organization Information" : "Organization Information"}
+                  </h2>
+                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                    Public identity, mailing address, billing, and contract details for the organization.
+                  </p>
                 </div>
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Naming + Identity</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Names and outward-facing profile details used across CityReport surfaces.
+                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Naming + Identity</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Names and outward-facing profile details used across CityReport surfaces.
+                      </div>
                     </div>
+                    {!inAddTenantFlow ? (
+                      organizationSectionReadOnly("identity") ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                          onClick={() => setEditingOrganizationSection("identity")}
+                          disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            onClick={() => void saveTenantProfile()}
+                            disabled={!canEditTenantSetup}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            onClick={resetProfileDraft}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                   <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Legal Organization Name</span>
-                      <input readOnly={profileReadOnly} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("identity")} value={profileForm.legal_name} onChange={(e) => setProfileForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="Example Municipality Public Works" style={{ ...inputBase, background: organizationSectionReadOnly("identity") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Public Display Name</span>
-                      <input readOnly={profileReadOnly} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("identity")} value={profileForm.display_name} onChange={(e) => setProfileForm((p) => ({ ...p, display_name: e.target.value }))} placeholder="Example Municipality" style={{ ...inputBase, background: organizationSectionReadOnly("identity") ? "#eef4fb" : inputBase.background }} />
                       <span style={{ fontSize: 11.5, color: palette.textMuted }}>
                         Falls back to Organization Name when a public label has not been set.
                       </span>
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Municipality Website URL</span>
-                      <input readOnly={profileReadOnly} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("identity")} value={profileForm.website_url} onChange={(e) => setProfileForm((p) => ({ ...p, website_url: e.target.value }))} placeholder="https://www.examplemunicipality.gov" style={{ ...inputBase, background: organizationSectionReadOnly("identity") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Timezone</span>
-                      <input readOnly={profileReadOnly} value={profileForm.timezone} onChange={(e) => setProfileForm((p) => ({ ...p, timezone: e.target.value }))} placeholder="America/New_York" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("identity")} value={profileForm.timezone} onChange={(e) => setProfileForm((p) => ({ ...p, timezone: e.target.value }))} placeholder="America/New_York" style={{ ...inputBase, background: organizationSectionReadOnly("identity") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4, gridColumn: "1 / -1" }}>
                       <span>URL Extension (Profile Alias)</span>
-                      <input readOnly={profileReadOnly} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("identity")} value={profileForm.url_extension} onChange={(e) => setProfileForm((p) => ({ ...p, url_extension: e.target.value }))} placeholder="examplemunicipality" style={{ ...inputBase, background: organizationSectionReadOnly("identity") ? "#eef4fb" : inputBase.background }} />
                       <span style={{ fontSize: 11.5, color: palette.textMuted }}>
                         Stored for profile and future alias use. It does not currently change live cityreport.io routing.
                       </span>
@@ -8643,50 +8717,114 @@ export default function PlatformAdminApp() {
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Mailing Address</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Primary mailing and billing address information for the organization.
+                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Mailing Address</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Primary mailing and billing address information for the organization.
+                      </div>
                     </div>
+                    {!inAddTenantFlow ? (
+                      organizationSectionReadOnly("address") ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                          onClick={() => setEditingOrganizationSection("address")}
+                          disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            onClick={() => void saveTenantProfile()}
+                            disabled={!canEditTenantSetup}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            onClick={resetProfileDraft}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                   <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Address 1</span>
-                      <input readOnly={profileReadOnly} value={profileForm.mailing_address_1} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_1: e.target.value }))} placeholder="100 Civic Center Dr" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("address")} value={profileForm.mailing_address_1} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_1: e.target.value }))} placeholder="100 Civic Center Dr" style={{ ...inputBase, background: organizationSectionReadOnly("address") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Address 2</span>
-                      <input readOnly={profileReadOnly} value={profileForm.mailing_address_2} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_2: e.target.value }))} placeholder="Building A, Suite 200 (optional)" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("address")} value={profileForm.mailing_address_2} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_address_2: e.target.value }))} placeholder="Building A, Suite 200 (optional)" style={{ ...inputBase, background: organizationSectionReadOnly("address") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>City</span>
-                      <input readOnly={profileReadOnly} value={profileForm.mailing_city} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_city: e.target.value }))} placeholder="Example City" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("address")} value={profileForm.mailing_city} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_city: e.target.value }))} placeholder="Example City" style={{ ...inputBase, background: organizationSectionReadOnly("address") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>State</span>
-                      <input readOnly={profileReadOnly} value={profileForm.mailing_state} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_state: e.target.value }))} placeholder="ST" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("address")} value={profileForm.mailing_state} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_state: e.target.value }))} placeholder="ST" style={{ ...inputBase, background: organizationSectionReadOnly("address") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>ZIP</span>
-                      <input readOnly={profileReadOnly} value={profileForm.mailing_zip} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_zip: e.target.value }))} placeholder="12345" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("address")} value={profileForm.mailing_zip} onChange={(e) => setProfileForm((p) => ({ ...p, mailing_zip: e.target.value }))} placeholder="12345" style={{ ...inputBase, background: organizationSectionReadOnly("address") ? "#eef4fb" : inputBase.background }} />
                     </label>
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Contract + Billing</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Billing and agreement details used for operations and account management.
+                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Contract + Billing</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Billing and agreement details used for operations and account management.
+                      </div>
                     </div>
+                    {!inAddTenantFlow ? (
+                      organizationSectionReadOnly("contract") ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                          onClick={() => setEditingOrganizationSection("contract")}
+                          disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            onClick={() => void saveTenantProfile()}
+                            disabled={!canEditTenantSetup}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            onClick={resetProfileDraft}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                   <div style={responsiveTwoColGrid}>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Billing Email</span>
-                      <input readOnly={profileReadOnly} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@examplemunicipality.gov" style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("contract")} value={profileForm.billing_email} onChange={(e) => setProfileForm((p) => ({ ...p, billing_email: e.target.value }))} placeholder="billing@examplemunicipality.gov" style={{ ...inputBase, background: organizationSectionReadOnly("contract") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Contract Status</span>
-                      <select disabled={profileReadOnly} value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }}>
+                      <select disabled={organizationSectionReadOnly("contract")} value={profileForm.contract_status} onChange={(e) => setProfileForm((p) => ({ ...p, contract_status: e.target.value }))} style={{ ...inputBase, background: organizationSectionReadOnly("contract") ? "#eef4fb" : inputBase.background }}>
                         <option value="pending">Pending</option>
                         <option value="active">Active</option>
                         <option value="paused">Paused</option>
@@ -8696,28 +8834,60 @@ export default function PlatformAdminApp() {
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Contract Start Date</span>
-                      <input readOnly={profileReadOnly} type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("contract")} type="date" value={profileForm.contract_start_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_start_date: e.target.value }))} style={{ ...inputBase, background: organizationSectionReadOnly("contract") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Contract End Date</span>
-                      <input readOnly={profileReadOnly} type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("contract")} type="date" value={profileForm.contract_end_date} onChange={(e) => setProfileForm((p) => ({ ...p, contract_end_date: e.target.value }))} style={{ ...inputBase, background: organizationSectionReadOnly("contract") ? "#eef4fb" : inputBase.background }} />
                     </label>
                     <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                       <span>Renewal Date</span>
-                      <input readOnly={profileReadOnly} type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={{ ...inputBase, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                      <input readOnly={organizationSectionReadOnly("contract")} type="date" value={profileForm.renewal_date} onChange={(e) => setProfileForm((p) => ({ ...p, renewal_date: e.target.value }))} style={{ ...inputBase, background: organizationSectionReadOnly("contract") ? "#eef4fb" : inputBase.background }} />
                     </label>
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 8 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Operational Notes</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Internal onboarding, operations, or account notes for this organization.
+                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Operational Notes</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Internal onboarding, operations, or account notes for this organization.
+                      </div>
                     </div>
+                    {!inAddTenantFlow ? (
+                      organizationSectionReadOnly("notes") ? (
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                          onClick={() => setEditingOrganizationSection("notes")}
+                          disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            onClick={() => void saveTenantProfile()}
+                            disabled={!canEditTenantSetup}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            onClick={resetProfileDraft}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    ) : null}
                   </div>
                   <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
                     <span>Notes</span>
-                    <textarea readOnly={profileReadOnly} value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 110, background: profileReadOnly ? "#eef4fb" : inputBase.background }} />
+                    <textarea readOnly={organizationSectionReadOnly("notes")} value={profileForm.notes} onChange={(e) => setProfileForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Add context for onboarding, constraints, and operating notes." style={{ ...inputBase, minHeight: 110, background: organizationSectionReadOnly("notes") ? "#eef4fb" : inputBase.background }} />
                   </label>
                 </section>
                 {inAddTenantFlow ? (
@@ -8726,10 +8896,6 @@ export default function PlatformAdminApp() {
                       Next: Contacts
                     </button>
                   </div>
-                ) : !profileReadOnly ? (
-                  <form onSubmit={saveTenantProfile} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }} disabled={!canEditTenantSetup}>Save Organization Information</button>
-                  </form>
                 ) : null}
                 {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
               </div>
@@ -9337,8 +9503,56 @@ export default function PlatformAdminApp() {
                       Control which reporting domains are active, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
                     </div>
                   </div>
+                  {isCompactViewport ? (
+                    <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
+                      <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
+                        <span style={{ color: palette.textMuted }}>Active Domains</span>
+                        <select
+                          value={compactDomainSettingsKey}
+                          onChange={(event) => setCompactDomainSettingsKey(event.target.value)}
+                          style={inputBase}
+                          disabled={!activeCompactDomainOptions.length}
+                        >
+                          {activeCompactDomainOptions.length ? (
+                            activeCompactDomainOptions.map((domain) => (
+                              <option key={domain.key} value={domain.key}>{domain.label}</option>
+                            ))
+                          ) : (
+                            <option value="">No active domains</option>
+                          )}
+                        </select>
+                      </label>
+                      {inactiveCompactDomainOptions.length ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
+                            <span style={{ color: palette.textMuted }}>Enable Domain</span>
+                            <select
+                              value={compactDomainEnableKey}
+                              onChange={(event) => setCompactDomainEnableKey(event.target.value)}
+                              style={inputBase}
+                            >
+                              {inactiveCompactDomainOptions.map((domain) => (
+                                <option key={domain.key} value={domain.key}>{domain.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <div>
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, opacity: canEditTenantDomains && !editingDomainKey ? 1 : 0.55 }}
+                              disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !compactDomainEnableKey}
+                              onClick={enableDomainFromCompactPicker}
+                              title={editingDomainKey ? "Finish the current domain edit before enabling another domain." : "Enable selected domain"}
+                            >
+                              Enable Selected Domain
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", gap: 10, alignItems: "start" }}>
-                    {DOMAIN_OPTIONS.map((d) => {
+                    {(isCompactViewport ? compactVisibleDomainCards : DOMAIN_OPTIONS).map((d) => {
                       const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
                       const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
                       const isAssetBacked = domainType === "asset_backed";
