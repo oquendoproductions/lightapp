@@ -24360,8 +24360,13 @@ async function insertReportWithFallback(payload) {
             >
               <AppIcon src={UI_ICON_SRC.info} size={20} />
             </button>
-            <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34 }}>
-              <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
+            <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34, display: "grid", gap: 4 }}>
+              <div>
+                <b>About:</b> Community-reported issues and repair confirmations are shared here for public visibility.
+              </div>
+              <div>
+                <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
+              </div>
             </div>
           </div>
         </div>
@@ -25189,8 +25194,13 @@ async function insertReportWithFallback(payload) {
               <AppIcon src={UI_ICON_SRC.info} size={18} />
             </button>
 
-            <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30 }}>
-              <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
+            <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30, display: "grid", gap: 4 }}>
+              <div>
+                <b>About:</b> Community-reported issues and repair confirmations are shared here for public visibility.
+              </div>
+              <div>
+                <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
+              </div>
             </div>
           </div>
         </div>
