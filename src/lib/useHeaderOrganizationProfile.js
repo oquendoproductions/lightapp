@@ -38,7 +38,8 @@ export function useHeaderOrganizationProfile(tenantKey) {
         return;
       }
 
-      setHeaderOrganizationProfile(data || null);
+      const nextProfile = Array.isArray(data) ? (data[0] || null) : (data || null);
+      setHeaderOrganizationProfile(nextProfile);
       setHeaderOrganizationProfileLoaded(true);
     }
 

@@ -24610,7 +24610,7 @@ async function insertReportWithFallback(payload) {
 
             <div
               style={{
-                marginTop: 20,
+                marginTop: 8,
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
