@@ -34,7 +34,7 @@ function smoothScrollTo(sectionId) {
 }
 
 export default function App() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeMobileSection, setActiveMobileSection] = useState(SECTION_LINKS[0]?.id || "");
 
   useEffect(() => {
     trackEvent("homepage_view", { page: "marketing_home" });
@@ -74,7 +74,7 @@ export default function App() {
   function onJumpToSection(sectionId) {
     trackEvent("section_rail_click", { target: sectionId });
     smoothScrollTo(sectionId);
-    setMobileMenuOpen(false);
+    setActiveMobileSection(sectionId);
   }
 
   return (
@@ -83,17 +83,7 @@ export default function App() {
         <div className="top-bar-inner">
           <div className="marketing-header-left-slot">
             <div className="marketing-header-spacer" aria-hidden="true" />
-            <button
-              type="button"
-              className="marketing-menu-toggle"
-              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-              aria-expanded={mobileMenuOpen}
-              onClick={() => setMobileMenuOpen((prev) => !prev)}
-            >
-              <span />
-              <span />
-              <span />
-            </button>
+            <div className="marketing-menu-toggle" aria-hidden="true" />
           </div>
           <a className="brand marketing-header-brand" href="#hero" onClick={(event) => event.preventDefault()}>
             <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
@@ -103,25 +93,6 @@ export default function App() {
             <span className="marketing-header-cta-mobile">Demo</span>
           </button>
         </div>
-        {mobileMenuOpen ? (
-          <div className="marketing-mobile-menu-backdrop" onClick={() => setMobileMenuOpen(false)}>
-            <div className="marketing-mobile-menu" onClick={(event) => event.stopPropagation()}>
-              <div className="marketing-mobile-menu-header">Navigate</div>
-              <div className="marketing-mobile-menu-list">
-                {SECTION_LINKS.map((link) => (
-                  <button
-                    key={link.id}
-                    type="button"
-                    className="marketing-mobile-menu-item"
-                    onClick={() => onJumpToSection(link.id)}
-                  >
-                    {link.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
       </header>
 
       <nav className="section-rail" aria-label="Homepage sections">
@@ -152,6 +123,19 @@ export default function App() {
         <Domains />
         <Trust />
       </main>
+
+      <nav className="marketing-mobile-nav" aria-label="Homepage mobile sections">
+        {SECTION_LINKS.map((link) => (
+          <button
+            key={link.id}
+            type="button"
+            className={`marketing-mobile-nav-link${activeMobileSection === link.id ? " is-active" : ""}`}
+            onClick={() => onJumpToSection(link.id)}
+          >
+            {link.label}
+          </button>
+        ))}
+      </nav>
 
       <SiteFooter />
     </div>

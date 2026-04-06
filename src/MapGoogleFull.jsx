@@ -10796,7 +10796,7 @@ function ResidentFeedWindow({
         </div>
 
         <div style={{ overflowY: "auto", padding: "18px 18px 20px 22px", marginRight: 4 }}>
-          {loading ? (
+          {loading && !items.length ? (
             <div style={{ fontSize: 13, opacity: 0.82, color: subtitleColor }}>Loading updates…</div>
           ) : error ? (
             <div style={{ fontSize: 13, color: errorColor, lineHeight: 1.45 }}>{error}</div>
