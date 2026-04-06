@@ -14,7 +14,7 @@ import "./homepage.css";
 
 const SECTION_LINKS = [
   { id: "problem-outcome", label: "Problem" },
-  { id: "capabilities", label: "Capabilities" },
+  { id: "capabilities", label: "Features" },
   { id: "workflow", label: "Workflow" },
   { id: "domains", label: "Domains" },
   { id: "trust", label: "Trust" },

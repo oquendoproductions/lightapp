@@ -26,6 +26,12 @@ const GMAPS_LIBRARIES = ["places"];
 
 const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
 
+function defaultDomainType(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (key === "streetlights" || key === "street_signs") return "asset_backed";
+  return "incident_driven";
+}
+
 function isDevMapsHost(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
   if (!host) return false;
@@ -55,6 +61,8 @@ const INITIAL_OVERVIEW_ZOOM = 5;
 const GROUP_RADIUS_METERS = 25;
 const POTHOLE_MERGE_RADIUS_METERS = 22;
 const POTHOLE_ROAD_HIT_METERS = 12;
+const INCIDENT_REPAIR_TARGET = 5;
+const INCIDENT_REPAIR_ARCHIVE_MS = 14 * 24 * 60 * 60 * 1000;
 
 // 💡 OFFICIAL LIGHTS (admin-only mapping layer)
 const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
@@ -1242,6 +1250,25 @@ function reportIdentityKey(r) {
   const phone = normalizePhone(r?.reporter_phone);
   if (phone) return `phone:${phone}`;
   return null;
+}
+
+function incidentRepairDisplayState(snapshot) {
+  if (snapshot?.archived) return "archived";
+  if (snapshot?.likelyFixed) return "likely_resolved";
+  return "";
+}
+
+function incidentRepairSummaryText(snapshot) {
+  const repairProgress = Math.max(0, Number(snapshot?.repairProgress || 0));
+  const issueScore = Number(snapshot?.issueScore || 0);
+  if (snapshot?.archived) return "Archived after 2 weeks with no new activity.";
+  if (snapshot?.likelyFixed) {
+    return `Community repair confidence reached ${repairProgress}/${INCIDENT_REPAIR_TARGET}.`;
+  }
+  if (issueScore < 0) {
+    return `Issue score ${issueScore} • repair progress ${repairProgress}/${INCIDENT_REPAIR_TARGET}.`;
+  }
+  return `Repair progress ${repairProgress}/${INCIDENT_REPAIR_TARGET}.`;
 }
 
 // Bearing (direction of travel) from 2 coords, degrees 0-360
@@ -5198,6 +5225,9 @@ function OpenReportsModal({
   onUtilityReportedChange = null,
   onMarkWorkingIncident = null,
   streetlightConfidenceByLightId = {},
+  incidentRepairProgressByKey = {},
+  canShowPublicRepairAction = null,
+  onConfirmRepairIncident = null,
   focusIncidentId = "",
   initialSearchQuery = "",
   onInitialFocusApplied = null,
@@ -5439,6 +5469,11 @@ function OpenReportsModal({
     const confidence = getStreetlightConfidence(incidentId);
     return Boolean(confidence?.canViewerMarkWorking);
   }, [activeDomain, canMarkWorkingIncidents, getStreetlightConfidence]);
+  const getRepairSnapshotForIncident = useCallback((incidentId) => {
+    const key = incidentSnapshotKey(activeDomain, incidentId);
+    if (!key) return null;
+    return incidentRepairProgressByKey?.[key] || null;
+  }, [activeDomain, incidentRepairProgressByKey]);
 
   const splitAddressParts = useCallback((rawAddress) => {
     const raw = String(rawAddress || "").trim();
@@ -6813,6 +6848,7 @@ function OpenReportsModal({
   const adminIncidentDotForRow = useCallback((row) => {
     const incidentId = String(row?.incident_id || "").trim();
     if (!incidentId) return { color: "#9e9e9e", label: "Unknown incident" };
+    const repairSnapshot = getRepairSnapshotForIncident(incidentId);
 
     if (activeDomain === "streetlights") {
       const confidence = getStreetlightConfidence(incidentId);
@@ -6833,6 +6869,9 @@ function OpenReportsModal({
     }
 
     if (activeDomain === "potholes") {
+      if (repairSnapshot?.archived || repairSnapshot?.likelyFixed) {
+        return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
+      }
       if (!isOpenLifecycleState(row?.current_state || "")) {
         return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
       }
@@ -6843,6 +6882,9 @@ function OpenReportsModal({
       };
     }
     if (activeDomain === "water_drain_issues") {
+      if (repairSnapshot?.archived || repairSnapshot?.likelyFixed) {
+        return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
+      }
       if (!isOpenLifecycleState(row?.current_state || "")) {
         return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
       }
@@ -6856,7 +6898,7 @@ function OpenReportsModal({
     if (activeDomain === "power_outage") return { color: "#f39c12", label: "Power outage incident" };
     if (activeDomain === "water_main") return { color: "#3498db", label: "Water main incident" };
     return { color: "#616161", label: "Incident" };
-  }, [activeDomain, getStreetlightConfidence, isOpenLifecycleState]);
+  }, [activeDomain, getStreetlightConfidence, getRepairSnapshotForIncident, isOpenLifecycleState]);
 
   const adminMetrics = useMemo(() => {
     const summary = exportSummaryRows || [];
@@ -8148,7 +8190,12 @@ function OpenReportsModal({
             </div>
           ) : compactDomainPicker ? (
             <div style={{ display: "grid", gap: 8, width: "100%" }}>
-              {displayedAdminRows.map((r) => (
+              {displayedAdminRows.map((r) => {
+                const repairSnapshot = getRepairSnapshotForIncident(r.incident_id);
+                const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
+                  ? canShowPublicRepairAction(r.incident_id, activeDomain)
+                  : false;
+                return (
                 <div
                   key={`mobile-${r.incident_id}`}
                   style={{
@@ -8185,6 +8232,11 @@ function OpenReportsModal({
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>Latest report:</b> {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                   </div>
+                  {repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                      <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
+                    </div>
+                  )}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   <button
                       type="button"
@@ -8242,6 +8294,23 @@ function OpenReportsModal({
                         {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
                       </button>
                     )}
+                    {!canMutateIncidents && showPublicRepairAction && (
+                      <button
+                        type="button"
+                        onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                        style={{
+                          padding: "6px 8px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "var(--sl-ui-brand-green)",
+                          color: "white",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Is fixed
+                      </button>
+                    )}
                     {isStreetlightMyReports && isOpenLifecycleState(r.current_state || "") && (
                       <>
                         {canShowWorkingActionForIncident(r.incident_id) && (
@@ -8295,6 +8364,11 @@ function OpenReportsModal({
                   {isStreetlightMyReports && Boolean(utilityReportedByIncident[r.incident_id]) && (
                     <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
                       <b>Utility report #:</b> {utilityReportReferenceByIncident?.[r.incident_id] || "Not added yet"}
+                    </div>
+                  )}
+                  {repairSnapshot?.viewerHasRepairSignal && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                    <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.3 }}>
+                      You already confirmed this repair.
                     </div>
                   )}
                   {adminExpandedSet.has(r.incident_id) && (
@@ -8554,7 +8628,8 @@ function OpenReportsModal({
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div
@@ -8610,7 +8685,12 @@ function OpenReportsModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedAdminRows.map((r) => (
+                  {displayedAdminRows.map((r) => {
+                    const repairSnapshot = getRepairSnapshotForIncident(r.incident_id);
+                    const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
+                      ? canShowPublicRepairAction(r.incident_id, activeDomain)
+                      : false;
+                    return (
                     <Fragment key={r.incident_id}>
                       <tr>
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
@@ -8711,6 +8791,23 @@ function OpenReportsModal({
                                 {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
                               </button>
                             )}
+                            {!canMutateIncidents && showPublicRepairAction && (
+                              <button
+                                type="button"
+                                onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                                style={{
+                                  padding: "6px 8px",
+                                  borderRadius: 8,
+                                  border: "none",
+                                  background: "var(--sl-ui-brand-green)",
+                                  color: "white",
+                                  fontWeight: 900,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Is fixed
+                              </button>
+                            )}
                           </div>
                         </td>
                         {isStreetlightMyReports && (
@@ -8779,6 +8876,24 @@ function OpenReportsModal({
                         <tr>
                           <td colSpan={isStreetlightMyReports ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                             <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
+                              {repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                                <div
+                                  style={{
+                                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                    borderRadius: 8,
+                                    padding: "7px 8px",
+                                    display: "grid",
+                                    gap: 4,
+                                    background: "rgba(46,125,50,0.10)",
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 900 }}>Community Repair Status</div>
+                                  <div style={{ opacity: 0.9, lineHeight: 1.35 }}>{incidentRepairSummaryText(repairSnapshot)}</div>
+                                  {repairSnapshot?.viewerHasRepairSignal && (
+                                    <div style={{ opacity: 0.8, lineHeight: 1.3 }}>You already confirmed this repair.</div>
+                                  )}
+                                </div>
+                              )}
                               {activeDomain === "streetlights" && (() => {
                                 const util = getStreetlightUtilityForIncident(r.incident_id);
                                 const items = getStreetlightUtilityRows(util, r?.coords || null);
@@ -9041,7 +9156,8 @@ function OpenReportsModal({
                         </tr>
                       )}
                     </Fragment>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -11579,6 +11695,8 @@ export default function App({ onBackToHub = null }) {
   const [potholeReports, setPotholeReports] = useState([]); // rows: {id, pothole_id, lat, lng, note, ts, reporter_*}
   const [cityBoundaryGeojson, setCityBoundaryGeojson] = useState(null);
   const [incidentStateByKey, setIncidentStateByKey] = useState({});
+  const [tenantDomainPublicConfigByDomain, setTenantDomainPublicConfigByDomain] = useState({});
+  const [incidentRepairProgressByKey, setIncidentRepairProgressByKey] = useState({});
   const [waterDrainIncidentsById, setWaterDrainIncidentsById] = useState({});
   // Google Maps InfoWindow selection
   const [selectedOfficialId, setSelectedOfficialId] = useState(null);
@@ -12525,7 +12643,7 @@ export default function App({ onBackToHub = null }) {
   const [guestInfoOpen, setGuestInfoOpen] = useState(false);
   const [contactChoiceOpen, setContactChoiceOpen] = useState(false);
   const [pendingSubmit, setPendingSubmit] = useState(false);
-  const [pendingGuestAction, setPendingGuestAction] = useState(null); // { kind: "report" | "working" | "bulk", lightId?: string }
+  const [pendingGuestAction, setPendingGuestAction] = useState(null); // { kind: "report" | "working" | "bulk" | "repair", lightId?: string, incidentId?: string, domainKey?: string }
   const guestSubmitBypassRef = useRef(false);
   const domainSubmitInFlightRef = useRef(false);
   const domainSubmitDedupRef = useRef(new Map());
@@ -14035,6 +14153,12 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
+  async function fetchTenantDomainPublicConfig() {
+    const { data, error } = await supabase.rpc("tenant_domain_public_config");
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
   useEffect(() => {
     if (!authReady) return; // ✅ wait until auth restored
     async function loadAll() {
@@ -15453,6 +15577,114 @@ export default function App({ onBackToHub = null }) {
     return out;
   }, [viewerIdentityKey, utilityReportedLightIdSet, officialIdSet]);
 
+  const refreshIncidentRepairProgress = useCallback(async (identityKey = viewerIdentityKey) => {
+    try {
+      const { data, error } = await supabase.rpc("incident_repair_progress_public", {
+        p_viewer_identity_hash: String(identityKey || "").trim() || null,
+      });
+      if (error) throw error;
+      const next = {};
+      for (const row of data || []) {
+        const key = incidentSnapshotKey(row?.domain, row?.incident_id);
+        if (!key) continue;
+        next[key] = {
+          issueScore: Number(row?.issue_score || 0),
+          repairProgress: Math.max(0, Math.min(INCIDENT_REPAIR_TARGET, Number(row?.repair_progress || 0))),
+          lastIssueAt: row?.last_issue_at || null,
+          lastRepairAt: row?.last_repair_at || null,
+          lastMovementAt: row?.last_movement_at || null,
+          archived: row?.archived === true,
+          likelyFixed: row?.likely_fixed === true,
+          viewerIsOriginalReporter: row?.viewer_is_original_reporter === true,
+          viewerHasIssueReport: row?.viewer_has_issue_report === true,
+          viewerHasRepairSignal: row?.viewer_has_repair_signal === true,
+        };
+      }
+      setIncidentRepairProgressByKey(next);
+    } catch (e) {
+      const msg = String(e?.message || "").toLowerCase();
+      if (!(msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"))) {
+        console.warn("[incident_repair_progress_public] load warning:", e?.message || e);
+      }
+      setIncidentRepairProgressByKey({});
+    }
+  }, [viewerIdentityKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDomainPublicConfig() {
+      try {
+        const rows = await fetchTenantDomainPublicConfig();
+        if (cancelled) return;
+        const next = {};
+        for (const row of rows || []) {
+          const domainKey = String(row?.domain || "").trim().toLowerCase();
+          if (!domainKey) continue;
+          next[domainKey] = {
+            domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
+            organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+          };
+        }
+        setTenantDomainPublicConfigByDomain(next);
+      } catch (e) {
+        const msg = String(e?.message || "").toLowerCase();
+        if (!(msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"))) {
+          console.warn("[tenant_domain_public_config] load warning:", e?.message || e);
+        }
+        if (!cancelled) setTenantDomainPublicConfigByDomain({});
+      }
+    }
+    loadDomainPublicConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    void refreshIncidentRepairProgress(viewerIdentityKey);
+  }, [authReady, viewerIdentityKey, refreshIncidentRepairProgress]);
+
+  useEffect(() => {
+    if (!authReady) return undefined;
+    const channel = supabase
+      .channel("realtime-incident-repair-signals")
+      .on("postgres_changes", { event: "*", schema: "public", table: "incident_repair_signals" }, () => {
+        void refreshIncidentRepairProgress(viewerIdentityKey);
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authReady, viewerIdentityKey, refreshIncidentRepairProgress]);
+
+  const getIncidentRepairSnapshot = useCallback((domain, incidentId) => {
+    const key = incidentSnapshotKey(domain, incidentId);
+    if (!key) return null;
+    return incidentRepairProgressByKey?.[key] || null;
+  }, [incidentRepairProgressByKey]);
+
+  const isPublicRepairEnabledForDomain = useCallback((domainKeyRaw) => {
+    const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
+    if (!domainKey) return false;
+    const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
+    const domainType = String(cfg?.domain_type || defaultDomainType(domainKey)).trim().toLowerCase();
+    if (domainType !== "incident_driven") return false;
+    return cfg?.organization_monitored_repairs === false;
+  }, [tenantDomainPublicConfigByDomain]);
+
+  const canShowPublicRepairAction = useCallback((incidentIdRaw, domainKeyRaw) => {
+    const incidentId = String(incidentIdRaw || "").trim();
+    const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
+    if (!incidentId || !domainKey) return false;
+    if (!isPublicRepairEnabledForDomain(domainKey)) return false;
+    const snapshot = getIncidentRepairSnapshot(domainKey, incidentId);
+    if (snapshot?.archived) return false;
+    if (snapshot?.likelyFixed) return false;
+    if (snapshot?.viewerHasRepairSignal) return false;
+    return true;
+  }, [isPublicRepairEnabledForDomain, getIncidentRepairSnapshot]);
+
   const streetlightConfidenceByLightId = useMemo(() => {
     const byLight = {};
     const signalMap = new Map();
@@ -15596,12 +15828,15 @@ export default function App({ onBackToHub = null }) {
         .map((m) => {
           const count = Number(m?.count || 0);
           const incidentId = String(m?.id || "").trim();
+          const repairSnapshot = getIncidentRepairSnapshot("water_drain_issues", incidentId);
+          if (repairSnapshot?.archived) return null;
           const userReported = incidentId ? viewerReportedWaterIncidentIdSet.has(incidentId) : false;
+          const resolvedByCommunity = repairSnapshot?.likelyFixed === true;
           if (adminView) {
             if (count < 1) return null;
             return {
               ...m,
-              color: waterDrainColorFromCount(count),
+              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : waterDrainColorFromCount(count),
               ringColor: userReported ? "#1e88e5" : "#fff",
               glyph: "",
               glyphSrc: UI_ICON_SRC.waterMain,
@@ -15613,7 +15848,9 @@ export default function App({ onBackToHub = null }) {
           const privateOwnYellow = officialStatusFromSinceFixCount(1).color;
           return {
             ...m,
-            color: isPrivateOwn ? privateOwnYellow : waterDrainColorFromCount(count),
+            color: resolvedByCommunity
+              ? "var(--sl-ui-brand-green)"
+              : (isPrivateOwn ? privateOwnYellow : waterDrainColorFromCount(count)),
             ringColor: userReported ? "#1e88e5" : "#fff",
             glyph: "",
             glyphSrc: UI_ICON_SRC.waterMain,
@@ -15636,12 +15873,16 @@ export default function App({ onBackToHub = null }) {
       .map((m) => {
         const pid = String(m?.pothole_id || "").trim();
         const count = Number(m?.count || 0);
+        const incidentId = pid ? `pothole:${pid}` : "";
+        const repairSnapshot = getIncidentRepairSnapshot("potholes", incidentId);
+        if (repairSnapshot?.archived) return null;
         const userReported = pid ? viewerReportedPotholeIdSet.has(pid) : false;
+        const resolvedByCommunity = repairSnapshot?.likelyFixed === true;
         if (adminView) {
           if (count < 1) return null;
           return {
             ...m,
-            color: potholeColorFromCount(count),
+            color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
             ringColor: userReported ? "#1e88e5" : "#fff",
             glyph: "",
             glyphSrc: UI_ICON_SRC.pothole,
@@ -15652,7 +15893,7 @@ export default function App({ onBackToHub = null }) {
         if (!isPublic && !isPrivateOwn) return null;
         return {
           ...m,
-          color: potholeColorFromCount(count),
+          color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
           ringColor: userReported ? "#1e88e5" : "#fff",
           glyph: "",
           glyphSrc: UI_ICON_SRC.pothole,
@@ -15669,6 +15910,7 @@ export default function App({ onBackToHub = null }) {
     nonStreetlightDomainMarkers,
     viewerReportedWaterIncidentIdSet,
     viewerReportedPotholeIdSet,
+    getIncidentRepairSnapshot,
     session?.user?.id,
     isAdmin,
     restrictPublicMarkersToCity,
@@ -16722,10 +16964,12 @@ export default function App({ onBackToHub = null }) {
     setGuestInfoDraft({ name: "", phone: "", email: "" });
   }
 
-  function requestGuestChallenge(kind, lightId = "") {
+  function requestGuestChallenge(kind, lightId = "", domainKey = "") {
     setPendingGuestAction(
       kind === "working"
         ? { kind, lightId: (lightId || "").trim() }
+        : kind === "repair"
+          ? { kind, incidentId: String(lightId || "").trim(), domainKey: String(domainKey || "").trim() }
         : { kind }
     );
     setContactChoiceOpen(true);
@@ -17447,6 +17691,10 @@ export default function App({ onBackToHub = null }) {
     setTimeout(() => {
       if (action.kind === "working") {
         submitIsWorking(action.lightId || "");
+        return;
+      }
+      if (action.kind === "repair") {
+        submitIncidentRepairConfirmation(action.incidentId || "", action.domainKey || "");
         return;
       }
       if (action.kind === "bulk") {
@@ -18373,6 +18621,101 @@ async function insertReportWithFallback(payload) {
 
     if (!isAuthed) clearGuestContact();
     openNotice("✅", "Thanks", "Reported working.");
+  }
+
+  async function submitIncidentRepairConfirmation(incidentIdRaw, domainKeyRaw) {
+    const incidentId = String(incidentIdRaw || "").trim();
+    const domainKey = normalizeDomainKey(domainKeyRaw) || domainForIncidentId(incidentId);
+    if (!incidentId || !domainKey || saving) return;
+
+    if (!isPublicRepairEnabledForDomain(domainKey)) {
+      openNotice("⚠️", "Repair confirmations unavailable", "This organization is handling repairs directly for this domain.");
+      return;
+    }
+
+    const currentSnapshot = getIncidentRepairSnapshot(domainKey, incidentId);
+    if (currentSnapshot?.archived) {
+      openNotice("ℹ️", "Incident archived", "This incident has already been archived due to inactivity.");
+      return;
+    }
+    if (currentSnapshot?.likelyFixed) {
+      openNotice("ℹ️", "Already likely fixed", "Community repair confirmations already reached the fixed threshold.");
+      return;
+    }
+    if (currentSnapshot?.viewerHasRepairSignal) {
+      openNotice("ℹ️", "Already confirmed", "You already marked this incident fixed.");
+      return;
+    }
+
+    const isAuthed = Boolean(session?.user?.id);
+    const usingGuestBypass = !isAuthed && guestSubmitBypassRef.current;
+    if (!isAuthed && !usingGuestBypass) {
+      requestGuestChallenge("repair", incidentId, domainKey);
+      return;
+    }
+    const guestSource = usingGuestBypass ? guestInfoDraft : guestInfo;
+    if (usingGuestBypass) guestSubmitBypassRef.current = false;
+
+    const name = isAuthed
+      ? ((profile?.full_name || session?.user?.user_metadata?.full_name || "").trim() || "User")
+      : (guestSource?.name || "");
+    const phone = isAuthed ? (profile?.phone || "") : (guestSource?.phone || "");
+    const email = isAuthed
+      ? ((profile?.email || session?.user?.email) || "")
+      : (guestSource?.email || "");
+    const identityGuestInfo = isAuthed ? null : { name, phone, email };
+
+    if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+      requestGuestChallenge("repair", incidentId, domainKey);
+      openNotice("⚠️", "Contact required", "Please add your name, email, and phone before confirming a repair.");
+      return;
+    }
+
+    const identityKey = reporterIdentityKey({ session, profile, guestInfo: identityGuestInfo });
+    if (!identityKey) {
+      openNotice("⚠️", "Identity required", "Please add contact details before confirming a repair.");
+      return;
+    }
+
+    const abuseGate = await registerAbuseEventWithServer({
+      session,
+      profile,
+      guestInfo: identityGuestInfo,
+      domain: domainKey,
+      bypass: false,
+    });
+    if (!abuseGate.allowed) {
+      openRateLimitNotice(openNotice, abuseGate);
+      return;
+    }
+
+    setSaving(true);
+    const { error } = await supabase
+      .from("incident_repair_signals")
+      .insert([{
+        tenant_key: activeTenantKey(),
+        domain: domainKey,
+        incident_id: incidentId,
+        identity_hash: identityKey,
+        reporter_user_id: isAuthed ? session.user.id : null,
+      }]);
+    setSaving(false);
+
+    if (error) {
+      const code = String(error?.code || "").trim();
+      const msg = String(error?.message || "").toLowerCase();
+      if (code === "23505" || msg.includes("duplicate")) {
+        openNotice("ℹ️", "Already confirmed", "You already marked this incident fixed.");
+        return;
+      }
+      console.error("[incident_repair_signals] insert error:", error);
+      openNotice("⚠️", "Couldn’t save", error.message || "Could not record repair confirmation.");
+      return;
+    }
+
+    await refreshIncidentRepairProgress(identityKey);
+    if (!isAuthed) clearGuestContact();
+    openNotice("✅", "Repair confirmation saved", "Thanks. Community repair progress has been updated.");
   }
 
   function resumeSubmitIfPending() {
@@ -21301,6 +21644,9 @@ async function insertReportWithFallback(payload) {
           setIsWorkingConfirmOpen(true);
         }}
         streetlightConfidenceByLightId={streetlightConfidenceByLightId}
+        incidentRepairProgressByKey={incidentRepairProgressByKey}
+        canShowPublicRepairAction={canShowPublicRepairAction}
+        onConfirmRepairIncident={submitIncidentRepairConfirmation}
         focusIncidentId={myReportsFocusIncidentId}
         initialSearchQuery={myReportsFocusQuery}
         mapBounds={mapBounds}
@@ -21372,6 +21718,9 @@ async function insertReportWithFallback(payload) {
         isWithinCityLimits={isWithinAshtabulaCityLimits}
         onUtilityReportedChange={handleUtilityReportedChange}
         streetlightConfidenceByLightId={streetlightConfidenceByLightId}
+        incidentRepairProgressByKey={incidentRepairProgressByKey}
+        canShowPublicRepairAction={canShowPublicRepairAction}
+        onConfirmRepairIncident={submitIncidentRepairConfirmation}
       />
 
       <ManageAccountModal
@@ -22265,29 +22614,53 @@ async function insertReportWithFallback(payload) {
             )}
             {!isAdmin && (() => {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+              const incidentId = pid ? `pothole:${pid}` : "";
+              const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
               const userReported = Boolean(pid && viewerReportedPotholeIdSet.has(pid));
-              if (!session?.user?.id || !userReported) return null;
               const lat = Number(selectedDomainMarker?.lat);
               const lng = Number(selectedDomainMarker?.lng);
               const ph = Number.isFinite(lat) && Number.isFinite(lng)
                 ? makePotholeIdFromCoords(lat, lng)
                 : "";
+              const showPublicRepairAction = canShowPublicRepairAction(incidentId, "potholes");
+              if (!userReported && !showPublicRepairAction && !repairSnapshot) return null;
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      openMyReports({
-                        domainKey: "potholes",
-                        focusIncidentId: `pothole:${pid}`,
-                        focusQuery: ph || pid,
-                      });
-                    }}
-                    style={markerPopupActionSecondary}
-                  >
-                    View Report
-                  </button>
+                  {repairSnapshot && (
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                      <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
+                    </div>
+                  )}
+                  {userReported && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openMyReports({
+                          domainKey: "potholes",
+                          focusIncidentId: `pothole:${pid}`,
+                          focusQuery: ph || pid,
+                        });
+                      }}
+                      style={markerPopupActionSecondary}
+                    >
+                      View Report
+                    </button>
+                  )}
+                  {showPublicRepairAction && (
+                    <button
+                      type="button"
+                      onClick={() => submitIncidentRepairConfirmation(incidentId, "potholes")}
+                      style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                    >
+                      Is fixed
+                    </button>
+                  )}
+                  {repairSnapshot?.viewerHasRepairSignal && (
+                    <div style={{ fontSize: 12, opacity: 0.82, lineHeight: 1.3 }}>
+                      You already confirmed this repair.
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -22444,25 +22817,48 @@ async function insertReportWithFallback(payload) {
             })()}
             {!isAdmin && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
+              const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
-              if (!session?.user?.id || !userReported) return null;
               const wd = makeWaterDrainIdFromIncidentId(incidentId);
+              const showPublicRepairAction = canShowPublicRepairAction(incidentId, "water_drain_issues");
+              if (!userReported && !showPublicRepairAction && !repairSnapshot) return null;
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      openMyReports({
-                        domainKey: "water_drain_issues",
-                        focusIncidentId: incidentId,
-                        focusQuery: wd || incidentId,
-                      });
-                    }}
-                    style={markerPopupActionSecondary}
-                  >
-                    View Report
-                  </button>
+                  {repairSnapshot && (
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                      <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
+                    </div>
+                  )}
+                  {userReported && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openMyReports({
+                          domainKey: "water_drain_issues",
+                          focusIncidentId: incidentId,
+                          focusQuery: wd || incidentId,
+                        });
+                      }}
+                      style={markerPopupActionSecondary}
+                    >
+                      View Report
+                    </button>
+                  )}
+                  {showPublicRepairAction && (
+                    <button
+                      type="button"
+                      onClick={() => submitIncidentRepairConfirmation(incidentId, "water_drain_issues")}
+                      style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                    >
+                      Is fixed
+                    </button>
+                  )}
+                  {repairSnapshot?.viewerHasRepairSignal && (
+                    <div style={{ fontSize: 12, opacity: 0.82, lineHeight: 1.3 }}>
+                      You already confirmed this repair.
+                    </div>
+                  )}
                 </>
               );
             })()}

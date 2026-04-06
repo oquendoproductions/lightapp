@@ -926,6 +926,7 @@ function initialDomainConfigForm() {
     out[d.key] = {
       domain_type: defaultDomainType(d.key),
       notification_email: "",
+      organization_monitored_repairs: true,
     };
   }
   return out;
@@ -2555,7 +2556,7 @@ export default function PlatformAdminApp() {
     }
     const { data, error } = await supabase
       .from("tenant_domain_configs")
-      .select("tenant_key,domain,domain_type,notification_email");
+      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs");
     if (error) {
       if (isMissingRelationError(error)) {
         setTenantDomainConfigsByTenant({});
@@ -2572,6 +2573,7 @@ export default function PlatformAdminApp() {
       next[tenantKey][domain] = {
         domain_type: String(row?.domain_type || defaultDomainType(domain)).trim().toLowerCase() || defaultDomainType(domain),
         notification_email: String(row?.notification_email || "").trim(),
+        organization_monitored_repairs: row?.organization_monitored_repairs !== false,
       };
     }
     setTenantDomainConfigsByTenant(next);
@@ -4159,6 +4161,7 @@ export default function PlatformAdminApp() {
       nextDomainConfig[d.key] = {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
         notification_email: String(configured?.notification_email || fallbackNotification).trim(),
+        organization_monitored_repairs: configured?.organization_monitored_repairs !== false,
       };
     }
     setDomainConfigForm(nextDomainConfig);
@@ -4732,6 +4735,7 @@ export default function PlatformAdminApp() {
       domain: d.key,
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
+      organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
       updated_by: cleanOptional(sessionUserId),
     }));
 
@@ -9457,6 +9461,43 @@ export default function PlatformAdminApp() {
                                 style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               />
                             </label>
+                            {!isAssetBacked && (
+                              <div style={{ ...modalField, justifyContent: "center" }}>
+                                <span>Repair Verification</span>
+                                <label
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    minHeight: 48,
+                                    padding: "0 14px",
+                                    borderRadius: 14,
+                                    border: "1px solid rgba(17, 36, 69, 0.14)",
+                                    background: domainFieldsReadOnly ? "#eef4fb" : "rgba(255,255,255,0.92)",
+                                    color: palette.navy900,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
+                                    disabled={domainFieldsReadOnly}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        organization_monitored_repairs: e.target.checked,
+                                      },
+                                    }))}
+                                  />
+                                  <span>
+                                    {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false
+                                      ? "Organization monitored repairs"
+                                      : "Public repair confirmations enabled"}
+                                  </span>
+                                </label>
+                              </div>
+                            )}
                           </div>
                           {isAssetBacked ? (
                             <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
