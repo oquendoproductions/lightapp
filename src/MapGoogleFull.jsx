@@ -112,7 +112,7 @@ const BULK_MAX_LIGHTS_PER_SUBMIT = 10;
 const EXPORT_SCHEMA_VERSION = "v1";
 const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
-const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v1";
+const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
 
 // Location request prompt upon opening page
 const LOC_PROMPTED_SESSION_KEY = "streetlight_loc_prompted_session_v1";
@@ -317,6 +317,8 @@ function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
       eventsLastViewedAt: 0,
       alertsReadKeys: [],
       eventsReadKeys: [],
+      alertsReadIds: [],
+      eventsReadIds: [],
     };
   }
   try {
@@ -327,6 +329,8 @@ function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
         eventsLastViewedAt: 0,
         alertsReadKeys: [],
         eventsReadKeys: [],
+        alertsReadIds: [],
+        eventsReadIds: [],
       };
     }
     const parsed = JSON.parse(raw);
@@ -335,6 +339,8 @@ function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
       eventsLastViewedAt: Math.max(0, Number(parsed?.eventsLastViewedAt || 0)),
       alertsReadKeys: Array.isArray(parsed?.alertsReadKeys) ? parsed.alertsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
       eventsReadKeys: Array.isArray(parsed?.eventsReadKeys) ? parsed.eventsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
+      alertsReadIds: Array.isArray(parsed?.alertsReadIds) ? parsed.alertsReadIds.map((value) => String(value || "").trim()).filter(Boolean) : [],
+      eventsReadIds: Array.isArray(parsed?.eventsReadIds) ? parsed.eventsReadIds.map((value) => String(value || "").trim()).filter(Boolean) : [],
     };
   } catch {
     return {
@@ -342,6 +348,8 @@ function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
       eventsLastViewedAt: 0,
       alertsReadKeys: [],
       eventsReadKeys: [],
+      alertsReadIds: [],
+      eventsReadIds: [],
     };
   }
 }
@@ -356,6 +364,8 @@ function saveMapCommunityFeedReadState(tenantKey, viewerKey, value) {
         eventsLastViewedAt: Math.max(0, Number(value?.eventsLastViewedAt || 0)),
         alertsReadKeys: Array.isArray(value?.alertsReadKeys) ? value.alertsReadKeys.slice(-300) : [],
         eventsReadKeys: Array.isArray(value?.eventsReadKeys) ? value.eventsReadKeys.slice(-300) : [],
+        alertsReadIds: Array.isArray(value?.alertsReadIds) ? value.alertsReadIds.slice(-300) : [],
+        eventsReadIds: Array.isArray(value?.eventsReadIds) ? value.eventsReadIds.slice(-300) : [],
       })
     );
   } catch {
@@ -391,9 +401,16 @@ function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts"
       ? (Array.isArray(readState?.eventsReadKeys) ? readState.eventsReadKeys : [])
       : (Array.isArray(readState?.alertsReadKeys) ? readState.alertsReadKeys : [])
   );
+  const readIds = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsReadIds) ? readState.eventsReadIds : [])
+      : (Array.isArray(readState?.alertsReadIds) ? readState.alertsReadIds : [])
+  );
   const threshold = Math.max(0, Number(lastViewedAt || 0));
   return (items || []).filter((item) => {
+    const itemId = String(item?.id || "").trim();
     const itemKey = mapCommunityFeedItemReadKey(item);
+    if (itemId && readIds.has(itemId)) return false;
     if (itemKey && readKeys.has(itemKey)) return false;
     return mapCommunityFeedItemTs(item) > threshold;
   }).length;
@@ -11900,6 +11917,8 @@ export default function App({ onBackToHub = null }) {
     eventsLastViewedAt: 0,
     alertsReadKeys: [],
     eventsReadKeys: [],
+    alertsReadIds: [],
+    eventsReadIds: [],
   });
 
 
@@ -13192,13 +13211,20 @@ export default function App({ onBackToHub = null }) {
     const nextReadKeys = sourceItems
       .map((item) => mapCommunityFeedItemReadKey(item))
       .filter(Boolean);
+    const nextReadIds = sourceItems
+      .map((item) => String(item?.id || "").trim())
+      .filter(Boolean);
     setMapCommunityFeedReadState((prev) => {
       const mergedAlertKeys = new Set(Array.isArray(prev?.alertsReadKeys) ? prev.alertsReadKeys : []);
       const mergedEventKeys = new Set(Array.isArray(prev?.eventsReadKeys) ? prev.eventsReadKeys : []);
+      const mergedAlertIds = new Set(Array.isArray(prev?.alertsReadIds) ? prev.alertsReadIds : []);
+      const mergedEventIds = new Set(Array.isArray(prev?.eventsReadIds) ? prev.eventsReadIds : []);
       if (kind === "alerts") {
         nextReadKeys.forEach((key) => mergedAlertKeys.add(key));
+        nextReadIds.forEach((id) => mergedAlertIds.add(id));
       } else {
         nextReadKeys.forEach((key) => mergedEventKeys.add(key));
+        nextReadIds.forEach((id) => mergedEventIds.add(id));
       }
       const next = {
         alertsLastViewedAt: kind === "alerts"
@@ -13209,6 +13235,8 @@ export default function App({ onBackToHub = null }) {
           : Math.max(0, Number(prev?.eventsLastViewedAt || 0)),
         alertsReadKeys: Array.from(mergedAlertKeys).slice(-300),
         eventsReadKeys: Array.from(mergedEventKeys).slice(-300),
+        alertsReadIds: Array.from(mergedAlertIds).slice(-300),
+        eventsReadIds: Array.from(mergedEventIds).slice(-300),
       };
       saveMapCommunityFeedReadState(tenantKey, communityFeedViewerKey, next);
       return next;
@@ -23952,7 +23980,7 @@ async function insertReportWithFallback(payload) {
             top: "calc(8px + env(safe-area-inset-top))",
             left: 0,
             right: 0,
-            zIndex: 1600,
+            zIndex: accountMenuOpen ? 2602 : 1600,
             display: "grid",
             placeItems: "center",
             padding: "0 10px",
@@ -24037,7 +24065,7 @@ async function insertReportWithFallback(payload) {
                   background: mapHeaderTheme.mobileBackground,
                   boxShadow: "var(--mobile-header-shadow)",
                   color: mapHeaderTheme.textColor,
-                  overflow: "hidden",
+                  overflow: accountMenuOpen ? "visible" : "hidden",
                 }}
             >
               <div
