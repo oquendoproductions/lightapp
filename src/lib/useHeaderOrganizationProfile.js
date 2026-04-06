@@ -23,11 +23,7 @@ export function useHeaderOrganizationProfile(tenantKey) {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("tenant_profiles")
-        .select("display_name,contact_primary_email,contact_primary_phone,website_url")
-        .eq("tenant_key", normalizedTenantKey)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc("tenant_header_profile_public");
 
       if (cancelled) return;
 
