@@ -5563,11 +5563,14 @@ function OpenReportsModal({
     if (!id) return null;
     return streetlightConfidenceByLightId?.[id] || null;
   }, [streetlightConfidenceByLightId]);
-  const canShowWorkingActionForIncident = useCallback((incidentId) => {
-    if (activeDomain !== "streetlights") return false;
-    if (!canMarkWorkingIncidents) return false;
+  const getWorkingActionStateForIncident = useCallback((incidentId) => {
+    if (activeDomain !== "streetlights") return "hidden";
+    if (!canMarkWorkingIncidents) return "hidden";
     const confidence = getStreetlightConfidence(incidentId);
-    return Boolean(confidence?.canViewerMarkWorking);
+    if (!confidence) return "hidden";
+    if (confidence?.viewerHasWorkingAck && !confidence?.closed) return "confirmed";
+    if (confidence?.canViewerMarkWorking) return "available";
+    return "hidden";
   }, [activeDomain, canMarkWorkingIncidents, getStreetlightConfidence]);
   const getRepairSnapshotForIncident = useCallback((incidentId) => {
     const key = incidentSnapshotKey(activeDomain, incidentId);
@@ -8398,7 +8401,7 @@ function OpenReportsModal({
                     )}
                     {isStreetlightMyReports && isOpenLifecycleState(r.current_state || "") && (
                       <>
-                        {canShowWorkingActionForIncident(r.incident_id) && (
+                        {getWorkingActionStateForIncident(r.incident_id) === "available" && (
                           <button
                             type="button"
                             onClick={() => onMarkWorkingIncident?.(r.incident_id)}
@@ -8413,6 +8416,25 @@ function OpenReportsModal({
                             }}
                           >
                             Is working
+                          </button>
+                        )}
+                        {getWorkingActionStateForIncident(r.incident_id) === "confirmed" && (
+                          <button
+                            type="button"
+                            disabled
+                            title="You already marked this light as working."
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: "rgba(46, 204, 113, 0.72)",
+                              color: "white",
+                              fontWeight: 900,
+                              cursor: "default",
+                              opacity: 0.92,
+                            }}
+                          >
+                            Working confirmed
                           </button>
                         )}
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
@@ -8933,7 +8955,7 @@ function OpenReportsModal({
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                         {isOpenLifecycleState(r.current_state || "") ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                {canShowWorkingActionForIncident(r.incident_id) && (
+                                {getWorkingActionStateForIncident(r.incident_id) === "available" && (
                                   <button
                                     type="button"
                                     onClick={() => onMarkWorkingIncident?.(r.incident_id)}
@@ -8949,6 +8971,26 @@ function OpenReportsModal({
                                     }}
                                   >
                                     Is working
+                                  </button>
+                                )}
+                                {getWorkingActionStateForIncident(r.incident_id) === "confirmed" && (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    title="You already marked this light as working."
+                                    style={{
+                                      padding: "6px 8px",
+                                      borderRadius: 8,
+                                      border: "none",
+                                      background: "rgba(46, 204, 113, 0.72)",
+                                      color: "white",
+                                      fontWeight: 900,
+                                      cursor: "default",
+                                      whiteSpace: "nowrap",
+                                      opacity: 0.92,
+                                    }}
+                                  >
+                                    Working confirmed
                                   </button>
                                 )}
                                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
