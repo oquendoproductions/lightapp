@@ -8314,9 +8314,11 @@ function OpenReportsModal({
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>State:</b> {incidentStateLabel(r.current_state || "")}
                   </div>
-                  <div style={{ fontSize: 12, opacity: 0.9 }}>
-                    <b>Reports:</b> {Number(r.report_count || 0)}
-                  </div>
+                  {!isMyReportsModal && (
+                    <div style={{ fontSize: 12, opacity: 0.9 }}>
+                      <b>Reports:</b> {Number(r.report_count || 0)}
+                    </div>
+                  )}
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>Latest report:</b> {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                   </div>
@@ -8790,7 +8792,7 @@ function OpenReportsModal({
                     {[
                       { key: "incident_id", label: activeDomain === "streetlights" ? "Light ID" : "Incident" },
                       { key: "current_state", label: "State" },
-                      { key: "report_count", label: "Reports" },
+                      ...(isMyReportsModal ? [] : [{ key: "report_count", label: "Reports" }]),
                       { key: "submitted_at", label: "Latest report" },
                       { key: "actions", label: "Actions" },
                       ...(isStreetlightMyReports ? [{ key: "utility_reported", label: "Utility reported" }] : []),
@@ -8870,9 +8872,11 @@ function OpenReportsModal({
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                           {incidentStateLabel(r.current_state || "")}
                         </td>
-                        <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", fontWeight: 900 }}>
-                          {Number(r.report_count || 0)}
-                        </td>
+                        {!isMyReportsModal && (
+                          <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", fontWeight: 900 }}>
+                            {Number(r.report_count || 0)}
+                          </td>
+                        )}
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                           {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                         </td>
@@ -9039,7 +9043,7 @@ function OpenReportsModal({
                       </tr>
                       {adminExpandedSet.has(r.incident_id) && (
                         <tr>
-                          <td colSpan={isStreetlightMyReports ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          <td colSpan={isMyReportsModal ? (isStreetlightMyReports ? 5 : 4) : (isStreetlightMyReports ? 6 : 5)} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                             <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
                               {repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
                                 <div
@@ -22718,10 +22722,12 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  <div style={markerPopupCopyRowStyle}>
-                    <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
-                    <span>{nearestLandmark || "No nearby landmark"}</span>
-                  </div>
+                  {!( !isAdmin && isPublicRepairEnabledForDomain("potholes") ) && (
+                    <div style={markerPopupCopyRowStyle}>
+                      <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                      <span>{nearestLandmark || "No nearby landmark"}</span>
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -22772,6 +22778,7 @@ async function insertReportWithFallback(payload) {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
               const incidentId = pid ? `pothole:${pid}` : "";
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
+              const hidePublicConfidenceMeta = isPublicRepairEnabledForDomain("potholes");
               const userReported = Boolean(pid && viewerReportedPotholeIdSet.has(pid));
               const lat = Number(selectedDomainMarker?.lat);
               const lng = Number(selectedDomainMarker?.lng);
@@ -22783,7 +22790,7 @@ async function insertReportWithFallback(payload) {
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  {repairSnapshot && (
+                  {repairSnapshot && !hidePublicConfidenceMeta && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
                       <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
                     </div>
@@ -22919,10 +22926,12 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  <div style={markerPopupCopyRowStyle}>
-                    <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
-                    <span>{nearestLandmark || "No nearby landmark"}</span>
-                  </div>
+                  {!( !isAdmin && isPublicRepairEnabledForDomain("water_drain_issues") ) && (
+                    <div style={markerPopupCopyRowStyle}>
+                      <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                      <span>{nearestLandmark || "No nearby landmark"}</span>
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -22974,6 +22983,7 @@ async function insertReportWithFallback(payload) {
             {!isAdmin && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
+              const hidePublicConfidenceMeta = isPublicRepairEnabledForDomain("water_drain_issues");
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
               const wd = makeWaterDrainIdFromIncidentId(incidentId);
               const showPublicRepairAction = canShowPublicRepairAction(incidentId, "water_drain_issues");
@@ -22981,7 +22991,7 @@ async function insertReportWithFallback(payload) {
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  {repairSnapshot && (
+                  {repairSnapshot && !hidePublicConfidenceMeta && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
                       <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
                     </div>
