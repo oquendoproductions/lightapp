@@ -12800,6 +12800,7 @@ export default function App({ onBackToHub = null }) {
   );
   const canOpenAdminReports = isAdmin || canAccessAdminReports;
   const canOpenDomainReports = isAdmin || canAccessDomainReports;
+  const reportsAdminView = isAdmin || canAccessAdminReports;
 
   useEffect(() => {
     if (!openReportsOpen) return;
@@ -14448,7 +14449,7 @@ export default function App({ onBackToHub = null }) {
       const actionsSelectPublic = "id, light_id, action, created_at";
       const actionsSelectFull = "id, light_id, action, note, created_at, actor_user_id";
 
-      const reportsPromise = isAdmin
+      const reportsPromise = reportsAdminView
         ? supabase.from("reports").select(reportSelectFull).order("created_at", { ascending: false })
         : (async () => {
             const first = await supabase
@@ -14465,7 +14466,7 @@ export default function App({ onBackToHub = null }) {
               .order("created_at", { ascending: false });
           })();
 
-      const ownReportsPromise = (!isAdmin && isAuthed)
+      const ownReportsPromise = (!reportsAdminView && isAuthed)
         ? supabase
             .from("reports")
             .select(reportSelectFull)
@@ -14481,7 +14482,7 @@ export default function App({ onBackToHub = null }) {
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
       const utilitySignalCountsPromise = supabase.rpc("streetlight_utility_signal_counts");
-      const utilityStatusAllPromise = isAdmin
+      const utilityStatusAllPromise = reportsAdminView
         ? supabase
             .from("utility_report_status")
             .select("incident_id")
@@ -14489,7 +14490,7 @@ export default function App({ onBackToHub = null }) {
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
 
-      const actionsPromise = isAdmin
+      const actionsPromise = reportsAdminView
         ? supabase.from("light_actions").select(actionsSelectFull).order("created_at", { ascending: false })
         : supabase.from("light_actions_public").select(actionsSelectPublic).order("created_at", { ascending: false });
 
@@ -14524,7 +14525,7 @@ export default function App({ onBackToHub = null }) {
       }
       let reportData = reportDataRaw;
       let repErr = repErrRaw;
-      if (!isAdmin && (repErr || !(Array.isArray(reportData) && reportData.length))) {
+      if (!reportsAdminView && (repErr || !(Array.isArray(reportData) && reportData.length))) {
         try {
           const fallback = await supabase
             .from("reports")
@@ -14951,7 +14952,7 @@ export default function App({ onBackToHub = null }) {
     }
 
     loadAll();
-  }, [authReady, isAdmin, session?.user?.id]);
+  }, [authReady, reportsAdminView, session?.user?.id]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -15040,7 +15041,7 @@ export default function App({ onBackToHub = null }) {
       }, 180);
     };
 
-    const reportsChannel = isAdmin ? supabase
+    const reportsChannel = reportsAdminView ? supabase
       .channel("realtime-reports")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "reports" }, (payload) => {
         const r = payload.new;
@@ -15111,7 +15112,7 @@ export default function App({ onBackToHub = null }) {
       })
       .subscribe();
 
-    const actionsChannel = isAdmin ? supabase
+    const actionsChannel = reportsAdminView ? supabase
       .channel("realtime-actions")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "light_actions" }, (payload) => {
         const a = payload.new;
@@ -15426,7 +15427,7 @@ export default function App({ onBackToHub = null }) {
       if (utilityStatusChannel) supabase.removeChannel(utilityStatusChannel);
       if (incidentStateChannel) supabase.removeChannel(incidentStateChannel);
     };
-  }, [isAdmin, session?.user?.id, domainForIncidentId]);
+  }, [reportsAdminView, isAdmin, session?.user?.id, domainForIncidentId]);
 
   // Build a fast lookup of official IDs
   const officialIdSet = useMemo(() => new Set(officialLights.map((o) => o.id)), [officialLights]);
@@ -21899,7 +21900,7 @@ async function insertReportWithFallback(payload) {
       <OpenReportsModal
         open={openReportsOpen}
         onClose={closeOpenReports}
-        isAdmin={isAdmin}
+        isAdmin={reportsAdminView}
         modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
         domainOptions={openReportsDomainOptions}
