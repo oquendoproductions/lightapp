@@ -9498,11 +9498,12 @@ function OpenReportsModal({
                   isFixed: Boolean(confidence?.closed),
                 }
               : { majorityLabel: (domainOptions || []).find((d) => d.key === activeDomain)?.label || "Report" };
+            const adminMarkerView = Boolean(reportsAdminView);
             const nonStreetlightDotColor =
               activeDomain === "potholes"
                 ? potholeColorFromCount(Number(g?.count || 0))
                 : activeDomain === "water_drain_issues"
-                  ? ((!isAdmin && Number(g?.count || 0) === 1)
+                  ? ((!adminMarkerView && Number(g?.count || 0) === 1)
                       ? officialStatusFromSinceFixCount(1).color
                       : waterDrainColorFromCount(Number(g?.count || 0)))
                 : activeDomain === "street_signs"
@@ -16079,7 +16080,7 @@ export default function App({ onBackToHub = null }) {
 
   const renderedDomainMarkers = useMemo(() => {
     if (isStreetSignsDomain) {
-      const adminView = Boolean(isAdmin);
+      const adminView = Boolean(reportsAdminView);
       const shaped = (nonStreetlightDomainMarkers || [])
         .map((m) => {
           const count = Number(m?.count || 0);
@@ -16100,7 +16101,7 @@ export default function App({ onBackToHub = null }) {
 
     if (isWaterDrainDomain) {
       const isLoggedIn = Boolean(session?.user?.id);
-      const adminView = Boolean(isAdmin);
+      const adminView = Boolean(reportsAdminView);
       const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("water_drain_issues");
       const shaped = (nonStreetlightDomainMarkers || [])
         .map((m) => {
@@ -16146,7 +16147,7 @@ export default function App({ onBackToHub = null }) {
       return base.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
     }
     const isLoggedIn = Boolean(session?.user?.id);
-    const adminView = Boolean(isAdmin);
+    const adminView = Boolean(reportsAdminView);
     const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("potholes");
     const shaped = (nonStreetlightDomainMarkers || [])
       .map((m) => {
@@ -16193,6 +16194,7 @@ export default function App({ onBackToHub = null }) {
     isPublicRepairEnabledForDomain,
     session?.user?.id,
     isAdmin,
+    reportsAdminView,
     restrictPublicMarkersToCity,
     isWithinAshtabulaCityLimits,
   ]);
@@ -16600,7 +16602,7 @@ export default function App({ onBackToHub = null }) {
     const lid = String(lightIdRaw || "").trim();
     if (!lid) return false;
 
-    if (isAdmin) {
+    if (reportsAdminView) {
       const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
       if (sinceFixCount < 1) return false;
       if (mode === "saved") return true;
@@ -16613,6 +16615,7 @@ export default function App({ onBackToHub = null }) {
   }, [
     streetlightInViewFilterMode,
     isAdmin,
+    reportsAdminView,
     reportsByOfficialId,
     utilityReportedAnyLightIdSet,
     viewerStreetlightRingOpenIdSet,
