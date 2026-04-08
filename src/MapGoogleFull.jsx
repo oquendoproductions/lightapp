@@ -5294,6 +5294,7 @@ function OpenReportsModal({
   open,
   onClose,
   isAdmin = false,
+  showDeveloperDiagnostics = false,
   activeDomain = "streetlights",
   onSelectDomain,
   domainOptions = REPORT_DOMAIN_OPTIONS,
@@ -8322,7 +8323,7 @@ function OpenReportsModal({
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>Latest report:</b> {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                   </div>
-                  {repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                  {showDeveloperDiagnostics && repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
                       <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
                     </div>
@@ -9045,7 +9046,7 @@ function OpenReportsModal({
                         <tr>
                           <td colSpan={isMyReportsModal ? (isStreetlightMyReports ? 5 : 4) : (isStreetlightMyReports ? 6 : 5)} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                             <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
-                              {repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                              {showDeveloperDiagnostics && repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
                                 <div
                                   style={{
                                     border: "1px solid var(--sl-ui-open-reports-item-border)",
@@ -16100,14 +16101,15 @@ export default function App({ onBackToHub = null }) {
     if (isWaterDrainDomain) {
       const isLoggedIn = Boolean(session?.user?.id);
       const adminView = Boolean(isAdmin);
+      const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("water_drain_issues");
       const shaped = (nonStreetlightDomainMarkers || [])
         .map((m) => {
           const count = Number(m?.count || 0);
           const incidentId = String(m?.id || "").trim();
           const repairSnapshot = getIncidentRepairSnapshot("water_drain_issues", incidentId);
-          if (repairSnapshot?.archived) return null;
+          if (usePublicRepairLifecycle && repairSnapshot?.archived) return null;
           const userReported = incidentId ? viewerReportedWaterIncidentIdSet.has(incidentId) : false;
-          const resolvedByCommunity = repairSnapshot?.likelyFixed === true;
+          const resolvedByCommunity = usePublicRepairLifecycle && repairSnapshot?.likelyFixed === true;
           if (adminView) {
             if (count < 1) return null;
             return {
@@ -16145,15 +16147,16 @@ export default function App({ onBackToHub = null }) {
     }
     const isLoggedIn = Boolean(session?.user?.id);
     const adminView = Boolean(isAdmin);
+    const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("potholes");
     const shaped = (nonStreetlightDomainMarkers || [])
       .map((m) => {
         const pid = String(m?.pothole_id || "").trim();
         const count = Number(m?.count || 0);
         const incidentId = pid ? `pothole:${pid}` : "";
         const repairSnapshot = getIncidentRepairSnapshot("potholes", incidentId);
-        if (repairSnapshot?.archived) return null;
+        if (usePublicRepairLifecycle && repairSnapshot?.archived) return null;
         const userReported = pid ? viewerReportedPotholeIdSet.has(pid) : false;
-        const resolvedByCommunity = repairSnapshot?.likelyFixed === true;
+        const resolvedByCommunity = usePublicRepairLifecycle && repairSnapshot?.likelyFixed === true;
         if (adminView) {
           if (count < 1) return null;
           return {
@@ -16187,6 +16190,7 @@ export default function App({ onBackToHub = null }) {
     viewerReportedWaterIncidentIdSet,
     viewerReportedPotholeIdSet,
     getIncidentRepairSnapshot,
+    isPublicRepairEnabledForDomain,
     session?.user?.id,
     isAdmin,
     restrictPublicMarkersToCity,
@@ -21901,6 +21905,7 @@ async function insertReportWithFallback(payload) {
         open={openReportsOpen}
         onClose={closeOpenReports}
         isAdmin={reportsAdminView}
+        showDeveloperDiagnostics={isAdmin}
         modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
         domainOptions={openReportsDomainOptions}
@@ -22832,7 +22837,6 @@ async function insertReportWithFallback(payload) {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
               const incidentId = pid ? `pothole:${pid}` : "";
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
-              const hidePublicConfidenceMeta = isPublicRepairEnabledForDomain("potholes");
               const userReported = Boolean(pid && viewerReportedPotholeIdSet.has(pid));
               const lat = Number(selectedDomainMarker?.lat);
               const lng = Number(selectedDomainMarker?.lng);
@@ -22844,11 +22848,6 @@ async function insertReportWithFallback(payload) {
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  {repairSnapshot && !hidePublicConfidenceMeta && (
-                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
-                      <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
-                    </div>
-                  )}
                   {userReported && (
                     <button
                       type="button"
@@ -23037,7 +23036,6 @@ async function insertReportWithFallback(payload) {
             {!isAdmin && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
-              const hidePublicConfidenceMeta = isPublicRepairEnabledForDomain("water_drain_issues");
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
               const wd = makeWaterDrainIdFromIncidentId(incidentId);
               const showPublicRepairAction = canShowPublicRepairAction(incidentId, "water_drain_issues");
@@ -23045,11 +23043,6 @@ async function insertReportWithFallback(payload) {
               return (
                 <>
                   <div style={{ height: 4 }} />
-                  {repairSnapshot && !hidePublicConfidenceMeta && (
-                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
-                      <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
-                    </div>
-                  )}
                   {userReported && (
                     <button
                       type="button"
