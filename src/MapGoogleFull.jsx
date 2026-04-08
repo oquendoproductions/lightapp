@@ -5295,6 +5295,7 @@ function OpenReportsModal({
   onClose,
   isAdmin = false,
   showDeveloperDiagnostics = false,
+  allowIncidentMutations = false,
   activeDomain = "streetlights",
   onSelectDomain,
   domainOptions = REPORT_DOMAIN_OPTIONS,
@@ -5333,7 +5334,7 @@ function OpenReportsModal({
   mapBounds = null,
   inViewOnly = false,
 }) {
-  const canMutateIncidents = isAdmin && typeof onMarkFixedIncident === "function";
+  const canMutateIncidents = allowIncidentMutations && typeof onMarkFixedIncident === "function";
   const canMarkWorkingIncidents = typeof onMarkWorkingIncident === "function";
   const [sortMode, setSortMode] = useState("count"); // count | recent
   const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
@@ -5580,7 +5581,7 @@ function OpenReportsModal({
   }, [activeDomain, incidentRepairProgressByKey]);
 
   const isMyReportsModal = String(modalTitle || "").trim().toLowerCase() === "my reports";
-  const isStreetlightMyReports = activeDomain === "streetlights" && !canMutateIncidents;
+  const isStreetlightMyReports = isMyReportsModal && activeDomain === "streetlights";
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
   const [utilityReportReferenceByIncident, setUtilityReportReferenceByIncident] = useState({});
@@ -12572,7 +12573,12 @@ export default function App({ onBackToHub = null }) {
   }
 
   async function insertLightActionsWithFallback(rows, { selectCols = "" } = {}) {
-    const payload = Array.isArray(rows) ? rows : [];
+    const tenantKey = activeTenantKey();
+    const payload = (Array.isArray(rows) ? rows : []).map((row) => {
+      const next = { ...(row || {}) };
+      if (!String(next?.tenant_key || "").trim() && tenantKey) next.tenant_key = tenantKey;
+      return next;
+    });
     const runInsert = async (insertRows) => {
       let q = supabase.from("light_actions").insert(insertRows);
       if (selectCols) q = q.select(selectCols);
@@ -12627,6 +12633,7 @@ export default function App({ onBackToHub = null }) {
     const noteClean = String(noteText || "").trim();
     const lightActionId = `pothole:${pid}`;
     const { error } = await insertLightActionsWithFallback([{
+      tenant_key: activeTenantKey(),
       light_id: lightActionId,
       action: "fix",
       note: noteClean || null,
@@ -12762,6 +12769,7 @@ export default function App({ onBackToHub = null }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [canAccessAdminReports, setCanAccessAdminReports] = useState(false);
   const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
+  const [canEditDomainReports, setCanEditDomainReports] = useState(false);
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
   const [tenantMapFeatures, setTenantMapFeatures] = useState({
@@ -13445,30 +13453,38 @@ export default function App({ onBackToHub = null }) {
       if (!session?.user?.id) {
         setCanAccessAdminReports(false);
         setCanAccessDomainReports(false);
+        setCanEditDomainReports(false);
         return;
       }
 
       const tenantKey = activeTenantKey();
-      const [adminRes, domainRes] = await Promise.all([
+      const [adminRes, domainRes, editRes] = await Promise.all([
         supabase.rpc("can_access_tenant_admin_reports", { p_tenant: tenantKey }),
         supabase.rpc("can_access_tenant_domain_reports", { p_tenant: tenantKey }),
+        supabase.rpc("can_edit_tenant_domain_reports", { p_tenant: tenantKey }),
       ]);
 
       if (cancelled) return;
 
       const adminError = adminRes?.error || null;
       const domainError = domainRes?.error || null;
+      const editError = editRes?.error || null;
       if (adminError && !isMissingFunctionError(adminError) && !isExpectedPermissionError(adminError)) {
         console.warn("[map report access admin]", adminError?.message || adminError);
       }
       if (domainError && !isMissingFunctionError(domainError) && !isExpectedPermissionError(domainError)) {
         console.warn("[map report access domain]", domainError?.message || domainError);
       }
+      if (editError && !isMissingFunctionError(editError) && !isExpectedPermissionError(editError)) {
+        console.warn("[map report edit domain]", editError?.message || editError);
+      }
 
       const nextAdmin = !adminError ? Boolean(adminRes?.data) : false;
       const nextDomain = !domainError ? Boolean(domainRes?.data) : false;
+      const nextEdit = !editError ? Boolean(editRes?.data) : false;
       setCanAccessAdminReports(nextAdmin);
       setCanAccessDomainReports(nextDomain || nextAdmin);
+      setCanEditDomainReports(nextEdit || nextAdmin);
     }
 
     void loadReportAccess();
@@ -15950,6 +15966,21 @@ export default function App({ onBackToHub = null }) {
     if (domainType !== "incident_driven") return false;
     return cfg?.organization_monitored_repairs === false;
   }, [tenantDomainPublicConfigByDomain]);
+
+  const isOrganizationManagedIncidentDomain = useCallback((domainKeyRaw) => {
+    const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
+    if (!domainKey) return false;
+    const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
+    const domainType = String(cfg?.domain_type || defaultDomainType(domainKey)).trim().toLowerCase();
+    if (domainType !== "incident_driven") return false;
+    return cfg?.organization_monitored_repairs !== false;
+  }, [tenantDomainPublicConfigByDomain]);
+
+  const canManageIncidentDomainRepairs = useCallback((domainKeyRaw) => {
+    if (isAdmin) return true;
+    if (!canEditDomainReports) return false;
+    return isOrganizationManagedIncidentDomain(domainKeyRaw);
+  }, [isAdmin, canEditDomainReports, isOrganizationManagedIncidentDomain]);
 
   const canShowPublicRepairAction = useCallback((incidentIdRaw, domainKeyRaw) => {
     const incidentId = String(incidentIdRaw || "").trim();
@@ -19768,6 +19799,7 @@ async function insertReportWithFallback(payload) {
     // 1) Write to light_actions for EACH affected light_id (this is the permanent history)
     const { data: actRows, error: actErr } = await insertLightActionsWithFallback(
       ids.map((id) => ({
+        tenant_key: activeTenantKey(),
         light_id: id,
         action: "fix",
         note: noteClean || null,
@@ -19797,7 +19829,7 @@ async function insertReportWithFallback(payload) {
     if (allOfficialLights) {
       const { error: fixErr } = await supabase
         .from("fixed_lights")
-        .upsert(ids.map((id) => ({ light_id: id, fixed_at: fixIso })));
+        .upsert(ids.map((id) => ({ tenant_key: activeTenantKey(), light_id: id, fixed_at: fixIso })));
 
       if (fixErr) {
         console.error(fixErr);
@@ -19874,16 +19906,15 @@ async function insertReportWithFallback(payload) {
       : uniqueLightIdsForCluster(light);
 
     // 1) Record reopen history for each id
-    const { error: logErr } = await supabase
-      .from("light_actions")
-      .insert(
-        ids.map((id) => ({
-          light_id: id,
-          action: "reopen",
-          note: noteClean || null,
-          actor_user_id: session?.user?.id || null,
-        }))
-      );
+    const { error: logErr } = await insertLightActionsWithFallback(
+      ids.map((id) => ({
+        tenant_key: activeTenantKey(),
+        light_id: id,
+        action: "reopen",
+        note: noteClean || null,
+        actor_user_id: session?.user?.id || null,
+      }))
+    );
 
     if (logErr) console.error(logErr);
 
@@ -19891,6 +19922,7 @@ async function insertReportWithFallback(payload) {
     const { error: reErr } = await supabase
       .from("fixed_lights")
       .delete()
+      .eq("tenant_key", activeTenantKey())
       .in("light_id", ids);
 
     if (reErr) {
@@ -21909,6 +21941,7 @@ async function insertReportWithFallback(payload) {
         onClose={closeOpenReports}
         isAdmin={reportsAdminView}
         showDeveloperDiagnostics={isAdmin}
+        allowIncidentMutations={Boolean(isAdmin || (canEditDomainReports && isOrganizationManagedIncidentDomain(adminReportDomain)))}
         modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
         domainOptions={openReportsDomainOptions}
@@ -22784,7 +22817,7 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  {!( !isAdmin && isPublicRepairEnabledForDomain("potholes") ) && (
+                  {!( !reportsAdminView && isPublicRepairEnabledForDomain("potholes") ) && (
                     <div style={markerPopupCopyRowStyle}>
                       <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
                       <span>{nearestLandmark || "No nearby landmark"}</span>
@@ -22793,7 +22826,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {isAdmin && (
+            {reportsAdminView && (
               <>
                 <div style={{ height: 4 }} />
                 <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
@@ -22814,29 +22847,31 @@ async function insertReportWithFallback(payload) {
                 >
                   All Reports
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const pid = String(selectedDomainMarker?.pothole_id || "").trim();
-                    const potholeLightId = pid ? `pothole:${pid}` : "";
-                    const isFixedNow = potholeLightId ? isLightFixed(potholeLightId) : false;
-                    if (isFixedNow && potholeLightId) {
-                      toggleFixed(potholeLightId);
-                      return;
-                    }
-                    openMarkFixedDialogForPothole(selectedDomainMarker);
-                  }}
-                  style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
-                >
-                  {(() => {
-                    const pid = String(selectedDomainMarker?.pothole_id || "").trim();
-                    const potholeLightId = pid ? `pothole:${pid}` : "";
-                    return potholeLightId && isLightFixed(potholeLightId) ? "Re-open" : "Mark fixed";
-                  })()}
-                </button>
+                {canManageIncidentDomainRepairs("potholes") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                      const potholeLightId = pid ? `pothole:${pid}` : "";
+                      const isFixedNow = potholeLightId ? isLightFixed(potholeLightId) : false;
+                      if (isFixedNow && potholeLightId) {
+                        toggleFixed(potholeLightId);
+                        return;
+                      }
+                      openMarkFixedDialogForPothole(selectedDomainMarker);
+                    }}
+                    style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                  >
+                    {(() => {
+                      const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                      const potholeLightId = pid ? `pothole:${pid}` : "";
+                      return potholeLightId && isLightFixed(potholeLightId) ? "Re-open" : "Mark fixed";
+                    })()}
+                  </button>
+                )}
               </>
             )}
-            {!isAdmin && (() => {
+            {!reportsAdminView && (() => {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
               const incidentId = pid ? `pothole:${pid}` : "";
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
@@ -22982,7 +23017,7 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  {!( !isAdmin && isPublicRepairEnabledForDomain("water_drain_issues") ) && (
+                  {!( !reportsAdminView && isPublicRepairEnabledForDomain("water_drain_issues") ) && (
                     <div style={markerPopupCopyRowStyle}>
                       <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
                       <span>{nearestLandmark || "No nearby landmark"}</span>
@@ -22991,7 +23026,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {isAdmin && (() => {
+            {reportsAdminView && (() => {
               const incidentId = String(selectedDomainMarker?.id || "").trim();
               const clusterRows = Array.isArray(selectedDomainMarker?.rows) ? selectedDomainMarker.rows : [];
               const clusterLight = { lightId: incidentId, isOfficial: false, reports: clusterRows };
@@ -23018,7 +23053,7 @@ async function insertReportWithFallback(payload) {
                   >
                     All Reports
                   </button>
-                  {(openCount > 0 || isFixedNow) && (
+                  {(openCount > 0 || isFixedNow) && canManageIncidentDomainRepairs("water_drain_issues") && (
                     <button
                       type="button"
                       onClick={() => {
@@ -23036,7 +23071,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {!isAdmin && (() => {
+            {!reportsAdminView && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
