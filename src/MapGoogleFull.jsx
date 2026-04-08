@@ -12798,6 +12798,8 @@ export default function App({ onBackToHub = null }) {
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
   );
+  const canOpenAdminReports = isAdmin || canAccessAdminReports;
+  const canOpenDomainReports = isAdmin || canAccessDomainReports;
 
   useEffect(() => {
     if (!openReportsOpen) return;
@@ -12891,8 +12893,6 @@ export default function App({ onBackToHub = null }) {
       return false;
     }
   });
-  const canOpenAdminReports = isAdmin || canAccessAdminReports;
-  const canOpenDomainReports = isAdmin || canAccessDomainReports;
 
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
 
