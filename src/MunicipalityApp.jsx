@@ -2615,9 +2615,15 @@ export default function MunicipalityApp() {
     [roleDefinitions]
   );
   const permissionModules = useMemo(() => {
+    const catalogRows = Array.isArray(permissionCatalog) ? permissionCatalog : [];
+    const hasScopedReportModules = catalogRows.some((row) => {
+      const moduleKey = trimOrEmpty(row?.module_key);
+      return moduleKey === "admin_reports" || moduleKey === "domain_reports";
+    });
     const groups = new Map();
-    for (const row of permissionCatalog || []) {
+    for (const row of catalogRows) {
       const moduleKey = trimOrEmpty(row?.module_key) || "general";
+      if (hasScopedReportModules && moduleKey === "reports") continue;
       const actionKey = trimOrEmpty(row?.action_key).toLowerCase();
       if (!["access", "edit", "delete"].includes(actionKey)) continue;
       const current = groups.get(moduleKey) || {

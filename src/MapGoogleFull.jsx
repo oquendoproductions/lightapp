@@ -12310,6 +12310,7 @@ export default function App({ onBackToHub = null }) {
   }
 
   function openOpenReports({ inViewOnly = false } = {}) {
+    if (!canOpenDomainReports) return;
     setOpenReportsInViewOnly(Boolean(inViewOnly));
     setOpenReportsExpanded(new Set());
     setOpenReportsOpen(true);
@@ -12757,6 +12758,8 @@ export default function App({ onBackToHub = null }) {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canAccessAdminReports, setCanAccessAdminReports] = useState(false);
+  const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
   const [tenantMapFeatures, setTenantMapFeatures] = useState({
@@ -12802,6 +12805,14 @@ export default function App({ onBackToHub = null }) {
     if (openReportsDomainOptions.some((d) => d.key === adminReportDomain)) return;
     setAdminReportDomain(openReportsDomainOptions[0].key);
   }, [openReportsOpen, openReportsDomainOptions, adminReportDomain]);
+
+  useEffect(() => {
+    if (canOpenDomainReports) return;
+    if (!openReportsOpen) return;
+    setOpenReportsOpen(false);
+    setOpenReportsExpanded(new Set());
+    setOpenReportsInViewOnly(false);
+  }, [canOpenDomainReports, openReportsOpen]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -12880,6 +12891,8 @@ export default function App({ onBackToHub = null }) {
       return false;
     }
   });
+  const canOpenAdminReports = isAdmin || canAccessAdminReports;
+  const canOpenDomainReports = isAdmin || canAccessDomainReports;
 
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
 
@@ -13424,6 +13437,45 @@ export default function App({ onBackToHub = null }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    async function loadReportAccess() {
+      if (!session?.user?.id) {
+        setCanAccessAdminReports(false);
+        setCanAccessDomainReports(false);
+        return;
+      }
+
+      const tenantKey = activeTenantKey();
+      const [adminRes, domainRes] = await Promise.all([
+        supabase.rpc("can_access_tenant_admin_reports", { p_tenant: tenantKey }),
+        supabase.rpc("can_access_tenant_domain_reports", { p_tenant: tenantKey }),
+      ]);
+
+      if (cancelled) return;
+
+      const adminError = adminRes?.error || null;
+      const domainError = domainRes?.error || null;
+      if (adminError && !isMissingFunctionError(adminError) && !isExpectedPermissionError(adminError)) {
+        console.warn("[map report access admin]", adminError?.message || adminError);
+      }
+      if (domainError && !isMissingFunctionError(domainError) && !isExpectedPermissionError(domainError)) {
+        console.warn("[map report access domain]", domainError?.message || domainError);
+      }
+
+      const nextAdmin = !adminError ? Boolean(adminRes?.data) : false;
+      const nextDomain = !domainError ? Boolean(domainRes?.data) : false;
+      setCanAccessAdminReports(nextAdmin);
+      setCanAccessDomainReports(nextDomain || nextAdmin);
+    }
+
+    void loadReportAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, tenant?.tenantKey]);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadTenantVisibilityConfig() {
       // Week 3 noise hardening: keep default visibility unless this feature is explicitly enabled.
       if (!authReady) return;
@@ -13721,7 +13773,7 @@ export default function App({ onBackToHub = null }) {
       setMyReportsDomain(nextDomain);
     }
 
-    if (focusIncidentId && isAdmin) {
+    if (focusIncidentId && canOpenDomainReports) {
       setOpenReportsExpanded(new Set([focusIncidentId]));
       setOpenReportsOpen(true);
     }
@@ -13730,7 +13782,7 @@ export default function App({ onBackToHub = null }) {
       preserveReportFlyTargetCameraRef.current = true;
       flyToTarget([flyLat, flyLng], flyZoom);
     }
-  }, [visibleDomainOptions, isAdmin]);
+  }, [visibleDomainOptions, canOpenDomainReports]);
 
   useEffect(() => {
     let cancelled = false;
@@ -21848,6 +21900,7 @@ async function insertReportWithFallback(payload) {
         open={openReportsOpen}
         onClose={closeOpenReports}
         isAdmin={isAdmin}
+        modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
         domainOptions={openReportsDomainOptions}
         onSelectDomain={setAdminReportDomain}
@@ -23501,6 +23554,29 @@ async function insertReportWithFallback(payload) {
           </div>
         }
 
+        {canOpenDomainReports && (
+          <button
+            type="button"
+            className={`sl-map-tool-mini ${openReportsOpen ? "is-on" : ""}`}
+            title="Reports"
+            aria-label="Open reports"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (mappingMode) requestExitMappingMode();
+              if (bulkMode) setBulkMode(false);
+              setAdminDomainMenuOpen(false);
+              setAdminToolboxOpen(false);
+              setAlertsWindowOpen(false);
+              setEventsWindowOpen(false);
+              openOpenReports({ inViewOnly: false });
+              showToolHint("Reports", 1000, 5);
+            }}
+          >
+            <AppIcon src={UI_ICON_SRC.openReports} size={38} />
+          </button>
+        )}
+
         {canUseStreetlightBulk && (
           <button
             type="button"
@@ -24943,6 +25019,42 @@ async function insertReportWithFallback(payload) {
                     {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
                   </span>
                 ) : null}
+                </button>
+                ) : null}
+                {canOpenDomainReports ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminDomainMenuOpen(false);
+                    setAdminToolboxOpen(false);
+                    setAlertsWindowOpen(false);
+                    setEventsWindowOpen(false);
+                    openOpenReports({ inViewOnly: false });
+                  }}
+                  aria-label="Open reports"
+                  title="Open reports"
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 9,
+                    border: openReportsOpen
+                      ? "1px solid var(--sl-ui-tool-active-border)"
+                      : "1px solid var(--sl-ui-zoom-border)",
+                    background: openReportsOpen
+                      ? "var(--sl-ui-tool-active-bg)"
+                      : "var(--sl-ui-zoom-bg)",
+                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
+                    color: openReportsOpen
+                      ? "var(--sl-ui-tool-active-text)"
+                      : "var(--sl-ui-text)",
+                    cursor: "pointer",
+                    lineHeight: 1,
+                    position: "relative",
+                    display: "grid",
+                    placeItems: "center",
+                  }}
+                >
+                  <AppIcon src={UI_ICON_SRC.openReports} size={18} />
                 </button>
                 ) : null}
               </div>
