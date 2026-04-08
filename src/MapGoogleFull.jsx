@@ -8422,19 +8422,21 @@ function OpenReportsModal({
                           <button
                             type="button"
                             disabled
+                            aria-pressed="true"
                             title="You already marked this light as working."
                             style={{
                               padding: "6px 8px",
                               borderRadius: 8,
-                              border: "none",
-                              background: "rgba(46, 204, 113, 0.72)",
+                              border: "1px solid rgba(22, 116, 89, 0.82)",
+                              background: "rgba(24, 138, 95, 0.26)",
                               color: "white",
                               fontWeight: 900,
                               cursor: "default",
                               opacity: 0.92,
+                              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
                             }}
                           >
-                            Working confirmed
+                            Is working
                           </button>
                         )}
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
@@ -8977,20 +8979,22 @@ function OpenReportsModal({
                                   <button
                                     type="button"
                                     disabled
+                                    aria-pressed="true"
                                     title="You already marked this light as working."
                                     style={{
                                       padding: "6px 8px",
                                       borderRadius: 8,
-                                      border: "none",
-                                      background: "rgba(46, 204, 113, 0.72)",
+                                      border: "1px solid rgba(22, 116, 89, 0.82)",
+                                      background: "rgba(24, 138, 95, 0.26)",
                                       color: "white",
                                       fontWeight: 900,
                                       cursor: "default",
                                       whiteSpace: "nowrap",
                                       opacity: 0.92,
+                                      boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
                                     }}
                                   >
-                                    Working confirmed
+                                    Is working
                                   </button>
                                 )}
                                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
