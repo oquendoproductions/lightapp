@@ -1853,6 +1853,7 @@ export default function MunicipalityApp() {
   const [reportExpandedIncidentId, setReportExpandedIncidentId] = useState("");
   const [reportIncidentActionBusyId, setReportIncidentActionBusyId] = useState("");
   const [reportIncidentActionStatus, setReportIncidentActionStatus] = useState("");
+  const [canEditDomainReports, setCanEditDomainReports] = useState(false);
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [tenantSecuritySettingsSaved, setTenantSecuritySettingsSaved] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
   const [tenantSecuritySettingsDraft, setTenantSecuritySettingsDraft] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
@@ -2496,10 +2497,13 @@ export default function MunicipalityApp() {
     void loadTenantSecurityConfig();
   }, [loadTenantSecurityConfig, routePath]);
   const handleReportIncidentStateToggle = useCallback(async (row) => {
-    if (!manageAccess) return;
+    if (!manageAccess || !canEditDomainReports) {
+      setReportIncidentActionStatus("You do not have permission to update this incident.");
+      return;
+    }
     const incidentId = trimOrEmpty(row?.incident_id);
     const domainKey = normalizeReportDomainKey(row?.domain);
-    if (!incidentId || !domainKey) return;
+    if (!incidentId || !domainKey || !tenantKey) return;
     const nextAction = isOpenReportState(row?.current_state) ? "fix" : "reopen";
     const nextState = nextAction === "fix" ? "fixed" : "reopened";
     const incidentLabel = trimOrEmpty(row?.incident_label) || summarizeReportIncidentLabel(row);
@@ -2527,6 +2531,7 @@ export default function MunicipalityApp() {
     setReportIncidentActionStatus("");
 
     const payload = {
+      tenant_key: tenantKey,
       light_id: incidentId,
       action: nextAction,
       note: null,
@@ -2545,7 +2550,7 @@ export default function MunicipalityApp() {
       if (nextAction === "fix") {
         const { error: fixedError } = await supabase
           .from("fixed_lights")
-          .upsert([{ light_id: incidentId, fixed_at: new Date().toISOString() }]);
+          .upsert([{ tenant_key: tenantKey, light_id: incidentId, fixed_at: new Date().toISOString() }]);
         if (fixedError) {
           setReportIncidentActionBusyId("");
           setReportIncidentActionStatus(fixedError.message || "Incident history was recorded, but fixed status could not be synced.");
@@ -2555,6 +2560,7 @@ export default function MunicipalityApp() {
         const { error: reopenError } = await supabase
           .from("fixed_lights")
           .delete()
+          .eq("tenant_key", tenantKey)
           .eq("light_id", incidentId);
         if (reopenError) {
           setReportIncidentActionBusyId("");
@@ -2577,7 +2583,7 @@ export default function MunicipalityApp() {
     )));
     setReportIncidentActionBusyId("");
     setReportIncidentActionStatus(nextAction === "fix" ? "Incident marked fixed." : "Incident re-opened.");
-  }, [manageAccess, requireTenantSecurityCheckpoint, session?.user?.id]);
+  }, [canEditDomainReports, manageAccess, requireTenantSecurityCheckpoint, session?.user?.id, tenantKey]);
   const roleDefinitionLookup = useMemo(
     () => Object.fromEntries((roleDefinitions || []).map((row) => [trimOrEmpty(row?.role), row])),
     [roleDefinitions]
@@ -3077,6 +3083,35 @@ export default function MunicipalityApp() {
     }
 
     void loadManageAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, tenantKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDomainReportEditAccess() {
+      if (!session?.user?.id || !tenantKey) {
+        setCanEditDomainReports(false);
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("can_edit_tenant_domain_reports", { p_tenant: tenantKey });
+      if (cancelled) return;
+
+      if (error) {
+        if (!isMissingFunctionError(error)) {
+          console.warn("[hub report edit access]", error?.message || error);
+        }
+        setCanEditDomainReports(false);
+        return;
+      }
+
+      setCanEditDomainReports(Boolean(data));
+    }
+
+    void loadDomainReportEditAccess();
     return () => {
       cancelled = true;
     };
@@ -5751,7 +5786,7 @@ export default function MunicipalityApp() {
                     getFlyToHref={(row) => buildReportFlyToHref(window.location.pathname, tenantKey, row)}
                     sortPreset={reportSortPreset}
                     onChangeSort={setReportSortPreset}
-                    canMutateIncidents={manageAccess}
+                    canMutateIncidents={manageAccess && canEditDomainReports}
                     busyIncidentId={reportIncidentActionBusyId}
                     onToggleIncidentState={handleReportIncidentStateToggle}
                   />
