@@ -12808,9 +12808,19 @@ export default function App({ onBackToHub = null }) {
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
   );
-  const canOpenAdminReports = isAdmin || canAccessAdminReports;
-  const canOpenDomainReports = isAdmin || canAccessDomainReports;
-  const reportsAdminView = isAdmin || canAccessAdminReports;
+  // Access vocabulary:
+  // - isPlatformAdmin: developer/platform-only tools and diagnostics
+  // - hasOrgAdminReportsAccess: richer org-admin reports workspace
+  // - hasOrgDomainReportsAccess: org-admin can open domain reports
+  // - hasOrgDomainReportsEditAccess: org-admin can mark fixed / reopen on managed incident domains
+  const isPlatformAdmin = isAdmin;
+  const hasOrgAdminReportsAccess = canAccessAdminReports;
+  const hasOrgDomainReportsAccess = canAccessDomainReports;
+  const hasOrgDomainReportsEditAccess = canEditDomainReports;
+  const canOpenAdminReports = isPlatformAdmin || hasOrgAdminReportsAccess;
+  const canOpenDomainReports = isPlatformAdmin || hasOrgDomainReportsAccess;
+  const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess;
+  const reportsAdminView = isReportsAdminView;
 
   useEffect(() => {
     if (!openReportsOpen) return;
@@ -15977,10 +15987,10 @@ export default function App({ onBackToHub = null }) {
   }, [tenantDomainPublicConfigByDomain]);
 
   const canManageIncidentDomainRepairs = useCallback((domainKeyRaw) => {
-    if (isAdmin) return true;
-    if (!canEditDomainReports) return false;
+    if (isPlatformAdmin) return true;
+    if (!hasOrgDomainReportsEditAccess) return false;
     return isOrganizationManagedIncidentDomain(domainKeyRaw);
-  }, [isAdmin, canEditDomainReports, isOrganizationManagedIncidentDomain]);
+  }, [isPlatformAdmin, hasOrgDomainReportsEditAccess, isOrganizationManagedIncidentDomain]);
 
   const canShowPublicRepairAction = useCallback((incidentIdRaw, domainKeyRaw) => {
     const incidentId = String(incidentIdRaw || "").trim();
@@ -21939,9 +21949,9 @@ async function insertReportWithFallback(payload) {
       <OpenReportsModal
         open={openReportsOpen}
         onClose={closeOpenReports}
-        isAdmin={reportsAdminView}
-        showDeveloperDiagnostics={isAdmin}
-        allowIncidentMutations={Boolean(isAdmin || (canEditDomainReports && isOrganizationManagedIncidentDomain(adminReportDomain)))}
+        isAdmin={isReportsAdminView}
+        showDeveloperDiagnostics={isPlatformAdmin}
+        allowIncidentMutations={Boolean(isPlatformAdmin || (hasOrgDomainReportsEditAccess && isOrganizationManagedIncidentDomain(adminReportDomain)))}
         modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
         domainOptions={openReportsDomainOptions}
@@ -22806,7 +22816,7 @@ async function insertReportWithFallback(payload) {
                     <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
                     <span style={markerPopupCopyValueStyle}>{nearestAddress || "Unavailable"}</span>
                   </button>
-                  {isAdmin && (
+                  {isPlatformAdmin && (
                     <button
                       type="button"
                       onClick={() => copyTextToClipboard("Coordinates", coordsText)}
@@ -22817,7 +22827,7 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  {!( !reportsAdminView && isPublicRepairEnabledForDomain("potholes") ) && (
+                  {isReportsAdminView && (
                     <div style={markerPopupCopyRowStyle}>
                       <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
                       <span>{nearestLandmark || "No nearby landmark"}</span>
@@ -22826,7 +22836,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {reportsAdminView && (
+            {isReportsAdminView && (
               <>
                 <div style={{ height: 4 }} />
                 <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
@@ -22871,7 +22881,7 @@ async function insertReportWithFallback(payload) {
                 )}
               </>
             )}
-            {!reportsAdminView && (() => {
+            {!isReportsAdminView && (() => {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
               const incidentId = pid ? `pothole:${pid}` : "";
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
@@ -23006,7 +23016,7 @@ async function insertReportWithFallback(payload) {
                     <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
                     <span style={markerPopupCopyValueStyle}>{nearestAddress || "Unavailable"}</span>
                   </button>
-                  {isAdmin && (
+                  {isPlatformAdmin && (
                     <button
                       type="button"
                       onClick={() => copyTextToClipboard("Coordinates", coordsText)}
@@ -23017,7 +23027,7 @@ async function insertReportWithFallback(payload) {
                       <span style={markerPopupCopyValueStyle}>{coordsText}</span>
                     </button>
                   )}
-                  {!( !reportsAdminView && isPublicRepairEnabledForDomain("water_drain_issues") ) && (
+                  {isReportsAdminView && (
                     <div style={markerPopupCopyRowStyle}>
                       <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
                       <span>{nearestLandmark || "No nearby landmark"}</span>
@@ -23026,7 +23036,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {reportsAdminView && (() => {
+            {isReportsAdminView && (() => {
               const incidentId = String(selectedDomainMarker?.id || "").trim();
               const clusterRows = Array.isArray(selectedDomainMarker?.rows) ? selectedDomainMarker.rows : [];
               const clusterLight = { lightId: incidentId, isOfficial: false, reports: clusterRows };
@@ -23071,7 +23081,7 @@ async function insertReportWithFallback(payload) {
                 </>
               );
             })()}
-            {!reportsAdminView && (() => {
+            {!isReportsAdminView && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
               const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));

@@ -1448,6 +1448,7 @@ export default function PlatformAdminApp() {
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
   const [compactDomainSettingsKey, setCompactDomainSettingsKey] = useState("");
   const [compactDomainEnableKey, setCompactDomainEnableKey] = useState("");
+  const [domainAddModalOpen, setDomainAddModalOpen] = useState(false);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [mapFeaturesEditMode, setMapFeaturesEditMode] = useState(false);
   const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
@@ -5386,6 +5387,7 @@ export default function PlatformAdminApp() {
     beginDomainEdit(key);
     setDomainVisibilityForm((prev) => ({ ...prev, [key]: "enabled" }));
     setCompactDomainSettingsKey(key);
+    setDomainAddModalOpen(false);
     setStatus((prev) => ({ ...prev, domains: "" }));
   }, [beginDomainEdit, compactDomainEnableKey]);
 
@@ -5590,7 +5592,6 @@ export default function PlatformAdminApp() {
   }, [isCompactViewport, activeCompactDomainOptions]);
 
   useEffect(() => {
-    if (!isCompactViewport) return;
     if (!inactiveCompactDomainOptions.length) {
       setCompactDomainEnableKey("");
       return;
@@ -5600,7 +5601,7 @@ export default function PlatformAdminApp() {
       if (current && inactiveCompactDomainOptions.some((domain) => domain.key === current)) return current;
       return inactiveCompactDomainOptions[0].key;
     });
-  }, [isCompactViewport, inactiveCompactDomainOptions]);
+  }, [inactiveCompactDomainOptions]);
 
   const fixedBanner = (
     <div style={bannerStyle}>
@@ -6223,6 +6224,64 @@ export default function PlatformAdminApp() {
     <main style={shellStyle}>
       {fixedBanner}
       {helpModal}
+      {domainAddModalOpen ? (
+        <div style={authModalBackdrop} onClick={() => setDomainAddModalOpen(false)}>
+          <div style={{ ...authModalCard, width: "min(560px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Domain</h2>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
+                  Select a new domain to enable it and open its settings.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDomainAddModalOpen(false)}
+                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
+                aria-label="Close add domain dialog"
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <label style={modalField}>
+                <span>Disabled Domains</span>
+                <select
+                  value={compactDomainEnableKey}
+                  onChange={(event) => setCompactDomainEnableKey(event.target.value)}
+                  style={modalInput}
+                  disabled={!inactiveCompactDomainOptions.length}
+                >
+                  {inactiveCompactDomainOptions.length ? (
+                    inactiveCompactDomainOptions.map((domain) => (
+                      <option key={domain.key} value={domain.key}>{domain.label}</option>
+                    ))
+                  ) : (
+                    <option value="">All domains are already enabled</option>
+                  )}
+                </select>
+              </label>
+              <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                Future pricing and confirmation can slot into this flow before the domain is enabled.
+              </p>
+              <div style={modalFooterActions}>
+                <button
+                  type="button"
+                  style={{ ...modalPrimaryButton, opacity: canEditTenantDomains && !editingDomainKey ? 1 : 0.55 }}
+                  disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !compactDomainEnableKey}
+                  onClick={enableDomainFromCompactPicker}
+                  title={editingDomainKey ? "Finish the current domain edit before enabling another domain." : "Enable selected domain"}
+                >
+                  Add Domain
+                </button>
+                <button type="button" style={modalSecondaryButton} onClick={() => setDomainAddModalOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {contactAddModalOpen ? (
         <div style={authModalBackdrop} onClick={() => setContactAddModalOpen(false)}>
           <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
@@ -9504,60 +9563,33 @@ export default function PlatformAdminApp() {
               </div>
               <div style={{ display: "grid", gap: 12 }}>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Control which reporting domains are active, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      ...subPanel,
-                      display: "grid",
-                      gap: 8,
-                      background: "rgba(255,255,255,0.72)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <div style={{ display: "grid", gap: 3 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Add Domain</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Enable additional domains and open them directly in edit mode from this section.
-                        </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Control which reporting domains are enabled, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
                       </div>
-                      {!isCompactViewport ? (
-                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <select
-                            value={compactDomainEnableKey}
-                            onChange={(event) => setCompactDomainEnableKey(event.target.value)}
-                            style={{ ...inputBase, minWidth: 220 }}
-                            disabled={!inactiveCompactDomainOptions.length}
-                          >
-                            {inactiveCompactDomainOptions.length ? (
-                              inactiveCompactDomainOptions.map((domain) => (
-                                <option key={domain.key} value={domain.key}>{domain.label}</option>
-                              ))
-                            ) : (
-                              <option value="">All domains are active</option>
-                            )}
-                          </select>
-                          <button
-                            type="button"
-                            style={{ ...buttonAlt, opacity: canEditTenantDomains && !editingDomainKey ? 1 : 0.55 }}
-                            disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !compactDomainEnableKey}
-                            onClick={enableDomainFromCompactPicker}
-                            title={editingDomainKey ? "Finish the current domain edit before enabling another domain." : "Enable selected domain"}
-                          >
-                            Add Domain
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
+                    <button
+                      type="button"
+                      style={{ ...buttonAlt, opacity: canEditTenantDomains && !editingDomainKey && inactiveCompactDomainOptions.length ? 1 : 0.55 }}
+                      disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !inactiveCompactDomainOptions.length}
+                      onClick={() => setDomainAddModalOpen(true)}
+                      title={
+                        !inactiveCompactDomainOptions.length
+                          ? "All domains are already enabled."
+                          : editingDomainKey
+                            ? "Finish the current domain edit before enabling another domain."
+                            : "Add a new enabled domain"
+                      }
+                    >
+                      Add Domain
+                    </button>
                   </div>
                   {isCompactViewport ? (
                     <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
                       <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
-                        <span style={{ color: palette.textMuted }}>Active Domains</span>
+                        <span style={{ color: palette.textMuted }}>Enabled Domains</span>
                         <select
                           value={compactDomainSettingsKey}
                           onChange={(event) => setCompactDomainSettingsKey(event.target.value)}
@@ -9569,37 +9601,10 @@ export default function PlatformAdminApp() {
                               <option key={domain.key} value={domain.key}>{domain.label}</option>
                             ))
                           ) : (
-                            <option value="">No active domains</option>
+                            <option value="">No enabled domains</option>
                           )}
                         </select>
                       </label>
-                      {inactiveCompactDomainOptions.length ? (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
-                            <span style={{ color: palette.textMuted }}>Enable Domain</span>
-                            <select
-                              value={compactDomainEnableKey}
-                              onChange={(event) => setCompactDomainEnableKey(event.target.value)}
-                              style={inputBase}
-                            >
-                              {inactiveCompactDomainOptions.map((domain) => (
-                                <option key={domain.key} value={domain.key}>{domain.label}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <div>
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, opacity: canEditTenantDomains && !editingDomainKey ? 1 : 0.55 }}
-                              disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !compactDomainEnableKey}
-                              onClick={enableDomainFromCompactPicker}
-                              title={editingDomainKey ? "Finish the current domain edit before enabling another domain." : "Enable selected domain"}
-                            >
-                              Add Domain
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
                     </div>
                   ) : null}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", gap: 10, alignItems: "start" }}>
@@ -9817,7 +9822,7 @@ export default function PlatformAdminApp() {
                   </div>
                   {!domainEnablementCards.length ? (
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      No active domains yet. Use <b>Add Domain</b> above to enable the first one.
+                      No enabled domains yet. Use <b>Add Domain</b> above to enable the first one.
                     </div>
                   ) : null}
                 </div>
