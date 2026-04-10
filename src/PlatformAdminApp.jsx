@@ -4726,6 +4726,25 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, domains: "Select a tenant first." }));
       return;
     }
+    const closingDomainKey = String(options?.closeEditingDomain || "").trim().toLowerCase();
+    const currentVisibility = closingDomainKey
+      ? String(domainVisibilityForm?.[closingDomainKey] || "enabled").trim().toLowerCase()
+      : "";
+    const snapshotVisibility = closingDomainKey && editingDomainSnapshot?.key === closingDomainKey
+      ? String(editingDomainSnapshot?.visibility || "enabled").trim().toLowerCase()
+      : "";
+    const isDisablingEditedDomain = Boolean(
+      closingDomainKey
+      && currentVisibility === "disabled"
+      && snapshotVisibility !== "disabled"
+    );
+    if (isDisablingEditedDomain && typeof window !== "undefined") {
+      const domainLabel = DOMAIN_OPTIONS.find((domain) => domain.key === closingDomainKey)?.label || "this domain";
+      const confirmed = window.confirm(
+        `Disable ${domainLabel}? It will no longer appear under Enabled Domains until it is added again.`
+      );
+      if (!confirmed) return;
+    }
     const checkpointApproved = await requirePlatformSecurityCheckpoint({
       settingKey: "require_pin_for_domain_settings_changes",
       title: "Enter Security PIN",
@@ -4779,12 +4798,19 @@ export default function PlatformAdminApp() {
     });
 
     setStatus((prev) => ({ ...prev, domains: `Saved domain types and notification routing for ${key}.` }));
-    if (String(options?.closeEditingDomain || "").trim()) {
-      setEditingDomainKey((current) => current === options.closeEditingDomain ? "" : current);
-      setEditingDomainSnapshot((current) => current?.key === options.closeEditingDomain ? null : current);
+    if (closingDomainKey) {
+      setEditingDomainKey("");
+      setEditingDomainSnapshot(null);
+      if (currentVisibility === "disabled") {
+        const nextEnabledDomainKey = DOMAIN_OPTIONS.find((domain) => (
+          domain.key !== closingDomainKey
+          && String(domainVisibilityForm?.[domain.key] || "enabled").trim().toLowerCase() !== "disabled"
+        ))?.key || "";
+        setCompactDomainSettingsKey(nextEnabledDomainKey);
+      }
     }
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot]);
 
   const saveMapFeaturesSettings = useCallback(async (event) => {
     event?.preventDefault?.();
