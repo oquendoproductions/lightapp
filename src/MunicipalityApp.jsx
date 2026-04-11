@@ -157,6 +157,7 @@ const DEFAULT_TENANT_SECURITY_SETTINGS = {
   require_pin_for_organization_user_changes: false,
   require_pin_for_organization_role_changes: false,
   require_pin_for_domain_settings_changes: false,
+  require_pin_for_communications_delete: false,
 };
 
 const DEFAULT_TENANT_SECURITY_PIN_DRAFT = {
@@ -204,6 +205,11 @@ const TENANT_SECURITY_CHECKPOINT_OPTIONS = [
     label: "Require PIN for domain and asset setting changes",
     note: "Protect map appearance updates and asset library changes.",
   },
+  {
+    key: "require_pin_for_communications_delete",
+    label: "Require PIN for alert and event deletion",
+    note: "Protect permanent removal of hub alerts and events.",
+  },
 ];
 
 function normalizeTenantSecuritySettings(value) {
@@ -215,6 +221,7 @@ function normalizeTenantSecuritySettings(value) {
     require_pin_for_organization_user_changes: Boolean(value?.require_pin_for_organization_user_changes),
     require_pin_for_organization_role_changes: Boolean(value?.require_pin_for_organization_role_changes),
     require_pin_for_domain_settings_changes: Boolean(value?.require_pin_for_domain_settings_changes),
+    require_pin_for_communications_delete: Boolean(value?.require_pin_for_communications_delete),
   };
 }
 
@@ -281,8 +288,10 @@ function isMissingRelationError(error) {
   const msg = String(error?.message || "").toLowerCase();
   return (
     code === "42P01"
+    || code === "42703"
     || code === "PGRST205"
     || msg.includes("relation")
+    || msg.includes("column")
     || msg.includes("does not exist")
     || msg.includes("schema cache")
     || msg.includes("could not find the table")
@@ -1601,7 +1610,16 @@ function EventFeed({ events, emptyText, showStatus = false, onStatusChange = nul
   );
 }
 
-function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit, heading = "Create Alert", submitLabel = "Save Alert" }) {
+function AlertComposer({
+  topicLookup,
+  alertForm,
+  setAlertForm,
+  onSubmit,
+  onDelete = null,
+  deleteBusy = false,
+  heading = "Create Alert",
+  submitLabel = "Save Alert",
+}) {
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
       <h4>{heading}</h4>
@@ -1661,13 +1679,27 @@ function AlertComposer({ topicLookup, alertForm, setAlertForm, onSubmit, heading
         </div>
       </div>
       <div className="municipality-actions">
-        <button type="submit" className="municipality-button municipality-button--primary">{submitLabel}</button>
+        {typeof onDelete === "function" ? (
+          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={onDelete} disabled={deleteBusy}>
+            {deleteBusy ? "Deleting..." : "Delete Alert"}
+          </button>
+        ) : null}
+        <button type="submit" className="municipality-button municipality-button--primary" disabled={deleteBusy}>{submitLabel}</button>
       </div>
     </form>
   );
 }
 
-function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit, heading = "Create Event", submitLabel = "Save Event" }) {
+function EventComposer({
+  topicLookup,
+  eventForm,
+  setEventForm,
+  onSubmit,
+  onDelete = null,
+  deleteBusy = false,
+  heading = "Create Event",
+  submitLabel = "Save Event",
+}) {
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
       <h4>{heading}</h4>
@@ -1718,7 +1750,12 @@ function EventComposer({ topicLookup, eventForm, setEventForm, onSubmit, heading
         </div>
       </div>
       <div className="municipality-actions">
-        <button type="submit" className="municipality-button municipality-button--primary">{submitLabel}</button>
+        {typeof onDelete === "function" ? (
+          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={onDelete} disabled={deleteBusy}>
+            {deleteBusy ? "Deleting..." : "Delete Event"}
+          </button>
+        ) : null}
+        <button type="submit" className="municipality-button municipality-button--primary" disabled={deleteBusy}>{submitLabel}</button>
       </div>
     </form>
   );
@@ -1854,6 +1891,8 @@ export default function MunicipalityApp() {
   const [reportIncidentActionBusyId, setReportIncidentActionBusyId] = useState("");
   const [reportIncidentActionStatus, setReportIncidentActionStatus] = useState("");
   const [canEditDomainReports, setCanEditDomainReports] = useState(false);
+  const [canDeleteCommunications, setCanDeleteCommunications] = useState(false);
+  const [communicationsDeleteBusyKey, setCommunicationsDeleteBusyKey] = useState("");
   const [accountProfileDraft, setAccountProfileDraft] = useState({ full_name: "", phone: "", email: "" });
   const [tenantSecuritySettingsSaved, setTenantSecuritySettingsSaved] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
   const [tenantSecuritySettingsDraft, setTenantSecuritySettingsDraft] = useState(DEFAULT_TENANT_SECURITY_SETTINGS);
@@ -2333,7 +2372,7 @@ export default function MunicipalityApp() {
     const [settingsResult, sharedPinResult, legacyTenantPinResult] = await Promise.all([
       supabase
         .from("tenant_security_settings")
-        .select("tenant_key,require_pin_for_account_changes,require_pin_for_report_state_changes,require_pin_for_organization_info_changes,require_pin_for_contact_changes,require_pin_for_organization_user_changes,require_pin_for_organization_role_changes,require_pin_for_domain_settings_changes")
+        .select("tenant_key,require_pin_for_account_changes,require_pin_for_report_state_changes,require_pin_for_organization_info_changes,require_pin_for_contact_changes,require_pin_for_organization_user_changes,require_pin_for_organization_role_changes,require_pin_for_domain_settings_changes,require_pin_for_communications_delete")
         .eq("tenant_key", tenantKey)
         .maybeSingle(),
       supabase
@@ -3116,6 +3155,37 @@ export default function MunicipalityApp() {
       cancelled = true;
     };
   }, [session?.user?.id, tenantKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCommunicationsDeleteAccess() {
+      if (!session?.user?.id || !tenantKey) {
+        setCanDeleteCommunications(false);
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("can_delete_tenant_communications", { p_tenant: tenantKey });
+      if (cancelled) return;
+
+      if (error) {
+        if (!isMissingFunctionError(error)) {
+          console.warn("[hub communications delete access]", error?.message || error);
+          setCanDeleteCommunications(false);
+          return;
+        }
+        setCanDeleteCommunications(Boolean(manageAccess));
+        return;
+      }
+
+      setCanDeleteCommunications(Boolean(data));
+    }
+
+    void loadCommunicationsDeleteAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [manageAccess, session?.user?.id, tenantKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4739,6 +4809,80 @@ export default function MunicipalityApp() {
     await reloadEvents();
   }
 
+  async function deleteAlert() {
+    if (!manageAccess || !canDeleteCommunications || !editingAlertId) return;
+    const currentAlert = alerts.find((item) => item.id === editingAlertId) || null;
+    const alertTitle = trimOrEmpty(currentAlert?.title) || "this alert";
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${alertTitle}? This cannot be undone.`)) {
+      return;
+    }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_communications_delete",
+      title: "Confirm alert deletion",
+      description: `Enter your 4-digit PIN to permanently delete ${alertTitle}.`,
+      onBlocked: (message) => setAdminStatus(message),
+    });
+    if (!checkpointApproved) return;
+
+    const busyKey = `alert:${editingAlertId}`;
+    setCommunicationsDeleteBusyKey(busyKey);
+    setAdminStatus("");
+    const { error } = await supabase
+      .from("municipality_alerts")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("id", editingAlertId);
+    setCommunicationsDeleteBusyKey("");
+
+    if (error) {
+      setAdminStatus(error.message || "Could not delete the alert.");
+      return;
+    }
+
+    closeAlertComposer();
+    navigate("/alerts");
+    setAdminStatus("Alert deleted.");
+    await reloadAlerts();
+  }
+
+  async function deleteEvent() {
+    if (!manageAccess || !canDeleteCommunications || !editingEventId) return;
+    const currentEvent = events.find((item) => item.id === editingEventId) || null;
+    const eventTitle = trimOrEmpty(currentEvent?.title) || "this event";
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${eventTitle}? This cannot be undone.`)) {
+      return;
+    }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_communications_delete",
+      title: "Confirm event deletion",
+      description: `Enter your 4-digit PIN to permanently delete ${eventTitle}.`,
+      onBlocked: (message) => setAdminStatus(message),
+    });
+    if (!checkpointApproved) return;
+
+    const busyKey = `event:${editingEventId}`;
+    setCommunicationsDeleteBusyKey(busyKey);
+    setAdminStatus("");
+    const { error } = await supabase
+      .from("municipality_events")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("id", editingEventId);
+    setCommunicationsDeleteBusyKey("");
+
+    if (error) {
+      setAdminStatus(error.message || "Could not delete the event.");
+      return;
+    }
+
+    closeEventComposer();
+    navigate("/events");
+    setAdminStatus("Event deleted.");
+    await reloadEvents();
+  }
+
   async function updateAlertStatus(alert, nextStatus) {
     const { error } = await supabase
       .from("municipality_alerts")
@@ -5574,6 +5718,8 @@ export default function MunicipalityApp() {
                   alertForm={alertForm}
                   setAlertForm={setAlertForm}
                   onSubmit={createAlert}
+                  onDelete={editingAlertId && canDeleteCommunications ? () => void deleteAlert() : null}
+                  deleteBusy={communicationsDeleteBusyKey === `alert:${editingAlertId || ""}`}
                   heading={editingAlertId ? "Edit Alert" : "Create Alert"}
                   submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
                 />
@@ -5639,6 +5785,8 @@ export default function MunicipalityApp() {
                   eventForm={eventForm}
                   setEventForm={setEventForm}
                   onSubmit={createEvent}
+                  onDelete={editingEventId && canDeleteCommunications ? () => void deleteEvent() : null}
+                  deleteBusy={communicationsDeleteBusyKey === `event:${editingEventId || ""}`}
                   heading={editingEventId ? "Edit Event" : "Create Event"}
                   submitLabel={editingEventId ? "Update Event" : "Save Event"}
                 />
