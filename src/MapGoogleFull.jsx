@@ -3721,7 +3721,15 @@ function AuthGateModal({
   if (!open) return null;
 
   return (
-    <ModalShell open={open} zIndex={10030}>
+    <ModalShell
+      open={open}
+      zIndex={10030}
+      panelStyle={{
+        maxHeight: "min(92dvh, 760px)",
+        overflowY: "auto",
+        WebkitOverflowScrolling: "touch",
+      }}
+    >
       {step === "welcome" && (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -4092,10 +4100,7 @@ function AuthGateModal({
               >
                 Privacy Policy
               </button>
-              , including permission for CityReport.io to submit my provided name, phone number,
-              and email on my behalf to city departments, utility providers, or other responsible
-              maintenance entities for issue resolution. I understand these entities may contact me
-              directly using that shared information for follow-up, validation, scheduling, or status updates.
+              .
             </span>
           </label>
 
