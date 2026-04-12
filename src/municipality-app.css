@@ -238,6 +238,34 @@
   background: rgba(255, 255, 255, 0.82);
 }
 
+.municipality-button--icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px;
+}
+
+.municipality-button--icon img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.municipality-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .municipality-button--primary,
 .municipality-button--primary:hover,
 .municipality-button--primary:visited {

@@ -25,6 +25,8 @@ const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
 
 const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_BRAND_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+const EDIT_BUTTON_BLUE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_blue_icon.png";
+const EDIT_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_white_icon.png";
 
 const NAV_ITEMS = [
   { key: "home", label: "Home", path: "/" },
@@ -1506,6 +1508,23 @@ function MunicipalityReportTable({
   );
 }
 
+function HubEditButton({ label = "Edit", onClick, disabled = false, variant = "ghost" }) {
+  const isPrimary = variant === "primary";
+  return (
+    <button
+      type="button"
+      className={`municipality-button municipality-button--${isPrimary ? "primary" : "ghost"} municipality-button--icon`}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+    >
+      <img src={isPrimary ? EDIT_BUTTON_WHITE_ICON_SRC : EDIT_BUTTON_BLUE_ICON_SRC} alt="" aria-hidden="true" />
+      <span className="municipality-visually-hidden">{label}</span>
+    </button>
+  );
+}
+
 function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = null, onEdit = null }) {
   if (!alerts.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
@@ -1536,9 +1555,7 @@ function AlertFeed({ alerts, emptyText, showStatus = false, onStatusChange = nul
           {showStatus && typeof onStatusChange === "function" ? (
             <div className="municipality-actions" style={{ marginTop: 12 }}>
               {typeof onEdit === "function" ? (
-                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => onEdit(alert)}>
-                  Edit
-                </button>
+                <HubEditButton label="Edit alert" onClick={() => onEdit(alert)} />
               ) : null}
               {alert.status !== "published" ? (
                 <button type="button" className="municipality-button municipality-button--primary" onClick={() => onStatusChange(alert, "published")}>
@@ -1588,9 +1605,7 @@ function EventFeed({ events, emptyText, showStatus = false, onStatusChange = nul
           {showStatus && typeof onStatusChange === "function" ? (
             <div className="municipality-actions" style={{ marginTop: 12 }}>
               {typeof onEdit === "function" ? (
-                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => onEdit(event)}>
-                  Edit
-                </button>
+                <HubEditButton label="Edit event" onClick={() => onEdit(event)} />
               ) : null}
               {event.status !== "published" ? (
                 <button type="button" className="municipality-button municipality-button--primary" onClick={() => onStatusChange(event, "published")}>
@@ -6066,9 +6081,7 @@ export default function MunicipalityApp() {
                                 </button>
                               </div>
                             ) : (
-                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("profile", true)}>
-                                Edit
-                              </button>
+                              <HubEditButton label="Edit account info" onClick={() => setSectionEditing("profile", true)} />
                             )}
                           </div>
                           {accountSectionEdit.profile ? (
@@ -6138,17 +6151,14 @@ export default function MunicipalityApp() {
                                     </button>
                                   </div>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    className="municipality-button municipality-button--ghost"
+                                  <HubEditButton
+                                    label="Edit PIN"
                                     onClick={() => {
                                       setTenantSecurityPinEditMode(true);
                                       setTenantSecurityPinDraft(DEFAULT_TENANT_SECURITY_PIN_DRAFT);
                                       setTenantSecurityStatus("");
                                     }}
-                                  >
-                                    Edit PIN
-                                  </button>
+                                  />
                                 )}
                               </div>
                               {tenantSecurityStatus ? <p className={`municipality-inline-status${/could not|incorrect|required|enter|use|not available|apply/i.test(tenantSecurityStatus.toLowerCase()) ? " is-error" : ""}`}>{tenantSecurityStatus}</p> : null}
@@ -6294,9 +6304,7 @@ export default function MunicipalityApp() {
                                 </button>
                               </div>
                             ) : (
-                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("cities", true)}>
-                                Edit
-                              </button>
+                              <HubEditButton label="Edit followed locations" onClick={() => setSectionEditing("cities", true)} />
                             )}
                           </div>
                           {accountSectionEdit.cities ? (
@@ -6387,9 +6395,7 @@ export default function MunicipalityApp() {
                               </button>
                             </div>
                           ) : (
-                            <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("notifications", true)}>
-                              Edit
-                            </button>
+                            <HubEditButton label="Edit notification preferences" onClick={() => setSectionEditing("notifications", true)} />
                           )}
                         </div>
                         <div className="municipality-topic-row municipality-topic-row--stacked">
@@ -6456,9 +6462,7 @@ export default function MunicipalityApp() {
                               </button>
                             </div>
                           ) : (
-                            <button type="button" className="municipality-button municipality-button--ghost" onClick={() => setSectionEditing("security", true)}>
-                              Edit
-                            </button>
+                            <HubEditButton label="Edit password settings" onClick={() => setSectionEditing("security", true)} />
                           )}
                         </div>
                         {accountSectionEdit.security ? (
@@ -7416,16 +7420,14 @@ export default function MunicipalityApp() {
                                             : "Permissions are view-only until you select Edit Permissions."}
                                         </p>
                                         {!settingsRolePermissionEditMode ? (
-                                          <button
-                                            type="button"
-                                            className="municipality-button municipality-button--primary"
+                                          <HubEditButton
+                                            label="Edit permissions"
+                                            variant="primary"
                                             onClick={() => {
                                               setSettingsRolePermissionEditMode(true);
                                               setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
                                             }}
-                                          >
-                                            Edit Permissions
-                                          </button>
+                                          />
                                         ) : null}
                                       </div>
                                       <div className="municipality-permission-matrix">
@@ -7539,16 +7541,13 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">Choose which municipality actions should require a 4-digit PIN checkpoint before completing.</p>
                             </div>
                             {!tenantSecurityChecksEditMode ? (
-                              <button
-                                type="button"
-                                className="municipality-button municipality-button--ghost"
+                              <HubEditButton
+                                label="Edit security checks"
                                 onClick={() => {
                                   setTenantSecurityChecksEditMode(true);
                                   setTenantSecurityStatus("");
                                 }}
-                              >
-                                Edit
-                              </button>
+                              />
                             ) : null}
                           </div>
                           {tenantSecurityStatus ? <p className={`municipality-inline-status${/could not|incorrect|required|enter|use|not available|apply/i.test(tenantSecurityStatus.toLowerCase()) ? " is-error" : ""}`}>{tenantSecurityStatus}</p> : null}
