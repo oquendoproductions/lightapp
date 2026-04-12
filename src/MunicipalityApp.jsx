@@ -25,6 +25,10 @@ const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
 
 const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_BRAND_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+const ADD_BUTTON_GREEN_ICON_SRC = "/Icons/Buttons/add_button/add_button_green_icon.png";
+const ADD_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/add_button/add_button_white_icon.png";
+const DELETE_BUTTON_RED_ICON_SRC = "/Icons/Buttons/delete_button/delete_button_red_icon.png";
+const DELETE_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/delete_button/delete_button_white_icon.png";
 const EDIT_BUTTON_BLUE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_blue_icon.png";
 const EDIT_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_white_icon.png";
 
@@ -1508,20 +1512,57 @@ function MunicipalityReportTable({
   );
 }
 
-function HubEditButton({ label = "Edit", onClick, disabled = false, variant = "ghost" }) {
+function HubIconButton({ label, iconSrc, onClick, disabled = false, variant = "ghost", tone = "default" }) {
   const isPrimary = variant === "primary";
   return (
     <button
       type="button"
-      className={`municipality-button municipality-button--${isPrimary ? "primary" : "ghost"} municipality-button--icon`}
+      className={`municipality-button municipality-button--${isPrimary ? "primary" : "ghost"} municipality-button--icon${tone === "danger" ? " municipality-button--danger" : ""}`}
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
       title={label}
     >
-      <img src={isPrimary ? EDIT_BUTTON_WHITE_ICON_SRC : EDIT_BUTTON_BLUE_ICON_SRC} alt="" aria-hidden="true" />
+      <img src={iconSrc} alt="" aria-hidden="true" />
       <span className="municipality-visually-hidden">{label}</span>
     </button>
+  );
+}
+
+function HubEditButton({ label = "Edit", onClick, disabled = false, variant = "ghost" }) {
+  return (
+    <HubIconButton
+      label={label}
+      iconSrc={variant === "primary" ? EDIT_BUTTON_WHITE_ICON_SRC : EDIT_BUTTON_BLUE_ICON_SRC}
+      onClick={onClick}
+      disabled={disabled}
+      variant={variant}
+    />
+  );
+}
+
+function HubAddButton({ label = "Add", onClick, disabled = false, variant = "primary" }) {
+  return (
+    <HubIconButton
+      label={label}
+      iconSrc={variant === "primary" ? ADD_BUTTON_WHITE_ICON_SRC : ADD_BUTTON_GREEN_ICON_SRC}
+      onClick={onClick}
+      disabled={disabled}
+      variant={variant}
+    />
+  );
+}
+
+function HubDeleteButton({ label = "Delete", onClick, disabled = false, variant = "ghost" }) {
+  return (
+    <HubIconButton
+      label={label}
+      iconSrc={variant === "primary" ? DELETE_BUTTON_WHITE_ICON_SRC : DELETE_BUTTON_RED_ICON_SRC}
+      onClick={onClick}
+      disabled={disabled}
+      variant={variant}
+      tone="danger"
+    />
   );
 }
 
@@ -1695,9 +1736,7 @@ function AlertComposer({
       </div>
       <div className="municipality-actions">
         {typeof onDelete === "function" ? (
-          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={onDelete} disabled={deleteBusy}>
-            {deleteBusy ? "Deleting..." : "Delete Alert"}
-          </button>
+          <HubDeleteButton label={deleteBusy ? "Deleting alert" : "Delete alert"} onClick={onDelete} disabled={deleteBusy} />
         ) : null}
         <button type="submit" className="municipality-button municipality-button--primary" disabled={deleteBusy}>{submitLabel}</button>
       </div>
@@ -1766,9 +1805,7 @@ function EventComposer({
       </div>
       <div className="municipality-actions">
         {typeof onDelete === "function" ? (
-          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={onDelete} disabled={deleteBusy}>
-            {deleteBusy ? "Deleting..." : "Delete Event"}
-          </button>
+          <HubDeleteButton label={deleteBusy ? "Deleting event" : "Delete event"} onClick={onDelete} disabled={deleteBusy} />
         ) : null}
         <button type="submit" className="municipality-button municipality-button--primary" disabled={deleteBusy}>{submitLabel}</button>
       </div>
@@ -6549,17 +6586,14 @@ export default function MunicipalityApp() {
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                type="button"
-                                className="municipality-button municipality-button--ghost"
+                              <HubEditButton
+                                label="Edit organization general settings"
                                 onClick={() => {
                                   setOrganizationProfileDraft(buildOrganizationProfileDraft(organizationProfile, tenantName));
                                   setSettingsSectionEdit((prev) => ({ ...prev, organization: true }));
                                   setSettingsSectionStatus((prev) => ({ ...prev, organization: "" }));
                                 }}
-                              >
-                                Edit
-                              </button>
+                              />
                             )}
                           </div>
                           {settingsSectionStatus.organization ? <p className={`municipality-inline-status${settingsSectionStatus.organization.toLowerCase().includes("could not") || settingsSectionStatus.organization.toLowerCase().includes("enter") ? " is-error" : ""}`}>{settingsSectionStatus.organization}</p> : null}
@@ -6698,16 +6732,13 @@ export default function MunicipalityApp() {
                                 Back
                               </button>
                             ) : (
-                              <button
-                                type="button"
-                                className="municipality-button municipality-button--primary"
+                              <HubAddButton
+                                label="Add new asset"
                                 onClick={() => {
                                   setSettingsSectionEdit((prev) => ({ ...prev, assets: true }));
                                   setSettingsSectionStatus((prev) => ({ ...prev, assets: "" }));
                                 }}
-                              >
-                                Add New Asset
-                              </button>
+                              />
                             )}
                           </div>
                           {settingsSectionStatus.assets ? <p className={`municipality-inline-status${settingsSectionStatus.assets.toLowerCase().includes("could not") || settingsSectionStatus.assets.toLowerCase().includes("choose") ? " is-error" : ""}`}>{settingsSectionStatus.assets}</p> : null}
@@ -6835,14 +6866,7 @@ export default function MunicipalityApp() {
                                               >
                                                 Open
                                               </button>
-                                              <button
-                                                type="button"
-                                                className="municipality-button municipality-button--ghost municipality-button--danger"
-                                                onClick={() => void removeAssetFile(fileRow)}
-                                                disabled={settingsSectionSaving.assets}
-                                              >
-                                                Remove
-                                              </button>
+                                              <HubDeleteButton label="Remove asset" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets} />
                                             </div>
                                           </div>
                                         ))
@@ -6886,7 +6910,7 @@ export default function MunicipalityApp() {
                                         </div>
                                         <div className="municipality-actions municipality-actions--compact">
                                           <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
-                                          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
+                                          <HubDeleteButton label="Remove asset" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets} />
                                         </div>
                                       </div>
                                     ))}
@@ -6928,7 +6952,7 @@ export default function MunicipalityApp() {
                                         </div>
                                         <div className="municipality-actions municipality-actions--compact">
                                           <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void openAssetFile(fileRow)}>Open</button>
-                                          <button type="button" className="municipality-button municipality-button--ghost municipality-button--danger" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets}>Remove</button>
+                                          <HubDeleteButton label="Remove asset" onClick={() => void removeAssetFile(fileRow)} disabled={settingsSectionSaving.assets} />
                                         </div>
                                       </div>
                                     ))}
@@ -6997,13 +7021,7 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">Review the employees who currently have access to this location, then add a new employee when needed.</p>
                             </div>
                             <div className="municipality-actions">
-                                <button
-                                  type="button"
-                                  className="municipality-button municipality-button--primary"
-                                  onClick={() => setTeamManagementView("add")}
-                                >
-                                  Add Employee
-                                </button>
+                                <HubAddButton label="Add employee" onClick={() => setTeamManagementView("add")} />
                             </div>
                           </div>
                           {settingsSectionStatus.team ? <p className={`municipality-inline-status${teamSectionStatusIsError ? " is-error" : ""}`}>{settingsSectionStatus.team}</p> : null}
@@ -7101,25 +7119,19 @@ export default function MunicipalityApp() {
                                                   </>
                                                 ) : (
                                                   <>
-                                                    <button
-                                                      type="button"
-                                                      className="municipality-button municipality-button--ghost"
+                                                    <HubEditButton
+                                                      label="Edit employee role"
                                                       onClick={() => {
                                                         setEditingTeamAssignmentKey(assignmentKey);
                                                         setEditingTeamAssignmentRole(roleKey);
                                                       }}
                                                       disabled={isBusy}
-                                                    >
-                                                      Edit
-                                                    </button>
-                                                    <button
-                                                      type="button"
-                                                      className="municipality-button municipality-button--ghost municipality-button--danger"
+                                                    />
+                                                    <HubDeleteButton
+                                                      label="Remove employee assignment"
                                                       onClick={() => void removeTeamAssignment(assignment)}
                                                       disabled={isBusy}
-                                                    >
-                                                      Remove
-                                                    </button>
+                                                    />
                                                   </>
                                                 )}
                                               </div>
@@ -7339,16 +7351,14 @@ export default function MunicipalityApp() {
                               <p className="municipality-note">Choose a role, adjust permissions, then save the updated access profile for this location.</p>
                             </div>
                             <div className="municipality-actions">
-                              <button
-                                type="button"
-                                className={`municipality-button${settingsRoleFormOpen ? " municipality-button--ghost" : " municipality-button--primary"}`}
+                              <HubAddButton
+                                label={settingsRoleFormOpen ? "Hide add role" : "Add role"}
+                                variant={settingsRoleFormOpen ? "ghost" : "primary"}
                                 onClick={() => {
                                   setSettingsRoleFormOpen((prev) => !prev);
                                   setSettingsSectionStatus((prev) => ({ ...prev, roles: "" }));
                                 }}
-                              >
-                                {settingsRoleFormOpen ? "Hide Add Role" : "Add Role"}
-                              </button>
+                              />
                             </div>
                           </div>
                           {settingsSectionStatus.roles ? <p className={`municipality-inline-status${/could not|select|enter|already exists/i.test(settingsSectionStatus.roles) ? " is-error" : ""}`}>{settingsSectionStatus.roles}</p> : null}
@@ -7384,9 +7394,7 @@ export default function MunicipalityApp() {
                                       </div>
                                     </div>
                                     <div className="municipality-actions">
-                                      <button type="button" className="municipality-button municipality-button--primary" onClick={() => void createLocationRole()}>
-                                        Create Role
-                                      </button>
+                                      <HubAddButton label="Create role" onClick={() => void createLocationRole()} />
                                     </div>
                                   </div>
                                 ) : null}
@@ -7631,17 +7639,14 @@ export default function MunicipalityApp() {
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                type="button"
-                                className="municipality-button municipality-button--ghost"
+                              <HubEditButton
+                                label="Edit visual appearance"
                                 onClick={() => {
                                   setMapAppearanceDraft(buildMapAppearanceDraft(mapAppearance));
                                   setSettingsSectionEdit((prev) => ({ ...prev, map: true }));
                                   setSettingsSectionStatus((prev) => ({ ...prev, map: "" }));
                                 }}
-                              >
-                                Edit
-                              </button>
+                              />
                             )}
                           </div>
                           {settingsSectionStatus.map ? <p className={`municipality-inline-status${settingsSectionStatus.map.toLowerCase().includes("could not") ? " is-error" : ""}`}>{settingsSectionStatus.map}</p> : null}
