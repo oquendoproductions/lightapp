@@ -18618,9 +18618,37 @@ export default function App({ onBackToHub = null }) {
         if (/^\d+$/.test(v)) return "";
         return v;
       };
+      const extractLandmarkCandidate = (result) => {
+        const types = Array.isArray(result?.types) ? result.types : [];
+        const comps = Array.isArray(result?.address_components) ? result.address_components : [];
+        const interestingTypeSet = new Set([
+          "establishment",
+          "point_of_interest",
+          "premise",
+          "subpremise",
+          "park",
+          "school",
+          "shopping_mall",
+          "tourist_attraction",
+          "place_of_worship",
+          "transit_station",
+          "natural_feature",
+        ]);
+        const namedComp = comps.find((c) => {
+          const ct = Array.isArray(c?.types) ? c.types : [];
+          return ct.some((type) => interestingTypeSet.has(type));
+        });
+        const compName = sanitizeLandmarkName(namedComp?.long_name || "");
+        if (compName && !/^\d+\s/.test(compName)) return compName;
+        if (types.some((type) => interestingTypeSet.has(type))) {
+          const formatted = String(result?.formatted_address || "").trim();
+          const firstChunk = sanitizeLandmarkName(formatted.split(",")[0] || "");
+          if (firstChunk && !/^\d+\s/.test(firstChunk)) return firstChunk;
+        }
+        return "";
+      };
       try {
-        if (placesLookupBlockedRef.current) return "";
-        if (ENABLE_LEGACY_PLACES_SERVICE) {
+        if (ENABLE_LEGACY_PLACES_SERVICE && !placesLookupBlockedRef.current) {
           const placesNS = window.google?.maps?.places;
           if (placesNS?.PlacesService) {
             const service = new placesNS.PlacesService(document.createElement("div"));
@@ -18630,7 +18658,7 @@ export default function App({ onBackToHub = null }) {
                 service.nearbySearch(
                   {
                     location: { lat: qlat, lng: qlng },
-                    radius: 152, // ~500 ft
+                    radius: 305, // ~1000 ft
                     type,
                   },
                   (results, status) => {
@@ -18651,9 +18679,13 @@ export default function App({ onBackToHub = null }) {
               });
 
             const candidates = [];
+            let legacyLookupBlocked = false;
             for (const type of ["establishment", "point_of_interest"]) {
               const res = await nearbyByType(type);
-              if (res?.blocked) return "";
+              if (res?.blocked) {
+                legacyLookupBlocked = true;
+                break;
+              }
               if (!res.ok || !res.results.length) continue;
               for (const r of res.results) {
                 const nm = String(r?.name || "").trim();
@@ -18670,61 +18702,81 @@ export default function App({ onBackToHub = null }) {
               return sanitizeLandmarkName(candidates[0]?.name || "");
             }
 
-            // Fallback 2: distance-ranked search without a strict type
-            const byDistance = await new Promise((resolve) => {
-              service.nearbySearch(
-                {
-                  location: { lat: qlat, lng: qlng },
-                  rankBy: placesNS.RankBy.DISTANCE,
-                  keyword: "business",
-                },
-                (results, status) => {
-                  const blocked =
-                    status === placesNS.PlacesServiceStatus.REQUEST_DENIED;
-                  if (blocked) {
-                    markPlacesLookupBlocked("REQUEST_DENIED");
+            if (!legacyLookupBlocked) {
+              // Prefer the nearest named place when type-scoped lookups return no rows.
+              const byDistance = await new Promise((resolve) => {
+                service.nearbySearch(
+                  {
+                    location: { lat: qlat, lng: qlng },
+                    rankBy: placesNS.RankBy.DISTANCE,
+                    type: "establishment",
+                  },
+                  (results, status) => {
+                    const blocked =
+                      status === placesNS.PlacesServiceStatus.REQUEST_DENIED;
+                    if (blocked) {
+                      markPlacesLookupBlocked("REQUEST_DENIED");
+                    }
+                    resolve({
+                      results: Array.isArray(results) ? results : [],
+                      ok:
+                        status === placesNS.PlacesServiceStatus.OK ||
+                        status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
+                      blocked,
+                    });
                   }
-                  resolve({
-                    results: Array.isArray(results) ? results : [],
-                    ok:
-                      status === placesNS.PlacesServiceStatus.OK ||
-                      status === placesNS.PlacesServiceStatus.ZERO_RESULTS,
-                    blocked,
-                  });
-                }
-              );
-            });
-            if (byDistance?.blocked) return "";
-            if (byDistance.ok && byDistance.results.length) {
-              const named = byDistance.results
-                .map((r) => String(r?.name || "").trim())
-                .filter(Boolean);
-              if (named.length) return sanitizeLandmarkName(named[0]);
+                );
+              });
+              if (byDistance?.ok && byDistance.results.length) {
+                const named = byDistance.results
+                  .map((r) => sanitizeLandmarkName(r?.name || ""))
+                  .filter(Boolean);
+                if (named.length) return named[0];
+              }
             }
           }
         }
 
-        // Geocoder fallback: avoids legacy PlacesService warning noise.
+        // Geocoder fallback: probe a small area so we can still surface nearby named places
+        // when Places is blocked or the exact snapped point has no landmark result.
         const geocoder = new window.google.maps.Geocoder();
-        const geo = await new Promise((resolve) => {
-          geocoder.geocode({ location: { lat: qlat, lng: qlng } }, (results, status) => {
-            resolve({ results: Array.isArray(results) ? results : [], status });
+        const probeStep = 0.00035;
+        const probes = [
+          [qlat, qlng],
+          [qlat + probeStep, qlng],
+          [qlat - probeStep, qlng],
+          [qlat, qlng + probeStep],
+          [qlat, qlng - probeStep],
+          [qlat + probeStep, qlng + probeStep],
+          [qlat + probeStep, qlng - probeStep],
+          [qlat - probeStep, qlng + probeStep],
+          [qlat - probeStep, qlng - probeStep],
+        ];
+        const candidateByName = new Map();
+        for (const [plat, plng] of probes) {
+          const geo = await new Promise((resolve) => {
+            geocoder.geocode({ location: { lat: plat, lng: plng } }, (results, status) => {
+              resolve({ results: Array.isArray(results) ? results : [], status });
+            });
           });
-        });
-        if (geo.status !== "OK" || !geo.results.length) return "";
-        for (const r of geo.results) {
-          const t = Array.isArray(r?.types) ? r.types : [];
-          if (!t.includes("establishment") && !t.includes("point_of_interest") && !t.includes("premise")) continue;
-          const comps = Array.isArray(r?.address_components) ? r.address_components : [];
-          const namedComp = comps.find((c) => {
-            const ct = Array.isArray(c?.types) ? c.types : [];
-            return ct.includes("establishment") || ct.includes("point_of_interest") || ct.includes("premise");
-          });
-          const compName = String(namedComp?.long_name || "").trim();
-          if (compName && !/^\d+\s/.test(compName)) return sanitizeLandmarkName(compName);
-          const formatted = String(r?.formatted_address || "").trim();
-          const firstChunk = formatted.split(",")[0]?.trim() || "";
-          if (firstChunk && !/^\d+\s/.test(firstChunk)) return sanitizeLandmarkName(firstChunk);
+          if (geo.status !== "OK" || !geo.results.length) continue;
+          for (const result of geo.results) {
+            const candidate = extractLandmarkCandidate(result);
+            if (!candidate) continue;
+            const rLat = Number(result?.geometry?.location?.lat?.());
+            const rLng = Number(result?.geometry?.location?.lng?.());
+            const distance = Number.isFinite(rLat) && Number.isFinite(rLng)
+              ? distanceMeters(qlat, qlng, rLat, rLng)
+              : distanceMeters(qlat, qlng, plat, plng);
+            const key = candidate.toLowerCase();
+            const existing = candidateByName.get(key);
+            if (!existing || distance < existing.distance) {
+              candidateByName.set(key, { name: candidate, distance });
+            }
+          }
+        }
+        if (candidateByName.size) {
+          return Array.from(candidateByName.values()).sort((a, b) => a.distance - b.distance)[0]?.name || "";
         }
         return "";
       } catch (e) {
