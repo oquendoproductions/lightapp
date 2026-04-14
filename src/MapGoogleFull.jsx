@@ -1307,6 +1307,7 @@ function canIdentityReportLight(
     lastFixByLightId,
     potholeReports = [],
     potholeLastFixById = {},
+    allowRepeatAfterArchive = false,
   }
 ) {
   const key = reporterIdentityKey({ session, profile, guestInfo });
@@ -1325,7 +1326,10 @@ function canIdentityReportLight(
         if (!(rKey && rKey === key)) continue;
         const ts = Number(r?.ts || 0);
         if (!Number.isFinite(ts)) continue;
-        if (!lastFixTs || ts > lastFixTs) return false;
+        if (!lastFixTs || ts > lastFixTs) {
+          if (allowRepeatAfterArchive) continue;
+          return false;
+        }
       }
       return true;
     }
@@ -1350,7 +1354,10 @@ function canIdentityReportLight(
 
       // If never fixed, any prior report by this identity blocks another report.
       // If fixed, only reports after the last fix block another report.
-      if (!lastFixTs || ts > lastFixTs) return false;
+      if (!lastFixTs || ts > lastFixTs) {
+        if (allowRepeatAfterArchive) continue;
+        return false;
+      }
     }
 
     return true;
@@ -12835,8 +12842,9 @@ export default function App({ onBackToHub = null }) {
   const [lastFixByLightId, setLastFixByLightId] = useState({});
   const [actionsByLightId, setActionsByLightId] = useState({});
   const [utilityReportedLightIdSet, setUtilityReportedLightIdSet] = useState(() => new Set());
+  const [utilityReportedAtByLightId, setUtilityReportedAtByLightId] = useState({});
   const [utilityReportReferenceByLightId, setUtilityReportReferenceByLightId] = useState({});
-  const [utilityReportedAnyLightIdSet, setUtilityReportedAnyLightIdSet] = useState(() => new Set());
+  const [, setUtilityReportedAnyLightIdSet] = useState(() => new Set());
   const [utilitySignalCountsByLightId, setUtilitySignalCountsByLightId] = useState({});
 
   // per-light cooldowns: persisted
@@ -15395,7 +15403,7 @@ export default function App({ onBackToHub = null }) {
       const utilityStatusPromise = isAuthed
         ? supabase
             .from("utility_report_status")
-            .select("incident_id, report_reference")
+            .select("incident_id, report_reference, updated_at, reported_at")
             .eq("tenant_key", activeTenantKey())
             .eq("user_id", session.user.id)
             .order("updated_at", { ascending: false })
@@ -15435,7 +15443,7 @@ export default function App({ onBackToHub = null }) {
       if (utilityStatusErr && isMissingUtilityReportReferenceColumnError(utilityStatusErr) && isAuthed) {
         const fallback = await supabase
           .from("utility_report_status")
-          .select("incident_id")
+          .select("incident_id, updated_at, reported_at")
           .eq("tenant_key", activeTenantKey())
           .eq("user_id", session.user.id)
           .order("updated_at", { ascending: false });
@@ -15626,7 +15634,7 @@ export default function App({ onBackToHub = null }) {
             const incidentId = keyStr.slice(sep + 1).trim();
             if (!incidentId) continue;
             const state = String(snap?.state || "").trim().toLowerCase();
-            if (!(state === "fixed" || state === "archived")) continue;
+            if (state !== "fixed") continue;
             const ts = Date.parse(String(snap?.last_changed_at || "")) || 0;
             if (!ts) continue;
             if (!out[incidentId] || ts > Number(out[incidentId] || 0)) {
@@ -15772,6 +15780,7 @@ export default function App({ onBackToHub = null }) {
       setReports(Array.from(reportMap.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0)));
 
       const utilitySet = new Set();
+      const utilityReportedAtMap = {};
       const utilityReferenceMap = {};
       for (const row of utilityStatusData || []) {
         const rawId = String(row?.incident_id || "").trim();
@@ -15780,9 +15789,14 @@ export default function App({ onBackToHub = null }) {
         const id = String(normalizedId || "").trim();
         if (!id || !officialIdByAlias.has(id)) continue;
         utilitySet.add(id);
+        utilityReportedAtMap[id] = Math.max(
+          Number(utilityReportedAtMap[id] || 0),
+          Date.parse(String(row?.updated_at || row?.reported_at || "")) || 0
+        );
         utilityReferenceMap[id] = normalizeUtilityReportReference(row?.report_reference);
       }
       setUtilityReportedLightIdSet(utilitySet);
+      setUtilityReportedAtByLightId(utilityReportedAtMap);
       setUtilityReportReferenceByLightId(utilityReferenceMap);
 
       const utilityAnySet = new Set();
@@ -15899,14 +15913,14 @@ export default function App({ onBackToHub = null }) {
         if (viewerUserId) {
           let { data, error } = await supabase
             .from("utility_report_status")
-            .select("incident_id, report_reference")
+            .select("incident_id, report_reference, updated_at, reported_at")
             .eq("tenant_key", tenantKey)
             .eq("user_id", viewerUserId)
             .order("updated_at", { ascending: false });
           if (error && isMissingUtilityReportReferenceColumnError(error)) {
             const fallback = await supabase
               .from("utility_report_status")
-              .select("incident_id")
+              .select("incident_id, updated_at, reported_at")
               .eq("tenant_key", tenantKey)
               .eq("user_id", viewerUserId)
               .order("updated_at", { ascending: false });
@@ -15916,14 +15930,20 @@ export default function App({ onBackToHub = null }) {
           if (!error) {
             const next = new Set();
             const nextRefs = {};
+            const nextReportedAt = {};
             for (const row of data || []) {
               const incidentId = String(row?.incident_id || "").trim();
               if (!incidentId) continue;
               next.add(incidentId);
               nextRefs[incidentId] = normalizeUtilityReportReference(row?.report_reference);
+              nextReportedAt[incidentId] = Math.max(
+                Number(nextReportedAt[incidentId] || 0),
+                Date.parse(String(row?.updated_at || row?.reported_at || "")) || 0
+              );
             }
             setUtilityReportedLightIdSet(next);
             setUtilityReportReferenceByLightId(nextRefs);
+            setUtilityReportedAtByLightId(nextReportedAt);
           }
         }
 
@@ -16311,7 +16331,7 @@ export default function App({ onBackToHub = null }) {
             const next = { ...(prev || {}) };
             const prevTs = Number(next[incidentId] || 0);
             if (eventType === "DELETE") return next;
-            if (stateLower === "fixed" || stateLower === "archived") {
+            if (stateLower === "fixed") {
               if (!changedAtTs || changedAtTs >= prevTs) {
                 next[incidentId] = changedAtTs || Date.now();
               }
@@ -16524,7 +16544,7 @@ export default function App({ onBackToHub = null }) {
       const incidentId = keyStr.slice(sep + 1).trim();
       if (!incidentId.startsWith("pothole:")) continue;
       const state = String(snap?.state || "").trim().toLowerCase();
-      if (!(state === "fixed" || state === "archived")) continue;
+      if (state !== "fixed") continue;
       const pid = incidentId.slice("pothole:".length).trim();
       if (!pid) continue;
       const ts = Date.parse(String(snap?.last_changed_at || "")) || 0;
@@ -16755,11 +16775,14 @@ export default function App({ onBackToHub = null }) {
       if (!isOutageReportType(r)) continue;
       const lid = (r.light_id || "").trim();
       if (!lid || !officialIdSet.has(lid)) continue;
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[lid] || 0), Number(fixedLights?.[lid] || 0));
+      const ts = Number(r?.ts || 0);
+      if (lastFixTs && ts > 0 && ts <= lastFixTs) continue;
       if (reportIdentityKey(r) === viewerIdentityKey) out.add(lid);
     }
 
     return out;
-  }, [viewerIdentityKey, reports, officialIdSet]);
+  }, [viewerIdentityKey, reports, officialIdSet, lastFixByLightId, fixedLights]);
 
   const viewerUtilityReportedLightIdSet = useMemo(() => {
     const out = new Set();
@@ -16767,10 +16790,38 @@ export default function App({ onBackToHub = null }) {
     for (const lid of utilityReportedLightIdSet || []) {
       const id = String(lid || "").trim();
       if (!id || !officialIdSet.has(id)) continue;
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[id] || 0), Number(fixedLights?.[id] || 0));
+      const reportedAtTs = Number(utilityReportedAtByLightId?.[id] || 0);
+      if (lastFixTs && reportedAtTs > 0 && reportedAtTs <= lastFixTs) continue;
       out.add(id);
     }
     return out;
-  }, [viewerIdentityKey, utilityReportedLightIdSet, officialIdSet]);
+  }, [viewerIdentityKey, utilityReportedLightIdSet, officialIdSet, utilityReportedAtByLightId, lastFixByLightId, fixedLights]);
+
+  const activeUtilitySignalCountsByLightId = useMemo(() => {
+    const next = {};
+    for (const [lidRaw, utility] of Object.entries(utilitySignalCountsByLightId || {})) {
+      const lid = String(lidRaw || "").trim();
+      if (!lid) continue;
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[lid] || 0), Number(fixedLights?.[lid] || 0));
+      const latestReportedTs = Number(utility?.latestReportedTs || 0);
+      if (lastFixTs && latestReportedTs > 0 && latestReportedTs <= lastFixTs) continue;
+      next[lid] = {
+        reportedCount: Math.max(0, Number(utility?.reportedCount || 0)),
+        referenceCount: Math.max(0, Number(utility?.referenceCount || 0)),
+        latestReportedTs,
+      };
+    }
+    return next;
+  }, [utilitySignalCountsByLightId, lastFixByLightId, fixedLights]);
+
+  const activeUtilityReportedAnyLightIdSet = useMemo(() => {
+    const next = new Set();
+    for (const [lid, utility] of Object.entries(activeUtilitySignalCountsByLightId || {})) {
+      if (Math.max(0, Number(utility?.reportedCount || 0)) > 0) next.add(String(lid || "").trim());
+    }
+    return next;
+  }, [activeUtilitySignalCountsByLightId]);
 
   const refreshIncidentRepairProgress = useCallback(async (identityKey = viewerIdentityKey) => {
     try {
@@ -16922,13 +16973,13 @@ export default function App({ onBackToHub = null }) {
       signalMap.set(lid, current);
     }
 
-    for (const lid of Object.keys(utilitySignalCountsByLightId || {})) {
+    for (const lid of Object.keys(activeUtilitySignalCountsByLightId || {})) {
       if (String(lid || "").trim()) lightIds.add(String(lid || "").trim());
     }
 
     for (const lid of lightIds) {
       const signals = signalMap.get(lid) || { outageSignals: [], workingSignals: [] };
-      const utility = utilitySignalCountsByLightId?.[lid] || {};
+      const utility = activeUtilitySignalCountsByLightId?.[lid] || {};
       byLight[lid] = computeStreetlightConfidenceSnapshot({
         outageSignals: signals.outageSignals,
         workingSignals: signals.workingSignals,
@@ -16949,7 +17000,7 @@ export default function App({ onBackToHub = null }) {
     officialIdSet,
     lastFixByLightId,
     fixedLights,
-    utilitySignalCountsByLightId,
+    activeUtilitySignalCountsByLightId,
     viewerIdentityKey,
     viewerSavedStreetlightLightIdSet,
     viewerUtilityReportedLightIdSet,
@@ -16992,10 +17043,13 @@ export default function App({ onBackToHub = null }) {
     for (const r of potholeReports || []) {
       const pid = String(r?.pothole_id || "").trim();
       if (!pid) continue;
+      const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
+      const ts = Number(r?.ts || 0);
+      if (lastFixTs && ts > 0 && ts <= lastFixTs) continue;
       if (reportIdentityKey(r) === viewerIdentityKey) out.add(pid);
     }
     return out;
-  }, [viewerIdentityKey, potholeReports]);
+  }, [viewerIdentityKey, potholeReports, potholeLastFixById]);
 
   const viewerReportedWaterIncidentIdSet = useMemo(() => {
     const out = new Set();
@@ -17551,7 +17605,7 @@ export default function App({ onBackToHub = null }) {
       const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
       if (sinceFixCount < 1) return false;
       if (mode === "saved") return true;
-      return utilityReportedAnyLightIdSet.has(lid);
+      return activeUtilityReportedAnyLightIdSet.has(lid);
     }
 
     if (!viewerStreetlightRingOpenIdSet.has(lid)) return false;
@@ -17562,7 +17616,7 @@ export default function App({ onBackToHub = null }) {
     isAdmin,
     reportsAdminView,
     reportsByOfficialId,
-    utilityReportedAnyLightIdSet,
+    activeUtilityReportedAnyLightIdSet,
     viewerStreetlightRingOpenIdSet,
     viewerSavedStreetlightLightIdSet,
     viewerUtilityReportedLightIdSet,
@@ -17946,7 +18000,7 @@ export default function App({ onBackToHub = null }) {
         const sinceFixCount = Number(reportsByOfficialId?.[lid]?.sinceFixCount ?? 0);
         if (sinceFixCount >= 1) {
           saved += 1;
-          if (utilityReportedAnyLightIdSet.has(lid)) utility += 1;
+          if (activeUtilityReportedAnyLightIdSet.has(lid)) utility += 1;
         }
         continue;
       }
@@ -17963,7 +18017,7 @@ export default function App({ onBackToHub = null }) {
     mapBounds,
     renderedOfficialLights,
     reportsByOfficialId,
-    utilityReportedAnyLightIdSet,
+    activeUtilityReportedAnyLightIdSet,
     viewerStreetlightRingOpenIdSet,
     viewerSavedStreetlightLightIdSet,
     viewerUtilityReportedLightIdSet,
@@ -19226,6 +19280,9 @@ export default function App({ onBackToHub = null }) {
 
       if (potholeId) {
         const potholeIncidentId = `pothole:${String(potholeId || "").trim()}`;
+        const allowRepeatAfterArchive =
+          isPublicRepairEnabledForDomain("potholes")
+          && Boolean(getIncidentRepairSnapshot("potholes", potholeIncidentId)?.archived);
         if (!canIdentityReportLight(potholeIncidentId, {
           session,
           profile,
@@ -19235,6 +19292,7 @@ export default function App({ onBackToHub = null }) {
           lastFixByLightId,
           potholeReports,
           potholeLastFixById,
+          allowRepeatAfterArchive,
         })) {
           openNotice("⏳", "Already reported", "You already reported this pothole. You can report again after it is marked fixed.");
           return;
@@ -19344,6 +19402,7 @@ export default function App({ onBackToHub = null }) {
       if (saved.id) {
         setPotholeReports((prev) => (prev.some((x) => x.id === saved.id) ? prev : [saved, ...prev]));
       }
+      await refreshIncidentRepairProgress(viewerIdentityKey);
       persistedSubmission = true;
 
       const submittedAtIso = insReport.data?.created_at || new Date().toISOString();
@@ -19375,6 +19434,9 @@ export default function App({ onBackToHub = null }) {
         ? String(target?.lightId || "").trim()
         : "";
       if (isWaterDrainTarget && canonicalWaterDrainIncidentId) {
+        const allowRepeatAfterArchive =
+          isPublicRepairEnabledForDomain("water_drain_issues")
+          && Boolean(getIncidentRepairSnapshot("water_drain_issues", canonicalWaterDrainIncidentId)?.archived);
         if (!canIdentityReportLight(canonicalWaterDrainIncidentId, {
           session,
           profile,
@@ -19382,6 +19444,7 @@ export default function App({ onBackToHub = null }) {
           reports,
           fixedLights,
           lastFixByLightId,
+          allowRepeatAfterArchive,
         })) {
           openNotice("⏳", "Already reported", "You already reported this water/drain issue. You can report again after it is marked fixed.");
           return;
@@ -19472,6 +19535,7 @@ export default function App({ onBackToHub = null }) {
         reporter_email: data.reporter_email || null,
       };
       setReports((prev) => [saved, ...prev]);
+      await refreshIncidentRepairProgress(viewerIdentityKey);
       persistedSubmission = true;
 
       if (isWaterDrainTarget && saved?.light_id) {
@@ -19976,6 +20040,8 @@ async function insertReportWithFallback(payload) {
         // ✅ Identity enforcement AFTER identity is known
         const identityGuestInfo = isAuthed ? null : { name, phone, email };
 
+        const allowRepeatAfterArchive =
+          String(streetlightConfidenceByLightId?.[lightId]?.state || "").trim().toLowerCase() === "archived";
         if (!canIdentityReportLight(lightId, {
           session,
           profile,
@@ -19983,6 +20049,7 @@ async function insertReportWithFallback(payload) {
           reports,
           fixedLights,
           lastFixByLightId,
+          allowRepeatAfterArchive,
         })) {
           openNotice("⏳", "Already reported", "You already reported this light. You can report again after it is marked fixed.");
           setActiveLight(null);
@@ -20093,8 +20160,6 @@ async function insertReportWithFallback(payload) {
     };
 
     setReports((prev) => [saved, ...prev]);
-    // A new saved report starts a fresh utility-follow-up cycle for this user/light.
-    await clearUtilityReportedForViewer(saved.light_id || lightId);
 
     if (!session?.user?.id) {
       setCooldowns((prev) => {
@@ -20394,6 +20459,8 @@ async function insertReportWithFallback(payload) {
     // identity guard (one report per light since last fixed)
     const identityGuestInfo = isAuthed ? null : { name, phone, email };
 
+    const allowRepeatAfterArchive =
+      String(streetlightConfidenceByLightId?.[lightId]?.state || "").trim().toLowerCase() === "archived";
     if (!canIdentityReportLight(lightId, {
       session,
       profile,
@@ -20401,6 +20468,7 @@ async function insertReportWithFallback(payload) {
       reports,
       fixedLights,
       lastFixByLightId,
+      allowRepeatAfterArchive,
     })) {
       skipAlreadyReported += 1;
       continue;
@@ -20458,8 +20526,6 @@ async function insertReportWithFallback(payload) {
     };
 
     setReports((prev) => [saved, ...prev]);
-    // New save should show as saved-only (green) until user marks utility reported again.
-    await clearUtilityReportedForViewer(saved.light_id || lightId);
 
     // update per-light cooldown
     if (!session?.user?.id) {
@@ -20918,11 +20984,17 @@ async function insertReportWithFallback(payload) {
     const normalizedReference = normalizeUtilityReportReference(reportReference);
     const hadReported = utilityReportedLightIdSet.has(lid);
     const previousReference = String(utilityReportReferenceByLightId?.[lid] || "").trim();
+    const previousReportedAt = Number(utilityReportedAtByLightId?.[lid] || 0);
+    const nextReportedAt = Date.now();
     setUtilityReportedLightIdSet((prev) => {
       const next = new Set(prev || []);
       next.add(lid);
       return next;
     });
+    setUtilityReportedAtByLightId((prev) => ({
+      ...(prev || {}),
+      [lid]: nextReportedAt,
+    }));
     setUtilityReportReferenceByLightId((prev) => ({
       ...(prev || {}),
       [lid]: normalizedReference,
@@ -20961,6 +21033,12 @@ async function insertReportWithFallback(payload) {
         else next.delete(lid);
         return next;
       });
+      setUtilityReportedAtByLightId((prev) => {
+        const next = { ...(prev || {}) };
+        if (hadReported) next[lid] = previousReportedAt;
+        else delete next[lid];
+        return next;
+      });
       setUtilityReportReferenceByLightId((prev) => {
         const next = { ...(prev || {}) };
         if (hadReported) next[lid] = previousReference;
@@ -20979,6 +21057,11 @@ async function insertReportWithFallback(payload) {
     setUtilityReportedLightIdSet((prev) => {
       const next = new Set(prev || []);
       next.delete(lid);
+      return next;
+    });
+    setUtilityReportedAtByLightId((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[lid];
       return next;
     });
     setUtilityReportReferenceByLightId((prev) => {

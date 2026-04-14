@@ -95,6 +95,7 @@ export function computeStreetlightConfidenceSnapshot({
   const publicVisibleOutage = state === "likely_outage" || state === "high_confidence_outage";
   const closed = state === "likely_resolved" || state === "archived";
   const viewerHasOpenInterest = Boolean(viewerHasSaved || viewerUtilityReported);
+  const canViewerRestartArchivedCycle = state === "archived" && (viewerHasOpenInterest || publicVisibleOutage);
 
   return {
     state,
@@ -111,6 +112,8 @@ export function computeStreetlightConfidenceSnapshot({
     viewerHasOpenInterest,
     publicVisibleOutage,
     closed,
-    canViewerMarkWorking: !closed && !viewerHasWorkingAck && (viewerHasOpenInterest || publicVisibleOutage),
+    canViewerMarkWorking:
+      canViewerRestartArchivedCycle
+      || (!closed && !viewerHasWorkingAck && (viewerHasOpenInterest || publicVisibleOutage)),
   };
 }

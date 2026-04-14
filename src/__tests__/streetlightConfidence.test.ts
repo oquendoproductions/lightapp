@@ -127,4 +127,36 @@ describe("computeStreetlightConfidenceSnapshot", () => {
 
     expect(afterThreshold.state).toBe("archived");
   });
+
+  it("reactivates an archived light without adding score for the same reporter", () => {
+    const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+    const archivedTs = 1000 + fifteenDaysMs;
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [
+        { reporterKey: "uid:1", ts: 1000 },
+        { reporterKey: "uid:1", ts: archivedTs + 1000 },
+      ],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: archivedTs + 2000,
+    });
+
+    expect(snapshot.outageScore).toBe(1);
+    expect(snapshot.state).toBe("unconfirmed");
+    expect(snapshot.lastSignalTs).toBe(archivedTs + 1000);
+  });
+
+  it("allows a viewer to mark a previously archived light working as new activity", () => {
+    const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+    const snapshot = computeStreetlightConfidenceSnapshot({
+      outageSignals: [{ reporterKey: "uid:1", ts: 1000 }],
+      viewerIdentityKey: "uid:1",
+      viewerHasSaved: true,
+      now: 1000 + fifteenDaysMs,
+    });
+
+    expect(snapshot.state).toBe("archived");
+    expect(snapshot.closed).toBe(true);
+    expect(snapshot.canViewerMarkWorking).toBe(true);
+  });
 });
