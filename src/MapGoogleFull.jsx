@@ -524,6 +524,38 @@ function AppIcon({ src, alt = "", size = 18, style = {} }) {
   );
 }
 
+const ACTION_BUTTON_ICON_SRC = {
+  add: {
+    light: "/Icons/Buttons/add_button/add_button_blue_icon.png",
+    dark: "/Icons/Buttons/add_button/add_button_white_icon.png",
+  },
+  edit: {
+    light: "/Icons/Buttons/edit_button/edit_button_blue_icon.png",
+    dark: "/Icons/Buttons/edit_button/edit_button_white_icon.png",
+  },
+  delete: {
+    light: "/Icons/Buttons/delete_button/delete_button_red_icon.png",
+    dark: "/Icons/Buttons/delete_button/delete_button_white_icon.png",
+  },
+};
+
+function actionButtonIconSrc(action, { darkMode = false, emphasis = "secondary" } = {}) {
+  const key = String(action || "").trim().toLowerCase();
+  const iconSet = ACTION_BUTTON_ICON_SRC[key] || ACTION_BUTTON_ICON_SRC.edit;
+  if (emphasis === "filled" || emphasis === "danger") return iconSet.dark;
+  return darkMode ? iconSet.dark : iconSet.light;
+}
+
+function ActionButtonIcon({ action, darkMode = false, emphasis = "secondary", size = 18 }) {
+  return (
+    <AppIcon
+      src={actionButtonIconSrc(action, { darkMode, emphasis })}
+      alt=""
+      size={size}
+    />
+  );
+}
+
 function formatStreetSignTypeLabel(raw) {
   const key = String(raw || "").trim().toLowerCase();
   const found = STREET_SIGN_TYPE_OPTIONS.find((x) => x.value === key);
@@ -1168,6 +1200,10 @@ function stripSystemMetadataFromNote(note) {
     .replace(/\s*\|\s*\|\s*/g, " | ")
     .replace(/^\s*Note:\s*/i, "")
     .trim();
+}
+
+function noteDisplayText(note) {
+  return stripSystemMetadataFromNote(note);
 }
 
 function composeStreetlightQaNote(userNote, areaPowerOn, hazardYesNo) {
@@ -4322,14 +4358,17 @@ function AllReportsModal({
   onClose,
   onReporterDetails,
   domainKey = "streetlights",
+  incidentLabel = "",
   sharedLocation = "",
   sharedAddress = "",
   sharedLandmark = "",
   currentState = "",
   lastChangedAt = "",
   onCopyField = null,
+  isMobile = false,
 }) {
   const [actionProfileByUserId, setActionProfileByUserId] = useState({});
+  const showCompactMobileLayout = Boolean(isMobile);
 
   useEffect(() => {
     let cancelled = false;
@@ -4374,8 +4413,18 @@ function AllReportsModal({
 
   return (
     <ModalShell open={open} zIndex={10010}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>{title || "All Reports"}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ display: "grid", gap: showCompactMobileLayout && incidentLabel ? 2 : 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>
+            {title || "All Reports"}
+            {!showCompactMobileLayout && incidentLabel ? ` (${incidentLabel})` : ""}
+          </div>
+          {showCompactMobileLayout && incidentLabel ? (
+            <div style={{ fontSize: 12, lineHeight: 1.3, opacity: 0.78 }}>
+              {incidentLabel}
+            </div>
+          ) : null}
+        </div>
         <button
           onClick={onClose}
           style={{
@@ -4453,13 +4502,31 @@ function AllReportsModal({
         </div>
       )}
 
-      {!!String(currentState || "").trim() && (
-        <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
-          <b>Current state:</b> {incidentStateLabel(currentState)}
-          {!!String(lastChangedAt || "").trim() && (
-            <> • <b>Last updated:</b> {formatTs(lastChangedAt)}</>
-          )}
-        </div>
+      {(String(currentState || "").trim() || String(lastChangedAt || "").trim()) && (
+        showCompactMobileLayout ? (
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.35, opacity: 0.92, display: "grid", gap: 2 }}>
+            {!!String(currentState || "").trim() && (
+              <div><b>Current state:</b> {incidentStateLabel(currentState)}</div>
+            )}
+            {!!String(lastChangedAt || "").trim() && (
+              <div><b>Last updated:</b> {formatTs(lastChangedAt)}</div>
+            )}
+          </div>
+        ) : (
+          <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
+            {!!String(currentState || "").trim() && (
+              <>
+                <b>Current state:</b> {incidentStateLabel(currentState)}
+              </>
+            )}
+            {!!String(lastChangedAt || "").trim() && (
+              <>
+                {!!String(currentState || "").trim() ? " • " : null}
+                <b>Last updated:</b> {formatTs(lastChangedAt)}
+              </>
+            )}
+          </div>
+        )
       )}
 
       <div
@@ -4482,6 +4549,8 @@ function AllReportsModal({
             const isReopen = it.kind === "reopen";
             const isWorking = it.kind === "working";
             const isWorkingReport = it.kind === "report" && isWorkingReportType(it.type);
+            const imageUrl = readImageUrlFromNote(it.note);
+            const displayNote = noteDisplayText(it.note);
             const actorUserId = String(it?.actor_user_id || "").trim();
             const actorProfile = actorUserId ? actionProfileByUserId[actorUserId] : null;
             const actorName =
@@ -4541,22 +4610,31 @@ function AllReportsModal({
                   </div>
                 </div>
 
-                <div style={{ fontSize: 12, opacity: 0.85 }}>
-                  {formatDateTime(it.ts)}
-                </div>
-                {!!it.report_number && (
-                  <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
-                    Report #: {it.report_number}
-                  </div>
+                {showCompactMobileLayout ? (
+                  <>
+                    {!!it.report_number && (
+                      <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
+                        Report #: {it.report_number}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, opacity: 0.85 }}>
+                      {formatDateTime(it.ts)}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 12, opacity: 0.85 }}>
+                      {formatDateTime(it.ts)}
+                    </div>
+                    {!!it.report_number && (
+                      <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
+                        Report #: {it.report_number}
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {!!it.note?.trim() && (
-                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
-                    <b>Note:</b> {stripSystemMetadataFromNote(it.note) || it.note}
-                  </div>
-                )}
-
-                {(it.kind === "report" || it.kind === "working") && (
+                {!showCompactMobileLayout && (it.kind === "report" || it.kind === "working") && (
                   <div style={{ fontSize: 11.5, opacity: 0.9, lineHeight: 1.3 }}>
                     <b>Submitted by:</b>{" "}
                     <button
@@ -4576,6 +4654,35 @@ function AllReportsModal({
                       {String(it?.reporter_name || "").trim() || String(it?.reporter_email || "").trim() || "Unknown"}
                     </button>
                   </div>
+                )}
+
+                {!!String(displayNote || "").trim() && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Note:</b> {displayNote}
+                  </div>
+                )}
+                {!!imageUrl && (
+                  <a
+                    href={imageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 8px",
+                      borderRadius: 8,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      textDecoration: "none",
+                      width: "fit-content",
+                    }}
+                    title="View attached image"
+                  >
+                    📷 View image
+                  </a>
                 )}
 
                 {(isFix || isReopen) && (
@@ -4704,7 +4811,7 @@ function MyReportsModal({
           if (!normalizedQuery) return true;
           const no = reportNumberForRow(r, g?.domainKey || activeDomain).toLowerCase();
           const type = String(REPORT_TYPES?.[r?.type] || r?.type || "").toLowerCase();
-          const note = String(stripSystemMetadataFromNote(r?.note || "") || r?.note || "").toLowerCase();
+          const note = String(noteDisplayText(r?.note || "") || "").toLowerCase();
           const email = String(r?.reporter_email || "").toLowerCase();
           const name = String(r?.reporter_name || "").toLowerCase();
           const phoneNorm = normalizePhone(r?.reporter_phone || "");
@@ -5035,33 +5142,60 @@ function MyReportsModal({
                       <tr>
                         <td colSpan={4} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                           <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
-                            {(g.filteredRows || []).map((r) => (
-                              <div
-                                key={`${g.lightId}:${r.id}`}
-                                style={{
-                                  border: "1px solid var(--sl-ui-open-reports-item-border)",
-                                  borderRadius: 8,
-                                  padding: "7px 8px",
-                                  display: "grid",
-                                  gap: 4,
-                                }}
-                              >
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                                  <div style={{ fontWeight: 900 }}>
-                                    {REPORT_TYPES?.[r.type] || r.type || "Report"}
+                            {(g.filteredRows || []).map((r) => {
+                              const imageUrl = readImageUrlFromNote(r?.note || "");
+                              const displayNote = noteDisplayText(r?.note || "");
+                              return (
+                                <div
+                                  key={`${g.lightId}:${r.id}`}
+                                  style={{
+                                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                                    borderRadius: 8,
+                                    padding: "7px 8px",
+                                    display: "grid",
+                                    gap: 4,
+                                  }}
+                                >
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                    <div style={{ fontWeight: 900 }}>
+                                      {REPORT_TYPES?.[r.type] || r.type || "Report"}
+                                    </div>
+                                    <div style={{ opacity: 0.8 }}>{formatTs(r.ts)}</div>
                                   </div>
-                                  <div style={{ opacity: 0.8 }}>{formatTs(r.ts)}</div>
-                                </div>
-                                <div style={{ fontWeight: 900, opacity: 0.9 }}>
-                                  Report #: {reportNumberForRow(r, g.domainKey || activeDomain)}
-                                </div>
-                                {!!String(stripSystemMetadataFromNote(r.note || "") || "").trim() && (
-                                  <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
-                                    <b>Note:</b> {stripSystemMetadataFromNote(r.note) || r.note}
+                                  <div style={{ fontWeight: 900, opacity: 0.9 }}>
+                                    Report #: {reportNumberForRow(r, g.domainKey || activeDomain)}
                                   </div>
-                                )}
-                              </div>
-                            ))}
+                                  {!!String(displayNote || "").trim() && (
+                                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                      <b>Note:</b> {displayNote}
+                                    </div>
+                                  )}
+                                  {!!imageUrl && (
+                                    <a
+                                      href={imageUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "5px 8px",
+                                        borderRadius: 8,
+                                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                                        fontWeight: 900,
+                                        textDecoration: "none",
+                                        width: "fit-content",
+                                      }}
+                                      title="View attached image"
+                                    >
+                                      📷 View image
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                       </tr>
@@ -5300,6 +5434,8 @@ function OpenReportsModal({
   onClose,
   isAdmin = false,
   showDeveloperDiagnostics = false,
+  publicRepairLifecycleEnabled = false,
+  darkMode = false,
   allowIncidentMutations = false,
   activeDomain = "streetlights",
   onSelectDomain,
@@ -5341,6 +5477,11 @@ function OpenReportsModal({
 }) {
   const canMutateIncidents = allowIncidentMutations && typeof onMarkFixedIncident === "function";
   const canMarkWorkingIncidents = typeof onMarkWorkingIncident === "function";
+  const showCommunityRepairDiagnostics =
+    showDeveloperDiagnostics
+    && publicRepairLifecycleEnabled
+    && activeDomain !== "streetlights"
+    && activeDomain !== "street_signs";
   const [sortMode, setSortMode] = useState("count"); // count | recent
   const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
   const [searchDraft, setSearchDraft] = useState("");
@@ -5587,12 +5728,14 @@ function OpenReportsModal({
 
   const isMyReportsModal = String(modalTitle || "").trim().toLowerCase() === "my reports";
   const isStreetlightMyReports = isMyReportsModal && activeDomain === "streetlights";
+  const isCompactMyReports = compactDomainPicker && isMyReportsModal;
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
   const [utilityReportReferenceByIncident, setUtilityReportReferenceByIncident] = useState({});
   const [utilityReportDialogOpen, setUtilityReportDialogOpen] = useState(false);
   const [utilityReportDialogIncidentId, setUtilityReportDialogIncidentId] = useState("");
   const [utilityReportDialogReference, setUtilityReportDialogReference] = useState("");
+  const [savedStreetlightReportIncidentId, setSavedStreetlightReportIncidentId] = useState("");
   const [inViewOnlyActive, setInViewOnlyActive] = useState(Boolean(inViewOnly));
   useEffect(() => {
     if (!open) return;
@@ -5682,8 +5825,12 @@ function OpenReportsModal({
     const targetIncidentId = String(focusIncidentId || "").trim();
     if (!targetIncidentId) return;
     setStatusFilter("all");
+    if (isStreetlightMyReports && compactDomainPicker) {
+      setAdminExpandedSet(new Set());
+      return;
+    }
     setAdminExpandedSet(new Set([targetIncidentId]));
-  }, [open, focusIncidentId]);
+  }, [open, focusIncidentId, isStreetlightMyReports, compactDomainPicker]);
   useEffect(() => {
     if (!open) return;
     const q = String(initialSearchQuery || "").trim();
@@ -5848,6 +5995,16 @@ function OpenReportsModal({
     utilityReportReferenceByIncident,
     showInlineToast,
   ]);
+
+  const openSavedStreetlightReport = useCallback((row) => {
+    const incidentId = String(row?.incident_id || "").trim();
+    if (!incidentId) return;
+    setSavedStreetlightReportIncidentId(incidentId);
+  }, []);
+
+  const closeSavedStreetlightReport = useCallback(() => {
+    setSavedStreetlightReportIncidentId("");
+  }, []);
 
   const getStreetlightUtilityForIncident = useCallback((incidentId) => {
     const key = String(incidentId || "").trim();
@@ -6134,12 +6291,26 @@ function OpenReportsModal({
             : activeDomain === "water_drain_issues"
               ? `Water/Drain ID ${displayId || `WD${shortIncidentKey(incidentIdRaw || g?.lightId)}`}`
               : displayLightId(incidentIdRaw || g?.lightId, slIdByUuid);
+        const incidentIdNorm = String(incidentIdRaw || "").trim().toLowerCase();
+        const groupIncidentIdNorm = String(g?.incidentId || "").trim().toLowerCase();
+        const potholeIdNorm =
+          activeDomain === "potholes"
+            ? incidentIdNorm.replace(/^pothole:/i, "").replace(/^potholes:/i, "").trim()
+            : "";
+        const waterDrainIdNorm =
+          activeDomain === "water_drain_issues"
+            ? incidentIdNorm.replace(/^water_drain_issues:/i, "").trim()
+            : "";
         const displayIdNorm = String(displayId || "").toLowerCase();
         const matches =
           reportNo.includes(q) ||
           name.includes(q) ||
           email.includes(q) ||
           lightId.includes(q) ||
+          incidentIdNorm.includes(q) ||
+          groupIncidentIdNorm.includes(q) ||
+          potholeIdNorm.includes(q) ||
+          waterDrainIdNorm.includes(q) ||
           incidentLabel.toLowerCase().includes(q) ||
           displayIdNorm.includes(q) ||
           (digitsQ && phoneNorm.includes(digitsQ));
@@ -6704,6 +6875,7 @@ function OpenReportsModal({
         report_number: String(r?.report_number || ""),
         report_type: String(r?.report_type || ""),
         submitted_at: String(r?.submitted_at || ""),
+        reporter_user_id: String(r?.reporter_user_id || ""),
         reporter_name: String(r?.reporter_name || ""),
         reporter_email: String(r?.reporter_email || ""),
         reporter_phone: String(r?.reporter_phone || ""),
@@ -6894,6 +7066,17 @@ function OpenReportsModal({
 
   const displayedAdminRows = adminTableRows;
 
+  const savedStreetlightReportRow = useMemo(() => {
+    const incidentId = String(savedStreetlightReportIncidentId || "").trim();
+    if (!incidentId) return null;
+    return (adminTableRows || []).find((row) => String(row?.incident_id || "").trim() === incidentId) || null;
+  }, [adminTableRows, savedStreetlightReportIncidentId]);
+
+  useEffect(() => {
+    if (!savedStreetlightReportRow) return;
+    void ensureStreetlightUtilityForIncident(savedStreetlightReportRow.incident_id, savedStreetlightReportRow.coords || null);
+  }, [savedStreetlightReportRow, ensureStreetlightUtilityForIncident]);
+
   useEffect(() => {
     // Cost guardrail: disable passive streetlight hydration in reports views.
     // Streetlight utility details should come from persisted DB fields.
@@ -6940,6 +7123,64 @@ function OpenReportsModal({
     });
   }, []);
 
+  const openSubmittedReportsForRow = useCallback((row) => {
+    if (!isMyReportsModal || typeof onOpenAllReports !== "function" || !row) return;
+    const history = [];
+
+    for (const detail of row.rows || []) {
+      history.push({
+        kind: "report",
+        ts: Date.parse(String(detail?.submitted_at || "")) || 0,
+        label: REPORT_TYPES?.[String(detail?.report_type || "").trim()] || String(detail?.report_type || "").trim() || "Report",
+        note: String(detail?.raw_notes || detail?.notes || ""),
+        type: String(detail?.report_type || ""),
+        report_number: detail?.report_number || null,
+        reporter_user_id: detail?.reporter_user_id || null,
+        reporter_name: detail?.reporter_name || null,
+        reporter_phone: detail?.reporter_phone || null,
+        reporter_email: detail?.reporter_email || null,
+      });
+    }
+
+    for (const ev of row.reopen_events || []) {
+      history.push({
+        kind: "reopen",
+        ts: Number(ev?.ts || 0),
+        label: "Re-opened",
+        note: String(ev?.note || ""),
+        actor_user_id: ev?.reporter_user_id || null,
+        actor_name: ev?.reporter_name || null,
+        actor_email: ev?.reporter_email || null,
+        actor_phone: ev?.reporter_phone || null,
+      });
+    }
+
+    if (row.fixed_event) {
+      history.push({
+        kind: "fix",
+        ts: Number(row.fixed_event?.ts || 0),
+        label: "Marked fixed",
+        note: String(row.fixed_event?.note || ""),
+        actor_user_id: row.fixed_event?.reporter_user_id || null,
+        actor_name: row.fixed_event?.reporter_name || null,
+        actor_email: row.fixed_event?.reporter_email || null,
+        actor_phone: row.fixed_event?.reporter_phone || null,
+      });
+    }
+
+    history.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    onOpenAllReports(
+      "Submitted Reports",
+      history,
+      {
+        domainKey: activeDomain,
+        incidentLabel: String(row.incident_label || row.incident_id || "Incident"),
+        currentState: String(row?.current_state || ""),
+        lastChangedAt: String(row?.latest_activity_at || row?.latest_submitted_at || ""),
+      }
+    );
+  }, [activeDomain, isMyReportsModal, onOpenAllReports]);
+
   const adminIncidentDotForRow = useCallback((row) => {
     const incidentId = String(row?.incident_id || "").trim();
     if (!incidentId) return { color: "#9e9e9e", label: "Unknown incident" };
@@ -6964,7 +7205,7 @@ function OpenReportsModal({
     }
 
     if (activeDomain === "potholes") {
-      if (repairSnapshot?.archived || repairSnapshot?.likelyFixed) {
+      if (publicRepairLifecycleEnabled && (repairSnapshot?.archived || repairSnapshot?.likelyFixed)) {
         return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
       }
       if (!isOpenLifecycleState(row?.current_state || "")) {
@@ -6977,7 +7218,7 @@ function OpenReportsModal({
       };
     }
     if (activeDomain === "water_drain_issues") {
-      if (repairSnapshot?.archived || repairSnapshot?.likelyFixed) {
+      if (publicRepairLifecycleEnabled && (repairSnapshot?.archived || repairSnapshot?.likelyFixed)) {
         return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
       }
       if (!isOpenLifecycleState(row?.current_state || "")) {
@@ -6993,7 +7234,7 @@ function OpenReportsModal({
     if (activeDomain === "power_outage") return { color: "#f39c12", label: "Power outage incident" };
     if (activeDomain === "water_main") return { color: "#3498db", label: "Water main incident" };
     return { color: "#616161", label: "Incident" };
-  }, [activeDomain, getStreetlightConfidence, getRepairSnapshotForIncident, isOpenLifecycleState]);
+  }, [activeDomain, getStreetlightConfidence, getRepairSnapshotForIncident, isOpenLifecycleState, publicRepairLifecycleEnabled]);
 
   const adminMetrics = useMemo(() => {
     const summary = exportSummaryRows || [];
@@ -7220,28 +7461,140 @@ function OpenReportsModal({
         position: "relative",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitle || "Reports"}</div>
-        <button
-          onClick={onClose}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-          aria-label="Close"
-          title="Close"
-        >
-          ✕
-        </button>
-      </div>
+      {isCompactMyReports ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 950, whiteSpace: "nowrap" }}>{modalTitle || "Reports"}</div>
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setCompactDomainMenuOpen((p) => {
+                    const next = !p;
+                    if (next) setCompactFiltersOpen(false);
+                    return next;
+                  });
+                }}
+                style={{
+                  width: 48,
+                  minWidth: 48,
+                  height: 48,
+                  borderRadius: 13,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  padding: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+                aria-label="Report domain"
+                title={`Report domain: ${selectedDomainMeta?.label || activeDomain}`}
+              >
+                <AppIcon src={selectedDomainMeta?.iconSrc} size={38} />
+              </button>
+              {compactDomainMenuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: "min(190px, calc(100vw - 56px))",
+                    background: "var(--sl-ui-modal-bg)",
+                    border: "1px solid var(--sl-ui-modal-border)",
+                    borderRadius: 10,
+                    boxShadow: "var(--sl-ui-modal-shadow)",
+                    padding: 6,
+                    display: "grid",
+                    gap: 6,
+                    zIndex: 4,
+                  }}
+                >
+                  {(domainOptions || []).filter((d) => d.enabled).map((d) => {
+                    const selected = activeDomain === d.key;
+                    return (
+                      <button
+                        key={d.key}
+                        type="button"
+                        onClick={() => {
+                          onSelectDomain?.(d.key);
+                          setCompactDomainMenuOpen(false);
+                        }}
+                        style={{
+                          borderRadius: 9,
+                          border: selected
+                            ? "1px solid var(--sl-ui-brand-green-border)"
+                            : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                          background: selected
+                            ? "var(--sl-ui-brand-green)"
+                            : "var(--sl-ui-modal-btn-secondary-bg)",
+                          color: selected ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          padding: "7px 9px",
+                          whiteSpace: "nowrap",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 7,
+                          justifyContent: "flex-start",
+                        }}
+                        aria-label={d.label}
+                        title={d.label}
+                      >
+                        <AppIcon src={d.iconSrc} size={26} />
+                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+            aria-label="Close"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitle || "Reports"}</div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+            aria-label="Close"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
-      {isAdmin && (
+      {isAdmin && !isCompactMyReports && (
         <div
           style={{
             display: "grid",
@@ -7303,8 +7656,8 @@ function OpenReportsModal({
                   setCompactDomainMenuOpen(false);
                 }}
                 style={{
-                  width: 54,
-                  minWidth: 54,
+                  width: 48,
+                  minWidth: 48,
                   height: 40,
                   borderRadius: 10,
                   border: compactFiltersOpen
@@ -8149,7 +8502,7 @@ function OpenReportsModal({
             }}
           >
             <span style={{ fontSize: 12 }}>Metrics (domain + date range)</span>
-            <span style={{ opacity: 0.85 }}>{metricsCollapsed ? "▾" : "▴"}</span>
+            <span style={{ opacity: 0.9, fontSize: 18, lineHeight: 1 }}>{metricsCollapsed ? "▾" : "▴"}</span>
           </button>
           {!metricsCollapsed && (compactDomainPicker ? (
             <div style={{ display: "grid", gap: 8 }}>
@@ -8229,36 +8582,70 @@ function OpenReportsModal({
 
       {isAdmin && compactDomainPicker && (
         <div style={{ marginTop: 6, width: "100%", boxSizing: "border-box" }}>
-          <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 800, opacity: 0.9 }}>
-            <span>Sort reports</span>
-            <select
-              value={sortPresetValue}
-              onChange={(e) => applySortPreset(e.target.value)}
-              style={{
-                width: "100%",
-                minHeight: 40,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--sl-ui-modal-input-border)",
-                background: "var(--sl-ui-modal-input-bg)",
-                color: "var(--sl-ui-text)",
-                fontWeight: 800,
-              }}
-            >
-              <option value="recent_desc">Most recently reported (desc)</option>
-              <option value="recent_asc">Most recently reported (asc)</option>
-              <option value="reports_desc">Most reports (desc)</option>
-              <option value="reports_asc">Most reports (asc)</option>
-              <option value="id_asc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (asc)</option>
-              <option value="id_desc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (desc)</option>
-              {isStreetlightMyReports && (
-                <>
-                  <option value="utility_desc">Utility reported: true first</option>
-                  <option value="utility_asc">Utility reported: false first</option>
-                </>
-              )}
-            </select>
-          </label>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 800, opacity: 0.9, flex: 1, minWidth: 0 }}>
+              <span>Sort reports</span>
+              <select
+                value={sortPresetValue}
+                onChange={(e) => applySortPreset(e.target.value)}
+                style={{
+                  width: "100%",
+                  minHeight: 40,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                  fontWeight: 800,
+                }}
+              >
+                <option value="recent_desc">Most recently reported (desc)</option>
+                <option value="recent_asc">Most recently reported (asc)</option>
+                <option value="reports_desc">Most reports (desc)</option>
+                <option value="reports_asc">Most reports (asc)</option>
+                <option value="id_asc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (asc)</option>
+                <option value="id_desc">{activeDomain === "potholes" ? "Pothole ID" : "Incident ID"} (desc)</option>
+                {isStreetlightMyReports && (
+                  <>
+                    <option value="utility_desc">Utility reported: true first</option>
+                    <option value="utility_asc">Utility reported: false first</option>
+                  </>
+                )}
+              </select>
+            </label>
+            {isCompactMyReports ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCompactFiltersOpen((p) => !p);
+                  setCompactDomainMenuOpen(false);
+                }}
+                style={{
+                  width: 48,
+                  minWidth: 48,
+                  height: 36,
+                  borderRadius: 8,
+                  border: compactFiltersOpen
+                    ? "1px solid var(--sl-ui-brand-green-border)"
+                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: compactFiltersOpen
+                    ? "var(--sl-ui-brand-green)"
+                    : "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: compactFiltersOpen ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  padding: 0,
+                  alignSelf: "flex-end",
+                }}
+                aria-label="Search and filters"
+                title="Search and filters"
+              >
+                <AppIcon src={UI_ICON_SRC.filter} size={18} />
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
 
@@ -8276,6 +8663,7 @@ function OpenReportsModal({
           padding: 10,
           display: "grid",
           gap: 10,
+          alignContent: "start",
         }}
       >
         {isAdmin ? (
@@ -8284,12 +8672,16 @@ function OpenReportsModal({
               {serverDetailLoading ? "Loading rows…" : "No reports in selected filters."}
             </div>
           ) : compactDomainPicker ? (
-            <div style={{ display: "grid", gap: 8, width: "100%" }}>
+            <div style={{ display: "grid", gap: 8, width: "100%", alignContent: "start", gridAutoRows: "max-content" }}>
               {displayedAdminRows.map((r) => {
                 const repairSnapshot = getRepairSnapshotForIncident(r.incident_id);
                 const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
                   ? canShowPublicRepairAction(r.incident_id, activeDomain)
                   : false;
+                const mobileMyReportsCard = isMyReportsModal && !isStreetlightMyReports;
+                const streetlightMobileSummaryCard = isStreetlightMyReports && isMyReportsModal;
+                const streetlightDisplayId = displayLightId(r.incident_id, slIdByUuid);
+                const workingState = getWorkingActionStateForIncident(r.incident_id);
                 return (
                 <div
                   key={`mobile-${r.incident_id}`}
@@ -8300,24 +8692,161 @@ function OpenReportsModal({
                     display: "grid",
                     gap: 6,
                     background: "var(--sl-ui-modal-subtle-bg)",
+                    alignContent: "start",
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleAdminExpanded(r.incident_id)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--sl-ui-text)",
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      padding: 0,
-                      textAlign: "left",
-                    }}
-                  >
-                    {adminExpandedSet.has(r.incident_id) ? "▾ " : "▸ "}
-                    {r.incident_label || r.incident_id}
-                  </button>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    {streetlightMobileSummaryCard ? (
+                      <button
+                        type="button"
+                        onClick={() => openSavedStreetlightReport(r)}
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          color: "var(--sl-ui-text)",
+                          cursor: "pointer",
+                          padding: 0,
+                          textAlign: "left",
+                          display: "grid",
+                          gap: 2,
+                          minWidth: 0,
+                          flex: 1,
+                        }}
+                        title="Open saved report"
+                      >
+                        <div style={{ fontSize: 11, lineHeight: 1.15, opacity: 0.78, fontWeight: 500 }}>
+                          Streetlight ID
+                        </div>
+                        <div style={{ fontSize: 16, lineHeight: 1.2, fontWeight: 900, wordBreak: "break-word" }}>
+                          {streetlightDisplayId}
+                        </div>
+                      </button>
+                    ) : mobileMyReportsCard ? (
+                      <div style={{ color: "var(--sl-ui-text)", fontWeight: 900, lineHeight: 1.25 }}>
+                        {r.incident_label || r.incident_id}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toggleAdminExpanded(r.incident_id)}
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          color: "var(--sl-ui-text)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          padding: 0,
+                          textAlign: "left",
+                        }}
+                      >
+                        {adminExpandedSet.has(r.incident_id) ? "▾ " : "▸ "}
+                        {r.incident_label || r.incident_id}
+                      </button>
+                    )}
+                    {streetlightMobileSummaryCard ? (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!Number.isFinite(r.coords?.lat) || !Number.isFinite(r.coords?.lng)) return;
+                            onFlyTo?.([r.coords.lat, r.coords.lng], 18, r.incident_id);
+                          }}
+                          style={{
+                            padding: "6px 8px",
+                            borderRadius: 8,
+                            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                            background: "var(--sl-ui-modal-btn-secondary-bg)",
+                            color: "var(--sl-ui-modal-btn-secondary-text)",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          Fly to
+                        </button>
+                        {isOpenLifecycleState(r.current_state || "") && workingState === "available" && (
+                          <button
+                            type="button"
+                            onClick={() => onMarkWorkingIncident?.(r.incident_id)}
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: "var(--sl-ui-brand-green)",
+                              color: "white",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            Is working
+                          </button>
+                        )}
+                        {isOpenLifecycleState(r.current_state || "") && workingState === "confirmed" && (
+                          <button
+                            type="button"
+                            disabled
+                            aria-pressed="true"
+                            title="You already marked this light as working."
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "1px solid rgba(22, 116, 89, 0.82)",
+                              background: "rgba(24, 138, 95, 0.26)",
+                              color: "white",
+                              fontWeight: 900,
+                              cursor: "default",
+                              opacity: 0.92,
+                              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            Is working
+                          </button>
+                        )}
+                      </div>
+                    ) : mobileMyReportsCard ? (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!Number.isFinite(r.coords?.lat) || !Number.isFinite(r.coords?.lng)) return;
+                            onFlyTo?.([r.coords.lat, r.coords.lng], 18, r.incident_id);
+                          }}
+                          style={{
+                            padding: "6px 8px",
+                            borderRadius: 8,
+                            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                            background: "var(--sl-ui-modal-btn-secondary-bg)",
+                            color: "var(--sl-ui-modal-btn-secondary-text)",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          Fly to
+                        </button>
+                        {!canMutateIncidents && showPublicRepairAction && (
+                          <button
+                            type="button"
+                            onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: "var(--sl-ui-brand-green)",
+                              color: "white",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            Is fixed
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>State:</b> {incidentStateLabel(r.current_state || "")}
                   </div>
@@ -8327,13 +8856,35 @@ function OpenReportsModal({
                     </div>
                   )}
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
-                    <b>Latest report:</b> {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                    <b>{mobileMyReportsCard ? "Last report:" : "Latest report:"}</b>{" "}
+                    {mobileMyReportsCard ? (
+                      <button
+                        type="button"
+                        onClick={() => openSubmittedReportsForRow(r)}
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          color: "var(--sl-ui-brand-green)",
+                          textDecoration: "underline",
+                          textUnderlineOffset: 2,
+                          cursor: "pointer",
+                          padding: 0,
+                          font: "inherit",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                      </button>
+                    ) : (
+                      formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))
+                    )}
                   </div>
-                  {showDeveloperDiagnostics && repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                  {showCommunityRepairDiagnostics && repairSnapshot && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
                       <b>Community repair:</b> {incidentRepairSummaryText(repairSnapshot)}
                     </div>
                   )}
+                {!mobileMyReportsCard && !streetlightMobileSummaryCard && (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   <button
                       type="button"
@@ -8463,6 +9014,8 @@ function OpenReportsModal({
                           <button
                             type="button"
                             onClick={() => openUtilityReportDialog(r.incident_id)}
+                            aria-label={utilityReportReferenceByIncident?.[r.incident_id] ? "Edit utility report number" : "Add utility report number"}
+                            title={utilityReportReferenceByIncident?.[r.incident_id] ? "Edit utility report number" : "Add utility report number"}
                             style={{
                               padding: "6px 8px",
                               borderRadius: 8,
@@ -8471,15 +9024,23 @@ function OpenReportsModal({
                               color: "var(--sl-ui-modal-btn-secondary-text)",
                               fontWeight: 900,
                               cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
                             }}
                           >
-                            {utilityReportReferenceByIncident?.[r.incident_id] ? "Edit report #" : "Add report #"}
+                            <ActionButtonIcon
+                              action={utilityReportReferenceByIncident?.[r.incident_id] ? "edit" : "add"}
+                              darkMode={darkMode}
+                              emphasis="secondary"
+                            />
                           </button>
                         )}
                       </>
                     )}
                   </div>
-                  {isStreetlightMyReports && Boolean(utilityReportedByIncident[r.incident_id]) && (
+                )}
+                  {isStreetlightMyReports && !streetlightMobileSummaryCard && Boolean(utilityReportedByIncident[r.incident_id]) && (
                     <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
                       <b>Utility report #:</b> {utilityReportReferenceByIncident?.[r.incident_id] || "Not added yet"}
                     </div>
@@ -8489,7 +9050,7 @@ function OpenReportsModal({
                       You already confirmed this repair.
                     </div>
                   )}
-                  {adminExpandedSet.has(r.incident_id) && (
+                  {!mobileMyReportsCard && !streetlightMobileSummaryCard && adminExpandedSet.has(r.incident_id) && (
                     <div style={{ display: "grid", gap: 6 }}>
                       {Array.isArray(r.reopen_events) && r.reopen_events.map((ev) => (
                         <div
@@ -8609,7 +9170,7 @@ function OpenReportsModal({
                       {r.rows.map((detail) => {
                         const rawNotes = String(detail.raw_notes || detail.notes || "");
                         const imageUrl = readImageUrlFromNote(rawNotes);
-                        const noteText = stripSystemMetadataFromNote(rawNotes) || detail.notes;
+                        const noteText = noteDisplayText(rawNotes);
                         const qa = parseStreetlightQaFromNote(rawNotes);
                         return (
                           <div
@@ -9024,6 +9585,8 @@ function OpenReportsModal({
                                   <button
                                     type="button"
                                     onClick={() => openUtilityReportDialog(r.incident_id)}
+                                    aria-label={utilityReportReferenceByIncident?.[r.incident_id] ? "Edit utility report number" : "Add utility report number"}
+                                    title={utilityReportReferenceByIncident?.[r.incident_id] ? "Edit utility report number" : "Add utility report number"}
                                     style={{
                                       padding: "6px 8px",
                                       borderRadius: 8,
@@ -9032,10 +9595,17 @@ function OpenReportsModal({
                                       color: "var(--sl-ui-modal-btn-secondary-text)",
                                       fontWeight: 900,
                                       cursor: "pointer",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
                                       whiteSpace: "nowrap",
                                     }}
                                   >
-                                    {utilityReportReferenceByIncident?.[r.incident_id] ? "Edit report #" : "Add report #"}
+                                    <ActionButtonIcon
+                                      action={utilityReportReferenceByIncident?.[r.incident_id] ? "edit" : "add"}
+                                      darkMode={darkMode}
+                                      emphasis="secondary"
+                                    />
                                   </button>
                                 )}
                                 {Boolean(utilityReportedByIncident[r.incident_id]) && (
@@ -9052,7 +9622,7 @@ function OpenReportsModal({
                         <tr>
                           <td colSpan={isMyReportsModal ? (isStreetlightMyReports ? 5 : 4) : (isStreetlightMyReports ? 6 : 5)} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                             <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
-                              {showDeveloperDiagnostics && repairSnapshot && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                              {showCommunityRepairDiagnostics && repairSnapshot && (
                                 <div
                                   style={{
                                     border: "1px solid var(--sl-ui-open-reports-item-border)",
@@ -9200,7 +9770,7 @@ function OpenReportsModal({
                                   {(() => {
                                     const rawNotes = String(detail.raw_notes || detail.notes || "");
                                     const imageUrl = readImageUrlFromNote(rawNotes);
-                                    const noteText = stripSystemMetadataFromNote(rawNotes) || detail.notes;
+                                    const noteText = noteDisplayText(rawNotes);
                                     const qa = parseStreetlightQaFromNote(rawNotes);
                                     return (
                                       <>
@@ -9376,7 +9946,10 @@ function OpenReportsModal({
           !matchedSearchRows.length ? (
             <div style={{ fontSize: 13, opacity: 0.8 }}>No matching reports found.</div>
           ) : (
-            matchedSearchRows.map((item) => (
+            matchedSearchRows.map((item) => {
+              const imageUrl = readImageUrlFromNote(item.row?.note || "");
+              const displayNote = noteDisplayText(item.row?.note || "");
+              return (
               <div
                 key={item.id}
                 style={{
@@ -9455,10 +10028,33 @@ function OpenReportsModal({
                     <b>Location:</b> {item.locationLabel}
                   </div>
                 )}
-                {!!String(item.row?.note || "").trim() && (
+                {!!String(displayNote || "").trim() && (
                   <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
-                    <b>Note:</b> {stripSystemMetadataFromNote(item.row.note) || item.row.note}
+                    <b>Note:</b> {displayNote}
                   </div>
+                )}
+                {!!imageUrl && (
+                  <a
+                    href={imageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 8px",
+                      borderRadius: 8,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      textDecoration: "none",
+                      width: "fit-content",
+                    }}
+                    title="View attached image"
+                  >
+                    📷 View image
+                  </a>
                 )}
                 {canMutateIncidents && (
                   <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
@@ -9483,7 +10079,8 @@ function OpenReportsModal({
                   </div>
                 )}
               </div>
-            ))
+              );
+            })
           )
         ) : !visibleGroups?.length ? (
           <div style={{ fontSize: 13, opacity: 0.8 }}>No reports in selected filters.</div>
@@ -9753,6 +10350,266 @@ function OpenReportsModal({
           {copyToast?.text || "Copied to clipboard"}
         </div>
       )}
+      <ModalShell open={Boolean(savedStreetlightReportRow)} zIndex={10041}>
+        {(() => {
+          const row = savedStreetlightReportRow;
+          if (!row) return null;
+          const latestDetail = row.rows?.[0] || null;
+          const rawNotes = String(latestDetail?.raw_notes || latestDetail?.notes || "");
+          const noteText = noteDisplayText(rawNotes);
+          const imageUrl = readImageUrlFromNote(rawNotes);
+          const qa = parseStreetlightQaFromNote(rawNotes);
+          const utilityItems = getStreetlightUtilityRows(getStreetlightUtilityForIncident(row.incident_id), row?.coords || null);
+          const utilityReported = Boolean(utilityReportedByIncident?.[row.incident_id]);
+          const utilityReference = String(utilityReportReferenceByIncident?.[row.incident_id] || "").trim();
+          return (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div style={{ display: "grid", gap: 2 }}>
+                  <div style={{ fontSize: 22, fontWeight: 950, lineHeight: 1.05 }}>Saved Report</div>
+                  <div style={{ fontSize: 11.5, lineHeight: 1.15, opacity: 0.78, fontWeight: 500 }}>
+                    Streetlight ID
+                  </div>
+                  <div style={{ fontSize: 18, lineHeight: 1.2, fontWeight: 900, wordBreak: "break-word" }}>
+                    {displayLightId(row.incident_id, slIdByUuid)}
+                  </div>
+                </div>
+                <button
+                  onClick={closeSavedStreetlightReport}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    flex: "0 0 auto",
+                  }}
+                  aria-label="Close"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, opacity: 0.96 }}>
+                  <input
+                    type="checkbox"
+                    checked={utilityReported}
+                    onChange={(e) => {
+                      if (e.target.checked) openUtilityReportDialog(row.incident_id);
+                      else void clearUtilityReported(row.incident_id);
+                    }}
+                    aria-label={`Utility reported for ${displayLightId(row.incident_id, slIdByUuid)}`}
+                  />
+                  Utility reported
+                </label>
+                {utilityReported && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      border: "1px solid var(--sl-ui-open-reports-item-border)",
+                      borderRadius: 10,
+                      padding: "9px 10px",
+                      background: "rgba(255,255,255,0.04)",
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, lineHeight: 1.2, opacity: 0.78 }}>Utility report #</div>
+                      <div style={{ fontSize: 16, lineHeight: 1.2, fontWeight: 900, wordBreak: "break-word" }}>
+                        {utilityReference || "Not added yet"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openUtilityReportDialog(row.incident_id)}
+                      aria-label={utilityReference ? "Edit utility report number" : "Add utility report number"}
+                      title={utilityReference ? "Edit utility report number" : "Add utility report number"}
+                      style={{
+                        width: 36,
+                        minWidth: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        padding: 0,
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      <ActionButtonIcon
+                        action={utilityReference ? "edit" : "add"}
+                        darkMode={darkMode}
+                        emphasis="secondary"
+                      />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {latestDetail ? (
+                <div
+                  style={{
+                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                    display: "grid",
+                    gap: 6,
+                    background: "rgba(255,255,255,0.04)",
+                  }}
+                >
+                  <div style={{ fontSize: 18, fontWeight: 950, lineHeight: 1.1 }}>Submitted report</div>
+                  {!!latestDetail?.report_number && (
+                    <div style={{ fontSize: 11.5, opacity: 0.82, fontWeight: 900 }}>
+                      Report #: {latestDetail.report_number}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, opacity: 0.82 }}>{formatTs(latestDetail.submitted_at)}</div>
+                  <div style={{ opacity: 0.96, lineHeight: 1.3 }}>
+                    <b>What are you seeing:</b> {REPORT_TYPES?.[String(latestDetail.report_type || "").trim()] || "Streetlight issue"}
+                  </div>
+                  <div style={{ opacity: 0.96, lineHeight: 1.3 }}>
+                    <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
+                  </div>
+                  <div style={{ opacity: 0.96, lineHeight: 1.3 }}>
+                    <b>Hazardous situation:</b> {qa?.hazardous ? (qa.hazardous === "yes" ? "Yes" : qa.hazardous === "no" ? "No" : "Unknown") : "Unknown"}
+                  </div>
+                  {!!String(noteText || "").trim() && (
+                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                      <b>Note:</b> {noteText}
+                    </div>
+                  )}
+                  {!!imageUrl && (
+                    <a
+                      href={imageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "5px 8px",
+                        borderRadius: 8,
+                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        textDecoration: "none",
+                        width: "fit-content",
+                      }}
+                      title="View attached image"
+                    >
+                      📷 View image
+                    </a>
+                  )}
+                </div>
+              ) : null}
+
+              <div
+                style={{
+                  border: "1px solid var(--sl-ui-open-reports-item-border)",
+                  borderRadius: 10,
+                  padding: "10px 12px",
+                  display: "grid",
+                  gap: 6,
+                  background: "rgba(255,255,255,0.04)",
+                }}
+              >
+                <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.1 }}>Streetlight Utility Information</div>
+                {utilityItems.length ? (
+                  utilityItems.map((item) => (
+                    <button
+                      key={`saved-streetlight-${row.incident_id}-${item.label}`}
+                      type="button"
+                      onClick={(e) => copyStreetlightField(item.label, item.value, e.currentTarget)}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        margin: 0,
+                        textAlign: "left",
+                        color: "var(--sl-ui-text)",
+                        cursor: "copy",
+                        fontSize: 12.5,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      <b>{item.label}:</b>{" "}
+                      <span
+                        style={{
+                          textDecoration: "underline",
+                          textUnderlineOffset: "2px",
+                          color: "#7fd7ff",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {item.value}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div style={{ fontSize: 12.5, opacity: 0.8 }}>Location information unavailable.</div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 2,
+                  display: "grid",
+                  gap: 8,
+                  gridTemplateColumns: "1fr 1fr",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
+                    }
+                  }}
+                  style={{
+                    padding: 10,
+                    width: "100%",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-brand-blue-border)",
+                    background: "var(--sl-ui-brand-blue)",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Report Outage to Utility
+                </button>
+                <button
+                  onClick={closeSavedStreetlightReport}
+                  style={{
+                    padding: 10,
+                    width: "100%",
+                    borderRadius: 10,
+                    border: "none",
+                    background: "#111",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </ModalShell>
       <ModalShell open={utilityReportDialogOpen} zIndex={10040}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 950 }}>Utility Report</div>
@@ -9880,6 +10737,7 @@ function ManageAccountModal({
   onSave,
   onOpenChangePassword,
   onRequestEdit,
+  darkMode = false,
 }) {
   if (!open) return null;
 
@@ -9888,7 +10746,29 @@ function ManageAccountModal({
   return (
     <ModalShell open={open} zIndex={10010}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 16, fontWeight: 950 }}>Manage Account</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Manage Account</div>
+          {!editing ? (
+            <button
+              onClick={onRequestEdit}
+              style={{
+                ...btnPrimaryDark,
+                width: 34,
+                minWidth: 34,
+                height: 34,
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              disabled={saving}
+              aria-label="Edit account info"
+              title="Edit account info"
+            >
+              <ActionButtonIcon action="edit" darkMode={darkMode} emphasis="filled" />
+            </button>
+          ) : null}
+        </div>
         <button
           onClick={() => {
             setEditing(false);
@@ -9937,52 +10817,42 @@ function ManageAccountModal({
             placeholder="555-555-5555"
           />
         </label>
+
+        <button
+          onClick={onOpenChangePassword}
+          style={{ ...btnPrimary, width: "100%", marginTop: 6 }}
+          disabled={saving}
+        >
+          Change Password
+        </button>
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-        {!editing ? (
+      {editing ? (
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
           <button
-            onClick={onRequestEdit}
-            style={{ ...btnPrimaryDark, width: "100%" }}
+            onClick={() => {
+              setEditing(false);
+              // revert changes on cancel edit
+              setForm({
+                full_name: (profile?.full_name || "").trim(),
+                phone: (profile?.phone || "").trim(),
+              });
+            }}
+            style={btnSecondary}
             disabled={saving}
           >
-            Edit
+            Cancel
           </button>
-        ) : (
-          <>
-            <button
-              onClick={() => {
-                setEditing(false);
-                // revert changes on cancel edit
-                setForm({
-                  full_name: (profile?.full_name || "").trim(),
-                  phone: (profile?.phone || "").trim(),
-                });
-              }}
-              style={btnSecondary}
-              disabled={saving}
-            >
-              Cancel
-            </button>
 
-            <button
-              onClick={onSave}
-              style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}
-              disabled={saving}
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </>
-        )}
-      </div>
-
-      <button
-        onClick={onOpenChangePassword}
-        style={{ ...btnPrimary, width: "100%", marginTop: 10 }}
-        disabled={saving}
-      >
-        Change Password
-      </button>
+          <button
+            onClick={onSave}
+            style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      ) : null}
 
     </ModalShell>
   );
@@ -10422,6 +11292,7 @@ function AccountMenuPanel({
   onNotificationPreferences,
   onContactUs,
   onLogout,
+  showNotificationPreferences = true,
   variant = "modal",
   containerRef = null,
   darkMode = false,
@@ -10475,9 +11346,11 @@ function AccountMenuPanel({
         <button onClick={onManage} className="workspace-menu-button" style={buttonStyle}>
           Manage Account
         </button>
-        <button onClick={onNotificationPreferences} className="workspace-menu-button" style={buttonStyle}>
-          Notification Preferences
-        </button>
+        {showNotificationPreferences ? (
+          <button onClick={onNotificationPreferences} className="workspace-menu-button" style={buttonStyle}>
+            Notification Preferences
+          </button>
+        ) : null}
         <button onClick={onMyReports} className="workspace-menu-button" style={buttonStyle}>
           My Reports
         </button>
@@ -12220,6 +13093,7 @@ export default function App({ onBackToHub = null }) {
     title: "",
     items: [],
     domainKey: "streetlights",
+    incidentLabel: "",
     sharedLocation: "",
     sharedAddress: "",
     sharedLandmark: "",
@@ -12358,6 +13232,7 @@ export default function App({ onBackToHub = null }) {
       title: title || "All Reports",
       items: items || [],
       domainKey: String(opts?.domainKey || "streetlights").trim() || "streetlights",
+      incidentLabel: String(opts?.incidentLabel || "").trim(),
       sharedLocation: String(opts?.sharedLocation || "").trim(),
       sharedAddress: String(opts?.sharedAddress || "").trim(),
       sharedLandmark: String(opts?.sharedLandmark || "").trim(),
@@ -12932,6 +13807,9 @@ export default function App({ onBackToHub = null }) {
   const [notificationPreferencesLoading, setNotificationPreferencesLoading] = useState(false);
   const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false);
   const [notificationPreferencesStatus, setNotificationPreferencesStatus] = useState("");
+  const showNotificationPreferencesEntry =
+    Boolean(session?.user?.id) &&
+    (tenantMapFeatures?.show_alert_icon !== false || tenantMapFeatures?.show_event_icon !== false);
 
   const handleAccountMenuToggle = useCallback((event) => {
     event?.preventDefault?.();
@@ -13030,6 +13908,14 @@ export default function App({ onBackToHub = null }) {
       },
     }));
   }, []);
+
+  useEffect(() => {
+    if (showNotificationPreferencesEntry) return;
+    if (!notificationPreferencesOpen) return;
+    setNotificationPreferencesByTopic(savedNotificationPreferencesByTopic);
+    setNotificationPreferencesStatus("");
+    setNotificationPreferencesOpen(false);
+  }, [notificationPreferencesOpen, savedNotificationPreferencesByTopic, showNotificationPreferencesEntry]);
 
   const saveNotificationPreferences = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -16435,13 +17321,26 @@ export default function App({ onBackToHub = null }) {
     const derivedLastChangedAt =
       String(lifecycleSnapshot?.last_changed_at || "").trim() ||
       (latestReportTs ? new Date(latestReportTs).toISOString() : "");
+    const potholeRecord = (potholes || []).find((p) => String(p?.id || "").trim() === pid) || null;
+    const displayId =
+      String(potholeRecord?.ph_id || "").trim()
+      || (
+        Number.isFinite(Number(potholeRecord?.lat)) && Number.isFinite(Number(potholeRecord?.lng))
+          ? makePotholeIdFromCoords(Number(potholeRecord.lat), Number(potholeRecord.lng))
+          : (
+            Number.isFinite(Number(selectedDomainMarker?.lat)) && Number.isFinite(Number(selectedDomainMarker?.lng))
+              ? makePotholeIdFromCoords(Number(selectedDomainMarker.lat), Number(selectedDomainMarker.lng))
+              : ""
+          )
+      );
     return {
+      displayId,
       openCount: rows.length,
       locationLabel,
       currentState: derivedState,
       lastChangedAt: derivedLastChangedAt,
     };
-  }, [adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById, getIncidentSnapshot]);
+  }, [adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById, getIncidentSnapshot, potholes]);
 
   const selectedWaterDrainInfo = useMemo(() => {
     if (!(adminReportDomain === "water_drain_issues" && selectedDomainMarker)) return null;
@@ -21419,6 +22318,8 @@ async function insertReportWithFallback(payload) {
               type="button"
               onClick={confirmQueueOfficialSign}
               disabled={!STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase())}
+              aria-label="Add sign to queue"
+              title="Add sign to queue"
               style={{
                 padding: 12,
                 borderRadius: 12,
@@ -21428,9 +22329,12 @@ async function insertReportWithFallback(payload) {
                 fontWeight: 900,
                 cursor: STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase()) ? "pointer" : "not-allowed",
                 opacity: STREET_SIGN_TYPE_VALUES.has(String(pendingQueuedSign?.sign_type || "").trim().toLowerCase()) ? 1 : 0.6,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
-              Add to Queue
+              <ActionButtonIcon action="add" darkMode={prefersDarkMode} emphasis="filled" />
             </button>
             <button
               type="button"
@@ -21867,6 +22771,7 @@ async function insertReportWithFallback(payload) {
         title={allReportsModal.title}
         items={allReportsModal.items}
         domainKey={allReportsModal.domainKey}
+        incidentLabel={allReportsModal.incidentLabel}
         sharedLocation={allReportsModal.sharedLocation}
         sharedAddress={allReportsModal.sharedAddress}
         sharedLandmark={allReportsModal.sharedLandmark}
@@ -21875,6 +22780,7 @@ async function insertReportWithFallback(payload) {
         onCopyField={copyTextToClipboard}
         onClose={closeAllReports}
         onReporterDetails={openReporterDetails}
+        isMobile={isMobile}
       />
 
       <ReporterDetailsModal
@@ -21896,6 +22802,8 @@ async function insertReportWithFallback(payload) {
         open={myReportsOpen}
         onClose={closeMyReports}
         isAdmin={true}
+        publicRepairLifecycleEnabled={isPublicRepairEnabledForDomain(myReportsDomain)}
+        darkMode={prefersDarkMode}
         modalTitle="My Reports"
         activeDomain={myReportsDomain}
         domainOptions={visibleDomainOptions}
@@ -21956,6 +22864,8 @@ async function insertReportWithFallback(payload) {
         onClose={closeOpenReports}
         isAdmin={isReportsAdminView}
         showDeveloperDiagnostics={isPlatformAdmin}
+        publicRepairLifecycleEnabled={isPublicRepairEnabledForDomain(adminReportDomain)}
+        darkMode={prefersDarkMode}
         allowIncidentMutations={Boolean(isPlatformAdmin || (hasOrgDomainReportsEditAccess && isOrganizationManagedIncidentDomain(adminReportDomain)))}
         modalTitle={canOpenAdminReports ? "Admin Reports" : "Domain Reports"}
         activeDomain={adminReportDomain}
@@ -22123,6 +23033,7 @@ async function insertReportWithFallback(payload) {
         setForm={setManageForm}
         onSave={saveManagedProfile}
         onRequestEdit={requestEditManagedProfile}
+        darkMode={prefersDarkMode}
         onOpenChangePassword={() => {
           setChangePasswordValue("");
           setChangePasswordValue2("");
@@ -22661,9 +23572,15 @@ async function insertReportWithFallback(payload) {
                     <button
                       type="button"
                       onClick={() => openUtilityReportDialogForLight(lid)}
-                      style={btnPopupSecondary}
+                      style={{ ...btnPopupSecondary, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                      aria-label={utilityReportReferenceByLightId?.[lid] ? "Edit utility report number" : "Add utility report number"}
+                      title={utilityReportReferenceByLightId?.[lid] ? "Edit utility report number" : "Add utility report number"}
                     >
-                      {utilityReportReferenceByLightId?.[lid] ? "Edit report #" : "Add report #"}
+                      <ActionButtonIcon
+                        action={utilityReportReferenceByLightId?.[lid] ? "edit" : "add"}
+                        darkMode={prefersDarkMode}
+                        emphasis="secondary"
+                      />
                     </button>
                   )}
                   <button
@@ -22727,13 +23644,18 @@ async function insertReportWithFallback(payload) {
                   color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
+                aria-label="Delete light"
+                title="Delete light"
                 onClick={() => {
                   setPendingDeleteOfficialLightId(selectedOfficialLightForPopup.id);
                   setDeleteOfficialConfirmOpen(true);
                 }}
               >
-                Delete Light
+                <ActionButtonIcon action="delete" darkMode={prefersDarkMode} emphasis="danger" />
               </button>
             )}
           </div>
@@ -22889,7 +23811,10 @@ async function insertReportWithFallback(payload) {
             {!isReportsAdminView && (() => {
               const pid = String(selectedDomainMarker?.pothole_id || "").trim();
               const incidentId = pid ? `pothole:${pid}` : "";
-              const repairSnapshot = incidentId ? getIncidentRepairSnapshot("potholes", incidentId) : null;
+              const publicRepairLifecycleEnabled = isPublicRepairEnabledForDomain("potholes");
+              const repairSnapshot = publicRepairLifecycleEnabled && incidentId
+                ? getIncidentRepairSnapshot("potholes", incidentId)
+                : null;
               const userReported = Boolean(pid && viewerReportedPotholeIdSet.has(pid));
               const lat = Number(selectedDomainMarker?.lat);
               const lng = Number(selectedDomainMarker?.lng);
@@ -22897,7 +23822,7 @@ async function insertReportWithFallback(payload) {
                 ? makePotholeIdFromCoords(lat, lng)
                 : "";
               const showPublicRepairAction = canShowPublicRepairAction(incidentId, "potholes");
-              if (!userReported && !showPublicRepairAction && !repairSnapshot) return null;
+              if (!userReported && !showPublicRepairAction && !repairSnapshot?.viewerHasRepairSignal) return null;
               return (
                 <>
                   <div style={{ height: 4 }} />
@@ -22908,7 +23833,7 @@ async function insertReportWithFallback(payload) {
                         openMyReports({
                           domainKey: "potholes",
                           focusIncidentId: `pothole:${pid}`,
-                          focusQuery: ph || pid,
+                          focusQuery: String(selectedPotholeInfo?.displayId || "").trim() || ph || pid,
                         });
                       }}
                       style={markerPopupActionSecondary}
@@ -23088,11 +24013,14 @@ async function insertReportWithFallback(payload) {
             })()}
             {!isReportsAdminView && (() => {
               const incidentId = String(selectedWaterDrainInfo?.incidentId || selectedDomainMarker?.id || "").trim();
-              const repairSnapshot = incidentId ? getIncidentRepairSnapshot("water_drain_issues", incidentId) : null;
+              const publicRepairLifecycleEnabled = isPublicRepairEnabledForDomain("water_drain_issues");
+              const repairSnapshot = publicRepairLifecycleEnabled && incidentId
+                ? getIncidentRepairSnapshot("water_drain_issues", incidentId)
+                : null;
               const userReported = Boolean(incidentId && viewerReportedWaterIncidentIdSet.has(incidentId));
               const wd = makeWaterDrainIdFromIncidentId(incidentId);
               const showPublicRepairAction = canShowPublicRepairAction(incidentId, "water_drain_issues");
-              if (!userReported && !showPublicRepairAction && !repairSnapshot) return null;
+              if (!userReported && !showPublicRepairAction && !repairSnapshot?.viewerHasRepairSignal) return null;
               return (
                 <>
                   <div style={{ height: 4 }} />
@@ -23103,7 +24031,7 @@ async function insertReportWithFallback(payload) {
                         openMyReports({
                           domainKey: "water_drain_issues",
                           focusIncidentId: incidentId,
-                          focusQuery: wd || incidentId,
+                          focusQuery: String(selectedWaterDrainInfo?.displayId || "").trim() || wd || incidentId,
                         });
                       }}
                       style={markerPopupActionSecondary}
@@ -23243,9 +24171,11 @@ async function insertReportWithFallback(payload) {
                             setPendingDeleteOfficialSignId(signId);
                             setDeleteOfficialSignConfirmOpen(true);
                           }}
-                          style={markerPopupActionDanger}
+                          style={{ ...markerPopupActionDanger, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                          aria-label="Delete sign"
+                          title="Delete sign"
                         >
-                          Delete Sign
+                          <ActionButtonIcon action="delete" darkMode={prefersDarkMode} emphasis="danger" />
                         </button>
                       )}
                     </>
@@ -23392,14 +24322,19 @@ async function insertReportWithFallback(payload) {
                 color: "white",
                 fontWeight: 900,
                 cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
+              aria-label={(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" ? "Delete sign" : "Delete light"}
+              title={(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" ? "Delete sign" : "Delete light"}
               onClick={() => {
                 removeFromMappingQueue(selectedQueuedLightForPopup.tempId);
                 setSelectedQueuedTempId(null);
                 openNotice("✅", "", "", { autoCloseMs: 500, compact: true });
               }}
             >
-              {(selectedQueuedLightForPopup.domain || "streetlights") === "street_signs" ? "Delete Sign" : "Delete Light"}
+              <ActionButtonIcon action="delete" darkMode={prefersDarkMode} emphasis="danger" />
             </button>
 
             <button style={btnPopupSecondary} onClick={() => setSelectedQueuedTempId(null)}>
@@ -24382,6 +25317,7 @@ async function insertReportWithFallback(payload) {
           open={accountMenuOpen && !isMobile}
           session={session}
           profile={profile}
+          showNotificationPreferences={showNotificationPreferencesEntry}
           variant="desktop-popout"
           containerRef={desktopAccountMenuPanelRef}
           onClose={() => {
@@ -24865,6 +25801,7 @@ async function insertReportWithFallback(payload) {
               open={accountMenuOpen}
               session={session}
               profile={profile}
+              showNotificationPreferences={showNotificationPreferencesEntry}
               variant="mobile-popout"
               onClose={() => {
                 setAccountMenuOpen(false);
