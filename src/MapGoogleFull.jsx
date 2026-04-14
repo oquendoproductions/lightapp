@@ -19188,7 +19188,7 @@ export default function App({ onBackToHub = null }) {
       }
 
       if (target.domain === "potholes") {
-      const submitGeoPromise = reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "quick" });
+      const submitGeoPromise = reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" });
       const potholeImageUploadPromise = domainReportImageFile
         ? uploadDomainReportImageIfAny(domainReportImageFile, "potholes", target.lightId || target.pothole_id || "")
             .catch((e) => {
@@ -19388,7 +19388,7 @@ export default function App({ onBackToHub = null }) {
         }
       }
       const waterGeoPromise = isWaterDrainTarget
-        ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "quick" })
+        ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" })
         : Promise.resolve(null);
       const waterImageUploadPromise = (isWaterDrainTarget && domainReportImageFile)
         ? uploadDomainReportImageIfAny(domainReportImageFile, "water_drain_issues", target.lightId || "")
@@ -20012,7 +20012,7 @@ async function insertReportWithFallback(payload) {
             Boolean(String(existing?.nearest_landmark || "").trim());
           if (!hasCachedGeo && Number.isFinite(Number(picked?.[0])) && Number.isFinite(Number(picked?.[1]))) {
             try {
-              const geo = await reverseGeocodeRoadLabel(Number(picked[0]), Number(picked[1]), { mode: "quick" });
+              const geo = await reverseGeocodeRoadLabel(Number(picked[0]), Number(picked[1]), { mode: "full" });
               const nearestAddress = String(geo?.nearestAddress || "").trim();
               const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
               const nearestLandmark = String(geo?.nearestLandmark || "").trim();
