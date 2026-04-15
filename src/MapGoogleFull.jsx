@@ -18618,6 +18618,136 @@ export default function App({ onBackToHub = null }) {
         if (/^\d+$/.test(v)) return "";
         return v;
       };
+      const normalizeStreetKey = (raw) =>
+        String(raw || "")
+          .toLowerCase()
+          .replace(/\b(street|st|avenue|ave|road|rd|drive|dr|court|ct|lane|ln|boulevard|blvd|place|pl|terrace|ter|circle|cir|way|highway|hwy)\b/g, " ")
+          .replace(/[^a-z0-9]/g, "")
+          .trim();
+      const extractStreetNumber = (raw) => {
+        const match = String(raw || "").trim().match(/^(\d+)/);
+        return match ? Number(match[1]) : NaN;
+      };
+      const extractStreetLabel = (raw) => {
+        const text = String(raw || "").trim();
+        if (!text) return "";
+        const parts = text.split(",");
+        const first = String(parts[0] || "").trim();
+        const noNumber = first.replace(/^\d+\s+/, "").trim();
+        return noNumber || first;
+      };
+      const publicFacingTypeSet = new Set([
+        "restaurant",
+        "bar",
+        "cafe",
+        "meal_takeaway",
+        "meal_delivery",
+        "bakery",
+        "store",
+        "shopping_mall",
+        "supermarket",
+        "department_store",
+        "convenience_store",
+        "liquor_store",
+        "florist",
+        "gas_station",
+        "car_dealer",
+        "car_repair",
+        "hardware_store",
+        "home_goods_store",
+        "pharmacy",
+        "bank",
+        "atm",
+        "hospital",
+        "school",
+        "park",
+        "tourist_attraction",
+        "stadium",
+        "museum",
+        "library",
+        "lodging",
+      ]);
+      const civicTypeSet = new Set([
+        "city_hall",
+        "courthouse",
+        "fire_station",
+        "police",
+        "post_office",
+        "place_of_worship",
+        "transit_station",
+      ]);
+      const officeLikeTypeSet = new Set([
+        "insurance_agency",
+        "real_estate_agency",
+        "accounting",
+        "finance",
+        "lawyer",
+        "local_government_office",
+      ]);
+      const buildPlacesCandidateContext = (candidate, context) => {
+        const candidateStreetSource =
+          String(candidate?.vicinity || "").trim() ||
+          String(candidate?.formattedAddress || "").trim();
+        const candidateStreetLabel = extractStreetLabel(candidateStreetSource);
+        const candidateStreetKey = normalizeStreetKey(candidateStreetLabel);
+        const candidateStreetNumber = extractStreetNumber(candidateStreetSource);
+        const isSameStreet = Boolean(
+          context?.targetStreetKey &&
+          candidateStreetKey &&
+          context.targetStreetKey === candidateStreetKey
+        );
+        const streetNumberDiff =
+          Number.isFinite(context?.targetStreetNumber) && Number.isFinite(candidateStreetNumber)
+            ? Math.abs(candidateStreetNumber - context.targetStreetNumber)
+            : Infinity;
+        return {
+          candidateStreetKey,
+          candidateStreetNumber,
+          isSameStreet,
+          streetNumberDiff,
+        };
+      };
+      const rankPlacesCandidate = (candidate, context) => {
+        const types = Array.isArray(candidate?.types) ? candidate.types : [];
+        const name = sanitizeLandmarkName(candidate?.name || "");
+        if (!name) return Number.NEGATIVE_INFINITY;
+        const distance = Number(candidate?.d);
+        const candidateContext = buildPlacesCandidateContext(candidate, context);
+        let score = Number.isFinite(distance) ? Math.max(0, 240 - (distance * 1.35)) : 0;
+        if (String(candidate?.businessStatus || "").trim().toUpperCase() === "OPERATIONAL") score += 10;
+
+        if (candidateContext.isSameStreet) {
+          score += 80;
+          if (Number.isFinite(candidateContext.streetNumberDiff)) {
+            const diff = candidateContext.streetNumberDiff;
+            if (diff <= 2) score += 160;
+            else if (diff <= 6) score += 120;
+            else if (diff <= 15) score += 70;
+            else if (diff <= 30) score += 25;
+          }
+        }
+
+        if (types.some((type) => publicFacingTypeSet.has(type))) score += 130;
+        if (types.some((type) => civicTypeSet.has(type))) score += 110;
+        if (types.some((type) => officeLikeTypeSet.has(type))) score -= 25;
+
+        if (Number.isFinite(distance)) {
+          if (distance <= 25) score += 160;
+          else if (distance <= 50) score += 110;
+          else if (distance <= 90) score += 55;
+          else if (distance > 150) score -= 80;
+          else if (distance > 225) score -= 180;
+        }
+
+        if (/\b(associates|association|llc|inc|ltd|financial|accounting|attorney|law office|law offices)\b/i.test(name)) {
+          score -= 15;
+        }
+        if (/\b(grill|bar|cafe|restaurant|park|hospital|school|bank|pharmacy|museum|library|church)\b/i.test(name)) {
+          score += 20;
+        }
+
+        return score;
+      };
       const extractLandmarkCandidate = (result) => {
         const types = Array.isArray(result?.types) ? result.types : [];
         const comps = Array.isArray(result?.address_components) ? result.address_components : [];
@@ -18648,10 +18778,21 @@ export default function App({ onBackToHub = null }) {
         return "";
       };
       try {
+        let landmarkContext = null;
         if (ENABLE_LEGACY_PLACES_SERVICE && !placesLookupBlockedRef.current) {
           const placesNS = window.google?.maps?.places;
           if (placesNS?.PlacesService) {
             const service = new placesNS.PlacesService(document.createElement("div"));
+            if (!landmarkContext) {
+              const [targetStreetRaw, targetAddressRaw] = await Promise.all([
+                lookupStreetNameAt(qlat, qlng),
+                geocodeAddressAt(qlat, qlng),
+              ]);
+              landmarkContext = {
+                targetStreetKey: normalizeStreetKey(targetStreetRaw || extractStreetLabel(targetAddressRaw)),
+                targetStreetNumber: extractStreetNumber(targetAddressRaw),
+              };
+            }
 
             const nearbyByType = async (type) =>
               new Promise((resolve) => {
@@ -18692,14 +18833,39 @@ export default function App({ onBackToHub = null }) {
                 const rLat = Number(r?.geometry?.location?.lat?.());
                 const rLng = Number(r?.geometry?.location?.lng?.());
                 if (!nm || !Number.isFinite(rLat) || !Number.isFinite(rLng)) continue;
-                candidates.push({ name: nm, d: distanceMeters(qlat, qlng, rLat, rLng) });
+                candidates.push({
+                  name: nm,
+                  d: distanceMeters(qlat, qlng, rLat, rLng),
+                  types: Array.isArray(r?.types) ? r.types : [],
+                  vicinity: String(r?.vicinity || "").trim(),
+                  formattedAddress: String(r?.formatted_address || "").trim(),
+                  businessStatus: String(r?.business_status || "").trim(),
+                });
               }
               if (candidates.length) break;
             }
 
             if (candidates.length) {
-              candidates.sort((a, b) => a.d - b.d);
-              return sanitizeLandmarkName(candidates[0]?.name || "");
+              const closestDistance = candidates.reduce((min, candidate) => {
+                const distance = Number(candidate?.d);
+                return Number.isFinite(distance) ? Math.min(min, distance) : min;
+              }, Infinity);
+              const proximityShortlist = candidates.filter((candidate) => {
+                const distance = Number(candidate?.d);
+                if (!Number.isFinite(distance)) return false;
+                const candidateContext = buildPlacesCandidateContext(candidate, landmarkContext);
+                if (distance <= 70) return true;
+                if (distance <= closestDistance + 45) return true;
+                return candidateContext.isSameStreet && candidateContext.streetNumberDiff <= 20 && distance <= 140;
+              });
+              const rankedCandidates = (proximityShortlist.length ? proximityShortlist : candidates).slice();
+              rankedCandidates.sort((a, b) => {
+                const scoreDiff = rankPlacesCandidate(b, landmarkContext) - rankPlacesCandidate(a, landmarkContext);
+                if (scoreDiff !== 0) return scoreDiff;
+                return Number(a.d || Infinity) - Number(b.d || Infinity);
+              });
+              const winner = sanitizeLandmarkName(rankedCandidates[0]?.name || "");
+              return winner;
             }
 
             if (!legacyLookupBlocked) {
@@ -18728,10 +18894,42 @@ export default function App({ onBackToHub = null }) {
                 );
               });
               if (byDistance?.ok && byDistance.results.length) {
-                const named = byDistance.results
-                  .map((r) => sanitizeLandmarkName(r?.name || ""))
-                  .filter(Boolean);
-                if (named.length) return named[0];
+                const ranked = byDistance.results
+                  .map((r) => {
+                    const rLat = Number(r?.geometry?.location?.lat?.());
+                    const rLng = Number(r?.geometry?.location?.lng?.());
+                    return {
+                      name: sanitizeLandmarkName(r?.name || ""),
+                      d: Number.isFinite(rLat) && Number.isFinite(rLng)
+                        ? distanceMeters(qlat, qlng, rLat, rLng)
+                        : Infinity,
+                      types: Array.isArray(r?.types) ? r.types : [],
+                      vicinity: String(r?.vicinity || "").trim(),
+                      formattedAddress: String(r?.formatted_address || "").trim(),
+                      businessStatus: String(r?.business_status || "").trim(),
+                    };
+                  })
+                  .filter((r) => r.name);
+                const closestDistance = ranked.reduce((min, candidate) => {
+                  const distance = Number(candidate?.d);
+                  return Number.isFinite(distance) ? Math.min(min, distance) : min;
+                }, Infinity);
+                const proximityShortlist = ranked.filter((candidate) => {
+                  const distance = Number(candidate?.d);
+                  if (!Number.isFinite(distance)) return false;
+                  const candidateContext = buildPlacesCandidateContext(candidate, landmarkContext);
+                  if (distance <= 70) return true;
+                  if (distance <= closestDistance + 45) return true;
+                  return candidateContext.isSameStreet && candidateContext.streetNumberDiff <= 20 && distance <= 140;
+                });
+                (proximityShortlist.length ? proximityShortlist : ranked).sort((a, b) => {
+                    const scoreDiff = rankPlacesCandidate(b, landmarkContext) - rankPlacesCandidate(a, landmarkContext);
+                    if (scoreDiff !== 0) return scoreDiff;
+                    return Number(a.d || Infinity) - Number(b.d || Infinity);
+                  });
+                if ((proximityShortlist.length ? proximityShortlist : ranked).length) {
+                  return (proximityShortlist.length ? proximityShortlist : ranked)[0].name;
+                }
               }
             }
           }
