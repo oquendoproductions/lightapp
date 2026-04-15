@@ -10617,7 +10617,7 @@ function OpenReportsModal({
           );
         })()}
       </ModalShell>
-      <ModalShell open={utilityReportDialogOpen} zIndex={10040}>
+      <ModalShell open={utilityReportDialogOpen} zIndex={10042}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 950 }}>Utility Report</div>
           <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
