@@ -15,6 +15,8 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
+import { getAuthRedirectOptions } from "./platform/auth.js";
+import { openExternalUrl } from "./platform/external.js";
 import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
@@ -58,6 +60,7 @@ const SETTINGS_NAV = [
     items: [
       { key: "organization-general", label: "General Settings", path: "/settings/organization-general" },
       { key: "organization-assets", label: "Assets", path: "/settings/organization-assets" },
+      { key: "organization-resident-menu", label: "Resident Menu", path: "/settings/organization-resident-menu" },
       { key: "calendar", label: "Calendar", path: "/settings/calendar" },
     ],
   },
@@ -103,6 +106,7 @@ const EMPTY_ALERT_FORM = {
   ends_at: "",
   pinned: false,
   status: "published",
+  publish_at: "",
 };
 
 const EMPTY_EVENT_FORM = {
@@ -118,7 +122,65 @@ const EMPTY_EVENT_FORM = {
   ends_at: "",
   all_day: false,
   status: "published",
+  publish_at: "",
 };
+
+const RESIDENT_MENU_LINK_TYPE_OPTIONS = [
+  { key: "external_url", label: "Website Link" },
+  { key: "phone", label: "Phone Number" },
+  { key: "email", label: "Email Address" },
+];
+
+const RESIDENT_MENU_LINK_AUDIENCE_OPTIONS = [
+  { key: "public", label: "Everyone" },
+  { key: "signed_in", label: "Signed-in Users" },
+  { key: "admin", label: "Location Staff Only" },
+];
+
+function sortResidentMenuLinks(rows) {
+  return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
+    const orderDelta = Number(a?.sort_order || 0) - Number(b?.sort_order || 0);
+    if (orderDelta !== 0) return orderDelta;
+    return String(a?.label || "").localeCompare(String(b?.label || ""), undefined, { sensitivity: "base" });
+  });
+}
+
+function buildResidentMenuLinkDraft(row = null) {
+  return {
+    id: String(row?.id || "").trim(),
+    label: String(row?.label || "").trim(),
+    description: String(row?.description || "").trim(),
+    link_type: String(row?.link_type || "external_url").trim() || "external_url",
+    url: String(row?.url || "").trim(),
+    phone: String(row?.phone || "").trim(),
+    email: String(row?.email || "").trim(),
+    audience: String(row?.audience || "public").trim() || "public",
+    sort_order: Number.isFinite(Number(row?.sort_order)) ? String(Number(row.sort_order)) : "0",
+    enabled: row?.enabled !== false,
+  };
+}
+
+function formatResidentMenuLinkTypeLabel(linkType) {
+  return RESIDENT_MENU_LINK_TYPE_OPTIONS.find((option) => option.key === linkType)?.label || "Link";
+}
+
+function formatResidentMenuAudienceLabel(audience) {
+  return RESIDENT_MENU_LINK_AUDIENCE_OPTIONS.find((option) => option.key === audience)?.label || "Everyone";
+}
+
+function getResidentMenuLinkDestination(row) {
+  const linkType = String(row?.link_type || "").trim().toLowerCase();
+  if (linkType === "phone") return String(row?.phone || "").trim();
+  if (linkType === "email") return String(row?.email || "").trim();
+  return String(row?.url || "").trim();
+}
+
+const COMMUNITY_FEED_STATUS_OPTIONS = [
+  { value: "published", label: "Publish now" },
+  { value: "scheduled", label: "Schedule" },
+  { value: "draft", label: "Save draft" },
+  { value: "archived", label: "Keep archived" },
+];
 
 const LOCATION_ASSET_CATEGORIES = [
   { key: "logo", label: "Logo" },
@@ -265,7 +327,12 @@ function hasDateTimePassed(value) {
 }
 
 function shouldAutoArchiveCommunityItem(row) {
-  return trimOrEmpty(row?.status).toLowerCase() === "published" && hasDateTimePassed(row?.ends_at);
+  return isVisibleCommunityItem(row) && hasDateTimePassed(row?.ends_at);
+}
+
+function isVisibleCommunityItem(row) {
+  const status = trimOrEmpty(row?.status).toLowerCase();
+  return status === "published";
 }
 
 function normalizeCommunityItemStatus(row) {
@@ -618,6 +685,7 @@ function severityBadgeClass(severity) {
 function statusBadgeClass(status) {
   const key = trimOrEmpty(status).toLowerCase();
   if (key === "published") return "municipality-badge municipality-badge--published";
+  if (key === "scheduled") return "municipality-badge municipality-badge--info";
   if (key === "archived") return "municipality-badge municipality-badge--archived";
   return "municipality-badge municipality-badge--draft";
 }
@@ -625,7 +693,7 @@ function statusBadgeClass(status) {
 function activeAlertCount(alerts) {
   const now = Date.now();
   return (alerts || []).filter((alert) => {
-    if (String(alert?.status || "").trim().toLowerCase() !== "published") return false;
+    if (!isVisibleCommunityItem(alert)) return false;
     const startsAt = alert?.starts_at ? new Date(alert.starts_at).getTime() : null;
     const endsAt = alert?.ends_at ? new Date(alert.ends_at).getTime() : null;
     if (startsAt && startsAt > now) return false;
@@ -637,7 +705,7 @@ function activeAlertCount(alerts) {
 function upcomingEventCount(events) {
   const now = Date.now();
   return (events || []).filter((event) => {
-    if (String(event?.status || "").trim().toLowerCase() !== "published") return false;
+    if (!isVisibleCommunityItem(event)) return false;
     const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
     return !startsAt || startsAt >= now - (60 * 60 * 1000);
   }).length;
@@ -1673,9 +1741,13 @@ function AlertComposer({
   onSubmit,
   onDelete = null,
   deleteBusy = false,
+  canSchedule = true,
   heading = "Create Alert",
   submitLabel = "Save Alert",
 }) {
+  const statusOptions = canSchedule
+    ? COMMUNITY_FEED_STATUS_OPTIONS
+    : COMMUNITY_FEED_STATUS_OPTIONS.filter((option) => option.value !== "scheduled");
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
       <h4>{heading}</h4>
@@ -1727,12 +1799,23 @@ function AlertComposer({
           <label className="municipality-checkbox">
             <span>Status</span>
             <select value={alertForm.status} onChange={(event) => setAlertForm((prev) => ({ ...prev, status: event.target.value }))}>
-              <option value="published">Publish now</option>
-              <option value="draft">Save draft</option>
-              <option value="archived">Keep archived</option>
+              {statusOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
         </div>
+        {canSchedule && alertForm.status === "scheduled" ? (
+          <div className="municipality-field">
+            <label htmlFor="alert-publish-at">Publish At</label>
+            <input
+              id="alert-publish-at"
+              type="datetime-local"
+              value={alertForm.publish_at}
+              onChange={(event) => setAlertForm((prev) => ({ ...prev, publish_at: event.target.value }))}
+            />
+          </div>
+        ) : null}
       </div>
       <div className="municipality-actions">
         {typeof onDelete === "function" ? (
@@ -1751,9 +1834,13 @@ function EventComposer({
   onSubmit,
   onDelete = null,
   deleteBusy = false,
+  canSchedule = true,
   heading = "Create Event",
   submitLabel = "Save Event",
 }) {
+  const statusOptions = canSchedule
+    ? COMMUNITY_FEED_STATUS_OPTIONS
+    : COMMUNITY_FEED_STATUS_OPTIONS.filter((option) => option.value !== "scheduled");
   return (
     <form className="municipality-topic-row municipality-topic-card" onSubmit={onSubmit}>
       <h4>{heading}</h4>
@@ -1796,12 +1883,23 @@ function EventComposer({
           <label className="municipality-checkbox">
             <span>Status</span>
             <select value={eventForm.status} onChange={(event) => setEventForm((prev) => ({ ...prev, status: event.target.value }))}>
-              <option value="published">Publish now</option>
-              <option value="draft">Save draft</option>
-              <option value="archived">Keep archived</option>
+              {statusOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
         </div>
+        {canSchedule && eventForm.status === "scheduled" ? (
+          <div className="municipality-field">
+            <label htmlFor="event-publish-at">Publish At</label>
+            <input
+              id="event-publish-at"
+              type="datetime-local"
+              value={eventForm.publish_at}
+              onChange={(event) => setEventForm((prev) => ({ ...prev, publish_at: event.target.value }))}
+            />
+          </div>
+        ) : null}
       </div>
       <div className="municipality-actions">
         {typeof onDelete === "function" ? (
@@ -1881,6 +1979,8 @@ export default function MunicipalityApp() {
   const [mapAppearanceDraft, setMapAppearanceDraft] = useState(() => buildMapAppearanceDraft(null));
   const [assetLibrary, setAssetLibrary] = useState([]);
   const [assetFiles, setAssetFiles] = useState([]);
+  const [residentMenuLinks, setResidentMenuLinks] = useState([]);
+  const [residentMenuLinkDraft, setResidentMenuLinkDraft] = useState(() => buildResidentMenuLinkDraft());
   const [assetUploadDraft, setAssetUploadDraft] = useState({
     category: "asset",
     asset_subtype: "",
@@ -1890,11 +1990,13 @@ export default function MunicipalityApp() {
   });
   const [settingsSectionEdit, setSettingsSectionEdit] = useState({
     organization: false,
+    residentMenu: false,
     map: false,
     assets: false,
   });
   const [settingsSectionSaving, setSettingsSectionSaving] = useState({
     organization: false,
+    residentMenu: false,
     map: false,
     assets: false,
   });
@@ -1920,6 +2022,7 @@ export default function MunicipalityApp() {
   const [settingsRoleForm, setSettingsRoleForm] = useState({ role: "", role_label: "" });
   const [settingsSectionStatus, setSettingsSectionStatus] = useState({
     organization: "",
+    menu: "",
     assets: "",
     reports: "",
     team: "",
@@ -2059,8 +2162,7 @@ export default function MunicipalityApp() {
 
     setForgotPasswordError("");
     setAuthResetLoading(true);
-    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
     setAuthResetLoading(false);
 
     if (error) {
@@ -3326,6 +3428,7 @@ export default function MunicipalityApp() {
       setSettingsStatus("");
       setSettingsSectionStatus({
         organization: "",
+        menu: "",
         assets: "",
         reports: "",
         team: "",
@@ -3380,6 +3483,14 @@ export default function MunicipalityApp() {
           : Promise.resolve({ data: [], error: null }),
         manageAccess
           ? supabase
+            .from("organization_menu_links")
+            .select("id,tenant_key,label,description,link_type,url,phone,email,audience,sort_order,enabled,created_at,updated_at")
+            .eq("tenant_key", tenantKey)
+            .order("sort_order", { ascending: true })
+            .order("created_at", { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        manageAccess
+          ? supabase
             .from("tenant_files")
             .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
             .eq("tenant_key", tenantKey)
@@ -3387,7 +3498,7 @@ export default function MunicipalityApp() {
           : Promise.resolve({ data: [], error: null }),
       ]);
 
-      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, filesRes] = await locationQueries;
+      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, menuRes, filesRes] = await locationQueries;
 
       if (cancelled) return;
 
@@ -3430,6 +3541,11 @@ export default function MunicipalityApp() {
 
       setOrganizationProfile(nextProfile);
       setMapAppearance(nextMapAppearance);
+      setResidentMenuLinks(
+        menuRes?.error && isMissingRelationError(menuRes.error)
+          ? []
+          : sortResidentMenuLinks(menuRes?.error ? [] : (menuRes?.data || []))
+      );
       setAssetLibrary(nextAssetLibrary);
       setAssetFiles(filesRes?.error ? [] : (filesRes?.data || []));
       setTeamAssignments(teamRes?.error ? [] : (teamRes?.data || []));
@@ -3441,6 +3557,13 @@ export default function MunicipalityApp() {
           ? ((isPermissionError(profileRes.error)
             ? "Organization information is not available to this account yet."
             : profileRes.error.message) || "Could not load organization information.")
+          : "",
+        menu: menuRes?.error
+          ? (isMissingRelationError(menuRes.error)
+            ? "Resident menu links will appear after the latest database update is applied."
+            : ((isPermissionError(menuRes.error)
+              ? "Resident menu links are not available to this account yet."
+              : menuRes.error.message) || "Could not load resident menu links."))
           : "",
         assets: filesRes?.error
           ? ((isPermissionError(filesRes.error)
@@ -3532,7 +3655,9 @@ export default function MunicipalityApp() {
     }));
   }
 
-  function populateAlertForm(alert) {
+function populateAlertForm(alert) {
+    const itemStatus = trimOrEmpty(alert?.status).toLowerCase();
+    const editableStatus = itemStatus || EMPTY_ALERT_FORM.status;
     setAlertForm({
       topic_key: trimOrEmpty(alert?.topic_key) || EMPTY_ALERT_FORM.topic_key,
       title: trimOrEmpty(alert?.title),
@@ -3546,11 +3671,14 @@ export default function MunicipalityApp() {
       starts_at: toDateTimeLocalValue(alert?.starts_at),
       ends_at: toDateTimeLocalValue(alert?.ends_at),
       pinned: Boolean(alert?.pinned),
-      status: trimOrEmpty(alert?.status) || EMPTY_ALERT_FORM.status,
+      status: editableStatus,
+      publish_at: itemStatus === "scheduled" && alert?.published_at ? toDateTimeLocalValue(alert.published_at) : "",
     });
   }
 
   function populateEventForm(eventRow) {
+    const itemStatus = trimOrEmpty(eventRow?.status).toLowerCase();
+    const editableStatus = itemStatus || EMPTY_EVENT_FORM.status;
     setEventForm({
       topic_key: trimOrEmpty(eventRow?.topic_key) || EMPTY_EVENT_FORM.topic_key,
       title: trimOrEmpty(eventRow?.title),
@@ -3563,7 +3691,8 @@ export default function MunicipalityApp() {
       starts_at: toDateTimeLocalValue(eventRow?.starts_at),
       ends_at: toDateTimeLocalValue(eventRow?.ends_at),
       all_day: Boolean(eventRow?.all_day),
-      status: trimOrEmpty(eventRow?.status) || EMPTY_EVENT_FORM.status,
+      status: editableStatus,
+      publish_at: itemStatus === "scheduled" && eventRow?.published_at ? toDateTimeLocalValue(eventRow.published_at) : "",
     });
   }
 
@@ -3889,6 +4018,138 @@ export default function MunicipalityApp() {
     setOrganizationProfile(data || { ...(organizationProfile || {}), ...payload });
     setSettingsSectionEdit((prev) => ({ ...prev, organization: false }));
     setSettingsSectionStatus((prev) => ({ ...prev, organization: "Organization settings saved." }));
+  }
+
+  async function saveResidentMenuLink() {
+    if (!manageAccess) return;
+
+    const label = trimOrEmpty(residentMenuLinkDraft.label);
+    const linkType = trimOrEmpty(residentMenuLinkDraft.link_type).toLowerCase() || "external_url";
+    const audience = trimOrEmpty(residentMenuLinkDraft.audience).toLowerCase() || "public";
+    const url = trimOrEmpty(residentMenuLinkDraft.url);
+    const phone = trimOrEmpty(residentMenuLinkDraft.phone);
+    const email = trimOrEmpty(residentMenuLinkDraft.email);
+    const sortOrderRaw = Number(residentMenuLinkDraft.sort_order);
+    const sortOrder = Number.isFinite(sortOrderRaw) ? Math.max(0, Math.round(sortOrderRaw)) : 0;
+
+    if (!label) {
+      setSettingsSectionStatus((prev) => ({ ...prev, menu: "Enter a menu label before saving." }));
+      return;
+    }
+
+    if (linkType === "phone" && !phone) {
+      setSettingsSectionStatus((prev) => ({ ...prev, menu: "Enter a phone number before saving." }));
+      return;
+    }
+    if (linkType === "email" && !email) {
+      setSettingsSectionStatus((prev) => ({ ...prev, menu: "Enter an email address before saving." }));
+      return;
+    }
+    if (linkType === "external_url" && !url) {
+      setSettingsSectionStatus((prev) => ({ ...prev, menu: "Enter a website link before saving." }));
+      return;
+    }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Confirm resident menu update",
+      description: "Enter your 4-digit PIN to save resident-facing menu links.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, menu: message })),
+    });
+    if (!checkpointApproved) return;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, residentMenu: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, menu: "" }));
+
+    const basePayload = {
+      tenant_key: tenantKey,
+      label,
+      description: trimOrEmpty(residentMenuLinkDraft.description) || null,
+      link_type: linkType,
+      url: linkType === "external_url" ? url : null,
+      phone: linkType === "phone" ? phone : null,
+      email: linkType === "email" ? email : null,
+      audience,
+      sort_order: sortOrder,
+      enabled: Boolean(residentMenuLinkDraft.enabled),
+      updated_by: session?.user?.id || null,
+    };
+
+    const existingId = trimOrEmpty(residentMenuLinkDraft.id);
+    const query = existingId
+      ? supabase
+          .from("organization_menu_links")
+          .update(basePayload)
+          .eq("id", existingId)
+          .eq("tenant_key", tenantKey)
+          .select("id,tenant_key,label,description,link_type,url,phone,email,audience,sort_order,enabled,created_at,updated_at")
+          .maybeSingle()
+      : supabase
+          .from("organization_menu_links")
+          .insert([{ ...basePayload, created_by: session?.user?.id || null }])
+          .select("id,tenant_key,label,description,link_type,url,phone,email,audience,sort_order,enabled,created_at,updated_at")
+          .maybeSingle();
+
+    const { data, error } = await query;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, residentMenu: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        menu: error.message || "Could not save the resident menu link.",
+      }));
+      return;
+    }
+
+    const nextRow = data || { ...basePayload, id: existingId || crypto.randomUUID?.() || `${Date.now()}` };
+    setResidentMenuLinks((prev) => {
+      const filtered = prev.filter((row) => String(row?.id || "").trim() !== String(nextRow?.id || "").trim());
+      return sortResidentMenuLinks([...filtered, nextRow]);
+    });
+    setResidentMenuLinkDraft(buildResidentMenuLinkDraft());
+    setSettingsSectionEdit((prev) => ({ ...prev, residentMenu: false }));
+    setSettingsSectionStatus((prev) => ({ ...prev, menu: existingId ? "Resident menu link updated." : "Resident menu link added." }));
+  }
+
+  async function deleteResidentMenuLink(linkRow) {
+    if (!manageAccess) return;
+    const linkId = trimOrEmpty(linkRow?.id);
+    if (!linkId) return;
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Confirm resident menu removal",
+      description: "Enter your 4-digit PIN to remove this resident-facing menu link.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, menu: message })),
+    });
+    if (!checkpointApproved) return;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, residentMenu: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, menu: "" }));
+
+    const { error } = await supabase
+      .from("organization_menu_links")
+      .delete()
+      .eq("id", linkId)
+      .eq("tenant_key", tenantKey);
+
+    setSettingsSectionSaving((prev) => ({ ...prev, residentMenu: false }));
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        menu: error.message || "Could not remove the resident menu link.",
+      }));
+      return;
+    }
+
+    setResidentMenuLinks((prev) => prev.filter((row) => String(row?.id || "").trim() !== linkId));
+    if (trimOrEmpty(residentMenuLinkDraft.id) === linkId) {
+      setResidentMenuLinkDraft(buildResidentMenuLinkDraft());
+      setSettingsSectionEdit((prev) => ({ ...prev, residentMenu: false }));
+    }
+    setSettingsSectionStatus((prev) => ({ ...prev, menu: "Resident menu link removed." }));
   }
 
   async function saveMapAppearanceSettings() {
@@ -4343,9 +4604,7 @@ export default function MunicipalityApp() {
       }));
       return;
     }
-    if (typeof window !== "undefined") {
-      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-    }
+    void openExternalUrl(data.signedUrl);
   }
 
   async function removeAssetFile(row) {
@@ -4609,7 +4868,7 @@ export default function MunicipalityApp() {
   function openReportWorkspaceInNewTab() {
     if (typeof window === "undefined") return;
     const targetHref = buildMunicipalityAppHref(window.location.pathname, tenantKey, "/report");
-    window.open(targetHref, "_blank", "noopener,noreferrer");
+    void openExternalUrl(targetHref);
   }
 
   function downloadSummaryExport() {
@@ -4804,9 +5063,29 @@ export default function MunicipalityApp() {
     }
     const isEditing = Boolean(editingAlertId);
     const currentAlert = isEditing ? alerts.find((item) => item.id === editingAlertId) : null;
-    payload.published_at = payload.status === "published"
-      ? (currentAlert?.published_at || new Date().toISOString())
-      : null;
+    const currentStatus = trimOrEmpty(currentAlert?.status).toLowerCase();
+    if (isEditing && currentStatus !== "scheduled" && payload.status === "scheduled") {
+      setAdminStatus("Scheduling is only available before an alert or event has been published.");
+      return;
+    }
+    const scheduledPublishAt = coerceDateTimeInput(alertForm.publish_at);
+    if (payload.status === "scheduled") {
+      if (!scheduledPublishAt) {
+        setAdminStatus("Choose when this alert should publish.");
+        return;
+      }
+      if (new Date(scheduledPublishAt).getTime() <= Date.now()) {
+        setAdminStatus("Scheduled publish time must be in the future.");
+        return;
+      }
+    }
+    payload.published_at = payload.status === "scheduled"
+      ? scheduledPublishAt
+      : payload.status === "published"
+        ? (trimOrEmpty(currentAlert?.status).toLowerCase() === "published" && currentAlert?.published_at
+          ? currentAlert.published_at
+          : new Date().toISOString())
+        : null;
     const query = isEditing
       ? supabase.from("municipality_alerts").update(payload).eq("id", editingAlertId)
       : supabase.from("municipality_alerts").insert([payload]);
@@ -4845,9 +5124,29 @@ export default function MunicipalityApp() {
     }
     const isEditing = Boolean(editingEventId);
     const currentEvent = isEditing ? events.find((item) => item.id === editingEventId) : null;
-    payload.published_at = payload.status === "published"
-      ? (currentEvent?.published_at || new Date().toISOString())
-      : null;
+    const currentStatus = trimOrEmpty(currentEvent?.status).toLowerCase();
+    if (isEditing && currentStatus !== "scheduled" && payload.status === "scheduled") {
+      setAdminStatus("Scheduling is only available before an alert or event has been published.");
+      return;
+    }
+    const scheduledPublishAt = coerceDateTimeInput(eventForm.publish_at);
+    if (payload.status === "scheduled") {
+      if (!scheduledPublishAt) {
+        setAdminStatus("Choose when this event should publish.");
+        return;
+      }
+      if (new Date(scheduledPublishAt).getTime() <= Date.now()) {
+        setAdminStatus("Scheduled publish time must be in the future.");
+        return;
+      }
+    }
+    payload.published_at = payload.status === "scheduled"
+      ? scheduledPublishAt
+      : payload.status === "published"
+        ? (trimOrEmpty(currentEvent?.status).toLowerCase() === "published" && currentEvent?.published_at
+          ? currentEvent.published_at
+          : new Date().toISOString())
+        : null;
     const query = isEditing
       ? supabase.from("municipality_events").update(payload).eq("id", editingEventId)
       : supabase.from("municipality_events").insert([payload]);
@@ -5772,6 +6071,7 @@ export default function MunicipalityApp() {
                   onSubmit={createAlert}
                   onDelete={editingAlertId && canDeleteCommunications ? () => void deleteAlert() : null}
                   deleteBusy={communicationsDeleteBusyKey === `alert:${editingAlertId || ""}`}
+                  canSchedule={!editingAlertId || alertForm.status === "scheduled"}
                   heading={editingAlertId ? "Edit Alert" : "Create Alert"}
                   submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
                 />
@@ -5839,6 +6139,7 @@ export default function MunicipalityApp() {
                   onSubmit={createEvent}
                   onDelete={editingEventId && canDeleteCommunications ? () => void deleteEvent() : null}
                   deleteBusy={communicationsDeleteBusyKey === `event:${editingEventId || ""}`}
+                  canSchedule={!editingEventId || eventForm.status === "scheduled"}
                   heading={editingEventId ? "Edit Event" : "Create Event"}
                   submitLabel={editingEventId ? "Update Event" : "Save Event"}
                 />
@@ -6963,6 +7264,210 @@ export default function MunicipalityApp() {
                           </div>
                           {!assetFiles.length ? (
                             <div className="municipality-empty">No uploaded asset files are attached to this location yet.</div>
+                          ) : null}
+                        </div>
+                      )
+                    ) : null}
+
+                    {activeSettingsItemKey === "organization-resident-menu" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Resident menu links are limited to location staff</h4>
+                          <p className="municipality-note">Public menu links can be managed by the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Resident Menu</h4>
+                              <p className="municipality-note">Add quick links like trash pickup schedules, city contact points, or public information pages to the resident app menu.</p>
+                            </div>
+                            {settingsSectionEdit.residentMenu ? (
+                              <button
+                                type="button"
+                                className="municipality-button municipality-button--ghost"
+                                onClick={() => {
+                                  setResidentMenuLinkDraft(buildResidentMenuLinkDraft());
+                                  setSettingsSectionEdit((prev) => ({ ...prev, residentMenu: false }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, menu: "" }));
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            ) : (
+                              <HubAddButton
+                                label="Add resident menu link"
+                                onClick={() => {
+                                  setResidentMenuLinkDraft(buildResidentMenuLinkDraft({ sort_order: residentMenuLinks.length }));
+                                  setSettingsSectionEdit((prev) => ({ ...prev, residentMenu: true }));
+                                  setSettingsSectionStatus((prev) => ({ ...prev, menu: "" }));
+                                }}
+                              />
+                            )}
+                          </div>
+                          {settingsSectionStatus.menu ? <p className={`municipality-inline-status${/could not|enter|available|latest database update/i.test(settingsSectionStatus.menu) ? " is-error" : ""}`}>{settingsSectionStatus.menu}</p> : null}
+                          {settingsSectionEdit.residentMenu ? (
+                            <div className="municipality-asset-form-shell">
+                              <div className="municipality-form-grid municipality-form-grid--asset">
+                                <div className="municipality-field">
+                                  <label htmlFor="resident-menu-label">Label</label>
+                                  <input
+                                    id="resident-menu-label"
+                                    value={residentMenuLinkDraft.label}
+                                    onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, label: event.target.value }))}
+                                    placeholder="Trash pickup schedule"
+                                  />
+                                </div>
+                                <div className="municipality-field">
+                                  <label htmlFor="resident-menu-type">Link Type</label>
+                                  <select
+                                    id="resident-menu-type"
+                                    value={residentMenuLinkDraft.link_type}
+                                    onChange={(event) =>
+                                      setResidentMenuLinkDraft((prev) => ({
+                                        ...prev,
+                                        link_type: event.target.value,
+                                        url: event.target.value === "external_url" ? prev.url : "",
+                                        phone: event.target.value === "phone" ? prev.phone : "",
+                                        email: event.target.value === "email" ? prev.email : "",
+                                      }))
+                                    }
+                                  >
+                                    {RESIDENT_MENU_LINK_TYPE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="municipality-field municipality-field--full">
+                                  <label htmlFor="resident-menu-description">Description</label>
+                                  <input
+                                    id="resident-menu-description"
+                                    value={residentMenuLinkDraft.description}
+                                    onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, description: event.target.value }))}
+                                    placeholder="Optional helper text shown in the resident app menu."
+                                  />
+                                </div>
+                                {residentMenuLinkDraft.link_type === "external_url" ? (
+                                  <div className="municipality-field municipality-field--full">
+                                    <label htmlFor="resident-menu-url">Website Link</label>
+                                    <input
+                                      id="resident-menu-url"
+                                      type="url"
+                                      value={residentMenuLinkDraft.url}
+                                      onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, url: event.target.value }))}
+                                      placeholder="https://city.example.gov/trash"
+                                    />
+                                  </div>
+                                ) : null}
+                                {residentMenuLinkDraft.link_type === "phone" ? (
+                                  <div className="municipality-field municipality-field--full">
+                                    <label htmlFor="resident-menu-phone">Phone Number</label>
+                                    <input
+                                      id="resident-menu-phone"
+                                      value={residentMenuLinkDraft.phone}
+                                      onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, phone: event.target.value }))}
+                                      placeholder="(555) 555-5555"
+                                    />
+                                  </div>
+                                ) : null}
+                                {residentMenuLinkDraft.link_type === "email" ? (
+                                  <div className="municipality-field municipality-field--full">
+                                    <label htmlFor="resident-menu-email">Email Address</label>
+                                    <input
+                                      id="resident-menu-email"
+                                      type="email"
+                                      value={residentMenuLinkDraft.email}
+                                      onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, email: event.target.value }))}
+                                      placeholder="publicworks@city.gov"
+                                    />
+                                  </div>
+                                ) : null}
+                                <div className="municipality-field">
+                                  <label htmlFor="resident-menu-audience">Audience</label>
+                                  <select
+                                    id="resident-menu-audience"
+                                    value={residentMenuLinkDraft.audience}
+                                    onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, audience: event.target.value }))}
+                                  >
+                                    {RESIDENT_MENU_LINK_AUDIENCE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="municipality-field">
+                                  <label htmlFor="resident-menu-order">Sort Order</label>
+                                  <input
+                                    id="resident-menu-order"
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={residentMenuLinkDraft.sort_order}
+                                    onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, sort_order: event.target.value }))}
+                                  />
+                                </div>
+                                <label
+                                  className="municipality-settings-list-item municipality-settings-list-item--checkbox"
+                                  style={{ alignSelf: "end" }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(residentMenuLinkDraft.enabled)}
+                                    onChange={(event) => setResidentMenuLinkDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
+                                  />
+                                  <span>Enabled</span>
+                                </label>
+                                <div className="municipality-actions">
+                                  <button
+                                    type="button"
+                                    className="municipality-button municipality-button--primary"
+                                    onClick={() => void saveResidentMenuLink()}
+                                    disabled={settingsSectionSaving.residentMenu}
+                                  >
+                                    {settingsSectionSaving.residentMenu ? "Saving…" : "Save Link"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+                          <div className="municipality-settings-list">
+                            {residentMenuLinks.map((linkRow) => (
+                              <div key={linkRow.id} className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                <div className="municipality-settings-item-actions-row">
+                                  <div>
+                                    <strong>{trimOrEmpty(linkRow.label) || "Untitled link"}</strong>
+                                    <p className="municipality-note">
+                                      {formatResidentMenuLinkTypeLabel(linkRow.link_type)}
+                                      {" • "}
+                                      {formatResidentMenuAudienceLabel(linkRow.audience)}
+                                      {" • "}
+                                      {linkRow.enabled ? "Enabled" : "Hidden"}
+                                      {" • "}
+                                      Order {Number(linkRow.sort_order || 0)}
+                                    </p>
+                                    {trimOrEmpty(linkRow.description) ? <p className="municipality-note">{trimOrEmpty(linkRow.description)}</p> : null}
+                                    <p className="municipality-note">{getResidentMenuLinkDestination(linkRow) || "No destination set"}</p>
+                                  </div>
+                                  <div className="municipality-actions municipality-actions--compact">
+                                    <HubEditButton
+                                      label="Edit resident menu link"
+                                      onClick={() => {
+                                        setResidentMenuLinkDraft(buildResidentMenuLinkDraft(linkRow));
+                                        setSettingsSectionEdit((prev) => ({ ...prev, residentMenu: true }));
+                                        setSettingsSectionStatus((prev) => ({ ...prev, menu: "" }));
+                                      }}
+                                    />
+                                    <HubDeleteButton
+                                      label="Remove resident menu link"
+                                      onClick={() => void deleteResidentMenuLink(linkRow)}
+                                      disabled={settingsSectionSaving.residentMenu}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {!residentMenuLinks.length ? (
+                            <div className="municipality-empty">No resident menu links have been added for this location yet.</div>
                           ) : null}
                         </div>
                       )

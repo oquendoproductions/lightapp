@@ -943,6 +943,10 @@
   accent-color: #176d78;
 }
 
+.municipality-field--full {
+  grid-column: 1 / -1;
+}
+
 .municipality-settings-list-item > :first-child,
 .municipality-settings-sublist-item > :first-child,
 .municipality-settings-item-actions-row > :first-child {
