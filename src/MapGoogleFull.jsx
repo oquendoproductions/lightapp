@@ -2,15 +2,23 @@
 // App.jsx — Full file
 // ==================================================
 import React, { Fragment, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { CircleF, GoogleMap, MarkerF, PolygonF, useJsApiLoader } from "@react-google-maps/api";
+import { Geolocation } from "@capacitor/geolocation";
+import { PushNotifications } from "@capacitor/push-notifications";
+import { Badge } from "@capawesome/capacitor-badge";
+import { CircleF, GoogleMap, MarkerF, PolygonF, useGoogleMap, useJsApiLoader } from "@react-google-maps/api";
+import { createClient } from "@supabase/supabase-js";
 import "./headerStandards.css";
 import { supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { TenantContext } from "./tenant/contextObject";
 import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
 import { STANDARD_LOGIN_EMAIL_INPUT_PROPS, getStandardLoginPasswordInputProps } from "./auth/loginFieldStandards";
+import { getAuthRedirectOptions } from "./platform/auth.js";
+import { openExternalUrl } from "./platform/external.js";
+import { getPlatformName, isNativeAppRuntime } from "./platform/runtime.js";
 import { computeStreetlightConfidenceSnapshot } from "./streetlightConfidence";
 import { APP_VERSION } from "./appMeta";
+import AppLaunchScreen from "./AppLaunchScreen.jsx";
 import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import { buildMailtoHref, hasNonEmptyValue, normalizePhoneHref, normalizeWebsiteHref } from "./lib/workspaceSupport";
@@ -21,10 +29,38 @@ const GMAPS_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_KEY ||
   "";
 const GMAPS_KEY_DEV = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_DEV || "";
+const GMAPS_KEY_NATIVE = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_NATIVE || "";
+const GMAPS_KEY_IOS = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_IOS || "";
+const GMAPS_KEY_ANDROID = import.meta.env.VITE_GOOGLE_MAPS_API_KEY_ANDROID || "";
 const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
 const GMAPS_LIBRARIES = ["places"];
 
 const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
+
+function createTenantScopedReadClient(tenantKey, accessToken = "") {
+  const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
+  const supabaseAnonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+  if (!normalizedTenantKey || !supabaseUrl || !supabaseAnonKey) return null;
+
+  const headers = {
+    "x-tenant-key": normalizedTenantKey,
+  };
+  const token = String(accessToken || "").trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers,
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: `sb-tenant-readonly-${normalizedTenantKey}`,
+    },
+  });
+}
 
 function defaultDomainType(domainKey) {
   const key = String(domainKey || "").trim().toLowerCase();
@@ -45,10 +81,19 @@ function currentRuntimeHost() {
 }
 
 const GMAPS_RUNTIME_HOST = currentRuntimeHost();
+const GMAPS_PLATFORM = getPlatformName();
+const GMAPS_NATIVE_ACTIVE_KEY =
+  GMAPS_PLATFORM === "ios"
+    ? (GMAPS_KEY_IOS || GMAPS_KEY_NATIVE)
+    : GMAPS_PLATFORM === "android"
+      ? (GMAPS_KEY_ANDROID || GMAPS_KEY_NATIVE)
+      : GMAPS_KEY_NATIVE;
 const GMAPS_ACTIVE_KEY =
-  GMAPS_KEY_DEV && isDevMapsHost(GMAPS_RUNTIME_HOST)
-    ? GMAPS_KEY_DEV
-    : GMAPS_KEY;
+  isNativeAppRuntime()
+    ? (GMAPS_NATIVE_ACTIVE_KEY || GMAPS_KEY)
+    : GMAPS_KEY_DEV && isDevMapsHost(GMAPS_RUNTIME_HOST)
+      ? GMAPS_KEY_DEV
+      : GMAPS_KEY;
 
 
 
@@ -69,6 +114,10 @@ const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
 const REPORTING_MIN_ZOOM = 17;
+const TRAVEL_FOLLOW_LOOKAHEAD_METERS = 120;
+const LOCATION_PREDICT_MIN_SPEED_MPS = 3.2; // ~7 mph; avoids over-leading walking/standing users.
+const LOCATION_PREDICT_MAX_SECONDS = 1.45;
+const LOCATION_PREDICT_MAX_METERS = 30;
 const STREETLIGHT_STALENESS_ROLLOUT_START = new Date(2026, 2, 24, 0, 0, 0, 0).getTime();
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const TITLE_LOGO_DARK_SRC =
@@ -98,13 +147,15 @@ const UI_ICON_SRC = {
   headingReset: "/heading_reset_icon.png",
   info: "/info_icon.png",
   location: "/location_icon.png",
+  homeRecenter: "/Icons/Map Tools/home_recenter_button.png",
+  navigationArrow: "/Icons/Map Tools/navigation_arrow_icon.png",
+  incidentReportingLayer: "/Icons/Map Tools/incident_driven_map_layer_button.png",
+  mapTab: "/Icons/Buttons/tab_buttons/map_tab_icon.png",
   calendar: "/calendar_icon.png",
   notification: "/notification_icon.png",
   satellite: "/satellite_icon.png",
   streetMap: "/street_map_icon.png",
 };
-
-
 // Per-light cooldown (client-side guardrail; reversible)
 const REPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -121,9 +172,12 @@ const EXPORT_SCHEMA_VERSION = "v1";
 const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
+const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
+const NATIVE_PUSH_ENABLED = String(import.meta.env.VITE_NATIVE_PUSH_ENABLED || "").trim().toLowerCase() === "true";
+const PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY = "cityreport.public_onboarding_pending_auth_v1";
 
 // Location request prompt upon opening page
-const LOC_PROMPTED_SESSION_KEY = "streetlight_loc_prompted_session_v1";
+const LOC_PROMPTED_APP_KEY = "streetlight_loc_prompted_app_v1";
 
 
 // ==================================================
@@ -161,6 +215,7 @@ const REPORT_DOMAIN_OPTIONS = [
   { key: "power_outage", label: "Power Outage", icon: "⚡", iconSrc: UI_ICON_SRC.powerOutage, enabled: true },
   { key: "water_main", label: "Water Main", icon: "🚰", iconSrc: UI_ICON_SRC.waterMain, enabled: true },
 ];
+const INCIDENT_REPORTING_LAYER_KEY = "incident_reporting";
 const DEFAULT_PUBLIC_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
 const STREET_SIGN_TYPE_OPTIONS = [
   { value: "stop", label: "Stop" },
@@ -197,6 +252,74 @@ const RESIDENT_NOTIFICATION_TOPIC_DETAILS = {
   general_updates: { label: "General City Updates", description: "General municipality notices that do not fit another topic.", default_enabled: false },
 };
 
+const EMPTY_COMMUNITY_ALERT_FORM = {
+  topic_key: "general_updates",
+  title: "",
+  summary: "",
+  body: "",
+  severity: "info",
+  location_name: "",
+  location_address: "",
+  cta_label: "",
+  cta_url: "",
+  starts_at: "",
+  ends_at: "",
+  pinned: false,
+  status: "published",
+  publish_at: "",
+};
+
+const EMPTY_COMMUNITY_EVENT_FORM = {
+  topic_key: "community_events",
+  title: "",
+  summary: "",
+  body: "",
+  location_name: "",
+  location_address: "",
+  cta_label: "",
+  cta_url: "",
+  starts_at: "",
+  ends_at: "",
+  all_day: false,
+  status: "published",
+  publish_at: "",
+};
+
+const COMMUNITY_FEED_STATUS_OPTIONS = [
+  {
+    value: "draft",
+    label: "Draft",
+    description: "Hidden from residents while you work.",
+  },
+  {
+    value: "scheduled",
+    label: "Scheduled",
+    description: "Goes public at the time you choose.",
+  },
+  {
+    value: "published",
+    label: "Published",
+    description: "Visible in the public app.",
+  },
+  {
+    value: "archived",
+    label: "Archived",
+    description: "Hidden, but kept for records.",
+  },
+];
+
+function isIncidentDrivenDomainKey(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (!key) return false;
+  return defaultDomainType(key) !== "asset_based";
+}
+
+function isAssetBackedDomainKey(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (!key) return false;
+  return defaultDomainType(key) === "asset_based";
+}
+
 function defaultDomainIssueFor(domainKey) {
   const d = String(domainKey || "").trim().toLowerCase();
   if (d === "street_signs") return STREET_SIGN_ISSUE_OPTIONS[0].value;
@@ -208,6 +331,100 @@ function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
   const msg = String(error?.message || "").toLowerCase();
   return code === "42P01" || msg.includes("relation") || msg.includes("does not exist");
+}
+
+function trimResidentFeedValue(value) {
+  return String(value || "").trim();
+}
+
+function coerceResidentFeedDateTime(value) {
+  const raw = trimResidentFeedValue(value);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function toResidentFeedDateInputValue(value = new Date()) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function defaultCommunityFeedTopicKey(kind, topics = []) {
+  const preferred = kind === "event" ? "community_events" : "general_updates";
+  const list = Array.isArray(topics) ? topics : [];
+  if (list.some((topic) => String(topic?.topic_key || "").trim() === preferred)) return preferred;
+  return String(list?.[0]?.topic_key || preferred).trim() || preferred;
+}
+
+function makeCommunityFeedForm(kind, topics = [], item = null) {
+  const base = kind === "event"
+    ? { ...EMPTY_COMMUNITY_EVENT_FORM, starts_at: toResidentFeedDateInputValue(new Date()) }
+    : { ...EMPTY_COMMUNITY_ALERT_FORM };
+  const topicKey = defaultCommunityFeedTopicKey(kind, topics);
+  const next = { ...base, topic_key: topicKey };
+  if (!item) return next;
+  const itemStatus = trimResidentFeedValue(item.status).toLowerCase();
+  const editableStatus = itemStatus || "published";
+  return {
+    ...next,
+    topic_key: trimResidentFeedValue(item.topic_key) || topicKey,
+    title: trimResidentFeedValue(item.title),
+    summary: trimResidentFeedValue(item.summary),
+    body: trimResidentFeedValue(item.body),
+    severity: trimResidentFeedValue(item.severity) || "info",
+    location_name: trimResidentFeedValue(item.location_name),
+    location_address: trimResidentFeedValue(item.location_address),
+    cta_label: trimResidentFeedValue(item.cta_label),
+    cta_url: trimResidentFeedValue(item.cta_url),
+    starts_at: item.starts_at ? toResidentFeedDateInputValue(item.starts_at) : "",
+    ends_at: item.ends_at ? toResidentFeedDateInputValue(item.ends_at) : "",
+    pinned: Boolean(item.pinned),
+    all_day: Boolean(item.all_day),
+    status: editableStatus,
+    publish_at: itemStatus === "scheduled" && item.published_at
+      ? toResidentFeedDateInputValue(item.published_at)
+      : "",
+  };
+}
+
+function isResidentCommunityVisible(row) {
+  const status = String(row?.status || "").trim().toLowerCase();
+  return status === "published";
+}
+
+function residentCommunityStatusLabel(status) {
+  const key = String(status || "").trim().toLowerCase();
+  return COMMUNITY_FEED_STATUS_OPTIONS.find((option) => option.value === key)?.label || "Draft";
+}
+
+function residentCommunityStatusDescription(status) {
+  const key = String(status || "").trim().toLowerCase();
+  return COMMUNITY_FEED_STATUS_OPTIONS.find((option) => option.value === key)?.description || COMMUNITY_FEED_STATUS_OPTIONS[0].description;
+}
+
+function residentCommunityStatusTone(status, darkMode = false) {
+  const key = String(status || "").trim().toLowerCase();
+  if (key === "published") {
+    return darkMode
+      ? { bg: "rgba(24, 108, 94, 0.34)", border: "rgba(95, 208, 180, 0.2)", color: "#b7efe1" }
+      : { bg: "rgba(22, 109, 120, 0.09)", border: "rgba(22, 109, 120, 0.15)", color: "#176d78" };
+  }
+  if (key === "scheduled") {
+    return darkMode
+      ? { bg: "rgba(37, 99, 235, 0.28)", border: "rgba(147, 197, 253, 0.2)", color: "#bfdbfe" }
+      : { bg: "rgba(37, 99, 235, 0.10)", border: "rgba(37, 99, 235, 0.16)", color: "#1d4ed8" };
+  }
+  if (key === "archived") {
+    return darkMode
+      ? { bg: "rgba(75, 85, 99, 0.42)", border: "rgba(156, 163, 175, 0.22)", color: "#d1d5db" }
+      : { bg: "rgba(107, 114, 128, 0.10)", border: "rgba(107, 114, 128, 0.16)", color: "#4b5563" };
+  }
+  return darkMode
+    ? { bg: "rgba(140, 106, 0, 0.24)", border: "rgba(255, 227, 132, 0.16)", color: "#ffe79a" }
+    : { bg: "rgba(245, 190, 28, 0.13)", border: "rgba(245, 190, 28, 0.2)", color: "#7a5a00" };
 }
 
 function formatResidentFeedDateTime(value, opts = {}) {
@@ -370,13 +587,13 @@ function hasResidentCommunityEndPassed(value) {
 }
 
 function shouldAutoArchiveResidentCommunityItem(row) {
-  return String(row?.status || "").trim().toLowerCase() === "published" && hasResidentCommunityEndPassed(row?.ends_at);
+  return isResidentCommunityVisible(row) && hasResidentCommunityEndPassed(row?.ends_at);
 }
 
 function countActivePublishedAlerts(alerts) {
   const now = Date.now();
   return (alerts || []).filter((alert) => {
-    if (String(alert?.status || "").trim().toLowerCase() !== "published") return false;
+    if (!isResidentCommunityVisible(alert)) return false;
     const startsAt = alert?.starts_at ? new Date(alert.starts_at).getTime() : null;
     const endsAt = alert?.ends_at ? new Date(alert.ends_at).getTime() : null;
     if (startsAt && startsAt > now) return false;
@@ -388,7 +605,7 @@ function countActivePublishedAlerts(alerts) {
 function countUpcomingPublishedEvents(events) {
   const now = Date.now();
   return (events || []).filter((event) => {
-    if (String(event?.status || "").trim().toLowerCase() !== "published") return false;
+    if (!isResidentCommunityVisible(event)) return false;
     const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
     return !startsAt || startsAt >= now - (60 * 60 * 1000);
   }).length;
@@ -504,6 +721,30 @@ function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts"
     if (itemKey && readKeys.has(itemKey)) return false;
     return mapCommunityFeedItemTs(item) > threshold;
   }).length;
+}
+
+function isResidentFeedInAppTopicEnabled(topicKey, preferencesByTopic = {}, topics = []) {
+  const key = String(topicKey || "").trim();
+  if (!key) return false;
+  const configured = preferencesByTopic?.[key];
+  if (configured && Object.prototype.hasOwnProperty.call(configured, "in_app_enabled")) {
+    return Boolean(configured.in_app_enabled);
+  }
+  const topic = (Array.isArray(topics) ? topics : []).find((row) => String(row?.topic_key || "").trim() === key);
+  if (topic && Object.prototype.hasOwnProperty.call(topic, "default_enabled")) {
+    return Boolean(topic.default_enabled);
+  }
+  return Boolean(RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[key]?.default_enabled);
+}
+
+function filterResidentFeedItemsForInAppPreferences(items = [], preferencesByTopic = {}, topics = []) {
+  return (items || []).filter((item) => (
+    isResidentFeedInAppTopicEnabled(item?.topic_key, preferencesByTopic, topics)
+  ));
+}
+
+function filterVisibleResidentCommunityItems(items = []) {
+  return (items || []).filter((item) => isResidentCommunityVisible(item));
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -786,6 +1027,40 @@ function boundaryViewportFromPolygons(polygons) {
         if (lng < west) west = lng;
       }
     }
+  }
+
+  if (!(pointCount > 0)) return null;
+  if (![north, south, east, west].every(Number.isFinite)) return null;
+
+  return {
+    north,
+    south,
+    east,
+    west,
+    center: {
+      lat: (north + south) / 2,
+      lng: (east + west) / 2,
+    },
+  };
+}
+
+function viewportFromPoints(points) {
+  if (!Array.isArray(points) || points.length <= 0) return null;
+  let north = -Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let west = Infinity;
+  let pointCount = 0;
+
+  for (const pt of points) {
+    const lat = Number(pt?.lat);
+    const lng = Number(pt?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    pointCount += 1;
+    if (lat > north) north = lat;
+    if (lat < south) south = lat;
+    if (lng > east) east = lng;
+    if (lng < west) west = lng;
   }
 
   if (!(pointCount > 0)) return null;
@@ -1442,6 +1717,36 @@ function destinationPointMeters(start, distanceMeters, bearingDeg) {
   };
 }
 
+function predictedMovingDisplayPosition(position, speedMps, headingDeg, accuracyM, fixTimestamp) {
+  const lat = Number(position?.lat);
+  const lng = Number(position?.lng);
+  const speed = Number(speedMps);
+  const heading = Number(headingDeg);
+  const accuracy = Number(accuracyM);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return position;
+  if (!Number.isFinite(speed) || speed < LOCATION_PREDICT_MIN_SPEED_MPS) return { lat, lng };
+  if (!Number.isFinite(heading)) return { lat, lng };
+  if (Number.isFinite(accuracy) && accuracy > 35) return { lat, lng };
+
+  const ageSeconds = Number.isFinite(Number(fixTimestamp))
+    ? Math.max(0, Math.min(0.9, (Date.now() - Number(fixTimestamp)) / 1000))
+    : 0;
+  const baseSeconds =
+    speed >= 13.4 ? 0.95 : // ~30 mph
+    speed >= 8.9 ? 0.82 :  // ~20 mph
+    0.62;
+  const horizonSeconds = Math.min(LOCATION_PREDICT_MAX_SECONDS, baseSeconds + ageSeconds);
+  const accuracyScale = Number.isFinite(accuracy)
+    ? Math.max(0.45, Math.min(1, (35 - accuracy) / 22))
+    : 0.8;
+  const distanceMeters = Math.min(
+    LOCATION_PREDICT_MAX_METERS,
+    Math.max(0, speed * horizonSeconds * accuracyScale)
+  );
+  if (distanceMeters < 2) return { lat, lng };
+  return destinationPointMeters({ lat, lng }, distanceMeters, heading);
+}
+
 // ==================================================
 // SECTION 4A — Cooldown persistence helpers
 // ==================================================
@@ -1983,25 +2288,6 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   };
 }
 
-function gmapsUserLocIcon() {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-      <circle cx="9" cy="9" r="5" fill="#1976d2" stroke="white" stroke-width="2" />
-    </svg>
-  `.trim();
-
-  const url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
-
-  const g = window.google?.maps;
-  if (!g) return { url };
-
-  return {
-    url,
-    scaledSize: new g.Size(18, 18),
-    anchor: new g.Point(9, 9),
-  };
-}
-
 const OFFICIAL_MARKER_SHAPE = {
   type: "circle",
   // Smaller hit area than the full 24x24 icon so pan/zoom gestures are easier to start.
@@ -2090,7 +2376,7 @@ function MapUserInteractionWatcher({ onUserInteract }) {
 }
 
 function MapZoomWatcher({ onZoom }) {
-  const map = useMap();
+  const map = useGoogleMap();
 
   useEffect(() => {
     const emit = () => onZoom(map.getZoom());
@@ -2103,7 +2389,7 @@ function MapZoomWatcher({ onZoom }) {
 }
 
 function MapInteractionLock({ locked }) {
-  const map = useMap();
+  const map = useGoogleMap();
 
   useEffect(() => {
     if (!locked) return;
@@ -2129,7 +2415,7 @@ function MapInteractionLock({ locked }) {
 }
 
 function MapTwoTapHoldDragZoom({ enabled = true, suppressClickRef, clickDelayRef }) {
-  const map = useMap();
+  const map = useGoogleMap();
 
   const stateRef = useRef({
     lastTapTs: 0,
@@ -2295,7 +2581,7 @@ function MapTwoTapHoldDragZoom({ enabled = true, suppressClickRef, clickDelayRef
 }
 
 function MapFlyTo({ target }) {
-  const map = useMap();
+  const map = useGoogleMap();
 
   useEffect(() => {
     if (!target?.pos) return;
@@ -2307,16 +2593,148 @@ function MapFlyTo({ target }) {
 }
 
 // Smooth marker movement (removes stutter)
-function SmoothUserMarker({ position }) {
-  const markerRef = useRef(null);
+function SmoothUserMarker({ position, heading = null, travelFollowMode = false }) {
+  const map = useGoogleMap();
+  const overlayRef = useRef(null);
+  const containerRef = useRef(null);
+  const arrowGroupRef = useRef(null);
   const lastRef = useRef(null);
+  const livePosRef = useRef(null);
   const rafRef = useRef(null);
+  const headingRafRef = useRef(null);
+  const lastHeadingRef = useRef(null);
+  const targetHeadingRef = useRef(null);
+  const lastTravelFollowModeRef = useRef(travelFollowMode);
+  const OVERLAY_SIZE = 36;
+  const OVERLAY_HALF = OVERLAY_SIZE / 2;
+
+  const applyHeadingVisual = useCallback((nextHeading, mode = lastTravelFollowModeRef.current) => {
+    const arrowGroup = arrowGroupRef.current;
+    if (!arrowGroup) return;
+
+    if (!Number.isFinite(nextHeading)) {
+      arrowGroup.setAttribute("opacity", "0");
+      arrowGroup.setAttribute("transform", "rotate(0 18 18)");
+      return;
+    }
+
+    const rotation = mode ? 0 : ((Number(nextHeading) % 360) + 360) % 360;
+    arrowGroup.setAttribute("opacity", "1");
+    arrowGroup.setAttribute("transform", `rotate(${rotation} 18 18)`);
+  }, []);
+
+  const redrawOverlay = useCallback(() => {
+    overlayRef.current?.draw?.();
+  }, []);
 
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (headingRafRef.current) cancelAnimationFrame(headingRafRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!map || !window.google?.maps || overlayRef.current) return;
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const overlay = new window.google.maps.OverlayView();
+
+    overlay.onAdd = () => {
+      const container = document.createElement("div");
+      container.style.position = "absolute";
+      container.style.width = `${OVERLAY_SIZE}px`;
+      container.style.height = `${OVERLAY_SIZE}px`;
+      container.style.pointerEvents = "none";
+      container.style.userSelect = "none";
+      container.style.willChange = "transform";
+      container.style.transform = "translate(-9999px, -9999px)";
+      container.style.filter = "drop-shadow(0 2px 6px rgba(5, 16, 30, 0.28))";
+
+      const svg = document.createElementNS(svgNs, "svg");
+      svg.setAttribute("xmlns", svgNs);
+      svg.setAttribute("width", String(OVERLAY_SIZE));
+      svg.setAttribute("height", String(OVERLAY_SIZE));
+      svg.setAttribute("viewBox", "0 0 36 36");
+
+      const headingGroup = document.createElementNS(svgNs, "g");
+      headingGroup.setAttribute("opacity", "0");
+
+      const shadow = document.createElementNS(svgNs, "path");
+      shadow.setAttribute("d", "M18 1 L26 15.5 L18 11.2 L10 15.5 Z");
+      shadow.setAttribute("fill", "rgba(8,18,32,0.22)");
+      shadow.setAttribute("stroke", "rgba(255,255,255,0.96)");
+      shadow.setAttribute("stroke-width", "1.8");
+
+      const body = document.createElementNS(svgNs, "path");
+      body.setAttribute("d", "M18 3.8 L22.7 12.4 L18 10.5 L13.3 12.4 Z");
+      body.setAttribute("fill", "#071a2f");
+      body.setAttribute("stroke", "rgba(255,255,255,0.98)");
+      body.setAttribute("stroke-width", "1.25");
+
+      const tip = document.createElementNS(svgNs, "circle");
+      tip.setAttribute("cx", "18");
+      tip.setAttribute("cy", "12.8");
+      tip.setAttribute("r", "1.35");
+      tip.setAttribute("fill", "#7fd7ff");
+      tip.setAttribute("stroke", "white");
+      tip.setAttribute("stroke-width", "0.7");
+
+      headingGroup.appendChild(shadow);
+      headingGroup.appendChild(body);
+      headingGroup.appendChild(tip);
+
+      const dot = document.createElementNS(svgNs, "circle");
+      dot.setAttribute("cx", "18");
+      dot.setAttribute("cy", "18");
+      dot.setAttribute("r", "11");
+      dot.setAttribute("fill", "#1976d2");
+      dot.setAttribute("stroke", "white");
+      dot.setAttribute("stroke-width", "4");
+
+      svg.appendChild(headingGroup);
+      svg.appendChild(dot);
+      container.appendChild(svg);
+
+      containerRef.current = container;
+      arrowGroupRef.current = headingGroup;
+      applyHeadingVisual(lastHeadingRef.current, lastTravelFollowModeRef.current);
+
+      const panes = overlay.getPanes?.();
+      (panes?.overlayMouseTarget || panes?.overlayLayer || panes?.floatPane)?.appendChild(container);
+    };
+
+    overlay.draw = () => {
+      const projection = overlay.getProjection?.();
+      const container = containerRef.current;
+      const livePos = livePosRef.current;
+      if (!projection || !container || !livePos) return;
+      const point = projection.fromLatLngToDivPixel(
+        new window.google.maps.LatLng(Number(livePos.lat), Number(livePos.lng)),
+      );
+      if (!point) return;
+      const x = Number(point.x);
+      const y = Number(point.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      container.style.transform = `translate(${x - OVERLAY_HALF}px, ${y - OVERLAY_HALF}px)`;
+    };
+
+    overlay.onRemove = () => {
+      try { containerRef.current?.remove(); } catch {}
+      containerRef.current = null;
+      arrowGroupRef.current = null;
+    };
+
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+
+    return () => {
+      try { overlay.setMap(null); } catch {}
+      overlayRef.current = null;
+      containerRef.current = null;
+      arrowGroupRef.current = null;
+    };
+  }, [applyHeadingVisual, map, OVERLAY_HALF, OVERLAY_SIZE]);
 
   useEffect(() => {
     if (!position) return;
@@ -2324,52 +2742,93 @@ function SmoothUserMarker({ position }) {
     const next = { lat: Number(position.lat), lng: Number(position.lng) };
     if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) return;
 
-    const marker = markerRef.current;
-    if (!marker) {
+    const overlay = overlayRef.current;
+    if (!overlay) {
       lastRef.current = next;
+      livePosRef.current = next;
       return;
     }
 
-    const prev = lastRef.current || next;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    lastRef.current = next;
+    livePosRef.current = next;
+    redrawOverlay();
+  }, [position?.lat, position?.lng, redrawOverlay]);
 
-    const start = performance.now();
-    const duration = 520;
+  useEffect(() => {
+    if (!overlayRef.current) return;
 
-    const step = (t) => {
-      const p = Math.min(1, (t - start) / duration);
-      const eased = 1 - Math.pow(1 - p, 3);
+    const nextHeading = Number(heading);
+    const modeChanged = lastTravelFollowModeRef.current !== travelFollowMode;
+    lastTravelFollowModeRef.current = travelFollowMode;
 
-      const lat = prev.lat + (next.lat - prev.lat) * eased;
-      const lng = prev.lng + (next.lng - prev.lng) * eased;
-      marker.setPosition({ lat, lng });
-
-      if (p < 1) {
-        rafRef.current = requestAnimationFrame(step);
-      } else {
-        rafRef.current = null;
-        lastRef.current = next;
+    if (!Number.isFinite(nextHeading)) {
+      targetHeadingRef.current = null;
+      lastHeadingRef.current = null;
+      if (headingRafRef.current) {
+        cancelAnimationFrame(headingRafRef.current);
+        headingRafRef.current = null;
       }
+      applyHeadingVisual(null, travelFollowMode);
+      return;
+    }
+
+    targetHeadingRef.current = nextHeading;
+
+    if (!Number.isFinite(lastHeadingRef.current) || modeChanged) {
+      lastHeadingRef.current = nextHeading;
+      applyHeadingVisual(nextHeading, travelFollowMode);
+      return;
+    }
+
+    if (headingRafRef.current) return;
+
+    const step = () => {
+      const target = Number(targetHeadingRef.current);
+      const current = Number(lastHeadingRef.current);
+      if (!arrowGroupRef.current || !Number.isFinite(target) || !Number.isFinite(current)) {
+        headingRafRef.current = null;
+        return;
+      }
+
+      const delta = ((target - current + 540) % 360) - 180;
+      if (Math.abs(delta) <= 0.8) {
+        lastHeadingRef.current = target;
+        applyHeadingVisual(target, lastTravelFollowModeRef.current);
+        headingRafRef.current = null;
+        return;
+      }
+
+      const alpha = lastTravelFollowModeRef.current ? 0.12 : 0.14;
+      const next = (current + delta * alpha + 360) % 360;
+      lastHeadingRef.current = next;
+      applyHeadingVisual(next, lastTravelFollowModeRef.current);
+      headingRafRef.current = requestAnimationFrame(step);
     };
 
-    rafRef.current = requestAnimationFrame(step);
-  }, [position?.lat, position?.lng]);
+    headingRafRef.current = requestAnimationFrame(step);
+  }, [applyHeadingVisual, heading, travelFollowMode]);
 
-  if (!position) return null;
+  useEffect(() => {
+    if (!position) return;
+    const next = { lat: Number(position.lat), lng: Number(position.lng) };
+    if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) return;
+    livePosRef.current = next;
+    if (!lastRef.current) lastRef.current = next;
+    redrawOverlay();
+  }, [position?.lat, position?.lng, redrawOverlay]);
 
-  return (
-    <MarkerF
-      position={position}
-      icon={gmapsUserLocIcon()}
-      title="You are here"
-      clickable={false}
-      zIndex={1}
-      onLoad={(marker) => {
-        markerRef.current = marker;
-        lastRef.current = { lat: Number(position.lat), lng: Number(position.lng) };
-      }}
-    />
-  );
+  useEffect(() => {
+    const initialHeading = Number(heading);
+    if (!Number.isFinite(lastHeadingRef.current) && Number.isFinite(initialHeading)) {
+      lastHeadingRef.current = initialHeading;
+      targetHeadingRef.current = initialHeading;
+      applyHeadingVisual(initialHeading, travelFollowMode);
+    }
+  }, [applyHeadingVisual, heading, travelFollowMode]);
+
+  return null;
 }
 
 const OfficialLightsLayer = memo(function OfficialLightsLayer({
@@ -2611,7 +3070,7 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
   return null;
 }));
 
-function ModalShell({ open, children, zIndex = 9999, panelStyle }) {
+function ModalShell({ open, children, zIndex = 9999, panelStyle, fullScreen = false, overlayStyle = null }) {
   if (!open) return null;
 
   return (
@@ -2619,25 +3078,37 @@ function ModalShell({ open, children, zIndex = 9999, panelStyle }) {
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.4)",
+        background: fullScreen ? "var(--sl-ui-modal-bg)" : "rgba(0,0,0,0.4)",
         display: "grid",
-        placeItems: "center",
+        placeItems: fullScreen ? "stretch" : "center",
         zIndex,
-        padding: 16,
+        padding: fullScreen ? 0 : 16,
+        animation: fullScreen ? "none" : "sl-modal-overlay-enter 140ms ease-out both",
+        ...(overlayStyle || {}),
       }}
     >
       <div
         style={{
           background: "var(--sl-ui-modal-bg)",
-          border: "1px solid var(--sl-ui-modal-border)",
+          border: fullScreen ? "none" : "1px solid var(--sl-ui-modal-border)",
           color: "var(--sl-ui-text)",
           fontFamily: "var(--app-header-font-family)",
-          padding: 18,
-          borderRadius: 10,
-          width: "min(360px, 100%)",
+          padding: fullScreen
+            ? "calc(env(safe-area-inset-top) + 12px) 14px calc(env(safe-area-inset-bottom) + 12px)"
+            : 18,
+          borderRadius: fullScreen ? 0 : 10,
+          width: fullScreen ? "100vw" : "min(360px, 100%)",
+          maxWidth: fullScreen ? "100vw" : undefined,
+          minWidth: fullScreen ? "100vw" : undefined,
+          height: fullScreen ? "100dvh" : undefined,
+          maxHeight: fullScreen ? "100dvh" : undefined,
           display: "grid",
           gap: 12,
-          boxShadow: "var(--sl-ui-modal-shadow)",
+          boxShadow: fullScreen ? "none" : "var(--sl-ui-modal-shadow)",
+          pointerEvents: "auto",
+          animation: fullScreen
+            ? "sl-mobile-page-enter 155ms cubic-bezier(0.2, 0.8, 0.2, 1) both"
+            : "sl-modal-panel-enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both",
           ...(panelStyle || {}),
         }}
       >
@@ -2950,6 +3421,103 @@ function ConfirmReportModal({
 
       <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1.35 }}>
         Reports help track infrastructure issues and do not replace emergency services.
+      </div>
+    </ModalShell>
+  );
+}
+
+function ReportSuccessModal({
+  open,
+  kind = "incident",
+  title = "Report saved",
+  message = "",
+  onClose,
+  onViewReports,
+  onReportToUtility,
+}) {
+  const isStreetlight = kind === "streetlight";
+  return (
+    <ModalShell open={open} zIndex={10043}>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 24, lineHeight: 1 }}>✅</div>
+          <div style={{ fontSize: 20, fontWeight: 950, lineHeight: 1.1 }}>{title}</div>
+          {message ? (
+            <div style={{ fontSize: 14, lineHeight: 1.5, opacity: 0.9 }}>
+              {message}
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          {isStreetlight ? (
+            <>
+              <button
+                type="button"
+                onClick={onReportToUtility}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "none",
+                  background: "var(--sl-ui-brand-blue)",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                Report to Utility
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                OK
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onViewReports}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "none",
+                  background: "var(--sl-ui-brand-blue)",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                View Reports
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                OK
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </ModalShell>
   );
@@ -3448,7 +4016,21 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
   );
 }
 
-function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
+function InfoMenuModal({
+  open,
+  onClose,
+  isAdmin,
+  onOpenTerms,
+  onOpenPrivacy,
+  showCitySwitcher = false,
+  currentCityLabel = "",
+  onOpenCitySwitcher,
+  signedIn = false,
+  currentCityFollowed = false,
+  followCitySaving = false,
+  onToggleFollowCity,
+  environmentGuardrailLabel = "",
+}) {
   if (!open) return null;
 
   const markerSwatch = (
@@ -3523,15 +4105,17 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
   ];
 
   const primaryToolRows = [
-    { iconSrc: UI_ICON_SRC.account, label: "Account", desc: "Open login/account menu and My Reports access." },
+    { iconSrc: UI_ICON_SRC.account, label: "Account", desc: "Open login/account controls and sign-out actions." },
     { iconSrc: UI_ICON_SRC.satellite, label: "Map View", desc: "Toggle street map and satellite imagery." },
     { iconSrc: UI_ICON_SRC.headingReset, label: "Reset Heading", desc: "Realign map orientation to north-up." },
     { iconSrc: UI_ICON_SRC.location, label: "My Location", desc: "Center map on your current device location." },
+    { iconSrc: UI_ICON_SRC.homeRecenter, label: "Home", desc: "Recenter the map over the active city boundary." },
     { iconSrc: UI_ICON_SRC.notification, label: "Alerts", desc: "Open published location alerts from the hub." },
     { iconSrc: UI_ICON_SRC.calendar, label: "Events", desc: "Open published location events from the hub." },
-    { iconSrc: UI_ICON_SRC.streetlight, label: "Domain Selector", desc: "Switch active reporting domain on the map." },
+    { iconSrc: UI_ICON_SRC.openReports, label: "My Reports", desc: "Open your saved report history and follow-up tools." },
+    { iconSrc: UI_ICON_SRC.incidentReportingLayer, label: "Layers", desc: "Switch between asset-backed layers and incident reporting." },
     { iconSrc: UI_ICON_SRC.bulk, label: "Bulk Save (Streetlights)", desc: "Select and save multiple streetlights to My Reports." },
-    { iconSrc: UI_ICON_SRC.info, label: "Info", desc: "Open this help modal with legend and policy links." },
+    { iconSrc: UI_ICON_SRC.info, label: "About", desc: "Open the map help modal with legend and policy links." },
   ];
 
   const adminToolRows = [
@@ -3543,7 +4127,7 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
   return (
     <ModalShell
       open={open}
-      zIndex={10013}
+      zIndex={10060}
       panelStyle={{ width: "min(760px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -3573,6 +4157,75 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
       <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35, marginTop: 4 }}>
         Learn what map icons and controls mean.
       </div>
+
+      {!!environmentGuardrailLabel && (
+        <div
+          style={{
+            border: "1px solid rgba(210, 96, 25, 0.24)",
+            borderRadius: 10,
+            padding: 10,
+            display: "grid",
+            gap: 6,
+            background: "rgba(210, 96, 25, 0.08)",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 900 }}>Testing Context</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.4, opacity: 0.92 }}>
+            Active build context: <b>{environmentGuardrailLabel}</b>
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.35, opacity: 0.86 }}>
+            Confirm the active city before submitting reports or creating test data.
+          </div>
+        </div>
+      )}
+
+      {showCitySwitcher && typeof onOpenCitySwitcher === "function" && (
+        <div
+          style={{
+            border: "1px solid var(--sl-ui-modal-border)",
+            borderRadius: 10,
+            padding: 10,
+            display: "grid",
+            gap: 10,
+            background: "var(--sl-ui-modal-subtle-bg)",
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 900 }}>City</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.4, opacity: 0.92 }}>
+            Shared public app builds can follow cities without reinstalling or changing env settings.
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.35 }}>
+            <b>Current city:</b> {String(currentCityLabel || "Unknown city").trim() || "Unknown city"}
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            <button
+              onClick={onToggleFollowCity}
+              disabled={followCitySaving}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: currentCityFollowed
+                  ? "1px solid rgba(28, 128, 98, 0.42)"
+                  : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: currentCityFollowed ? "rgba(28, 128, 98, 0.16)" : "var(--sl-ui-modal-btn-secondary-bg)",
+                color: currentCityFollowed ? "var(--sl-ui-text)" : "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: followCitySaving ? "wait" : "pointer",
+                opacity: followCitySaving ? 0.74 : 1,
+              }}
+            >
+              {followCitySaving ? "Saving…" : currentCityFollowed ? "Following" : "Follow this City"}
+            </button>
+            <div style={{ fontSize: 11.5, lineHeight: 1.3, opacity: 0.76 }}>
+              {signedIn
+                ? currentCityFollowed
+                  ? "This city appears in your switch-city list. Tap Following to remove it."
+                  : "Follow this city to keep it in your switch-city list."
+                : "Sign in or create an account to save followed cities."}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div
         style={{
@@ -3714,6 +4367,192 @@ function InfoMenuModal({ open, onClose, isAdmin, onOpenTerms, onOpenPrivacy }) {
       </div>
 
       <button onClick={onClose} style={btnPrimary}>Close</button>
+    </ModalShell>
+  );
+}
+
+function CitySwitcherModal({
+  open,
+  onClose,
+  cities = [],
+  followedCities = [],
+  followedCitiesLoading = false,
+  signedIn = false,
+  currentTenantKey = "",
+  currentCityLabel = "",
+  switchingTenant = "",
+  onSwitchTenant,
+}) {
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  const filteredCities = useMemo(() => {
+    const sourceCities = normalizedQuery ? cities : followedCities;
+    return sourceCities.filter((city) => {
+      const haystack = [
+        city?.displayName,
+        city?.name,
+        city?.tenantKey,
+        city?.primarySubdomain,
+        city?.routeSlug,
+      ]
+        .map((part) => String(part || "").trim().toLowerCase())
+        .filter(Boolean)
+        .join(" ");
+      return haystack.includes(normalizedQuery);
+    });
+  }, [cities, followedCities, normalizedQuery]);
+  const emptyMessage = normalizedQuery
+    ? "No matching cities found."
+    : followedCitiesLoading
+      ? "Loading your followed locations…"
+      : signedIn
+        ? "You are not following any locations yet. Search for a city to switch or add one later from Account."
+        : "Search for a city to switch locations. Sign in later to keep followed locations here.";
+
+  if (!open) return null;
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10061}
+      panelStyle={{ width: "min(560px, calc(100vw - 24px))", maxHeight: "80vh", overflow: "auto" }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.1 }}>Switch City</div>
+          <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.3 }}>
+            Your followed locations appear here. Search to find any other public city map.
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 10,
+          padding: 10,
+          display: "grid",
+          gap: 10,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        <div style={{ fontSize: 12.5, lineHeight: 1.35 }}>
+          <b>Current city:</b> {String(currentCityLabel || "Unknown city").trim() || "Unknown city"}
+        </div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search city name"
+          style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
+          autoCapitalize="words"
+        />
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {!normalizedQuery && filteredCities.length ? (
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 0.3, opacity: 0.7, textTransform: "uppercase" }}>
+            Followed locations
+          </div>
+        ) : null}
+        {filteredCities.length ? (
+          filteredCities.map((city) => {
+            const tenantKey = String(city?.tenantKey || "").trim().toLowerCase();
+            const isCurrent = tenantKey === String(currentTenantKey || "").trim().toLowerCase();
+            const isSwitching = tenantKey === String(switchingTenant || "").trim().toLowerCase();
+            const secondaryLabel =
+              String(city?.primarySubdomain || city?.routeSlug || city?.tenantKey || "").trim() || tenantKey;
+            return (
+              <button
+                key={tenantKey}
+                type="button"
+                disabled={Boolean(switchingTenant)}
+                onClick={async () => {
+                  if (isCurrent) {
+                    onClose?.();
+                    return;
+                  }
+                  if (typeof onSwitchTenant === "function") {
+                    await onSwitchTenant(tenantKey);
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  borderRadius: 12,
+                  border: isCurrent
+                    ? "1px solid rgba(25,118,210,0.48)"
+                    : "1px solid var(--sl-ui-modal-border)",
+                  background: isCurrent ? "rgba(25,118,210,0.12)" : "var(--sl-ui-modal-subtle-bg)",
+                  color: "var(--sl-ui-text)",
+                  padding: 12,
+                  display: "grid",
+                  gap: 6,
+                  cursor: Boolean(switchingTenant) ? "not-allowed" : "pointer",
+                  opacity: Boolean(switchingTenant) && !isSwitching ? 0.7 : 1,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 14, fontWeight: 900, lineHeight: 1.2 }}>
+                    {String(city?.displayName || city?.name || tenantKey).trim() || tenantKey}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 900,
+                      letterSpacing: 0.2,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: isCurrent ? "rgba(25,118,210,0.18)" : "rgba(17,17,17,0.08)",
+                      color: isCurrent ? "#1976d2" : "inherit",
+                    }}
+                  >
+                    {isSwitching ? "Switching…" : isCurrent ? "Current" : "Open"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.74, lineHeight: 1.3 }}>{secondaryLabel}</div>
+              </button>
+            );
+          })
+        ) : (
+          <div
+            style={{
+              border: "1px solid var(--sl-ui-modal-border)",
+              borderRadius: 12,
+              padding: 12,
+              background: "var(--sl-ui-modal-subtle-bg)",
+              fontSize: 12.5,
+              opacity: 0.82,
+              lineHeight: 1.35,
+            }}
+          >
+            {emptyMessage}
+          </div>
+        )}
+      </div>
+
+      <button onClick={onClose} style={btnSecondary}>Close</button>
     </ModalShell>
   );
 }
@@ -5225,11 +6064,16 @@ function ModerationFlagsModal({
   loading = false,
   error = "",
   onRefresh,
+  onAcknowledge,
+  isMobile = false,
+  pageTopInset = "",
+  pageBottomInset = "",
 }) {
   if (!open) return null;
 
   const toTsLabel = (row) => {
     const candidates = [
+      row?.last_seen_at,
       row?.created_at,
       row?.occurred_at,
       row?.event_ts,
@@ -5245,11 +6089,20 @@ function ModerationFlagsModal({
   };
 
   const isStillOpen = (row) => {
-    const closed = String(row?.resolved_at || row?.closed_at || row?.cleared_at || "").trim();
+    const closed = String(
+      row?.acknowledged_at ||
+      row?.reviewed_at ||
+      row?.resolved_at ||
+      row?.closed_at ||
+      row?.cleared_at ||
+      ""
+    ).trim();
     if (closed) return false;
     const explicit = row?.is_open;
     if (explicit === true) return true;
     if (explicit === false) return false;
+    const status = String(row?.status || "").trim().toLowerCase();
+    if (status && status !== "open") return false;
     return true;
   };
 
@@ -5268,7 +6121,28 @@ function ModerationFlagsModal({
     ).trim() || "flag";
   };
 
+  const canAcknowledgeRow = (row) => {
+    if (typeof onAcknowledge !== "function") return false;
+    if (!isStillOpen(row)) return false;
+    if (String(row?._source || "").startsWith("summary")) return false;
+    return Number.isFinite(Number(row?.id));
+  };
+
+  const promptAcknowledge = (row) => {
+    if (!canAcknowledgeRow(row)) return;
+    const note = window.prompt(
+      "Optional acknowledgement note",
+      ""
+    );
+    if (note === null) return;
+    onAcknowledge(row, note);
+  };
+
   const detailForRow = (row) => {
+    if (Number.isFinite(Number(row?.open_flag_count || 0)) && Number(row?.open_flag_count || 0) > 0) {
+      const count = Math.max(0, Number(row?.open_flag_count || 0));
+      return `${count} open moderation flag${count === 1 ? "" : "s"} in summary view.`;
+    }
     return String(
       row?.message ||
       row?.details ||
@@ -5278,17 +6152,48 @@ function ModerationFlagsModal({
       ""
     ).trim();
   };
+  const severityTone = (row) => {
+    const sev = Math.max(0, Number(row?.severity || 0));
+    if (sev >= 3) {
+      return {
+        bg: "rgba(183, 28, 28, 0.16)",
+        border: "rgba(183, 28, 28, 0.42)",
+        text: "#ff8a80",
+      };
+    }
+    if (sev >= 2) {
+      return {
+        bg: "rgba(239, 108, 0, 0.16)",
+        border: "rgba(239, 108, 0, 0.42)",
+        text: "#ffb74d",
+      };
+    }
+    return {
+      bg: "rgba(46, 125, 50, 0.14)",
+      border: "rgba(46, 125, 50, 0.40)",
+      text: "#81c784",
+    };
+  };
 
   return (
     <ModalShell
       open={open}
       zIndex={10011}
+      overlayStyle={
+        isMobile
+          ? {
+              padding: `${pageTopInset || "16px"} 10px ${pageBottomInset || "16px"}`,
+            }
+          : null
+      }
       panelStyle={{
-        width: "min(980px, calc(100vw - 32px))",
-        maxWidth: "980px",
-        minWidth: "min(680px, calc(100vw - 32px))",
-        height: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
-        maxHeight: "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        width: isMobile ? "min(calc(100vw - 20px), 420px)" : "min(980px, calc(100vw - 32px))",
+        maxWidth: isMobile ? "420px" : "980px",
+        minWidth: isMobile ? "min(calc(100vw - 20px), 320px)" : "min(680px, calc(100vw - 32px))",
+        height: isMobile ? "auto" : "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
+        maxHeight: isMobile
+          ? `calc(100dvh - ${pageTopInset || "16px"} - ${pageBottomInset || "16px"})`
+          : "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -5316,7 +6221,7 @@ function ModerationFlagsModal({
       </div>
 
       <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ fontSize: 12.5, opacity: 0.85 }}>
+        <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
           Admin-only telemetry view of active/recorded moderation events.
         </div>
         <button
@@ -5353,6 +6258,81 @@ function ModerationFlagsModal({
           <div style={{ padding: 12, fontSize: 13, opacity: 0.85 }}>Loading moderation flags…</div>
         ) : !rows.length ? (
           <div style={{ padding: 12, fontSize: 13, opacity: 0.85 }}>No moderation flags found.</div>
+        ) : isMobile ? (
+          <div style={{ padding: 10, display: "grid", gap: 10 }}>
+            {rows.map((row, idx) => {
+              const tone = severityTone(row);
+              return (
+                <div
+                  key={`${String(row?.id || "flag")}-${idx}`}
+                  style={{
+                    border: "1px solid var(--sl-ui-open-reports-item-border)",
+                    borderRadius: 12,
+                    padding: "10px 11px",
+                    display: "grid",
+                    gap: 9,
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.66, fontWeight: 900 }}>
+                        {domainForRow(row)}
+                      </div>
+                      <div style={{ fontSize: 14.5, fontWeight: 900, lineHeight: 1.2, wordBreak: "break-word" }}>
+                        {reasonForRow(row)}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        background: tone.bg,
+                        border: `1px solid ${tone.border}`,
+                        color: tone.text,
+                        fontWeight: 900,
+                        whiteSpace: "nowrap",
+                        fontSize: 12,
+                      }}
+                    >
+                      Severity {Math.max(0, Number(row?.severity || 0))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.35 }}>
+                      <b>Status:</b> {isStillOpen(row) ? "Open" : "Closed"}
+                    </div>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.35 }}>
+                      <b>Last seen:</b> {toTsLabel(row)}
+                    </div>
+                    <div style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+                      <b>Details:</b> {detailForRow(row) || "—"}
+                    </div>
+                  </div>
+                  {canAcknowledgeRow(row) ? (
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        onClick={() => promptAcknowledge(row)}
+                        style={{
+                          padding: "8px 11px",
+                          borderRadius: 10,
+                          border: "1px solid rgba(31,122,95,0.65)",
+                          background: "rgba(31,122,95,0.24)",
+                          color: "var(--sl-ui-modal-text)",
+                          fontWeight: 950,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Acknowledge
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
@@ -5363,6 +6343,7 @@ function ModerationFlagsModal({
                 <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Type</th>
                 <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>When</th>
                 <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Details</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -5386,11 +6367,173 @@ function ModerationFlagsModal({
                   <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", lineHeight: 1.35 }}>
                     {detailForRow(row) || "—"}
                   </td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)", textAlign: "right" }}>
+                    {canAcknowledgeRow(row) ? (
+                      <button
+                        type="button"
+                        onClick={() => promptAcknowledge(row)}
+                        style={{
+                          padding: "6px 9px",
+                          borderRadius: 8,
+                          border: "1px solid rgba(31,122,95,0.65)",
+                          background: "rgba(31,122,95,0.20)",
+                          color: "var(--sl-ui-modal-text)",
+                          fontWeight: 900,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Acknowledge
+                      </button>
+                    ) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function LocationDiagnosticsModal({
+  open,
+  onClose,
+  debug,
+  onCopy,
+  isMobile = false,
+  pageTopInset = "16px",
+  pageBottomInset = "16px",
+}) {
+  if (!open) return null;
+
+  const d = debug || {};
+  const fmtNum = (value, digits = 1, suffix = "") => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "—";
+    return `${num.toFixed(digits)}${suffix}`;
+  };
+  const fmtCoord = (value) => fmtNum(value, 6);
+  const fmtAge = (value) => {
+    const ms = Number(value);
+    if (!Number.isFinite(ms)) return "—";
+    if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
+    return `${(ms / 1000).toFixed(1)} s`;
+  };
+  const updatedAt = Number(d.updatedAt || 0);
+  const speedMps = Number(d.speedMps);
+  const rows = [
+    ["Status", String(d.status || "Waiting for location")],
+    ["Prediction", d.predictionActive ? "Active" : "Inactive"],
+    ["Follow camera", d.followCamera ? "On" : "Off"],
+    ["Travel follow", d.travelFollowMode ? "On" : "Off"],
+    ["Raw position", Number.isFinite(Number(d.rawLat)) && Number.isFinite(Number(d.rawLng)) ? `${fmtCoord(d.rawLat)}, ${fmtCoord(d.rawLng)}` : "—"],
+    ["Display position", Number.isFinite(Number(d.displayLat)) && Number.isFinite(Number(d.displayLng)) ? `${fmtCoord(d.displayLat)}, ${fmtCoord(d.displayLng)}` : "—"],
+    ["Raw to display", fmtNum(d.rawToDisplayM, 1, " m")],
+    ["GPS accuracy", fmtNum(d.accuracyM, 1, " m")],
+    ["Speed", Number.isFinite(speedMps) ? `${fmtNum(speedMps, 2, " m/s")} / ${fmtNum(speedMps * 2.236936, 1, " mph")}` : "—"],
+    ["Heading", fmtNum(d.headingDeg, 1, "°")],
+    ["Follow heading", fmtNum(d.followHeadingDeg, 1, "°")],
+    ["Raw heading", fmtNum(d.rawHeadingDeg, 1, "°")],
+    ["Heading accuracy", fmtNum(d.headingAccuracyDeg, 1, "°")],
+    ["GPS fix age", fmtAge(d.fixAgeMs)],
+    ["Moved from last fix", fmtNum(d.movedMeters, 1, " m")],
+    ["Stationary drift", fmtNum(d.stationaryDriftM, 1, " m")],
+    ["Stationary lock", d.stationaryLocked ? "On" : "Off"],
+    ["Last update", updatedAt ? new Date(updatedAt).toLocaleTimeString() : "—"],
+  ];
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10064}
+      overlayStyle={
+        isMobile
+          ? { padding: `${pageTopInset || "16px"} 10px ${pageBottomInset || "16px"}` }
+          : null
+      }
+      panelStyle={{
+        width: isMobile ? "min(calc(100vw - 20px), 430px)" : "min(520px, calc(100vw - 32px))",
+        maxHeight: isMobile
+          ? `calc(100dvh - ${pageTopInset || "16px"} - ${pageBottomInset || "16px"})`
+          : "min(86vh, 760px)",
+        overflow: "hidden",
+        display: "grid",
+        gridTemplateRows: "auto auto minmax(0, 1fr)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.1 }}>Location Diagnostics</div>
+          <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35 }}>
+            Admin-only field test readout for GPS, heading, smoothing, and prediction.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          aria-label="Close location diagnostics"
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button
+          type="button"
+          onClick={onCopy}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Copy Debug
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: 10,
+          overflow: "auto",
+          border: "1px solid var(--sl-ui-modal-border)",
+          borderRadius: 12,
+          background: "var(--sl-ui-modal-subtle-bg)",
+        }}
+      >
+        {rows.map(([label, value]) => (
+          <div
+            key={label}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(116px, 0.42fr) minmax(0, 1fr)",
+              gap: 10,
+              padding: "9px 11px",
+              borderBottom: "1px solid var(--sl-ui-modal-border)",
+              fontSize: 12.5,
+              lineHeight: 1.35,
+            }}
+          >
+            <span style={{ fontWeight: 900, opacity: 0.72 }}>{label}</span>
+            <span style={{ fontWeight: 800, overflowWrap: "anywhere" }}>{value}</span>
+          </div>
+        ))}
       </div>
     </ModalShell>
   );
@@ -5481,9 +6624,18 @@ function OpenReportsModal({
   onInitialFocusApplied = null,
   mapBounds = null,
   inViewOnly = false,
+  canToggleReportedBy = false,
+  reportedByMode = "me",
+  onReportedByModeChange = null,
+  pageTopInset = "",
+  pageBottomInset = "",
 }) {
   const canMutateIncidents = allowIncidentMutations && typeof onMarkFixedIncident === "function";
   const canMarkWorkingIncidents = typeof onMarkWorkingIncident === "function";
+  const normalizedReportedByMode = canToggleReportedBy && String(reportedByMode || "").trim().toLowerCase() === "all"
+    ? "all"
+    : "me";
+  const showAllReportedByMode = normalizedReportedByMode === "all";
   const showCommunityRepairDiagnostics =
     showDeveloperDiagnostics
     && publicRepairLifecycleEnabled
@@ -5496,10 +6648,9 @@ function OpenReportsModal({
   const DATE_PRESET_OPTIONS = useMemo(() => ([
     { key: "all", label: "All" },
     { key: "today", label: "Today" },
-    { key: "thisMonth", label: "This Month" },
-    { key: "lastMonth", label: "Last Month" },
-    { key: "last90", label: "Last 90 days" },
-    { key: "last180", label: "Last 180 days" },
+    { key: "thisMonth", label: "MTD" },
+    { key: "last90", label: "90-Days" },
+    { key: "last180", label: "180-Days" },
     { key: "ytd", label: "YTD" },
   ]), []);
   const defaultFromDate = useCallback(() => {
@@ -5664,11 +6815,6 @@ function OpenReportsModal({
     return day >= draftRangeFrom && day <= draftRangeTo;
   }, [draftRangeFrom, draftRangeTo]);
   const leftMonthCells = useMemo(() => buildMonthCells(calendarLeftMonth), [buildMonthCells, calendarLeftMonth]);
-  const rightMonthDate = useMemo(
-    () => new Date(calendarLeftMonth.getFullYear(), calendarLeftMonth.getMonth() + 1, 1),
-    [calendarLeftMonth]
-  );
-  const rightMonthCells = useMemo(() => buildMonthCells(rightMonthDate), [buildMonthCells, rightMonthDate]);
   const [compactDomainPicker, setCompactDomainPicker] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.innerWidth <= 760;
@@ -5733,9 +6879,13 @@ function OpenReportsModal({
     return incidentRepairProgressByKey?.[key] || null;
   }, [activeDomain, incidentRepairProgressByKey]);
 
-  const isMyReportsModal = String(modalTitle || "").trim().toLowerCase() === "my reports";
+  const isMyReportsModal =
+    String(modalTitle || "").trim().toLowerCase() === "my reports";
   const isStreetlightMyReports = isMyReportsModal && activeDomain === "streetlights";
   const isCompactMyReports = compactDomainPicker && isMyReportsModal;
+  const modalTitleText = String(modalTitle || "").trim().toLowerCase() === "my reports"
+    ? "Reports"
+    : modalTitle;
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
   const [utilityReportReferenceByIncident, setUtilityReportReferenceByIncident] = useState({});
@@ -5758,6 +6908,14 @@ function OpenReportsModal({
     setSearchQuery("");
     setInViewOnlyActive(false);
   }, []);
+  const resetCompactFilters = useCallback(() => {
+    clearSearchField();
+    setStatusFilter("open");
+    if (canToggleReportedBy) onReportedByModeChange?.("me");
+    const range = getPresetRange("last90");
+    setExportFromDate(range.from);
+    setExportToDate(range.to);
+  }, [clearSearchField, canToggleReportedBy, onReportedByModeChange, getPresetRange]);
   const copyStreetlightField = useCallback(async (label, value, anchorEl = null) => {
     const text = String(value || "").trim();
     if (!text || text.toLowerCase() === "unavailable") return;
@@ -7451,27 +8609,275 @@ function OpenReportsModal({
   if (!open) return null;
   const openReportsModalMaxHeight =
     "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)";
+  const useFullPageReportsLayout = isCompactMyReports;
+  const reportsPageTopInset = String(pageTopInset || "").trim() || "0px";
+  const reportsPageBottomInset = String(pageBottomInset || "").trim() || "0px";
+  const compactAdminFiltersPanel = compactFiltersOpen ? (
+    <div
+      style={{
+        marginTop: 6,
+        border: "1px solid var(--sl-ui-modal-border)",
+        borderRadius: 10,
+        padding: 8,
+        display: "grid",
+        gap: 8,
+        background: "var(--sl-ui-modal-subtle-bg)",
+        width: "100%",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: canToggleReportedBy ? "40px minmax(0, 1fr) minmax(0, 1fr)" : "40px minmax(0, 1fr)",
+          gap: 8,
+          alignItems: "start",
+        }}
+      >
+        <button
+          type="button"
+          onClick={resetCompactFilters}
+          style={{
+            width: 36,
+            minWidth: 36,
+            height: 36,
+            borderRadius: 8,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            padding: 0,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 16,
+            lineHeight: 1,
+            alignSelf: "end",
+          }}
+          aria-label="Reset filters"
+          title="Reset filters"
+        >
+          ↺
+        </button>
+        {canToggleReportedBy ? (
+          <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, minWidth: 0 }}>
+            Reported by
+            <select
+              value={normalizedReportedByMode}
+              onChange={(e) => onReportedByModeChange?.(String(e.target.value || "me"))}
+              style={{
+                marginTop: 4,
+                width: "100%",
+                minHeight: 40,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--sl-ui-modal-input-border)",
+                background: "var(--sl-ui-modal-input-bg)",
+                color: "var(--sl-ui-text)",
+                fontWeight: 800,
+              }}
+            >
+              <option value="me">My Reports</option>
+              <option value="all">All Reports</option>
+            </select>
+          </label>
+        ) : null}
+        <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, minWidth: 0 }}>
+          Status
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
+            style={{
+              marginTop: 4,
+              width: "100%",
+              minHeight: 40,
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+              fontWeight: 800,
+            }}
+          >
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          <input
+            value={searchDraft}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
+            }}
+            placeholder={reportSearchPlaceholder}
+            style={{
+              width: "100%",
+              padding: "9px 30px 9px 10px",
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+              fontSize: 12.5,
+            }}
+          />
+          {showSearchClearButton ? (
+            <button
+              type="button"
+              onClick={clearSearchField}
+              style={{
+                position: "absolute",
+                right: 7,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 18,
+                height: 18,
+                borderRadius: 999,
+                border: "none",
+                background: "transparent",
+                color: "var(--sl-ui-text)",
+                opacity: 0.55,
+                fontSize: 15,
+                lineHeight: 1,
+                cursor: "pointer",
+                padding: 0,
+              }}
+              aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+              title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => setSearchQuery(String(searchDraft || "").trim())}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Apply
+        </button>
+      </div>
+      <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+        Date range
+        <button
+          type="button"
+          onClick={openDatePicker}
+          style={{
+            marginTop: 4,
+            width: "100%",
+            minHeight: 40,
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--sl-ui-modal-input-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            color: "var(--sl-ui-text)",
+            fontWeight: 800,
+            textAlign: "left",
+            cursor: "pointer",
+          }}
+        >
+          {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
+        </button>
+      </label>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
+        <button
+          type="button"
+          onClick={exportSummaryCsv}
+          style={{
+            padding: "7px 10px",
+            borderRadius: 9,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            minWidth: 0,
+          }}
+        >
+          Export summary CSV
+        </button>
+        <button
+          type="button"
+          onClick={exportDetailCsv}
+          style={{
+            padding: "7px 10px",
+            borderRadius: 9,
+            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+            background: "var(--sl-ui-modal-btn-secondary-bg)",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontWeight: 900,
+            cursor: "pointer",
+            minWidth: 0,
+          }}
+        >
+          Export detail CSV
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <ModalShell
       open={open}
       zIndex={10004}
-      panelStyle={{
-        width: "min(980px, calc(100vw - 32px))",
-        maxWidth: "980px",
-        minWidth: "min(680px, calc(100vw - 32px))",
-        height: openReportsModalMaxHeight,
-        maxHeight: openReportsModalMaxHeight,
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-        position: "relative",
-      }}
+      fullScreen={useFullPageReportsLayout}
+      overlayStyle={
+        useFullPageReportsLayout
+          ? {
+            background: "transparent",
+            pointerEvents: "none",
+          }
+          : null
+      }
+      panelStyle={
+        useFullPageReportsLayout
+          ? {
+            width: "100%",
+            maxWidth: "100%",
+            minWidth: 0,
+            height: `calc(100dvh - (${reportsPageTopInset}) - (${reportsPageBottomInset}))`,
+            maxHeight: `calc(100dvh - (${reportsPageTopInset}) - (${reportsPageBottomInset}))`,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            position: "relative",
+            gap: 0,
+            marginTop: reportsPageTopInset,
+            marginBottom: reportsPageBottomInset,
+            padding: "10px 12px 0",
+            borderTop: "none",
+            borderBottom: "none",
+          }
+          : {
+            width: "min(980px, calc(100vw - 32px))",
+            maxWidth: "980px",
+            minWidth: "min(680px, calc(100vw - 32px))",
+            height: openReportsModalMaxHeight,
+            maxHeight: openReportsModalMaxHeight,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            position: "relative",
+          }
+      }
     >
       {isCompactMyReports ? (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 950, whiteSpace: "nowrap" }}>{modalTitle || "Reports"}</div>
+            <div style={{ fontSize: 16, fontWeight: 950, whiteSpace: "nowrap" }}>{modalTitleText || "Reports"}</div>
             <div style={{ position: "relative" }}>
               <button
                 type="button"
@@ -7560,44 +8966,48 @@ function OpenReportsModal({
               )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-            aria-label="Close"
-            title="Close"
-          >
-            ✕
-          </button>
+          {!useFullPageReportsLayout ? (
+            <button
+              onClick={onClose}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Close"
+              title="Close"
+            >
+              ✕
+            </button>
+          ) : null}
         </div>
       ) : (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitle || "Reports"}</div>
-          <button
-            onClick={onClose}
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-            aria-label="Close"
-            title="Close"
-          >
-            ✕
-          </button>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitleText || "Reports"}</div>
+          {!useFullPageReportsLayout ? (
+            <button
+              onClick={onClose}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Close"
+              title="Close"
+            >
+              ✕
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -7888,6 +9298,29 @@ function OpenReportsModal({
               </div>
               {isAdmin && (
                 <div style={{ display: "grid", gap: 8 }}>
+                  {canToggleReportedBy ? (
+                    <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                      Reported by
+                      <select
+                        value={normalizedReportedByMode}
+                        onChange={(e) => onReportedByModeChange?.(String(e.target.value || "me"))}
+                        style={{
+                          marginTop: 4,
+                          width: "100%",
+                          minHeight: 36,
+                          padding: "6px 8px",
+                          borderRadius: 8,
+                          border: "1px solid var(--sl-ui-modal-input-border)",
+                          background: "var(--sl-ui-modal-input-bg)",
+                          color: "var(--sl-ui-text)",
+                          fontWeight: 800,
+                        }}
+                      >
+                        <option value="me">My Reports</option>
+                        <option value="all">All Reports</option>
+                      </select>
+                    </label>
+                  ) : null}
                   <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
                     Status
                     <select
@@ -7937,163 +9370,9 @@ function OpenReportsModal({
             </div>
           )}
         </div>
-      ) : compactDomainPicker ? (
-        compactFiltersOpen ? (
-          <div
-            style={{
-              marginTop: 6,
-              border: "1px solid var(--sl-ui-modal-border)",
-              borderRadius: 10,
-              padding: 8,
-              display: "grid",
-              gap: 8,
-              background: "var(--sl-ui-modal-subtle-bg)",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          >
-            <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
-              Status
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
-                style={{
-                  marginTop: 4,
-                  width: "100%",
-                  minHeight: 40,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid var(--sl-ui-modal-input-border)",
-                  background: "var(--sl-ui-modal-input-bg)",
-                  color: "var(--sl-ui-text)",
-                  fontWeight: 800,
-                }}
-              >
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-                <option value="all">All</option>
-              </select>
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ position: "relative", flex: 1 }}>
-                <input
-                  value={searchDraft}
-                  onChange={(e) => setSearchDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") setSearchQuery(String(searchDraft || "").trim());
-                  }}
-                  placeholder={reportSearchPlaceholder}
-                  style={{
-                    width: "100%",
-                    padding: "9px 30px 9px 10px",
-                    borderRadius: 10,
-                    border: "1px solid var(--sl-ui-modal-input-border)",
-                    background: "var(--sl-ui-modal-input-bg)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 12.5,
-                  }}
-                />
-                {showSearchClearButton ? (
-                  <button
-                    type="button"
-                    onClick={clearSearchField}
-                    style={{
-                      position: "absolute",
-                      right: 7,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      width: 18,
-                      height: 18,
-                      borderRadius: 999,
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--sl-ui-text)",
-                      opacity: 0.55,
-                      fontSize: 15,
-                      lineHeight: 1,
-                      cursor: "pointer",
-                      padding: 0,
-                    }}
-                    aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
-                    title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSearchQuery(String(searchDraft || "").trim())}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 10,
-                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: "var(--sl-ui-modal-btn-secondary-text)",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Apply
-              </button>
-            </div>
-            <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
-              Date range
-              <button
-                type="button"
-                onClick={openDatePicker}
-                style={{
-                  marginTop: 4,
-                  width: "100%",
-                  minHeight: 40,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid var(--sl-ui-modal-input-border)",
-                  background: "var(--sl-ui-modal-input-bg)",
-                  color: "var(--sl-ui-text)",
-                  fontWeight: 800,
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
-              </button>
-            </label>
-            <div style={{ height: 6 }} />
-            <button
-              type="button"
-              onClick={exportSummaryCsv}
-              style={{
-                padding: "7px 10px",
-                borderRadius: 9,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              Export summary CSV
-            </button>
-            <button
-              type="button"
-              onClick={exportDetailCsv}
-              style={{
-                padding: "7px 10px",
-                borderRadius: 9,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              Export detail CSV
-            </button>
-          </div>
-        ) : null
-      ) : (
+      ) : compactDomainPicker && !(isAdmin && isCompactMyReports) ? (
+        compactAdminFiltersPanel
+      ) : !compactDomainPicker ? (
         <>
           <div style={{ marginTop: 6, minHeight: 42, display: "flex", gap: 8 }}>
             <div style={{ position: "relative", flex: 1 }}>
@@ -8162,6 +9441,28 @@ function OpenReportsModal({
 
           {isAdmin && (
             <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {canToggleReportedBy ? (
+                <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
+                  Reported by{" "}
+                  <select
+                    value={normalizedReportedByMode}
+                    onChange={(e) => onReportedByModeChange?.(String(e.target.value || "me"))}
+                    style={{
+                      marginLeft: 6,
+                      minHeight: 34,
+                      padding: "6px 8px",
+                      borderRadius: 8,
+                      border: "1px solid var(--sl-ui-modal-input-border)",
+                      background: "var(--sl-ui-modal-input-bg)",
+                      color: "var(--sl-ui-text)",
+                      fontWeight: 800,
+                    }}
+                  >
+                    <option value="me">My Reports</option>
+                    <option value="all">All Reports</option>
+                  </select>
+                </label>
+              ) : null}
               <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
                 Status{" "}
                 <select
@@ -8237,7 +9538,7 @@ function OpenReportsModal({
             </div>
           )}
         </>
-      )}
+      ) : null}
 
       {datePickerOpen && (
         <div
@@ -8256,7 +9557,7 @@ function OpenReportsModal({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(960px, calc(100vw - 24px))",
+              width: "min(760px, calc(100vw - 24px))",
               maxHeight: "calc(100dvh - 40px)",
               borderRadius: 12,
               border: "1px solid var(--sl-ui-modal-border)",
@@ -8270,14 +9571,14 @@ function OpenReportsModal({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: compactDomainPicker ? "1fr" : "190px 1fr",
+                gridTemplateColumns: compactDomainPicker ? "92px minmax(0, 1fr)" : "170px minmax(0, 1fr)",
                 minHeight: 0,
               }}
             >
               <div
                 style={{
-                  borderRight: compactDomainPicker ? "none" : "1px solid var(--sl-ui-modal-border)",
-                  borderBottom: compactDomainPicker ? "1px solid var(--sl-ui-modal-border)" : "none",
+                  borderRight: "1px solid var(--sl-ui-modal-border)",
+                  borderBottom: "none",
                   padding: 10,
                   display: "grid",
                   gap: 8,
@@ -8305,14 +9606,14 @@ function OpenReportsModal({
                 ))}
               </div>
 
-              <div style={{ display: "grid", minHeight: 0 }}>
+              <div style={{ display: "grid", minHeight: 0, minWidth: 0 }}>
                 <div
                   style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
                     gap: 8,
-                    padding: "10px 12px",
+                    padding: compactDomainPicker ? "10px 16px 10px 12px" : "10px 16px 10px 12px",
                     borderBottom: "1px solid var(--sl-ui-modal-border)",
                   }}
                 >
@@ -8320,8 +9621,9 @@ function OpenReportsModal({
                     type="button"
                     onClick={() => shiftCalendarMonths(-1)}
                     style={{
-                      width: 32,
-                      height: 32,
+                      width: 30,
+                      minWidth: 30,
+                      height: 30,
                       borderRadius: 8,
                       border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
                       background: "var(--sl-ui-modal-btn-secondary-bg)",
@@ -8334,15 +9636,28 @@ function OpenReportsModal({
                   >
                     ‹
                   </button>
-                  <div style={{ fontSize: 12.5, fontWeight: 900, opacity: 0.9 }}>
+                  <div
+                    style={{
+                      fontSize: compactDomainPicker ? 11.5 : 12.5,
+                      fontWeight: 900,
+                      opacity: 0.9,
+                      minWidth: 0,
+                      flex: 1,
+                      textAlign: "center",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
                     {dateRangeLabel(draftRangeFrom || exportFromDate, draftRangeTo || exportToDate)}
                   </div>
                   <button
                     type="button"
                     onClick={() => shiftCalendarMonths(1)}
                     style={{
-                      width: 32,
-                      height: 32,
+                      width: 30,
+                      minWidth: 30,
+                      height: 30,
                       borderRadius: 8,
                       border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
                       background: "var(--sl-ui-modal-btn-secondary-bg)",
@@ -8358,15 +9673,17 @@ function OpenReportsModal({
                 </div>
                 <div
                   style={{
-                    padding: 12,
-                    overflow: "auto",
+                    padding: compactDomainPicker ? "12px 16px 12px 12px" : "12px 16px 12px 12px",
+                    overflowY: "auto",
+                    overflowX: "hidden",
                     display: "grid",
                     gap: 12,
-                    gridTemplateColumns: compactDomainPicker ? "1fr" : "1fr 1fr",
+                    gridTemplateColumns: "1fr",
+                    minWidth: 0,
                   }}
                 >
-                  {[calendarLeftMonth, rightMonthDate].map((monthDate) => {
-                    const cells = monthDate === calendarLeftMonth ? leftMonthCells : rightMonthCells;
+                  {[calendarLeftMonth].map((monthDate) => {
+                    const cells = leftMonthCells;
                     return (
                       <div
                         key={`${monthDate.getFullYear()}-${monthDate.getMonth()}`}
@@ -8376,22 +9693,25 @@ function OpenReportsModal({
                           padding: 8,
                           display: "grid",
                           gap: 6,
+                          width: "100%",
+                          minWidth: 0,
+                          boxSizing: "border-box",
                         }}
                       >
                         <div style={{ textAlign: "center", fontWeight: 900 }}>
                           {formatMonthLabel(monthDate)}
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, fontSize: 11.5, opacity: 0.85 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 4, fontSize: 11.5, opacity: 0.85 }}>
                           {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
                             <div key={`${monthDate.getMonth()}-${d}`} style={{ textAlign: "center", fontWeight: 800 }}>
                               {d}
                             </div>
                           ))}
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 4 }}>
                           {cells.map((iso, idx) => {
                             if (!iso) {
-                              return <div key={`blank-${idx}`} style={{ height: 30 }} />;
+                              return <div key={`blank-${idx}`} style={{ height: 30, minWidth: 0 }} />;
                             }
                             const inRange = isDateInDraftRange(iso);
                             const isStart = iso === draftRangeFrom;
@@ -8402,6 +9722,7 @@ function OpenReportsModal({
                                 type="button"
                                 onClick={() => pickCalendarDate(iso)}
                                 style={{
+                                  minWidth: 0,
                                   height: 30,
                                   borderRadius: isStart || isEnd ? 8 : inRange ? 6 : 8,
                                   border: isStart || isEnd
@@ -8656,6 +9977,8 @@ function OpenReportsModal({
         </div>
       )}
 
+      {isAdmin && compactDomainPicker && isCompactMyReports ? compactAdminFiltersPanel : null}
+
       <div
         ref={listScrollRef}
         style={{
@@ -8729,9 +10052,50 @@ function OpenReportsModal({
                         </div>
                       </button>
                     ) : mobileMyReportsCard ? (
-                      <div style={{ color: "var(--sl-ui-text)", fontWeight: 900, lineHeight: 1.25 }}>
-                        {r.incident_label || r.incident_id}
-                      </div>
+                      (() => {
+                        const topLabel = activeDomain === "potholes"
+                          ? "Pothole ID"
+                          : activeDomain === "water_drain_issues"
+                            ? "Water / Drain ID"
+                            : activeDomain === "power_outage"
+                              ? "Power Outage ID"
+                              : activeDomain === "water_main"
+                                ? "Water Main ID"
+                                : activeDomain === "street_signs"
+                                  ? "Street Sign ID"
+                                  : "Incident ID";
+                        const rawValue = String(r.incident_label || r.incident_id || "").trim();
+                        const normalizedPrefix = `${topLabel} `;
+                        const displayValue = rawValue.toLowerCase().startsWith(normalizedPrefix.toLowerCase())
+                          ? rawValue.slice(normalizedPrefix.length).trim()
+                          : rawValue;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => openSubmittedReportsForRow(r)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "var(--sl-ui-text)",
+                              cursor: "pointer",
+                              padding: 0,
+                              textAlign: "left",
+                              display: "grid",
+                              gap: 2,
+                              minWidth: 0,
+                              flex: 1,
+                            }}
+                            title="Open submitted reports"
+                          >
+                            <div style={{ fontSize: 11, lineHeight: 1.15, opacity: 0.78, fontWeight: 500 }}>
+                              {topLabel}
+                            </div>
+                            <div style={{ fontSize: 16, lineHeight: 1.2, fontWeight: 900, wordBreak: "break-word" }}>
+                              {displayValue || rawValue}
+                            </div>
+                          </button>
+                        );
+                      })()
                     ) : (
                       <button
                         type="button"
@@ -8855,7 +10219,7 @@ function OpenReportsModal({
                     ) : null}
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
-                    <b>State:</b> {incidentStateLabel(r.current_state || "")}
+                    <b>Status:</b> {incidentStateLabel(r.current_state || "")}
                   </div>
                   {!isMyReportsModal && (
                     <div style={{ fontSize: 12, opacity: 0.9 }}>
@@ -8864,27 +10228,7 @@ function OpenReportsModal({
                   )}
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>{mobileMyReportsCard ? "Last report:" : "Latest report:"}</b>{" "}
-                    {mobileMyReportsCard ? (
-                      <button
-                        type="button"
-                        onClick={() => openSubmittedReportsForRow(r)}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "var(--sl-ui-brand-green)",
-                          textDecoration: "underline",
-                          textUnderlineOffset: 2,
-                          cursor: "pointer",
-                          padding: 0,
-                          font: "inherit",
-                          fontWeight: 900,
-                        }}
-                      >
-                        {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
-                      </button>
-                    ) : (
-                      formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))
-                    )}
+                    {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                   </div>
                   {showCommunityRepairDiagnostics && repairSnapshot && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
@@ -8915,9 +10259,7 @@ function OpenReportsModal({
                       <button
                         type="button"
                         onClick={() => {
-                          if (typeof window !== "undefined") {
-                            window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-                          }
+                          void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
                         }}
                         style={{
                           padding: "6px 8px",
@@ -9366,7 +10708,7 @@ function OpenReportsModal({
                   <tr style={{ position: "sticky", top: 0, background: "var(--sl-ui-modal-bg)", zIndex: 1 }}>
                     {[
                       { key: "incident_id", label: activeDomain === "streetlights" ? "Light ID" : "Incident" },
-                      { key: "current_state", label: "State" },
+                      { key: "current_state", label: "Status" },
                       ...(isMyReportsModal ? [] : [{ key: "report_count", label: "Reports" }]),
                       { key: "submitted_at", label: "Latest report" },
                       { key: "actions", label: "Actions" },
@@ -9479,9 +10821,7 @@ function OpenReportsModal({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (typeof window !== "undefined") {
-                                    window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-                                  }
+                                  void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
                                 }}
                                 style={{
                                   padding: "6px 8px",
@@ -10005,9 +11345,7 @@ function OpenReportsModal({
                     <button
                       type="button"
                       onClick={() => {
-                        if (typeof window !== "undefined") {
-                          window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-                        }
+                        void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
                       }}
                       style={{
                         padding: "8px 10px",
@@ -10580,9 +11918,7 @@ function OpenReportsModal({
                 <button
                   type="button"
                   onClick={() => {
-                    if (typeof window !== "undefined") {
-                      window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-                    }
+                    void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
                   }}
                   style={{
                     padding: 10,
@@ -10681,50 +12017,129 @@ function OpenReportsModal({
         </div>
       </ModalShell>
 
-      <div
-        style={{
-          marginTop: 6,
-          display: "grid",
-          gap: 8,
-          gridTemplateColumns: isStreetlightMyReports ? "1fr 1fr" : "1fr",
-        }}
-      >
-        {isStreetlightMyReports && (
+      {!useFullPageReportsLayout ? (
+        <div
+          style={{
+            marginTop: 6,
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: isStreetlightMyReports ? "1fr 1fr" : "1fr",
+          }}
+        >
+          {isStreetlightMyReports && (
+            <button
+              type="button"
+              onClick={() => {
+                void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
+              }}
+              style={{
+                padding: 10,
+                width: "100%",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-brand-blue-border)",
+                background: "var(--sl-ui-brand-blue)",
+                color: "white",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              Report Outage to Utility
+            </button>
+          )}
           <button
-            type="button"
-            onClick={() => {
-              if (typeof window !== "undefined") {
-                window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-              }
-            }}
+            onClick={onClose}
             style={{
               padding: 10,
               width: "100%",
               borderRadius: 10,
-              border: "1px solid var(--sl-ui-brand-blue-border)",
-              background: "var(--sl-ui-brand-blue)",
+              border: "none",
+              background: "#111",
               color: "white",
               fontWeight: 900,
               cursor: "pointer",
             }}
           >
-            Report Outage to Utility
+            Close
           </button>
-        )}
-        <button
-          onClick={onClose}
-          style={{
-            padding: 10,
-            width: "100%",
-            borderRadius: 10,
-            border: "none",
-            background: "#111",
-            color: "white",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          Close
+        </div>
+      ) : null}
+    </ModalShell>
+  );
+}
+
+function IncidentTypePickerModal({
+  open,
+  onClose,
+  onSelectPothole,
+  onSelectWaterDrain,
+}) {
+  if (!open) return null;
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10011}
+      panelStyle={{
+        width: "min(420px, 100%)",
+        maxWidth: "100%",
+      }}
+    >
+      <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.1 }}>What would you like to report?</div>
+          <div style={{ fontSize: 13, opacity: 0.82, lineHeight: 1.4 }}>
+            Choose the type of issue for this location.
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onSelectPothole}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 16,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              justifyContent: "flex-start",
+            }}
+          >
+            <AppIcon src={UI_ICON_SRC.pothole} size={34} />
+            <span style={{ fontSize: 16 }}>Pothole</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onSelectWaterDrain}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 16,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              justifyContent: "flex-start",
+            }}
+          >
+            <AppIcon src={UI_ICON_SRC.waterMain} size={34} />
+            <span style={{ fontSize: 16 }}>Water / Drain Issue</span>
+          </button>
+        </div>
+
+        <button type="button" onClick={onClose} style={btnSecondary}>
+          Cancel
         </button>
       </div>
     </ModalShell>
@@ -10734,6 +12149,7 @@ function OpenReportsModal({
 function ManageAccountModal({
   open,
   onClose,
+  onBack,
   profile,
   session,
   saving,
@@ -10745,123 +12161,259 @@ function ManageAccountModal({
   onOpenChangePassword,
   onRequestEdit,
   darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
 }) {
   if (!open) return null;
 
   const email = (profile?.email || session?.user?.email || "").trim() || "—";
+  const closeManage = () => {
+    setEditing(false);
+    onClose();
+  };
 
   return (
-    <ModalShell open={open} zIndex={10010}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>Manage Account</div>
-          {!editing ? (
+    <ModalShell
+      open={open}
+      zIndex={pageMode ? 10050 : 10010}
+      panelStyle={{
+        width: pageMode ? "100vw" : "min(420px, 100%)",
+        maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+        height: pageMode ? "100%" : undefined,
+        borderRadius: pageMode ? 0 : 10,
+        padding: 0,
+        overflow: "hidden",
+      }}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(0, 1fr) auto",
+          height: pageMode ? "100%" : undefined,
+          maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+          minHeight: 0,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : 18 }}>
+          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+            {pageMode ? (
+              <button
+                type="button"
+                onClick={onBack || closeManage}
+                style={{
+                  width: "fit-content",
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontSize: 13,
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
+            ) : null}
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: darkMode ? "#9cb6cf" : "#4f6983" }}>
+              Account
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: pageMode ? 24 : 16, fontWeight: 950, lineHeight: 1.05 }}>Manage Account</div>
+              {!editing ? (
+                <button
+                  onClick={onRequestEdit}
+                  style={{
+                    ...btnPrimaryDark,
+                    width: 34,
+                    minWidth: 34,
+                    height: 34,
+                    padding: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  disabled={saving}
+                  aria-label="Edit account info"
+                  title="Edit account info"
+                >
+                  <ActionButtonIcon action="edit" darkMode={darkMode} emphasis="filled" />
+                </button>
+              ) : null}
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+              Update your profile details and account security.
+            </div>
+          </div>
+          {!pageMode ? (
             <button
-              onClick={onRequestEdit}
+              onClick={closeManage}
               style={{
-                ...btnPrimaryDark,
                 width: 34,
-                minWidth: 34,
                 height: 34,
-                padding: 0,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
+                borderRadius: 10,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
               }}
-              disabled={saving}
-              aria-label="Edit account info"
-              title="Edit account info"
+              aria-label="Close"
+              title="Close"
             >
-              <ActionButtonIcon action="edit" darkMode={darkMode} emphasis="filled" />
+              ✕
             </button>
           ) : null}
         </div>
-        <button
-          onClick={() => {
-            setEditing(false);
-            onClose();
-          }}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-          aria-label="Close"
-          title="Close"
-        >
-          ✕
-        </button>
-      </div>
 
-      <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>
-        <div style={{ marginBottom: 8 }}>
-          <b>Email:</b> {email}
-        </div>
+        <div style={{ overflowY: "auto", padding: pageMode ? "12px 14px 18px" : "0 18px 18px", fontSize: 12.5, lineHeight: 1.45 }}>
+          <div style={{ marginBottom: 10, padding: "12px 14px", borderRadius: 16, border: "1px solid var(--sl-ui-modal-border)", background: "var(--sl-ui-modal-subtle-bg)" }}>
+            <b>Email:</b> {email}
+          </div>
 
-        <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Full name</div>
-          <input
-            value={form.full_name}
-            onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
-            style={inputStyle}
-            disabled={!editing || saving}
-            placeholder="Your full name"
-          />
-        </label>
+          <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Full name</div>
+            <input
+              value={form.full_name}
+              onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
+              style={{ ...inputStyle, width: "100%", borderRadius: 14 }}
+              disabled={!editing || saving}
+              placeholder="Your full name"
+            />
+          </label>
 
-        <label style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Phone</div>
-          <input
-            value={form.phone}
-            onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-            style={inputStyle}
-            disabled={!editing || saving}
-            placeholder="555-555-5555"
-          />
-        </label>
-
-        <button
-          onClick={onOpenChangePassword}
-          style={{ ...btnPrimary, width: "100%", marginTop: 6 }}
-          disabled={saving}
-        >
-          Change Password
-        </button>
-      </div>
-
-      {editing ? (
-        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-          <button
-            onClick={() => {
-              setEditing(false);
-              // revert changes on cancel edit
-              setForm({
-                full_name: (profile?.full_name || "").trim(),
-                phone: (profile?.phone || "").trim(),
-              });
-            }}
-            style={btnSecondary}
-            disabled={saving}
-          >
-            Cancel
-          </button>
+          <label style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Phone</div>
+            <input
+              value={form.phone}
+              onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
+              style={{ ...inputStyle, width: "100%", borderRadius: 14 }}
+              disabled={!editing || saving}
+              placeholder="555-555-5555"
+            />
+          </label>
 
           <button
-            onClick={onSave}
-            style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}
+            onClick={onOpenChangePassword}
+            style={{ ...btnPrimary, width: "100%", marginTop: 12 }}
             disabled={saving}
           >
-            {saving ? "Saving…" : "Save"}
+            Change Password
           </button>
         </div>
-      ) : null}
 
+        {editing ? (
+          <div style={{ display: "flex", gap: 10, padding: pageMode ? "10px 14px calc(10px + env(safe-area-inset-bottom))" : "0 18px 18px", borderTop: "1px solid var(--sl-ui-modal-border)" }}>
+            <button
+              onClick={() => {
+                setEditing(false);
+                // revert changes on cancel edit
+                setForm({
+                  full_name: (profile?.full_name || "").trim(),
+                  phone: (profile?.phone || "").trim(),
+                });
+              }}
+              style={btnSecondary}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+
+            <button
+              onClick={onSave}
+              style={{ ...btnPrimary, opacity: saving ? 0.7 : 1 }}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </ModalShell>
+  );
+}
+
+function MobileBottomRailButton({
+  label,
+  iconSrc,
+  active = false,
+  onClick,
+  badgeCount = 0,
+  disabled = false,
+  children = null,
+  showDivider = false,
+}) {
+  const showBadge = Number(badgeCount || 0) > 0;
+  return (
+    <div
+      style={{
+        position: "relative",
+        minWidth: 0,
+        borderRight: showDivider ? "1px solid var(--sl-ui-surface-border)" : "none",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          width: "100%",
+          minWidth: 0,
+          border: "none",
+          background: active ? "var(--sl-ui-tool-active-bg)" : "transparent",
+          color: active ? "var(--sl-ui-tool-active-text)" : "var(--sl-ui-text)",
+          borderRadius: 14,
+          padding: "0 4px 4px",
+          display: "grid",
+          justifyItems: "center",
+          gap: 4,
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.55 : 1,
+          lineHeight: 1,
+          position: "relative",
+        }}
+      >
+        <span style={{ position: "relative", width: 28, height: 28, display: "grid", placeItems: "center" }}>
+          <AppIcon src={iconSrc} size={24} />
+          {showBadge ? (
+            <span
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -8,
+                minWidth: 16,
+                height: 16,
+                padding: "0 4px",
+                borderRadius: 999,
+                background: "#c62828",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.88)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 9.5,
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              {badgeCount > 99 ? "99+" : badgeCount}
+            </span>
+          ) : null}
+        </span>
+        <span style={{ fontSize: 10.5, fontWeight: 900, opacity: active ? 1 : 0.82, textAlign: "center" }}>{label}</span>
+      </button>
+      {children}
+    </div>
   );
 }
 
@@ -11289,6 +12841,247 @@ function RecoveryPasswordModal({
   );
 }
 
+function FollowedLocationsModal({
+  open,
+  onClose,
+  onBack,
+  cities = [],
+  followedTenantKeys = [],
+  loading = false,
+  busyKey = "",
+  onSetFollowed,
+  darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+}) {
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  if (!open) return null;
+
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  const followedKeySet = new Set(
+    (Array.isArray(followedTenantKeys) ? followedTenantKeys : [])
+      .map((key) => String(key || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const cityList = Array.isArray(cities) ? cities.filter(Boolean) : [];
+  const cityByKey = new Map(
+    cityList
+      .map((city) => [String(city?.tenantKey || "").trim().toLowerCase(), city])
+      .filter(([key]) => Boolean(key))
+  );
+  const followedCities = [...followedKeySet]
+    .map((key) => cityByKey.get(key) || { tenantKey: key, name: key, displayName: key })
+    .sort((a, b) => String(a?.displayName || a?.name || a?.tenantKey || "").localeCompare(String(b?.displayName || b?.name || b?.tenantKey || ""), undefined, { sensitivity: "base" }));
+  const searchedCities = normalizedQuery
+    ? cityList.filter((city) => {
+        const haystack = [
+          city?.displayName,
+          city?.name,
+          city?.tenantKey,
+          city?.primarySubdomain,
+          city?.routeSlug,
+        ]
+          .map((value) => String(value || "").trim().toLowerCase())
+          .filter(Boolean)
+          .join(" ");
+        return haystack.includes(normalizedQuery);
+      })
+    : [];
+
+  const sectionEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const tileBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.10)";
+  const tileBackground = darkMode
+    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
+    : "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)";
+
+  const cityRow = (city, { searching = false } = {}) => {
+    const key = String(city?.tenantKey || city?.tenant_key || "").trim().toLowerCase();
+    if (!key) return null;
+    const isFollowed = followedKeySet.has(key);
+    const isBusy = String(busyKey || "").trim().toLowerCase() === key;
+    const label = String(city?.displayName || city?.name || key).trim() || key;
+    const sublabel = String(city?.primarySubdomain || city?.routeSlug || `${key}.cityreport.io`).trim();
+    return (
+      <div
+        key={`${searching ? "search" : "followed"}-${key}`}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: 10,
+          alignItems: "center",
+          padding: "13px 14px",
+          borderRadius: 18,
+          border: tileBorder,
+          background: tileBackground,
+        }}
+      >
+        <div style={{ minWidth: 0, display: "grid", gap: 3 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.15, color: "var(--sl-ui-text)" }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.35, opacity: 0.72, overflowWrap: "anywhere" }}>
+            {sublabel}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={isBusy}
+          onClick={() => onSetFollowed?.(key, !isFollowed)}
+          style={{
+            padding: "9px 12px",
+            borderRadius: 999,
+            border: isFollowed ? "1px solid rgba(198, 40, 40, 0.32)" : "1px solid rgba(28, 128, 98, 0.36)",
+            background: isFollowed ? "rgba(198, 40, 40, 0.10)" : "rgba(28, 128, 98, 0.16)",
+            color: isFollowed ? "#c62828" : "var(--sl-ui-text)",
+            fontSize: 12.5,
+            fontWeight: 900,
+            cursor: isBusy ? "wait" : "pointer",
+            opacity: isBusy ? 0.68 : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {isBusy ? "Saving…" : isFollowed ? "Remove" : "Follow"}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10050}
+      panelStyle={{
+        width: pageMode ? "100vw" : "min(760px, 100%)",
+        maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+        height: pageMode ? "100%" : undefined,
+        borderRadius: pageMode ? 0 : 24,
+        padding: 0,
+        overflow: "hidden",
+      }}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(0, 1fr)",
+          height: pageMode ? "100%" : undefined,
+          maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+          minHeight: 0,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : "22px 22px 18px" }}>
+          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+            {pageMode ? (
+              <button
+                type="button"
+                onClick={onBack || onClose}
+                style={{
+                  width: "fit-content",
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontSize: 13,
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
+            ) : null}
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
+              Followed Locations
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+              Your city list
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+              Followed cities appear in the Switch City menu. Search to add another public map.
+            </div>
+          </div>
+          {!pageMode ? (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+                flex: "0 0 auto",
+              }}
+              aria-label="Close followed locations"
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
+
+        <div style={{ overflowY: "auto", padding: pageMode ? "12px 14px 18px" : "0 22px 22px", display: "grid", alignContent: "start", gap: 14 }}>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search city name"
+            style={{ ...inputStyle, width: "100%", borderRadius: 16 }}
+            autoCapitalize="words"
+            autoCorrect="off"
+          />
+
+          {normalizedQuery ? (
+            <div style={{ display: "grid", gap: 9 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Search results
+              </div>
+              {searchedCities.length ? searchedCities.map((city) => cityRow(city, { searching: true })) : (
+                <div style={{ padding: "14px 16px", borderRadius: 18, border: tileBorder, background: tileBackground, fontSize: 13.5, opacity: 0.82 }}>
+                  No locations matched that search.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 9 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.7, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Following
+              </div>
+              {loading ? (
+                <div style={{ padding: "14px 16px", borderRadius: 18, border: tileBorder, background: tileBackground, fontSize: 13.5, opacity: 0.82 }}>
+                  Loading followed locations…
+                </div>
+              ) : followedCities.length ? (
+                followedCities.map((city) => cityRow(city))
+              ) : (
+                <div style={{ padding: "14px 16px", borderRadius: 18, border: tileBorder, background: tileBackground, fontSize: 13.5, opacity: 0.82, lineHeight: 1.45 }}>
+                  You are not following any locations yet. Search above to add your first city.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function AccountMenuPanel({
   open,
   session,
@@ -11296,13 +13089,17 @@ function AccountMenuPanel({
   onClose,
   onManage,
   onMyReports,
+  onFollowedLocations,
   onNotificationPreferences,
   onContactUs,
+  onOpenInfo,
   onLogout,
   showNotificationPreferences = true,
   variant = "modal",
   containerRef = null,
   darkMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
 }) {
   if (!open) return null;
 
@@ -11353,17 +13150,19 @@ function AccountMenuPanel({
         <button onClick={onManage} className="workspace-menu-button" style={buttonStyle}>
           Manage Account
         </button>
+        <button onClick={onFollowedLocations} className="workspace-menu-button" style={buttonStyle}>
+          Followed Locations
+        </button>
         {showNotificationPreferences ? (
           <button onClick={onNotificationPreferences} className="workspace-menu-button" style={buttonStyle}>
             Notification Preferences
           </button>
         ) : null}
-        <button onClick={onMyReports} className="workspace-menu-button" style={buttonStyle}>
-          My Reports
-        </button>
-        <button onClick={onContactUs} className="workspace-menu-button" style={buttonStyle}>
-          Contact Us
-        </button>
+        {variant === "desktop-popout" || variant === "modal" ? (
+          <button onClick={onMyReports} className="workspace-menu-button" style={buttonStyle}>
+            My Reports
+          </button>
+        ) : null}
         <button onClick={onLogout} className="workspace-menu-button" style={buttonStyle}>
           Logout
         </button>
@@ -11404,9 +13203,6 @@ function AccountMenuPanel({
         >
           Create account
         </button>
-        <button onClick={onContactUs} className="workspace-menu-button" style={buttonStyle}>
-          Contact Us
-        </button>
         {variant === "modal" ? (
           <button onClick={onClose} className="workspace-menu-button" style={buttonStyle}>
             Close
@@ -11446,19 +13242,19 @@ function AccountMenuPanel({
           inset: 0,
           zIndex: 10010,
           display: "grid",
-          alignItems: "start",
-          justifyItems: "end",
+          alignItems: "end",
+          justifyItems: "center",
           pointerEvents: "auto",
-          padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 8px) var(--mobile-header-horizontal-inset) 16px",
-          background: "transparent",
+          padding: "16px 10px calc(env(safe-area-inset-bottom) + 116px)",
+          background: "rgba(0,0,0,0.14)",
         }}
         onClick={onClose}
       >
         <div
           className="workspace-menu-panel"
           style={{
-            width: "min(320px, calc(100vw - (var(--mobile-header-horizontal-inset) * 2)))",
-            maxWidth: "calc(100vw - (var(--mobile-header-horizontal-inset) * 2))",
+            width: "min(360px, calc(100vw - 20px))",
+            maxWidth: "calc(100vw - 20px)",
             pointerEvents: "auto",
             ...(panelStyle || {}),
           }}
@@ -11486,6 +13282,54 @@ function AccountMenuPanel({
           </div>
           <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
             {menuBody}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === "mobile-page") {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: pageTopInset,
+          left: 0,
+          right: 0,
+          bottom: pageBottomInset,
+          zIndex: 1505,
+          background: "var(--sl-ui-modal-bg)",
+          color: "var(--sl-ui-text)",
+          pointerEvents: "auto",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            overflowY: "auto",
+            padding: "14px 14px 20px",
+          }}
+        >
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 24, fontWeight: 950, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+                Account
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.78 }}>
+                Manage your sign-in, profile, notifications, and account actions.
+              </div>
+            </div>
+
+            <div
+              className="workspace-menu-panel"
+              style={{
+                borderRadius: 18,
+                ...(panelStyle || {}),
+              }}
+            >
+              {menuBody}
+            </div>
           </div>
         </div>
       </div>
@@ -11535,6 +13379,193 @@ function AccountMenuPanel({
         </div>
         <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
           {menuBody}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function normalizeResidentMenuLinkRow(row) {
+  return {
+    id: String(row?.id || "").trim(),
+    label: String(row?.label || "").trim(),
+    description: String(row?.description || "").trim(),
+    link_type: String(row?.link_type || "external_url").trim().toLowerCase() || "external_url",
+    url: String(row?.url || "").trim(),
+    phone: String(row?.phone || "").trim(),
+    email: String(row?.email || "").trim(),
+    audience: String(row?.audience || "public").trim().toLowerCase() || "public",
+    sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
+    enabled: row?.enabled !== false,
+  };
+}
+
+function MobileHeaderMenuPanel({
+  open,
+  onClose,
+  onContactUs,
+  onOpenAbout,
+  residentMenuLinks = [],
+  onOpenResidentMenuLink,
+  showCitySwitcher = false,
+  onOpenCitySwitcher,
+  showLocationDiagnostics = false,
+  onOpenLocationDiagnostics,
+  darkMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+}) {
+  if (!open) return null;
+
+  const panelStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.22)",
+        background: "linear-gradient(180deg, rgba(16, 25, 37, 0.98) 0%, rgba(20, 33, 47, 0.98) 100%)",
+        boxShadow: "0 22px 42px rgba(0, 0, 0, 0.32)",
+        color: "#edf6ff",
+      }
+    : null;
+
+  const buttonStyle = darkMode
+    ? {
+        border: "1px solid rgba(143, 170, 198, 0.24)",
+        background: "rgba(28, 43, 60, 0.92)",
+        color: "#edf6ff",
+      }
+    : null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        zIndex: 10062,
+        pointerEvents: "auto",
+        background: "rgba(4, 10, 16, 0.18)",
+        backdropFilter: "blur(2px)",
+        WebkitBackdropFilter: "blur(2px)",
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: "min(320px, calc(100vw - 22px))",
+          maxWidth: "calc(100vw - 22px)",
+          borderLeft: darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.10)",
+          background: darkMode
+            ? "linear-gradient(180deg, rgba(16, 25, 37, 0.985) 0%, rgba(20, 33, 47, 0.985) 100%)"
+            : "linear-gradient(180deg, rgba(252, 254, 255, 0.99) 0%, rgba(244, 249, 253, 0.99) 100%)",
+          boxShadow: darkMode
+            ? "-18px 0 40px rgba(0, 0, 0, 0.30)"
+            : "-18px 0 34px rgba(17, 39, 64, 0.16)",
+          color: darkMode ? "#edf6ff" : "var(--sl-ui-text)",
+          padding: "16px 14px 18px",
+          overflowY: "auto",
+          display: "grid",
+          alignContent: "start",
+          gap: 14,
+          ...(panelStyle || {}),
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", opacity: darkMode ? 0.78 : 0.62 }}>
+              Menu
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 950, lineHeight: 1.05, color: darkMode ? "#edf6ff" : "var(--sl-ui-text)" }}>
+              More
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.78 }}>
+              General app information and public help links.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 999,
+              border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
+              color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+              flex: "0 0 auto",
+            }}
+            aria-label="Close menu"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="workspace-menu-actions" style={{ display: "grid", gap: 10 }}>
+          {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
+            <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+              Switch Location
+            </button>
+          ) : null}
+          {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
+            <button onClick={onOpenLocationDiagnostics} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+              Location Diagnostics
+            </button>
+          ) : null}
+          <button onClick={onContactUs} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            Contact Us
+          </button>
+          <button onClick={onOpenAbout} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            About
+          </button>
+          {residentMenuLinks.length ? (
+            <>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 11,
+                  fontWeight: 900,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  opacity: darkMode ? 0.72 : 0.58,
+                }}
+              >
+                Resident Links
+              </div>
+              {residentMenuLinks.map((linkRow) => (
+                <button
+                  key={String(linkRow?.id || `${linkRow?.label || "link"}-${linkRow?.sort_order || 0}`)}
+                  type="button"
+                  className="workspace-menu-button"
+                  style={{
+                    width: "100%",
+                    justifyItems: "start",
+                    textAlign: "left",
+                    gap: 4,
+                    ...(buttonStyle || {}),
+                  }}
+                  onClick={() => {
+                    if (typeof onOpenResidentMenuLink === "function") {
+                      onOpenResidentMenuLink(linkRow);
+                    }
+                  }}
+                >
+                  <span style={{ fontSize: 15.5, fontWeight: 900 }}>{String(linkRow?.label || "").trim() || "Open Link"}</span>
+                  {String(linkRow?.description || "").trim() ? (
+                    <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, opacity: 0.76 }}>
+                      {String(linkRow.description).trim()}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -11680,7 +13711,9 @@ function ContactUsModal({
 function NotificationPreferencesModal({
   open,
   onClose,
+  onBack,
   onSave,
+  onResetDraft,
   topics,
   preferencesByTopic,
   updatePreferenceDraft,
@@ -11688,7 +13721,11 @@ function NotificationPreferencesModal({
   loading,
   status,
   darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
 }) {
+  const [isEditing, setIsEditing] = useState(false);
   const hasError = String(status || "").toLowerCase().includes("could not");
   const sectionEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
   const topicCardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
@@ -11699,27 +13736,66 @@ function NotificationPreferencesModal({
   const footerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
   const checkboxLabelColor = darkMode ? "#edf6ff" : "var(--sl-ui-text)";
 
+  useEffect(() => {
+    if (!open) {
+      setIsEditing(false);
+      return;
+    }
+    setIsEditing(false);
+  }, [open]);
+
   return (
     <ModalShell
       open={open}
       zIndex={10050}
       panelStyle={{
-        width: "min(820px, 100%)",
-        maxHeight: "min(88vh, 900px)",
-        borderRadius: 24,
+        width: pageMode ? "100vw" : "min(820px, 100%)",
+        maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+        height: pageMode ? "100%" : undefined,
+        borderRadius: pageMode ? 0 : 24,
         padding: 0,
         overflow: "hidden",
       }}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
     >
       <div
         style={{
           display: "grid",
           gridTemplateRows: "auto minmax(0, 1fr) auto",
-          maxHeight: "min(88vh, 900px)",
+          height: pageMode ? "100%" : undefined,
+          maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+          minHeight: 0,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "22px 22px 18px" }}>
-          <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : "22px 22px 18px" }}>
+          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+            {pageMode ? (
+              <button
+                type="button"
+                onClick={onBack || onClose}
+                style={{
+                  width: "fit-content",
+                  padding: "0",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontSize: 13,
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
+            ) : null}
             <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
               Notification Preferences
             </div>
@@ -11727,34 +13803,105 @@ function NotificationPreferencesModal({
               Events and alerts
             </div>
             <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
-              Manage the same resident notification categories used in the hub. In-app and email are live now; web push is next.
+              Manage the same resident notification categories used in the hub. In-app and email are the available delivery channels.
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
+          <div
             style={{
-              width: 38,
-              height: 38,
-              borderRadius: 999,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
+              display: "grid",
+              justifyItems: "end",
+              alignContent: "start",
+              gap: 8,
               flex: "0 0 auto",
             }}
-            aria-label="Close notification preferences"
           >
-            ✕
-          </button>
+            {!isEditing ? (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                disabled={loading}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: loading ? "not-allowed" : "pointer",
+                  opacity: loading ? 0.65 : 1,
+                }}
+              >
+                Edit
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onResetDraft?.();
+                    setIsEditing(false);
+                  }}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={saving || loading}
+                style={{
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "var(--sl-ui-brand-blue)",
+                    color: "#fff",
+                    fontWeight: 900,
+                    cursor: saving || loading ? "not-allowed" : "pointer",
+                    opacity: saving || loading ? 0.65 : 1,
+                }}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </>
+            )}
+            {!pageMode ? (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 999,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  flex: "0 0 auto",
+                }}
+                aria-label="Close notification preferences"
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div
           style={{
             overflowY: "auto",
-            padding: "0 14px 0 22px",
+            padding: pageMode ? "0 10px 0 14px" : "0 14px 0 22px",
             marginRight: 4,
+            minHeight: 0,
+            WebkitOverflowScrolling: "touch",
           }}
         >
           {loading ? (
@@ -11788,6 +13935,7 @@ function NotificationPreferencesModal({
                         <input
                           type="checkbox"
                           checked={Boolean(current.in_app_enabled)}
+                          disabled={!isEditing}
                           onChange={(event) => updatePreferenceDraft(topic.topic_key, "in_app_enabled", event.target.checked)}
                         />
                         In-app
@@ -11796,18 +13944,10 @@ function NotificationPreferencesModal({
                         <input
                           type="checkbox"
                           checked={Boolean(current.email_enabled)}
+                          disabled={!isEditing}
                           onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)}
                         />
                         Email
-                      </label>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, opacity: 0.7, color: checkboxLabelColor }}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(current.web_push_enabled)}
-                          disabled
-                          readOnly
-                        />
-                        Web push (next)
                       </label>
                     </div>
                   </article>
@@ -11817,7 +13957,7 @@ function NotificationPreferencesModal({
           )}
         </div>
 
-        <div style={{ display: "grid", gap: 12, padding: "14px 22px 22px", borderTop: footerBorder }}>
+        <div style={{ display: "grid", gap: 12, padding: pageMode ? "14px 14px 18px" : "14px 22px 22px", borderTop: status ? footerBorder : "none" }}>
           {status ? (
             <div
               style={{
@@ -11830,41 +13970,6 @@ function NotificationPreferencesModal({
               {status}
             </div>
           ) : null}
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={saving || loading}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: "none",
-                background: "var(--sl-ui-brand-blue)",
-                color: "#fff",
-                fontWeight: 900,
-                cursor: saving || loading ? "not-allowed" : "pointer",
-                opacity: saving || loading ? 0.65 : 1,
-              }}
-            >
-              {saving ? "Saving…" : "Save Preferences"}
-            </button>
-          </div>
         </div>
       </div>
     </ModalShell>
@@ -11888,6 +13993,28 @@ function residentFeedBadgeStyle({ bg = "rgba(22, 109, 120, 0.12)", border = "rgb
   };
 }
 
+function residentFeedAdminButtonStyle(darkMode = false) {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 34,
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: darkMode ? "1px solid rgba(95, 208, 180, 0.28)" : "1px solid rgba(22, 109, 120, 0.22)",
+    background: darkMode
+      ? "linear-gradient(180deg, rgba(28, 112, 95, 0.92) 0%, rgba(20, 82, 72, 0.92) 100%)"
+      : "linear-gradient(180deg, rgba(31, 132, 113, 0.96) 0%, rgba(24, 108, 94, 0.96) 100%)",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 900,
+    letterSpacing: "0.01em",
+    boxShadow: darkMode ? "0 10px 22px rgba(0, 0, 0, 0.22)" : "0 10px 20px rgba(17, 61, 95, 0.14)",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
+}
+
 function ResidentFeedWindow({
   open,
   onClose,
@@ -11902,6 +14029,11 @@ function ResidentFeedWindow({
   items,
   renderItem,
   darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+  createLabel = "",
+  onCreate = null,
 }) {
   const headerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
   const eyebrowBadgeTone = darkMode
@@ -11927,18 +14059,30 @@ function ResidentFeedWindow({
       open={open}
       zIndex={10055}
       panelStyle={{
-        width: "min(860px, 100%)",
-        maxHeight: "min(88vh, 900px)",
-        borderRadius: 24,
+        width: pageMode ? "100vw" : "min(860px, 100%)",
+        maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+        height: pageMode ? "100%" : undefined,
+        borderRadius: pageMode ? 0 : 24,
         padding: 0,
         overflow: "hidden",
       }}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
     >
       <div
         style={{
           display: "grid",
           gridTemplateRows: "auto minmax(0, 1fr)",
-          maxHeight: "min(88vh, 900px)",
+          height: pageMode ? "100%" : undefined,
+          maxHeight: pageMode ? undefined : "min(88vh, 900px)",
         }}
       >
         <div
@@ -11947,7 +14091,7 @@ function ResidentFeedWindow({
             justifyContent: "space-between",
             alignItems: "flex-start",
             gap: 14,
-            padding: "22px 22px 18px",
+            padding: pageMode ? "14px 14px 12px" : "22px 22px 18px",
             borderBottom: headerBorder,
           }}
         >
@@ -11982,27 +14126,40 @@ function ResidentFeedWindow({
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 999,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
-              flex: "0 0 auto",
-            }}
-            aria-label={`Close ${title}`}
-          >
-            ✕
-          </button>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flex: "0 0 auto" }}>
+            {typeof onCreate === "function" && createLabel ? (
+              <button
+                type="button"
+                onClick={onCreate}
+                style={residentFeedAdminButtonStyle(darkMode)}
+              >
+                {createLabel}
+              </button>
+            ) : null}
+            {!pageMode ? (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 999,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  flex: "0 0 auto",
+                }}
+                aria-label={`Close ${title}`}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        <div style={{ overflowY: "auto", padding: "18px 18px 20px 22px", marginRight: 4 }}>
+        <div style={{ overflowY: "auto", padding: pageMode ? "14px 10px 18px 14px" : "18px 18px 20px 22px", marginRight: 4 }}>
           {loading && !items.length ? (
             <div style={{ fontSize: 13, opacity: 0.82, color: subtitleColor }}>Loading updates…</div>
           ) : error ? (
@@ -12020,7 +14177,21 @@ function ResidentFeedWindow({
   );
 }
 
-function AlertsWindow({ open, onClose, alerts, loading, error, darkMode = false }) {
+function AlertsWindow({
+  open,
+  onClose,
+  alerts,
+  loading,
+  error,
+  darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+  canCreate = false,
+  canEdit = false,
+  onCreate = null,
+  onEdit = null,
+}) {
   const activeCount = useMemo(() => countActivePublishedAlerts(alerts), [alerts]);
   const countLabel = activeCount === 1 ? "1 active alert" : `${activeCount} active alerts`;
   const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
@@ -12056,6 +14227,11 @@ function AlertsWindow({ open, onClose, alerts, loading, error, darkMode = false 
       emptyText="No active alerts are published right now."
       items={alerts}
       darkMode={darkMode}
+      pageMode={pageMode}
+      pageTopInset={pageTopInset}
+      pageBottomInset={pageBottomInset}
+      createLabel={canCreate ? "Create" : ""}
+      onCreate={canCreate ? onCreate : null}
       renderItem={(alert) => {
         const severityKey = String(alert?.severity || "info").trim().toLowerCase();
         const severityTone =
@@ -12092,17 +14268,33 @@ function AlertsWindow({ open, onClose, alerts, loading, error, darkMode = false 
               gap: 12,
             }}
           >
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <div style={residentFeedBadgeStyle(severityTone)}>{alert.severity || "info"}</div>
-              {alert?.pinned ? (
-                <div style={residentFeedBadgeStyle(pinnedTone)}>
-                  Pinned
-                </div>
-              ) : null}
-              {alert?.topic_label ? (
-                <div style={residentFeedBadgeStyle(topicTone)}>
-                  {alert.topic_label}
-                </div>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                <div style={residentFeedBadgeStyle(severityTone)}>{alert.severity || "info"}</div>
+                {alert?.pinned ? (
+                  <div style={residentFeedBadgeStyle(pinnedTone)}>
+                    Pinned
+                  </div>
+                ) : null}
+                {alert?.topic_label ? (
+                  <div style={residentFeedBadgeStyle(topicTone)}>
+                    {alert.topic_label}
+                  </div>
+                ) : null}
+                {canEdit && alert?.status ? (
+                  <div style={residentFeedBadgeStyle(residentCommunityStatusTone(alert.status, darkMode))}>
+                    {residentCommunityStatusLabel(alert.status)}
+                  </div>
+                ) : null}
+              </div>
+              {canEdit && typeof onEdit === "function" ? (
+                <button
+                  type="button"
+                  onClick={() => onEdit(alert)}
+                  style={residentFeedAdminButtonStyle(darkMode)}
+                >
+                  Edit
+                </button>
               ) : null}
             </div>
             <div style={{ display: "grid", gap: 6 }}>
@@ -12145,7 +14337,21 @@ function AlertsWindow({ open, onClose, alerts, loading, error, darkMode = false 
   );
 }
 
-function EventsWindow({ open, onClose, events, loading, error, darkMode = false }) {
+function EventsWindow({
+  open,
+  onClose,
+  events,
+  loading,
+  error,
+  darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+  canCreate = false,
+  canEdit = false,
+  onCreate = null,
+  onEdit = null,
+}) {
   const upcomingCount = useMemo(() => countUpcomingPublishedEvents(events), [events]);
   const countLabel = upcomingCount === 1 ? "1 upcoming event" : `${upcomingCount} upcoming events`;
   const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
@@ -12187,6 +14393,11 @@ function EventsWindow({ open, onClose, events, loading, error, darkMode = false 
       emptyText="No upcoming events are published yet."
       items={events}
       darkMode={darkMode}
+      pageMode={pageMode}
+      pageTopInset={pageTopInset}
+      pageBottomInset={pageBottomInset}
+      createLabel={canCreate ? "Create" : ""}
+      onCreate={canCreate ? onCreate : null}
       renderItem={(event) => (
         <article
           key={`map-event-${event.id}`}
@@ -12199,14 +14410,30 @@ function EventsWindow({ open, onClose, events, loading, error, darkMode = false 
             gap: 12,
           }}
         >
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <div style={residentFeedBadgeStyle(topicTone)}>
-              {event.topic_label || event.topic_key || "Event"}
-            </div>
-            {event.all_day ? (
-              <div style={residentFeedBadgeStyle(allDayTone)}>
-                All day
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+              <div style={residentFeedBadgeStyle(topicTone)}>
+                {event.topic_label || event.topic_key || "Event"}
               </div>
+              {event.all_day ? (
+                <div style={residentFeedBadgeStyle(allDayTone)}>
+                  All day
+                </div>
+              ) : null}
+              {canEdit && event?.status ? (
+                <div style={residentFeedBadgeStyle(residentCommunityStatusTone(event.status, darkMode))}>
+                  {residentCommunityStatusLabel(event.status)}
+                </div>
+              ) : null}
+            </div>
+            {canEdit && typeof onEdit === "function" ? (
+              <button
+                type="button"
+                onClick={() => onEdit(event)}
+                style={residentFeedAdminButtonStyle(darkMode)}
+              >
+                Edit
+              </button>
             ) : null}
           </div>
           <div style={{ display: "grid", gap: 6 }}>
@@ -12245,6 +14472,424 @@ function EventsWindow({ open, onClose, events, loading, error, darkMode = false 
         </article>
       )}
     />
+  );
+}
+
+function CommunityFeedEditorModal({
+  open,
+  kind = "alert",
+  mode = "create",
+  topics = [],
+  form,
+  setForm,
+  saving = false,
+  deleting = false,
+  canDelete = false,
+  error = "",
+  darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+  onClose,
+  onDelete,
+  onSubmit,
+}) {
+  const isEvent = kind === "event";
+  const actionPending = saving || deleting;
+  const showDelete = mode === "edit" && canDelete && typeof onDelete === "function";
+  const canSchedule = mode !== "edit" || String(form?.status || "").trim().toLowerCase() === "scheduled";
+  const statusOptions = canSchedule
+    ? COMMUNITY_FEED_STATUS_OPTIONS
+    : COMMUNITY_FEED_STATUS_OPTIONS.filter((option) => option.value !== "scheduled");
+  const title = `${mode === "edit" ? "Edit" : "Create"} ${isEvent ? "Event" : "Alert"}`;
+  const fieldStyle = {
+    display: "grid",
+    gap: 6,
+    minWidth: 0,
+  };
+  const labelStyle = {
+    fontSize: 11.5,
+    fontWeight: 900,
+    letterSpacing: "0.03em",
+    textTransform: "uppercase",
+    opacity: 0.78,
+  };
+  const inputStyle = {
+    width: "100%",
+    boxSizing: "border-box",
+    minHeight: 42,
+    borderRadius: 12,
+    border: darkMode ? "1px solid rgba(143, 170, 198, 0.2)" : "1px solid rgba(23, 49, 79, 0.14)",
+    background: darkMode ? "rgba(13, 24, 36, 0.74)" : "rgba(255, 255, 255, 0.96)",
+    color: "var(--sl-ui-text)",
+    padding: "10px 12px",
+    fontSize: 14,
+    fontWeight: 750,
+    fontFamily: "var(--app-header-font-family)",
+    outline: "none",
+  };
+  const secondaryButtonStyle = {
+    minHeight: 36,
+    borderRadius: 10,
+    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+    background: "var(--sl-ui-modal-btn-secondary-bg)",
+    color: "var(--sl-ui-modal-btn-secondary-text)",
+    fontWeight: 900,
+    cursor: actionPending ? "default" : "pointer",
+  };
+  const primaryButtonStyle = {
+    minHeight: 36,
+    borderRadius: 10,
+    border: "1px solid rgba(95, 208, 180, 0.24)",
+    background: "linear-gradient(180deg, rgba(31, 132, 113, 0.98) 0%, rgba(24, 108, 94, 0.98) 100%)",
+    color: "#fff",
+    fontWeight: 950,
+    cursor: actionPending ? "default" : "pointer",
+  };
+  const destructiveButtonStyle = {
+    minHeight: 36,
+    borderRadius: 10,
+    border: darkMode ? "1px solid rgba(248, 113, 113, 0.4)" : "1px solid rgba(185, 28, 28, 0.22)",
+    background: darkMode ? "rgba(127, 29, 29, 0.36)" : "rgba(254, 226, 226, 0.92)",
+    color: darkMode ? "#fecaca" : "#991b1b",
+    fontWeight: 950,
+    cursor: actionPending ? "default" : "pointer",
+  };
+  const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const setPublishingStatus = (nextStatus) => {
+    const normalized = String(nextStatus || "published").trim().toLowerCase();
+    setForm((prev) => {
+      const next = { ...prev, status: normalized };
+      if (normalized === "scheduled" && !String(next.publish_at || "").trim()) {
+        next.publish_at = toResidentFeedDateInputValue(new Date(Date.now() + 60 * 60 * 1000));
+      }
+      return next;
+    });
+  };
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={10070}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+        overflowX: "hidden",
+      } : null}
+      panelStyle={{
+        width: pageMode ? "100%" : "min(620px, 100%)",
+        height: pageMode ? "100%" : undefined,
+        maxWidth: "100%",
+        maxHeight: pageMode ? undefined : "min(88vh, 840px)",
+        borderRadius: pageMode ? 0 : 22,
+        padding: 0,
+        overflow: "hidden",
+        overflowX: "hidden",
+      }}
+    >
+      <form
+        onSubmit={onSubmit}
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(0, 1fr) auto",
+          height: pageMode ? "100%" : undefined,
+          maxHeight: pageMode ? undefined : "min(88vh, 840px)",
+          minHeight: 0,
+          width: "100%",
+          maxWidth: "100%",
+          overflowX: "hidden",
+          color: "var(--sl-ui-text)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: pageMode ? "14px" : "20px 20px 16px",
+            borderBottom: darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)",
+          }}
+        >
+          <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, color: "#53c3a7", letterSpacing: "0.16em", textTransform: "uppercase" }}>
+              {isEvent ? "Community Event" : "Location Alert"}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 950, lineHeight: 1.1 }}>{title}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={actionPending}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 999,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: actionPending ? "default" : "pointer",
+              flex: "0 0 auto",
+            }}
+            aria-label={`Close ${title}`}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ overflowY: "auto", overflowX: "hidden", minHeight: 0, minWidth: 0, padding: pageMode ? "14px" : "18px 20px", display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: pageMode ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Topic</span>
+              <select
+                value={form.topic_key}
+                onChange={(event) => setField("topic_key", event.target.value)}
+                style={inputStyle}
+              >
+                {topics.map((topic) => (
+                  <option key={topic.topic_key} value={topic.topic_key}>
+                    {topic.label || topic.topic_key}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!isEvent ? (
+              <label style={fieldStyle}>
+                <span style={labelStyle}>Severity</span>
+                <select value={form.severity} onChange={(event) => setField("severity", event.target.value)} style={inputStyle}>
+                  <option value="info">Info</option>
+                  <option value="advisory">Advisory</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="emergency">Emergency</option>
+                </select>
+              </label>
+            ) : (
+              <label style={{ ...fieldStyle, alignContent: "end" }}>
+                <span style={labelStyle}>Event Type</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 42, fontSize: 13, fontWeight: 850 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.all_day)}
+                    onChange={(event) => setField("all_day", event.target.checked)}
+                  />
+                  All day event
+                </label>
+              </label>
+            )}
+          </div>
+
+          <label style={fieldStyle}>
+            <span style={labelStyle}>Title</span>
+            <input
+              value={form.title}
+              onChange={(event) => setField("title", event.target.value)}
+              placeholder={isEvent ? "Memorial Day parade" : "Water main repair on Lake Ave"}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={fieldStyle}>
+            <span style={labelStyle}>Summary</span>
+            <textarea
+              value={form.summary}
+              onChange={(event) => setField("summary", event.target.value)}
+              placeholder="Short resident-facing summary"
+              rows={3}
+              style={{ ...inputStyle, resize: "vertical", minHeight: 76 }}
+            />
+          </label>
+
+          <label style={fieldStyle}>
+            <span style={labelStyle}>Details</span>
+            <textarea
+              value={form.body}
+              onChange={(event) => setField("body", event.target.value)}
+              placeholder={isEvent ? "Parking guidance, route info, and resident expectations." : "What residents should expect and what action they should take."}
+              rows={4}
+              style={{ ...inputStyle, resize: "vertical", minHeight: 98 }}
+            />
+          </label>
+
+          <div style={{ display: "grid", gridTemplateColumns: pageMode ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Starts</span>
+              <input type="datetime-local" value={form.starts_at} onChange={(event) => setField("starts_at", event.target.value)} style={inputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Ends</span>
+              <input type="datetime-local" value={form.ends_at} onChange={(event) => setField("ends_at", event.target.value)} style={inputStyle} />
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: pageMode ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Location Name</span>
+              <input value={form.location_name} onChange={(event) => setField("location_name", event.target.value)} placeholder="City Hall, Lake Ave, etc." style={inputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Location Address</span>
+              <input value={form.location_address} onChange={(event) => setField("location_address", event.target.value)} placeholder="Optional address" style={inputStyle} />
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: pageMode ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>CTA Label</span>
+              <input value={form.cta_label} onChange={(event) => setField("cta_label", event.target.value)} placeholder="More details" style={inputStyle} />
+            </label>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>CTA URL</span>
+              <input value={form.cta_url} onChange={(event) => setField("cta_url", event.target.value)} placeholder="https://..." style={inputStyle} />
+            </label>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: pageMode ? "1fr" : (isEvent ? "1fr" : "minmax(0, 0.72fr) minmax(0, 1.28fr)"),
+              gap: 12,
+              alignItems: "stretch",
+            }}
+          >
+            {!isEvent ? (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  minHeight: 42,
+                  fontSize: 13,
+                  fontWeight: 850,
+                  borderRadius: 14,
+                  border: darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.1)",
+                  background: darkMode ? "rgba(13, 24, 36, 0.4)" : "rgba(255, 255, 255, 0.6)",
+                  padding: "10px 12px",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.pinned)}
+                  disabled={actionPending}
+                  onChange={(event) => setField("pinned", event.target.checked)}
+                />
+                Pin at top
+              </label>
+            ) : null}
+            <div style={{ ...fieldStyle, gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+                <span style={labelStyle}>Publishing</span>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 850,
+                    color: residentCommunityStatusTone(form.status, darkMode).color,
+                  }}
+                >
+                  {residentCommunityStatusDescription(form.status)}
+                </span>
+              </div>
+              <div
+                role="group"
+                aria-label={`${isEvent ? "Event" : "Alert"} publishing status`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: pageMode ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+                  gap: 6,
+                  padding: 5,
+                  borderRadius: 14,
+                  border: darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.1)",
+                  background: darkMode ? "rgba(13, 24, 36, 0.54)" : "rgba(239, 245, 250, 0.92)",
+                }}
+              >
+                {statusOptions.map((option) => {
+                  const active = String(form.status || "").trim().toLowerCase() === option.value;
+                  const tone = residentCommunityStatusTone(option.value, darkMode);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={actionPending}
+                      onClick={() => setPublishingStatus(option.value)}
+                      style={{
+                        minHeight: 38,
+                        borderRadius: 11,
+                        border: active ? `1px solid ${tone.border}` : "1px solid transparent",
+                        background: active ? tone.bg : "transparent",
+                        color: active ? tone.color : "var(--sl-ui-text)",
+                        fontSize: 12,
+                        fontWeight: 950,
+                        cursor: actionPending ? "default" : "pointer",
+                        opacity: actionPending && !active ? 0.58 : 1,
+                      }}
+                      aria-pressed={active}
+                      title={option.description}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {canSchedule && String(form.status || "").trim().toLowerCase() === "scheduled" ? (
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Publish At</span>
+              <input
+                type="datetime-local"
+                value={form.publish_at}
+                onChange={(event) => setField("publish_at", event.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          ) : null}
+
+          {error ? (
+            <div style={{ color: darkMode ? "#ffb4b4" : "#b23a48", fontSize: 13, fontWeight: 800, lineHeight: 1.4 }}>
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+            padding: pageMode ? "8px 14px 9px" : "12px 20px 14px",
+            borderTop: darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)",
+            background: "var(--sl-ui-modal-bg)",
+            position: pageMode ? "sticky" : "static",
+            bottom: 0,
+            zIndex: 2,
+          }}
+        >
+          {showDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={actionPending}
+              style={{ ...destructiveButtonStyle, gridColumn: "1 / -1" }}
+            >
+              {deleting ? "Deleting…" : `Delete ${isEvent ? "Event" : "Alert"}`}
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} disabled={actionPending} style={secondaryButtonStyle}>
+            Cancel
+          </button>
+          <button type="submit" disabled={actionPending} style={primaryButtonStyle}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
   );
 }
 
@@ -12581,14 +15226,23 @@ export default function App({ onBackToHub = null }) {
   const flyInfoTimerRef = useRef(null);
   const officialCanvasOverlayRef = useRef(null);
   const smoothedHeadingRef = useRef(null);
+  const navigationHeadingRef = useRef(null);
   const lastFollowCameraRef = useRef({ lat: null, lng: null, heading: null });
+  const followAnimatedCameraRef = useRef({ lat: null, lng: null, heading: null });
   const followTargetRef = useRef(null);
   const followRafRef = useRef(null);
   const followLastFrameAtRef = useRef(0);
   const lastFollowStateSyncRef = useRef(0);
   const liveMotionRef = useRef({ lat: null, lng: null, heading: null, speed: 0, ts: 0 });
+  const animatedUserLocRef = useRef({ lat: null, lng: null });
+  const userLocTargetRef = useRef(null);
+  const userLocRafRef = useRef(null);
+  const stationaryAnchorRef = useRef(null);
+  const stationaryReleaseStreakRef = useRef(0);
   const lastUserLocUiRef = useRef({ lat: null, lng: null, ts: 0 });
+  const locationDiagnosticsLastStateAtRef = useRef(0);
   const boundaryCameraSignatureRef = useRef("");
+  const pendingTenantHomeRecenterRef = useRef("");
   const reportDeepLinkHandledRef = useRef(false);
   const initialReportDeepLinkRef = useRef(
     typeof window === "undefined" ? readReportDeepLinkRequest("") : readReportDeepLinkRequest(window.location.search || "")
@@ -12616,6 +15270,64 @@ export default function App({ onBackToHub = null }) {
       }),
     [headerOrganizationProfile, headerOrganizationProfileLoaded, headerTenantKey, tenant?.tenantConfig]
   );
+  const environmentGuardrailLabel = useMemo(() => {
+    if (!isNativeAppRuntime() || tenant?.appScope !== "map") return "";
+
+    const configuredLabel = String(
+      import.meta.env.VITE_PUBLIC_APP_BUILD_LABEL ||
+        import.meta.env.VITE_NATIVE_BUILD_LABEL ||
+        import.meta.env.VITE_MOBILE_BUILD_LABEL ||
+        ""
+    ).trim();
+    if (configuredLabel) return configuredLabel;
+
+    const testSignals = [
+      tenant?.tenantKey,
+      tenant?.tenantConfig?.name,
+      tenant?.tenantConfig?.primary_subdomain,
+      organizationDisplayName,
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean)
+      .join(" ");
+
+    return /\b(test|testing|demo|staging|sandbox|sample|qa|dev)\b/.test(testSignals) ? "TEST CITY" : "";
+  }, [organizationDisplayName, tenant?.appScope, tenant?.tenantConfig?.name, tenant?.tenantConfig?.primary_subdomain, tenant?.tenantKey]);
+  const citySwitchAvailable =
+    isNativeAppRuntime() &&
+    tenant?.appScope === "map" &&
+    Array.isArray(tenant?.availableTenants) &&
+    tenant.availableTenants.length > 1;
+  const mobileBottomRailHeight = "calc(env(safe-area-inset-bottom) + 68px)";
+  const mobileBottomRailOffset = "calc(env(safe-area-inset-bottom) + 92px)";
+  const mobileReportsPageBottomInset = "calc(env(safe-area-inset-bottom) + 68px)";
+  const mobileTabPageTopInset = "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
+  const mobileHeaderContentTopInset = "calc(env(safe-area-inset-top) + 50px)";
+  const mobileHeaderBottomInset = 16;
+  const mobileMapToolButtonStyle = {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    border: "1px solid rgba(17, 39, 64, 0.18)",
+    background: prefersDarkMode
+      ? "linear-gradient(180deg, rgba(28, 43, 60, 0.96) 0%, rgba(19, 30, 43, 0.98) 100%)"
+      : "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(241, 246, 252, 0.96) 100%)",
+    boxShadow: prefersDarkMode
+      ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.34)"
+      : "inset 0 1px 0 rgba(255,255,255,0.9), 0 10px 22px rgba(17,39,64,0.20)",
+    color: "var(--sl-ui-text)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    padding: 0,
+  };
+  const mobileMapLayerButtonStyle = {
+    ...mobileMapToolButtonStyle,
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+  };
   const mapHeaderTheme = useMemo(
     () => (
       prefersDarkMode
@@ -12724,7 +15436,49 @@ export default function App({ onBackToHub = null }) {
     if (!force && movedMeters < 0.9 && elapsedMs < 120) return;
 
     lastUserLocUiRef.current = { lat: next.lat, lng: next.lng, ts: now };
-    setUserLoc([next.lat, next.lng]);
+    userLocTargetRef.current = next;
+
+    if (force || !Number.isFinite(animatedUserLocRef.current?.lat) || !Number.isFinite(animatedUserLocRef.current?.lng)) {
+      animatedUserLocRef.current = { lat: next.lat, lng: next.lng };
+      setUserLoc([next.lat, next.lng]);
+      if (userLocRafRef.current) {
+        cancelAnimationFrame(userLocRafRef.current);
+        userLocRafRef.current = null;
+      }
+      return;
+    }
+
+    if (userLocRafRef.current) return;
+
+    const animate = () => {
+      const target = userLocTargetRef.current;
+      const current = animatedUserLocRef.current;
+      if (!target || !Number.isFinite(current?.lat) || !Number.isFinite(current?.lng)) {
+        userLocRafRef.current = null;
+        return;
+      }
+
+      const remainingMeters = metersBetween(current, target);
+      if (remainingMeters <= 0.6) {
+        animatedUserLocRef.current = { lat: target.lat, lng: target.lng };
+        setUserLoc([target.lat, target.lng]);
+        userLocRafRef.current = null;
+        return;
+      }
+
+      const alpha =
+        remainingMeters >= 18 ? 0.34 :
+        remainingMeters >= 8 ? 0.28 :
+        remainingMeters >= 3 ? 0.22 :
+        0.16;
+      const nextLat = current.lat + (target.lat - current.lat) * alpha;
+      const nextLng = current.lng + (target.lng - current.lng) * alpha;
+      animatedUserLocRef.current = { lat: nextLat, lng: nextLng };
+      setUserLoc([nextLat, nextLng]);
+      userLocRafRef.current = requestAnimationFrame(animate);
+    };
+
+    userLocRafRef.current = requestAnimationFrame(animate);
   }
 
   function stopFollowCameraAnimation() {
@@ -12734,6 +15488,113 @@ export default function App({ onBackToHub = null }) {
     }
     followLastFrameAtRef.current = 0;
     followTargetRef.current = null;
+    followAnimatedCameraRef.current = { lat: null, lng: null, heading: null };
+  }
+
+  function requestCurrentPositionReliable({
+    enableHighAccuracy = true,
+    timeout = 12000,
+    maximumAge = 0,
+  } = {}) {
+    return new Promise((resolve, reject) => {
+      if (isNativeAppRuntime()) {
+        let timeoutId = null;
+        const rejectOnce = (err) => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          reject(err);
+        };
+        timeoutId = setTimeout(() => {
+          rejectOnce({ code: 3, message: "Location request timed out." });
+        }, Math.max(2000, timeout + 2000));
+        Geolocation.getCurrentPosition({
+          enableHighAccuracy,
+          timeout,
+          maximumAge,
+        })
+          .then((pos) => {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+            resolve(pos);
+          })
+          .catch((err) => {
+            rejectOnce(err);
+          });
+        return;
+      }
+
+      if (!navigator?.geolocation) {
+        reject(new Error("Geolocation unavailable"));
+        return;
+      }
+
+      let settled = false;
+      let watchId = null;
+      let timeoutId = null;
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        if (watchId != null) {
+          try { navigator.geolocation.clearWatch(watchId); } catch {}
+          watchId = null;
+        }
+      };
+
+      const resolveOnce = (pos) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(pos);
+      };
+
+      const rejectOnce = (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      timeoutId = setTimeout(() => {
+        rejectOnce({ code: 3, message: "Location request timed out." });
+      }, Math.max(2000, timeout + 2000));
+
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          resolveOnce,
+          (err) => {
+            if (Number(err?.code) === 1) rejectOnce(err);
+          },
+          {
+            enableHighAccuracy,
+            maximumAge,
+            timeout,
+          }
+        );
+      } catch {
+        watchId = null;
+      }
+
+      try {
+        navigator.geolocation.getCurrentPosition(
+          resolveOnce,
+          rejectOnce,
+          {
+            enableHighAccuracy,
+            timeout,
+            maximumAge,
+          }
+        );
+      } catch (err) {
+        rejectOnce(err);
+      }
+    });
   }
 
   // Suppress popups
@@ -12897,6 +15758,13 @@ export default function App({ onBackToHub = null }) {
 
   // Notice modal state
   const [notice, setNotice] = useState({ open: false, icon: "", title: "", message: "", compact: false });
+  const [reportSuccess, setReportSuccess] = useState({
+    open: false,
+    kind: "incident",
+    domainKey: "",
+    title: "",
+    message: "",
+  });
   const noticeTimerRef = useRef(null);
   const dbConnectionStartedAtRef = useRef(Date.now());
   const dbConnectionNoticeAtRef = useRef(0);
@@ -12948,6 +15816,20 @@ export default function App({ onBackToHub = null }) {
       noticeTimerRef.current = null;
     }
     setNotice((p) => ({ ...p, open: false }));
+  }
+
+  function openReportSuccess(opts = {}) {
+    setReportSuccess({
+      open: true,
+      kind: String(opts?.kind || "incident").trim() === "streetlight" ? "streetlight" : "incident",
+      domainKey: String(opts?.domainKey || "").trim(),
+      title: String(opts?.title || "Report saved").trim() || "Report saved",
+      message: String(opts?.message || "").trim(),
+    });
+  }
+
+  function closeReportSuccess() {
+    setReportSuccess((prev) => ({ ...prev, open: false }));
   }
 
   async function copyTextToClipboard(label, value) {
@@ -13126,6 +16008,7 @@ export default function App({ onBackToHub = null }) {
   const [myReportsFocusIncidentId, setMyReportsFocusIncidentId] = useState("");
   const [myReportsFocusQuery, setMyReportsFocusQuery] = useState("");
   const [myReportsInViewOnly, setMyReportsInViewOnly] = useState(false);
+  const [myReportsReportedByMode, setMyReportsReportedByMode] = useState("me");
 
   const [openReportsOpen, setOpenReportsOpen] = useState(false);
   const [openReportsExpanded, setOpenReportsExpanded] = useState(() => new Set()); // lightIds expanded
@@ -13133,14 +16016,30 @@ export default function App({ onBackToHub = null }) {
   const [openReportMapFilterOn, setOpenReportMapFilterOn] = useState(false);
   const [streetlightInViewFilterMode, setStreetlightInViewFilterMode] = useState("");
   const [adminReportDomain, setAdminReportDomain] = useState("potholes");
+  const [activeMapLayerKey, setActiveMapLayerKey] = useState(INCIDENT_REPORTING_LAYER_KEY);
+  const [lastIncidentMapDomain, setLastIncidentMapDomain] = useState("potholes");
   const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
   const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
   const [selectedDomainMarker, setSelectedDomainMarker] = useState(null);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
+  const [citySwitcherOpen, setCitySwitcherOpen] = useState(false);
+  const [followedTenantKeys, setFollowedTenantKeys] = useState([]);
+  const [followedTenantKeysLoading, setFollowedTenantKeysLoading] = useState(false);
+  const [followCitySaving, setFollowCitySaving] = useState(false);
+  const [followedLocationsOpen, setFollowedLocationsOpen] = useState(false);
+  const [followedTenantBusyKey, setFollowedTenantBusyKey] = useState("");
   const [alertsWindowOpen, setAlertsWindowOpen] = useState(false);
   const [eventsWindowOpen, setEventsWindowOpen] = useState(false);
   const [mapCommunityAlerts, setMapCommunityAlerts] = useState([]);
   const [mapCommunityEvents, setMapCommunityEvents] = useState([]);
+  const [mapCommunityTopics, setMapCommunityTopics] = useState([]);
+  const [canManageCommunityFeed, setCanManageCommunityFeed] = useState(false);
+  const [canDeleteCommunityFeed, setCanDeleteCommunityFeed] = useState(false);
+  const [communityFeedEditor, setCommunityFeedEditor] = useState({ open: false, kind: "alert", mode: "create", item: null });
+  const [communityFeedForm, setCommunityFeedForm] = useState(() => makeCommunityFeedForm("alert", []));
+  const [communityFeedSaving, setCommunityFeedSaving] = useState(false);
+  const [communityFeedDeleting, setCommunityFeedDeleting] = useState(false);
+  const [communityFeedEditorError, setCommunityFeedEditorError] = useState("");
   const [mapCommunityFeedLoading, setMapCommunityFeedLoading] = useState(false);
   const [mapCommunityFeedError, setMapCommunityFeedError] = useState("");
   const [mapCommunityFeedReadState, setMapCommunityFeedReadState] = useState({
@@ -13151,6 +16050,19 @@ export default function App({ onBackToHub = null }) {
     alertsReadIds: [],
     eventsReadIds: [],
   });
+
+  function preferredInitialDomainKey(options = []) {
+    const list = Array.isArray(options) ? options.filter(Boolean) : [];
+    const firstIncidentKey = String(
+      list.find((d) => isIncidentDrivenDomainKey(d?.key))?.key || ""
+    ).trim();
+    if (firstIncidentKey) return firstIncidentKey;
+    const firstStreetlightKey = String(
+      list.find((d) => String(d?.key || "").trim() === "streetlights")?.key || ""
+    ).trim();
+    if (firstStreetlightKey) return firstStreetlightKey;
+    return String(list?.[0]?.key || "streetlights").trim() || "streetlights";
+  }
 
 
   function toggleMyReportsExpanded(lightId) {
@@ -13175,12 +16087,23 @@ export default function App({ onBackToHub = null }) {
     const focusIncidentId = String(opts?.focusIncidentId || "").trim();
     const focusQuery = String(opts?.focusQuery || "").trim();
     const inViewOnly = Boolean(opts?.inViewOnly);
+    const reportedByMode = String(opts?.reportedByMode || "me").trim().toLowerCase() === "all" ? "all" : "me";
+    closeAnyPopup();
+    setSelectedOfficialId(null);
+    setSelectedDomainMarker(null);
+    setSelectedQueuedTempId(null);
+    setAccountMenuOpen(false);
+    setMobileHeaderMenuOpen(false);
+    setAdminDomainMenuOpen(false);
+    setAlertsWindowOpen(false);
+    setEventsWindowOpen(false);
     setAdminReportDomain(domainKey);
     setMyReportsDomain(domainKey);
     setMyReportsExpanded(focusIncidentId ? new Set([focusIncidentId]) : new Set());
     setMyReportsFocusIncidentId(focusIncidentId);
     setMyReportsFocusQuery(focusQuery);
     setMyReportsInViewOnly(inViewOnly);
+    setMyReportsReportedByMode(reportedByMode);
     setMyReportsOpen(true);
   }
 
@@ -13599,6 +16522,10 @@ export default function App({ onBackToHub = null }) {
   const [locating, setLocating] = useState(false);
   const [autoFollow, setAutoFollow] = useState(false);
   const [followCamera, setFollowCamera] = useState(false);
+  const [travelFollowMode, setTravelFollowMode] = useState(false);
+  const [userHeading, setUserHeading] = useState(null);
+  const [locationDiagnosticsOpen, setLocationDiagnosticsOpen] = useState(false);
+  const [locationDiagnostics, setLocationDiagnostics] = useState(null);
   const lightActionsActorColumnsSupportedRef = useRef(false); // hard-disable actor_* writes unless explicitly enabled later
   const followHeadingEnabledRef = useRef(true);
 
@@ -13626,15 +16553,15 @@ export default function App({ onBackToHub = null }) {
   }
 
   useEffect(() => {
-    // Ask for location immediately on first load (once per tab session)
+    // Ask for location immediately on first load (once per app install/browser profile)
     try {
-      const alreadyPrompted = sessionStorage.getItem(LOC_PROMPTED_SESSION_KEY) === "1";
+      const alreadyPrompted = localStorage.getItem(LOC_PROMPTED_APP_KEY) === "1";
       if (!alreadyPrompted) {
-        sessionStorage.setItem(LOC_PROMPTED_SESSION_KEY, "1");
+        localStorage.setItem(LOC_PROMPTED_APP_KEY, "1");
         setShowLocationPrompt(true);
       }
     } catch {
-      // If sessionStorage fails, still show once
+      // If storage fails, still show once
       setShowLocationPrompt(true);
     }
   }, []);
@@ -13658,6 +16585,26 @@ export default function App({ onBackToHub = null }) {
   const [canAccessAdminReports, setCanAccessAdminReports] = useState(false);
   const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
   const [canEditDomainReports, setCanEditDomainReports] = useState(false);
+  const tenantScopedReadClient = useMemo(
+    () => createTenantScopedReadClient(tenant?.tenantKey || activeTenantKey(), session?.access_token),
+    [tenant?.tenantKey, session?.access_token]
+  );
+  const followedCityOptions = useMemo(() => {
+    const keys = new Set(
+      (Array.isArray(followedTenantKeys) ? followedTenantKeys : [])
+        .map((key) => String(key || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    if (!keys.size) return [];
+    return (Array.isArray(tenant?.availableTenants) ? tenant.availableTenants : [])
+      .filter((city) => keys.has(String(city?.tenantKey || "").trim().toLowerCase()));
+  }, [followedTenantKeys, tenant?.availableTenants]);
+  const currentCityFollowed = useMemo(() => {
+    const currentKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+    if (!currentKey) return false;
+    return (Array.isArray(followedTenantKeys) ? followedTenantKeys : [])
+      .some((key) => String(key || "").trim().toLowerCase() === currentKey);
+  }, [followedTenantKeys, tenant?.tenantKey]);
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
   const [tenantMapFeatures, setTenantMapFeatures] = useState({
@@ -13669,6 +16616,7 @@ export default function App({ onBackToHub = null }) {
     boundary_border_color: "#e53935",
     boundary_border_width: 4,
   });
+  const [residentMenuLinks, setResidentMenuLinks] = useState([]);
   const [openAbuseFlagSummary, setOpenAbuseFlagSummary] = useState({ total: 0, maxSeverity: 0 });
   const [moderationFlagsOpen, setModerationFlagsOpen] = useState(false);
   const [moderationFlagRows, setModerationFlagRows] = useState([]);
@@ -13692,6 +16640,47 @@ export default function App({ onBackToHub = null }) {
       enabled: true,
     }));
   }, [isDomainPublic]);
+  const assetLayerOptions = useMemo(() => {
+    const includeInternalAssetLayers = Boolean(isAdmin);
+    const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isAssetBackedDomainKey(d.key));
+    const next = [...visibleAssetOptions];
+    const hasStreetlightLayer = next.some((d) => d.key === "streetlights");
+    if (!hasStreetlightLayer) {
+      const streetlightsOption = REPORT_DOMAIN_OPTIONS.find((d) => d.key === "streetlights");
+      if (streetlightsOption) {
+        next.unshift({ ...streetlightsOption, enabled: true });
+      }
+    }
+    if (includeInternalAssetLayers) {
+      for (const option of REPORT_DOMAIN_OPTIONS.filter((d) => isAssetBackedDomainKey(d.key))) {
+        if (next.some((d) => d.key === option.key)) continue;
+        next.push({ ...option, enabled: true });
+      }
+    }
+    return next;
+  }, [visibleDomainOptions, isAdmin]);
+  const incidentLayerDomainOptions = useMemo(
+    () => (visibleDomainOptions || []).filter((d) => isIncidentDrivenDomainKey(d.key)),
+    [visibleDomainOptions]
+  );
+  const layerOptions = useMemo(() => {
+    const opts = [...assetLayerOptions];
+    if (incidentLayerDomainOptions.length) {
+      opts.push({
+        key: INCIDENT_REPORTING_LAYER_KEY,
+        label: "Incident Reporting",
+        icon: "📍",
+        iconSrc: UI_ICON_SRC.incidentReportingLayer,
+        enabled: true,
+      });
+    }
+    return opts;
+  }, [assetLayerOptions, incidentLayerDomainOptions]);
+  const resolvedIncidentMapDomain = useMemo(() => {
+    if (incidentLayerDomainOptions.some((d) => d.key === lastIncidentMapDomain)) return lastIncidentMapDomain;
+    if (incidentLayerDomainOptions.some((d) => d.key === adminReportDomain)) return adminReportDomain;
+    return String(incidentLayerDomainOptions?.[0]?.key || "").trim();
+  }, [incidentLayerDomainOptions, lastIncidentMapDomain, adminReportDomain]);
   const openReportsDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
@@ -13709,6 +16698,7 @@ export default function App({ onBackToHub = null }) {
   const canOpenDomainReports = isPlatformAdmin || hasOrgDomainReportsAccess;
   const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess;
   const reportsAdminView = isReportsAdminView;
+  const canToggleReportedByInMyReports = canOpenDomainReports || canOpenAdminReports;
 
   useEffect(() => {
     if (!openReportsOpen) return;
@@ -13716,6 +16706,24 @@ export default function App({ onBackToHub = null }) {
     if (openReportsDomainOptions.some((d) => d.key === adminReportDomain)) return;
     setAdminReportDomain(openReportsDomainOptions[0].key);
   }, [openReportsOpen, openReportsDomainOptions, adminReportDomain]);
+
+  useEffect(() => {
+    if (!isIncidentDrivenDomainKey(adminReportDomain)) return;
+    const nextIncidentDomain = String(adminReportDomain || "").trim();
+    if (!nextIncidentDomain || nextIncidentDomain === lastIncidentMapDomain) return;
+    setLastIncidentMapDomain(nextIncidentDomain);
+  }, [adminReportDomain, lastIncidentMapDomain]);
+
+  useEffect(() => {
+    if (!layerOptions.length) return;
+    if (layerOptions.some((d) => d.key === activeMapLayerKey)) return;
+    const fallbackLayerKey = layerOptions.some((d) => d.key === INCIDENT_REPORTING_LAYER_KEY)
+      ? INCIDENT_REPORTING_LAYER_KEY
+      : layerOptions.some((d) => d.key === "streetlights")
+        ? "streetlights"
+        : String(layerOptions?.[0]?.key || "streetlights").trim() || "streetlights";
+    setActiveMapLayerKey(fallbackLayerKey);
+  }, [layerOptions, activeMapLayerKey]);
 
   useEffect(() => {
     if (canOpenDomainReports) return;
@@ -13748,6 +16756,43 @@ export default function App({ onBackToHub = null }) {
         } catch {}
       };
     }, [session?.user?.id, session?.user?.email]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const openAuthStep = (stepValue = "login") => {
+      if (session?.user?.id) return;
+      const step = String(stepValue || "login").trim() || "login";
+      window.setTimeout(() => {
+        setAccountView("menu");
+        setAccountMenuOpen(false);
+        setAuthGateStep(step);
+        setAuthGateOpen(true);
+      }, 0);
+    };
+    const consumePendingOnboardingAuth = () => {
+      try {
+        const pending = String(window.sessionStorage.getItem(PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY) || "").trim();
+        if (!pending) return;
+        window.sessionStorage.removeItem(PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY);
+        openAuthStep(pending);
+      } catch {
+        // ignore storage failures
+      }
+    };
+    const handleOnboardingOpenAuth = (event) => {
+      try {
+        window.sessionStorage.removeItem(PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY);
+      } catch {
+        // ignore storage failures
+      }
+      openAuthStep(event?.detail?.step || "login");
+    };
+    window.addEventListener("cityreport:public-onboarding-open-auth", handleOnboardingOpenAuth);
+    consumePendingOnboardingAuth();
+    return () => {
+      window.removeEventListener("cityreport:public-onboarding-open-auth", handleOnboardingOpenAuth);
+    };
+  }, [session?.user?.id]);
 
 
   const [authEmail, setAuthEmail] = useState("");
@@ -13806,6 +16851,8 @@ export default function App({ onBackToHub = null }) {
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
 
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
+  const [mobileTabTransitionDirection, setMobileTabTransitionDirection] = useState("forward");
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
   const [contactUsOpen, setContactUsOpen] = useState(false);
@@ -13815,6 +16862,7 @@ export default function App({ onBackToHub = null }) {
   const [notificationPreferencesLoading, setNotificationPreferencesLoading] = useState(false);
   const [notificationPreferencesSaving, setNotificationPreferencesSaving] = useState(false);
   const [notificationPreferencesStatus, setNotificationPreferencesStatus] = useState("");
+  const nativePushRegisteringRef = useRef(false);
   const showNotificationPreferencesEntry =
     Boolean(session?.user?.id) &&
     (tenantMapFeatures?.show_alert_icon !== false || tenantMapFeatures?.show_event_icon !== false);
@@ -13822,6 +16870,7 @@ export default function App({ onBackToHub = null }) {
   const handleAccountMenuToggle = useCallback((event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
+    setMobileHeaderMenuOpen(false);
     setAccountMenuOpen((prev) => !prev);
     setAccountView("menu");
   }, []);
@@ -13947,15 +16996,24 @@ export default function App({ onBackToHub = null }) {
       .upsert(rows, { onConflict: "tenant_key,user_id,topic_key" });
 
     setNotificationPreferencesSaving(false);
-    if (error) {
-      setNotificationPreferencesStatus(error.message || "Could not save your notification preferences.");
-      return;
-    }
+      if (error) {
+        setNotificationPreferencesStatus(error.message || "Could not save your notification preferences.");
+        return;
+      }
 
     setSavedNotificationPreferencesByTopic(notificationPreferencesByTopic);
     setNotificationPreferencesStatus("Notification preferences saved.");
     setNotificationPreferencesOpen(false);
-  }, [notificationPreferencesByTopic, notificationTopics, session?.user?.id]);
+    setAccountView("menu");
+    if (isMobile) setAccountMenuOpen(true);
+  }, [isMobile, notificationPreferencesByTopic, notificationTopics, session?.user?.id]);
+
+  const nativePushShouldRegister = useMemo(() => {
+    if (!showNotificationPreferencesEntry) return false;
+    return notificationTopics.some((topic) => (
+      isResidentFeedInAppTopicEnabled(topic.topic_key, savedNotificationPreferencesByTopic, notificationTopics)
+    ));
+  }, [notificationTopics, savedNotificationPreferencesByTopic, showNotificationPreferencesEntry]);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageEditing, setManageEditing] = useState(false);
@@ -13976,7 +17034,50 @@ export default function App({ onBackToHub = null }) {
   const [recoveryPasswordValue, setRecoveryPasswordValue] = useState("");
   const [recoveryPasswordValue2, setRecoveryPasswordValue2] = useState("");
 
+  const closeAccountSubpages = useCallback(() => {
+    setAccountMenuOpen(false);
+    setManageOpen(false);
+    setManageEditing(false);
+    setNotificationPreferencesOpen(false);
+    setNotificationPreferencesStatus("");
+    setFollowedLocationsOpen(false);
+    setAccountView("menu");
+  }, []);
+
   const showAdminTools = isAdmin || showAdminLogin;
+
+  function recordLocationDiagnostics(snapshot = {}, force = false) {
+    if (!showAdminTools) return;
+    const now = Date.now();
+    if (!force && now - Number(locationDiagnosticsLastStateAtRef.current || 0) < 500) return;
+    locationDiagnosticsLastStateAtRef.current = now;
+    setLocationDiagnostics({
+      updatedAt: now,
+      tenantKey: tenant?.tenantKey || activeTenantKey(),
+      ...snapshot,
+    });
+  }
+
+  async function copyLocationDiagnostics() {
+    const payload = {
+      capturedAt: new Date().toISOString(),
+      tenantKey: tenant?.tenantKey || activeTenantKey(),
+      activeMapLayerKey,
+      autoFollow,
+      followCamera,
+      travelFollowMode,
+      userLoc,
+      userHeading,
+      liveMotion: liveMotionRef.current,
+      diagnostics: locationDiagnostics,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      openNotice("✅", "Copied", "Location diagnostics copied.", { autoCloseMs: 1200, compact: true });
+    } catch {
+      openNotice("⚠️", "Copy failed", "Could not copy location diagnostics.");
+    }
+  }
 
 
 
@@ -14012,6 +17113,8 @@ export default function App({ onBackToHub = null }) {
   const [pendingQueuedSign, setPendingQueuedSign] = useState(null); // {lat, lng, sign_type}
   const [potholeAdvisoryOpen, setPotholeAdvisoryOpen] = useState(false);
   const [pendingPotholeDomainTarget, setPendingPotholeDomainTarget] = useState(null);
+  const [incidentTypePickerOpen, setIncidentTypePickerOpen] = useState(false);
+  const [pendingIncidentTypeTarget, setPendingIncidentTypeTarget] = useState(null);
 
   const bulkSelectedSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds]);
   const bulkSelectedCount = bulkSelectedIds.length;
@@ -14077,21 +17180,108 @@ export default function App({ onBackToHub = null }) {
     exitMappingMode();
   }
 
-  function requestAdminDomainSwitch(domainKey, domainLabel) {
+  function closeIncidentTypePicker() {
+    setIncidentTypePickerOpen(false);
+    setPendingIncidentTypeTarget(null);
+  }
+
+  function startIncidentReportAtPoint(domainKey, lat, lng) {
+    const normalizedDomain = normalizeDomainKey(domainKey);
+    if (normalizedDomain !== "potholes" && normalizedDomain !== "water_drain_issues") return;
+
+    const targetLat = Number(lat);
+    const targetLng = Number(lng);
+    if (!Number.isFinite(targetLat) || !Number.isFinite(targetLng)) return;
+
+    if (normalizedDomain === "potholes") {
+      const domainLabel =
+        visibleDomainOptions.find((d) => d.key === normalizedDomain)?.label || "Pothole";
+      const targetToken = `pothole:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+      const provisionalTarget = {
+        domain: normalizedDomain,
+        domainLabel,
+        lat: targetLat,
+        lng: targetLng,
+        sourceLat: targetLat,
+        sourceLng: targetLng,
+        lightId: makePotholeIdFromCoords(targetLat, targetLng),
+        pothole_id: null,
+        locationLabel: `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
+        nearestAddress: "",
+        nearestLandmark: "",
+        nearestCrossStreet: "",
+        nearestIntersection: "",
+        _targetToken: targetToken,
+      };
+      setPendingPotholeDomainTarget(provisionalTarget);
+      setPotholeAdvisoryOpen(true);
+      return;
+    }
+
+    const nearestWaterMarker = nearestWaterDrainMarkerForPoint(targetLat, targetLng, waterDrainDomainMarkers);
+    const resolvedWaterIncidentId = String(nearestWaterMarker?.marker?.id || "").trim();
+    const lightId = resolvedWaterIncidentId || `${normalizedDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`;
+    const domainLabel =
+      visibleDomainOptions.find((d) => d.key === normalizedDomain)?.label || "Water / Drain Issue";
+    const nextTarget = {
+      domain: normalizedDomain,
+      domainLabel,
+      lat: targetLat,
+      lng: targetLng,
+      sourceLat: targetLat,
+      sourceLng: targetLng,
+      lightId,
+      pothole_id: null,
+      locationLabel:
+        String(nearestWaterMarker?.marker?.location_label || "").trim()
+        || `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
+      nearestAddress: "",
+      nearestLandmark: "",
+      nearestCrossStreet: "",
+      nearestIntersection: "",
+    };
+    setDomainReportTarget(nextTarget);
+    setDomainReportNote("");
+  }
+
+  function requestAdminDomainSwitch(domainKey, domainLabel, opts = {}) {
     const nextKey = String(domainKey || "").trim();
     if (!nextKey) return;
-    if (nextKey === adminReportDomain) {
+    const nextLayerKey = String(
+      opts?.layerKey || (isIncidentDrivenDomainKey(nextKey) ? INCIDENT_REPORTING_LAYER_KEY : nextKey)
+    ).trim() || nextKey;
+    if (nextKey === adminReportDomain && nextLayerKey === activeMapLayerKey) {
       setAdminDomainMenuOpen(false);
       return;
     }
     if (mappingMode && mappingQueue.length > 0) {
-      setPendingDomainSwitchTarget({ key: nextKey, label: String(domainLabel || nextKey) });
+      setPendingDomainSwitchTarget({
+        key: nextKey,
+        layerKey: nextLayerKey,
+        label: String(domainLabel || nextKey),
+      });
       setDomainSwitchConfirmOpen(true);
       return;
     }
+    if (isIncidentDrivenDomainKey(nextKey)) setLastIncidentMapDomain(nextKey);
+    setActiveMapLayerKey(nextLayerKey);
     setAdminReportDomain(nextKey);
     setAdminDomainMenuOpen(false);
     showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 3);
+  }
+
+  function requestMapLayerSwitch(layerKey, layerLabel) {
+    const nextLayerKey = String(layerKey || "").trim();
+    if (!nextLayerKey) return;
+    if (nextLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
+      const fallbackIncidentDomain = resolvedIncidentMapDomain;
+      if (!fallbackIncidentDomain) return;
+      requestAdminDomainSwitch(fallbackIncidentDomain, layerLabel || "Incident Reporting", {
+        layerKey: INCIDENT_REPORTING_LAYER_KEY,
+      });
+      return;
+    }
+    requestAdminDomainSwitch(nextLayerKey, layerLabel, { layerKey: nextLayerKey });
   }
 
   function cancelAdminDomainSwitch() {
@@ -14106,6 +17296,13 @@ export default function App({ onBackToHub = null }) {
     }
     const ok = await confirmMappingQueue();
     if (!ok) return;
+    if (isIncidentDrivenDomainKey(pendingDomainSwitchTarget.key)) {
+      setLastIncidentMapDomain(pendingDomainSwitchTarget.key);
+    }
+    setActiveMapLayerKey(
+      String(pendingDomainSwitchTarget?.layerKey || pendingDomainSwitchTarget.key).trim()
+      || pendingDomainSwitchTarget.key
+    );
     setAdminReportDomain(pendingDomainSwitchTarget.key);
     setAdminDomainMenuOpen(false);
     showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 3);
@@ -14119,6 +17316,13 @@ export default function App({ onBackToHub = null }) {
     }
     setMappingQueue([]);
     setSelectedQueuedTempId(null);
+    if (isIncidentDrivenDomainKey(pendingDomainSwitchTarget.key)) {
+      setLastIncidentMapDomain(pendingDomainSwitchTarget.key);
+    }
+    setActiveMapLayerKey(
+      String(pendingDomainSwitchTarget?.layerKey || pendingDomainSwitchTarget.key).trim()
+      || pendingDomainSwitchTarget.key
+    );
     setAdminReportDomain(pendingDomainSwitchTarget.key);
     setAdminDomainMenuOpen(false);
     showToolHint(`Domain: ${String(pendingDomainSwitchTarget.label || pendingDomainSwitchTarget.key)}`, 1000, 3);
@@ -14329,6 +17533,118 @@ export default function App({ onBackToHub = null }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const userId = String(session?.user?.id || "").trim();
+
+    async function loadFollowedCities() {
+      if (!userId) {
+        setFollowedTenantKeys([]);
+        setFollowedTenantKeysLoading(false);
+        return;
+      }
+
+      setFollowedTenantKeysLoading(true);
+      const { data, error } = await supabase
+        .from("resident_tenant_interests")
+        .select("tenant_key")
+        .eq("user_id", userId);
+
+      if (cancelled) return;
+
+      setFollowedTenantKeysLoading(false);
+      if (error) {
+        if (!isMissingRelationError(error) && !isExpectedPermissionError(error)) {
+          console.warn("[city-switcher][followed-locations-failed]", error);
+        }
+        setFollowedTenantKeys([]);
+        return;
+      }
+
+      const nextKeys = [...new Set(
+        (Array.isArray(data) ? data : [])
+          .map((row) => String(row?.tenant_key || "").trim().toLowerCase())
+          .filter(Boolean)
+      )];
+      setFollowedTenantKeys(nextKeys);
+    }
+
+    void loadFollowedCities();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  async function setTenantFollowStatus(tenantKeyValue, shouldFollow, opts = {}) {
+    const tenantKey = String(tenantKeyValue || "").trim().toLowerCase();
+    const userId = String(session?.user?.id || "").trim();
+    if (!tenantKey || !userId) return false;
+    if (followedTenantBusyKey) return false;
+    setFollowedTenantBusyKey(tenantKey);
+    try {
+      const request = shouldFollow
+        ? supabase
+          .from("resident_tenant_interests")
+          .upsert([{ user_id: userId, tenant_key: tenantKey }], { onConflict: "user_id,tenant_key" })
+        : supabase
+          .from("resident_tenant_interests")
+          .delete()
+          .eq("user_id", userId)
+          .eq("tenant_key", tenantKey);
+
+      const { error } = await request;
+      if (error) throw error;
+
+      setFollowedTenantKeys((prev) => {
+        const normalized = [...new Set(
+          (Array.isArray(prev) ? prev : [])
+            .map((key) => String(key || "").trim().toLowerCase())
+            .filter(Boolean)
+        )];
+        if (!shouldFollow) return normalized.filter((key) => key !== tenantKey);
+        return normalized.includes(tenantKey) ? normalized : [tenantKey, ...normalized];
+      });
+      if (!opts.silent) {
+        const label = String(opts.label || "City").trim() || "City";
+        openNotice(
+          "✅",
+          shouldFollow ? "City followed" : "City removed",
+          shouldFollow
+            ? `${label} will now appear in your switch-city list.`
+            : `${label} was removed from your switch-city list.`,
+          { autoCloseMs: 1400, compact: true }
+        );
+      }
+      return true;
+    } catch (error) {
+      openNotice("⚠️", "Couldn’t save city", error?.message || "Please try again.");
+      return false;
+    } finally {
+      setFollowedTenantBusyKey("");
+    }
+  }
+
+  async function toggleFollowCurrentCity() {
+    const tenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+    const userId = String(session?.user?.id || "").trim();
+    if (!tenantKey) return;
+
+    if (!userId) {
+      setInfoMenuOpen(false);
+      setAuthGateStep("welcome");
+      setAuthGateOpen(true);
+      return;
+    }
+
+    if (followCitySaving) return;
+    setFollowCitySaving(true);
+    try {
+      await setTenantFollowStatus(tenantKey, !currentCityFollowed, { label: organizationDisplayName });
+    } finally {
+      setFollowCitySaving(false);
+    }
+  }
+
+  useEffect(() => {
     async function checkAdmin() {
       if (!session?.user?.id) {
         setIsAdmin(false);
@@ -14404,9 +17720,51 @@ export default function App({ onBackToHub = null }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    async function loadCommunityFeedAccess() {
+      if (!session?.user?.id) {
+        setCanManageCommunityFeed(false);
+        setCanDeleteCommunityFeed(false);
+        return;
+      }
+      const tenantKey = activeTenantKey();
+      const [manageRes, deleteRes] = await Promise.all([
+        supabase.rpc("can_manage_tenant_communications", { p_tenant: tenantKey }),
+        supabase.rpc("can_delete_tenant_communications", { p_tenant: tenantKey }),
+      ]);
+      if (cancelled) return;
+      const manageError = manageRes?.error || null;
+      const deleteError = deleteRes?.error || null;
+      if (manageError && !isMissingFunctionError(manageError) && !isExpectedPermissionError(manageError)) {
+        console.warn("[map communications access]", manageError?.message || manageError);
+      }
+      if (deleteError && !isMissingFunctionError(deleteError) && !isExpectedPermissionError(deleteError)) {
+        console.warn("[map communications delete access]", deleteError?.message || deleteError);
+      }
+      if (manageError) {
+        setCanManageCommunityFeed(false);
+        setCanDeleteCommunityFeed(false);
+        return;
+      }
+      setCanManageCommunityFeed(Boolean(manageRes?.data));
+      setCanDeleteCommunityFeed(!deleteError && Boolean(deleteRes?.data));
+    }
+
+    void loadCommunityFeedAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, tenant?.tenantKey]);
+
+  useEffect(() => {
+    if (canManageCommunityFeed || !canDeleteCommunityFeed) return;
+    setCanDeleteCommunityFeed(false);
+  }, [canDeleteCommunityFeed, canManageCommunityFeed]);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadTenantVisibilityConfig() {
       // Week 3 noise hardening: keep default visibility unless this feature is explicitly enabled.
-      if (!authReady) return;
       if (!ENABLE_TENANT_VISIBILITY_CONFIG) {
         if (!cancelled) {
           setTenantVisibilityByDomain({});
@@ -14414,8 +17772,16 @@ export default function App({ onBackToHub = null }) {
         }
         return;
       }
-      const tenantKey = activeTenantKey();
-      const { data, error } = await supabase
+      const tenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+      if (!tenantKey) {
+        if (!cancelled) {
+          setTenantVisibilityByDomain({});
+          setTenantVisibilityLoaded(false);
+        }
+        return;
+      }
+      const readClient = tenantScopedReadClient || supabase;
+      const { data, error } = await readClient
         .from("tenant_visibility_config")
         .select("domain,visibility")
         .eq("tenant_key", tenantKey);
@@ -14450,7 +17816,45 @@ export default function App({ onBackToHub = null }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady]);
+  }, [tenant?.tenantKey, tenantScopedReadClient]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadResidentMenuLinks() {
+      const tenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+      if (!tenantKey) {
+        if (!cancelled) setResidentMenuLinks([]);
+        return;
+      }
+
+      const readClient = tenantScopedReadClient || supabase;
+      const { data, error } = await readClient
+        .from("organization_menu_links")
+        .select("id,label,description,link_type,url,phone,email,audience,sort_order,enabled")
+        .eq("tenant_key", tenantKey)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (cancelled) return;
+
+      if (error) {
+        if (!isMissingRelationError(error)) {
+          console.warn("[resident menu links]", error?.message || error);
+        }
+        setResidentMenuLinks([]);
+        return;
+      }
+
+      const next = (data || [])
+        .map((row) => normalizeResidentMenuLinkRow(row))
+        .filter((row) => row.enabled);
+      setResidentMenuLinks(next);
+    }
+    void loadResidentMenuLinks();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant?.tenantKey, tenantScopedReadClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -14512,7 +17916,7 @@ export default function App({ onBackToHub = null }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady]);
+  }, [authReady, tenant?.tenantKey]);
 
   const resolvedCommunityFeedTenantKey = String(
     tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
@@ -14526,7 +17930,7 @@ export default function App({ onBackToHub = null }) {
   const markMapCommunityFeedViewed = useCallback((kind) => {
     const tenantKey = resolvedCommunityFeedTenantKey;
     if (!tenantKey) return;
-    const sourceItems = kind === "alerts" ? mapCommunityAlerts : mapCommunityEvents;
+    const sourceItems = filterVisibleResidentCommunityItems(kind === "alerts" ? mapCommunityAlerts : mapCommunityEvents);
     const nextTs = maxMapCommunityFeedTs(sourceItems);
     if (!nextTs) return;
     const nextReadKeys = sourceItems
@@ -14589,7 +17993,6 @@ export default function App({ onBackToHub = null }) {
       .from("municipality_alerts")
       .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,status,starts_at,ends_at,published_at,created_at,updated_at")
       .eq("tenant_key", tenantKey)
-      .eq("status", "published")
       .order("pinned", { ascending: false })
       .order("starts_at", { ascending: false })
       .order("created_at", { ascending: false });
@@ -14598,7 +18001,6 @@ export default function App({ onBackToHub = null }) {
       .from("municipality_events")
       .select("id,tenant_key,topic_key,title,summary,body,location_name,location_address,cta_label,cta_url,all_day,status,starts_at,ends_at,published_at,created_at,updated_at")
       .eq("tenant_key", tenantKey)
-      .eq("status", "published")
       .order("starts_at", { ascending: true })
       .order("created_at", { ascending: false });
 
@@ -14625,6 +18027,13 @@ export default function App({ onBackToHub = null }) {
     const topicLabelsByKey = Object.fromEntries(
       (topicRes.data || []).map((topic) => [topic.topic_key, String(topic?.label || "").trim() || topic?.topic_key])
     );
+    const nextTopics = (topicRes.data || [])
+      .map((topic) => ({
+        topic_key: String(topic?.topic_key || "").trim(),
+        label: String(topic?.label || "").trim() || String(topic?.topic_key || "").trim(),
+      }))
+      .filter((topic) => topic.topic_key);
+    setMapCommunityTopics(nextTopics);
 
     setMapCommunityAlerts(
       sortResidentAlerts((alertRes.data || [])
@@ -14664,6 +18073,342 @@ export default function App({ onBackToHub = null }) {
   }, [alertsWindowOpen, eventsWindowOpen, loadMapCommunityFeed]);
 
   useEffect(() => {
+    if (!authReady || tenant?.ready === false || !resolvedCommunityFeedTenantKey) return undefined;
+    let refreshTimer = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void loadMapCommunityFeed();
+      }, 250);
+    };
+    const channel = supabase
+      .channel(`realtime-community-feed-${resolvedCommunityFeedTenantKey}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "municipality_alerts",
+          filter: `tenant_key=eq.${resolvedCommunityFeedTenantKey}`,
+        },
+        scheduleRefresh
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "municipality_events",
+          filter: `tenant_key=eq.${resolvedCommunityFeedTenantKey}`,
+        },
+        scheduleRefresh
+      )
+      .subscribe();
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [authReady, loadMapCommunityFeed, resolvedCommunityFeedTenantKey, tenant?.ready]);
+
+  useEffect(() => {
+    if (!NATIVE_PUSH_ENABLED) return undefined;
+    if (!isNativeAppRuntime()) return undefined;
+    if (!session?.user?.id) return undefined;
+
+    let cancelled = false;
+    const listenerHandles = [];
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    const userId = session.user.id;
+    const platform = getPlatformName();
+    const safePlatform = platform === "android" ? "android" : platform === "ios" ? "ios" : "";
+    if (!tenantKey || !safePlatform) return undefined;
+
+    const rememberToken = async (tokenValue) => {
+      const token = String(tokenValue || "").trim();
+      if (!token || cancelled) return;
+      const { error } = await supabase
+        .from("native_push_tokens")
+        .upsert([{
+          tenant_key: tenantKey,
+          user_id: userId,
+          platform: safePlatform,
+          token,
+          enabled: true,
+          last_seen_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }], { onConflict: "tenant_key,user_id,platform,token" });
+      if (error && !isMissingRelationError(error) && !isExpectedPermissionError(error)) {
+        console.warn("[native push token]", error?.message || error);
+      }
+    };
+
+    const attachListeners = async () => {
+      try {
+        listenerHandles.push(await PushNotifications.addListener("registration", (token) => {
+          void rememberToken(token?.value);
+        }));
+        listenerHandles.push(await PushNotifications.addListener("registrationError", (error) => {
+          console.warn("[native push registration]", error?.error || error);
+        }));
+        listenerHandles.push(await PushNotifications.addListener("pushNotificationReceived", () => {
+          void loadMapCommunityFeed();
+        }));
+        listenerHandles.push(await PushNotifications.addListener("pushNotificationActionPerformed", () => {
+          void loadMapCommunityFeed();
+        }));
+      } catch (error) {
+        if (!cancelled) console.warn("[native push listeners]", error?.message || error);
+      }
+    };
+
+    void attachListeners();
+
+    return () => {
+      cancelled = true;
+      for (const handle of listenerHandles) {
+        try {
+          void handle?.remove?.();
+        } catch {
+          // ignore listener cleanup failures
+        }
+      }
+    };
+  }, [loadMapCommunityFeed, resolvedCommunityFeedTenantKey, session?.user?.id]);
+
+  useEffect(() => {
+    if (!NATIVE_PUSH_ENABLED) return;
+    if (!isNativeAppRuntime()) return;
+    if (!session?.user?.id || !nativePushShouldRegister) return;
+    if (nativePushRegisteringRef.current) return;
+
+    let cancelled = false;
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    const userId = session.user.id;
+    if (!tenantKey || !userId) return;
+
+    async function registerForNativePush() {
+      nativePushRegisteringRef.current = true;
+      try {
+        const platform = getPlatformName();
+        if (platform === "android") {
+          try {
+            await PushNotifications.createChannel({
+              id: "cityreport-updates",
+              name: "CityReport updates",
+              description: "Alerts and events from your selected city.",
+              importance: 4,
+              visibility: 1,
+              sound: "default",
+            });
+          } catch (error) {
+            console.warn("[native push channel]", error?.message || error);
+          }
+        }
+
+        let permission = await PushNotifications.checkPermissions();
+        if (permission?.receive === "prompt") {
+          permission = await PushNotifications.requestPermissions();
+        }
+        if (cancelled || permission?.receive !== "granted") return;
+
+        await PushNotifications.register();
+        try {
+          localStorage.setItem(`${NATIVE_PUSH_REGISTERED_KEY}:${tenantKey}:${userId}`, "1");
+        } catch {
+          // ignore storage failures
+        }
+      } catch (error) {
+        if (!cancelled) console.warn("[native push register]", error?.message || error);
+      } finally {
+        nativePushRegisteringRef.current = false;
+      }
+    }
+
+    void registerForNativePush();
+    return () => {
+      cancelled = true;
+    };
+  }, [nativePushShouldRegister, resolvedCommunityFeedTenantKey, session?.user?.id]);
+
+  const communityFeedTopicOptions = useMemo(() => {
+    if (mapCommunityTopics.length) return mapCommunityTopics;
+    return Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, details]) => ({
+      topic_key,
+      label: details?.label || topic_key,
+    }));
+  }, [mapCommunityTopics]);
+
+  const openCommunityFeedEditor = useCallback((kind, item = null) => {
+    const safeKind = kind === "event" ? "event" : "alert";
+    const safeItem = item || null;
+    setCommunityFeedEditor({
+      open: true,
+      kind: safeKind,
+      mode: safeItem ? "edit" : "create",
+      item: safeItem,
+    });
+    setCommunityFeedForm(makeCommunityFeedForm(safeKind, communityFeedTopicOptions, safeItem));
+    setCommunityFeedEditorError("");
+  }, [communityFeedTopicOptions]);
+
+  const closeCommunityFeedEditor = useCallback(() => {
+    if (communityFeedSaving || communityFeedDeleting) return;
+    setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+    setCommunityFeedEditorError("");
+  }, [communityFeedDeleting, communityFeedSaving]);
+
+  const saveCommunityFeedEditor = useCallback(async (event) => {
+    event.preventDefault();
+    if (!canManageCommunityFeed || communityFeedSaving || communityFeedDeleting) return;
+    const kind = communityFeedEditor.kind === "event" ? "event" : "alert";
+    const isEvent = kind === "event";
+    const isEditing = communityFeedEditor.mode === "edit" && communityFeedEditor.item?.id;
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    if (!tenantKey) {
+      setCommunityFeedEditorError("Tenant is not ready yet.");
+      return;
+    }
+
+    const basePayload = {
+      tenant_key: tenantKey,
+      topic_key: trimResidentFeedValue(communityFeedForm.topic_key),
+      title: trimResidentFeedValue(communityFeedForm.title),
+      summary: trimResidentFeedValue(communityFeedForm.summary),
+      body: trimResidentFeedValue(communityFeedForm.body),
+      location_name: trimResidentFeedValue(communityFeedForm.location_name),
+      location_address: trimResidentFeedValue(communityFeedForm.location_address),
+      cta_label: trimResidentFeedValue(communityFeedForm.cta_label),
+      cta_url: trimResidentFeedValue(communityFeedForm.cta_url),
+      status: trimResidentFeedValue(communityFeedForm.status) || "published",
+      starts_at: coerceResidentFeedDateTime(communityFeedForm.starts_at),
+      ends_at: coerceResidentFeedDateTime(communityFeedForm.ends_at),
+      delivery_channels: ["in_app", "email"],
+    };
+
+    if (!basePayload.topic_key || !basePayload.title) {
+      setCommunityFeedEditorError(`${isEvent ? "Event" : "Alert"} title and topic are required.`);
+      return;
+    }
+    if (isEvent && !basePayload.starts_at) {
+      setCommunityFeedEditorError("Event start time is required.");
+      return;
+    }
+    const currentItem = communityFeedEditor.item || null;
+    const currentStatus = trimResidentFeedValue(currentItem?.status).toLowerCase();
+    if (isEditing && currentStatus !== "scheduled" && basePayload.status === "scheduled") {
+      setCommunityFeedEditorError("Scheduling is only available before an alert or event has been published.");
+      return;
+    }
+    const scheduledPublishAt = coerceResidentFeedDateTime(communityFeedForm.publish_at);
+    if (basePayload.status === "scheduled") {
+      if (!scheduledPublishAt) {
+        setCommunityFeedEditorError("Choose when this should publish.");
+        return;
+      }
+      if (new Date(scheduledPublishAt).getTime() <= Date.now()) {
+        setCommunityFeedEditorError("Scheduled publish time must be in the future.");
+        return;
+      }
+    }
+
+    const payload = isEvent
+      ? {
+          ...basePayload,
+          all_day: Boolean(communityFeedForm.all_day),
+        }
+      : {
+          ...basePayload,
+          severity: trimResidentFeedValue(communityFeedForm.severity) || "info",
+          pinned: Boolean(communityFeedForm.pinned),
+        };
+    payload.published_at = payload.status === "scheduled"
+      ? scheduledPublishAt
+      : payload.status === "published"
+        ? (String(currentItem?.status || "").trim().toLowerCase() === "published" && currentItem?.published_at
+          ? currentItem.published_at
+          : new Date().toISOString())
+        : null;
+
+    setCommunityFeedSaving(true);
+    setCommunityFeedEditorError("");
+    const tableName = isEvent ? "municipality_events" : "municipality_alerts";
+    const query = isEditing
+      ? supabase.from(tableName).update(payload).eq("tenant_key", tenantKey).eq("id", communityFeedEditor.item.id)
+      : supabase.from(tableName).insert([payload]);
+    const { error } = await query;
+    setCommunityFeedSaving(false);
+
+    if (error) {
+      setCommunityFeedEditorError(error.message || `Could not save the ${isEvent ? "event" : "alert"}.`);
+      return;
+    }
+
+    setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+    openNotice("✅", isEvent ? "Event saved" : "Alert saved", `${isEvent ? "Event" : "Alert"} was saved successfully.`, {
+      autoCloseMs: 1400,
+      compact: true,
+    });
+    await loadMapCommunityFeed();
+  }, [
+    canManageCommunityFeed,
+    communityFeedEditor.item,
+    communityFeedEditor.kind,
+    communityFeedEditor.mode,
+    communityFeedForm,
+    communityFeedDeleting,
+    communityFeedSaving,
+    loadMapCommunityFeed,
+    resolvedCommunityFeedTenantKey,
+  ]);
+
+  const deleteCommunityFeedItem = useCallback(async () => {
+    if (!canDeleteCommunityFeed || communityFeedSaving || communityFeedDeleting) return;
+    const kind = communityFeedEditor.kind === "event" ? "event" : "alert";
+    const isEvent = kind === "event";
+    const itemId = communityFeedEditor.item?.id;
+    const tenantKey = resolvedCommunityFeedTenantKey;
+    if (!tenantKey || !itemId) {
+      setCommunityFeedEditorError(`${isEvent ? "Event" : "Alert"} is not ready to delete yet.`);
+      return;
+    }
+
+    const itemTitle = trimResidentFeedValue(communityFeedEditor.item?.title) || `this ${isEvent ? "event" : "alert"}`;
+    const confirmed = typeof window === "undefined" || window.confirm(`Delete "${itemTitle}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setCommunityFeedDeleting(true);
+    setCommunityFeedEditorError("");
+    const tableName = isEvent ? "municipality_events" : "municipality_alerts";
+    const { error } = await supabase
+      .from(tableName)
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("id", itemId);
+    setCommunityFeedDeleting(false);
+
+    if (error) {
+      setCommunityFeedEditorError(error.message || `Could not delete the ${isEvent ? "event" : "alert"}.`);
+      return;
+    }
+
+    setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+    openNotice("✅", isEvent ? "Event deleted" : "Alert deleted", `${isEvent ? "Event" : "Alert"} was deleted.`, {
+      autoCloseMs: 1400,
+      compact: true,
+    });
+    await loadMapCommunityFeed();
+  }, [
+    canDeleteCommunityFeed,
+    communityFeedDeleting,
+    communityFeedEditor.item,
+    communityFeedEditor.kind,
+    communityFeedSaving,
+    loadMapCommunityFeed,
+    resolvedCommunityFeedTenantKey,
+  ]);
+
+  useEffect(() => {
     if (!alertsWindowOpen || mapCommunityFeedLoading) return;
     markMapCommunityFeedViewed("alerts");
   }, [alertsWindowOpen, mapCommunityFeedLoading, mapCommunityAlerts, markMapCommunityFeedViewed]);
@@ -14675,11 +18420,72 @@ export default function App({ onBackToHub = null }) {
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
+    const preferredDomainKey = preferredInitialDomainKey(visibleDomainOptions);
     const hasAdminDomain = visibleDomainOptions.some((d) => d.key === adminReportDomain);
-    if (!hasAdminDomain) setAdminReportDomain(visibleDomainOptions[0].key);
+    if (!hasAdminDomain) setAdminReportDomain(preferredDomainKey);
+    if (!hasAdminDomain) {
+      setActiveMapLayerKey(isIncidentDrivenDomainKey(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
+    }
     const hasMyDomain = visibleDomainOptions.some((d) => d.key === myReportsDomain);
-    if (!hasMyDomain) setMyReportsDomain(visibleDomainOptions[0].key);
+    if (!hasMyDomain) setMyReportsDomain(preferredDomainKey);
   }, [visibleDomainOptions, adminReportDomain, myReportsDomain]);
+
+  const previousTenantKeyRef = useRef("");
+  useEffect(() => {
+    const nextTenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
+    if (!nextTenantKey || !visibleDomainOptions.length) return;
+    if (!previousTenantKeyRef.current) {
+      previousTenantKeyRef.current = nextTenantKey;
+      return;
+    }
+    if (previousTenantKeyRef.current === nextTenantKey) return;
+    previousTenantKeyRef.current = nextTenantKey;
+
+    const preferredDomainKey = preferredInitialDomainKey(visibleDomainOptions);
+
+    setActiveMapLayerKey(isIncidentDrivenDomainKey(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
+    setAdminReportDomain(preferredDomainKey);
+    setMyReportsDomain(preferredDomainKey);
+    setMyReportsReportedByMode("me");
+    closeMyReports();
+    closeOpenReports();
+    setSelectedOfficialId(null);
+    setSelectedDomainMarker(null);
+    setSelectedQueuedTempId(null);
+    setAdminDomainMenuOpen(false);
+    setAdminToolboxOpen(false);
+    setAlertsWindowOpen(false);
+    setEventsWindowOpen(false);
+    setAccountMenuOpen(false);
+    setMobileHeaderMenuOpen(false);
+    setStreetlightInViewFilterMode("");
+    setBulkMode(false);
+    setBulkConfirmOpen(false);
+    clearBulkSelection();
+    setMappingMode(false);
+    setMappingQueue([]);
+    setReports([]);
+    setOfficialLights([]);
+    setOfficialSigns([]);
+    setPotholes([]);
+    setPotholeReports([]);
+    setIncidentStateByKey({});
+    setWaterDrainIncidentsById({});
+    setFixedLights({});
+    setLastFixByLightId({});
+    setActionsByLightId({});
+    setUtilityReportedLightIdSet(new Set());
+    setUtilityReportedAtByLightId({});
+    setUtilityReportReferenceByLightId({});
+    setUtilitySignalCountsByLightId({});
+    setCityBoundaryGeojson(null);
+    setMapBounds(null);
+    setGmapsRef(null);
+    mapRef.current = null;
+    boundaryCameraSignatureRef.current = "";
+    preserveReportFlyTargetCameraRef.current = false;
+    pendingTenantHomeRecenterRef.current = nextTenantKey;
+  }, [tenant?.tenantKey, visibleDomainOptions]);
 
   useEffect(() => {
     if (reportDeepLinkHandledRef.current) return;
@@ -14697,6 +18503,7 @@ export default function App({ onBackToHub = null }) {
     reportDeepLinkHandledRef.current = true;
 
     if (nextDomain) {
+      setActiveMapLayerKey(isIncidentDrivenDomainKey(nextDomain) ? INCIDENT_REPORTING_LAYER_KEY : nextDomain);
       setAdminReportDomain(nextDomain);
       setMyReportsDomain(nextDomain);
     }
@@ -14712,55 +18519,59 @@ export default function App({ onBackToHub = null }) {
     }
   }, [visibleDomainOptions, canOpenDomainReports]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadOpenAbuseFlags() {
-      if (!isAdmin) {
-        if (!cancelled) setOpenAbuseFlagSummary({ total: 0, maxSeverity: 0 });
-        abuseFlagBannerShownRef.current = false;
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("metrics_open_abuse_flags_v1")
-        .select("open_flag_count,severity");
-
-      if (cancelled) return;
-      if (error) {
-        if (!isExpectedPermissionError(error)) {
-          console.warn("[abuse flags]", error?.message || error);
-        }
-        return;
-      }
-
-      let total = 0;
-      let maxSeverity = 0;
-      for (const r of data || []) {
-        const count = Math.max(0, Number(r?.open_flag_count || 0));
-        const sev = Math.max(0, Number(r?.severity || 0));
-        total += count;
-        if (sev > maxSeverity) maxSeverity = sev;
-      }
-
-      setOpenAbuseFlagSummary({ total, maxSeverity });
-
-      if (total > 0 && !abuseFlagBannerShownRef.current) {
-        // Keep admin anomaly totals in state, but avoid disruptive modal on login/refresh.
-        abuseFlagBannerShownRef.current = true;
-      } else if (total === 0) {
-        abuseFlagBannerShownRef.current = false;
-      }
+  const loadOpenAbuseFlagSummary = useCallback(async ({ silent = true } = {}) => {
+    if (!isAdmin) {
+      setOpenAbuseFlagSummary({ total: 0, maxSeverity: 0 });
+      abuseFlagBannerShownRef.current = false;
+      return;
     }
 
-    loadOpenAbuseFlags();
-    const timer = setInterval(loadOpenAbuseFlags, 60000);
+    const { data, error } = await supabase
+      .from("metrics_open_abuse_flags_v1")
+      .select("open_flag_count,severity");
+
+    if (error) {
+      if (!silent && !isExpectedPermissionError(error)) {
+        console.warn("[abuse flags]", error?.message || error);
+      }
+      return;
+    }
+
+    let total = 0;
+    let maxSeverity = 0;
+    for (const r of data || []) {
+      const count = Math.max(0, Number(r?.open_flag_count || 0));
+      const sev = Math.max(0, Number(r?.severity || 0));
+      total += count;
+      if (sev > maxSeverity) maxSeverity = sev;
+    }
+
+    setOpenAbuseFlagSummary({ total, maxSeverity });
+
+    if (total > 0 && !abuseFlagBannerShownRef.current) {
+      // Keep admin anomaly totals in state, but avoid disruptive modal on login/refresh.
+      abuseFlagBannerShownRef.current = true;
+    } else if (total === 0) {
+      abuseFlagBannerShownRef.current = false;
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setOpenAbuseFlagSummary({ total: 0, maxSeverity: 0 });
+      abuseFlagBannerShownRef.current = false;
+      return undefined;
+    }
+
+    void loadOpenAbuseFlagSummary();
+    const timer = setInterval(() => {
+      void loadOpenAbuseFlagSummary();
+    }, 60000);
 
     return () => {
-      cancelled = true;
       clearInterval(timer);
     };
-  }, [isAdmin]);
+  }, [isAdmin, loadOpenAbuseFlagSummary]);
 
   const loadModerationFlagRows = useCallback(async () => {
     if (!isAdmin) {
@@ -14771,7 +18582,29 @@ export default function App({ onBackToHub = null }) {
     }
     setModerationFlagsLoading(true);
     setModerationFlagsError("");
+
+    try {
+      const { data, error } = await supabase
+        .from("abuse_anomaly_flags")
+        .select("*")
+        .eq("status", "open")
+        .order("last_seen_at", { ascending: false })
+        .limit(300);
+      if (!error) {
+        const rows = Array.isArray(data)
+          ? data.map((row) => ({ ...row, _source: "abuse_anomaly_flags" }))
+          : [];
+        setModerationFlagRows(rows);
+        setModerationFlagsError("");
+        setModerationFlagsLoading(false);
+        return;
+      }
+    } catch {
+      // Older deployments may not expose the anomaly table; fall through to telemetry/events.
+    }
+
     const tryQueries = [
+      () => supabase.from("abuse_events").select("*").is("acknowledged_at", null).order("created_at", { ascending: false }).limit(300),
       () => supabase.from("abuse_events").select("*").order("created_at", { ascending: false }).limit(300),
       () => supabase.from("abuse_events").select("*").order("ts", { ascending: false }).limit(300),
       () => supabase.from("abuse_events").select("*").order("id", { ascending: false }).limit(300),
@@ -14784,7 +18617,11 @@ export default function App({ onBackToHub = null }) {
           lastErr = error;
           continue;
         }
-        const rows = Array.isArray(data) ? data : [];
+        const rows = Array.isArray(data)
+          ? data
+              .filter((row) => !String(row?.acknowledged_at || "").trim())
+              .map((row) => ({ ...row, _source: "abuse_events" }))
+          : [];
         setModerationFlagRows(rows);
         setModerationFlagsError("");
         setModerationFlagsLoading(false);
@@ -14793,10 +18630,115 @@ export default function App({ onBackToHub = null }) {
         lastErr = e;
       }
     }
+    try {
+      const { data, error } = await supabase
+        .from("metrics_open_abuse_flags_v1")
+        .select("domain,reason,severity,open_flag_count,last_seen_at")
+        .order("severity", { ascending: false })
+        .order("open_flag_count", { ascending: false });
+      if (!error) {
+        const rows = Array.isArray(data)
+          ? data.map((row, idx) => ({
+              id: `summary-${idx}-${String(row?.domain || "unknown")}-${String(row?.reason || "flag")}-${Number(row?.severity || 0)}`,
+              domain: row?.domain || "unknown",
+              reason: row?.reason || "flag",
+              severity: Number(row?.severity || 0),
+              open_flag_count: Number(row?.open_flag_count || 0),
+              last_seen_at: row?.last_seen_at || "",
+              is_open: true,
+            }))
+          : [];
+        setModerationFlagRows(rows);
+        setModerationFlagsError("");
+        setModerationFlagsLoading(false);
+        return;
+      }
+      lastErr = error;
+    } catch (e) {
+      lastErr = e;
+    }
     setModerationFlagRows([]);
     setModerationFlagsError(String(lastErr?.message || lastErr || "Unable to load moderation flags"));
     setModerationFlagsLoading(false);
   }, [isAdmin]);
+
+  const acknowledgeModerationFlag = useCallback(async (row, note = "") => {
+    if (!isAdmin || !row) return;
+    const id = Number(row?.id);
+    if (!Number.isFinite(id)) return;
+    const source = String(row?._source || (row?.status ? "abuse_anomaly_flags" : "abuse_events")).trim() || "abuse_events";
+    const cleanNote = String(note || "").trim();
+
+    setModerationFlagsError("");
+    setModerationFlagsLoading(true);
+    let saved = false;
+    let lastErr = null;
+
+    try {
+      const { data, error } = await supabase.rpc("acknowledge_moderation_flag", {
+        p_source: source,
+        p_id: id,
+        p_note: cleanNote || null,
+      });
+      if (error) {
+        lastErr = error;
+      } else {
+        saved = data !== false;
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+
+    if (!saved) {
+      try {
+        if (source === "abuse_anomaly_flags") {
+          const { error } = await supabase
+            .from("abuse_anomaly_flags")
+            .update({
+              status: "reviewed",
+              reviewed_at: new Date().toISOString(),
+              reviewed_by: session?.user?.id || null,
+              review_note: cleanNote || null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", id)
+            .eq("status", "open");
+          if (error) {
+            lastErr = error;
+          } else {
+            saved = true;
+          }
+        } else {
+          const { error } = await supabase
+            .from("abuse_events")
+            .update({
+              acknowledged_at: new Date().toISOString(),
+              acknowledged_by: session?.user?.id || null,
+              acknowledgement_note: cleanNote || null,
+            })
+            .eq("id", id);
+          if (error) {
+            lastErr = error;
+          } else {
+            saved = true;
+          }
+        }
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    if (saved) {
+      setModerationFlagRows((prev) => (prev || []).filter((item) => String(item?.id) !== String(id) || String(item?._source || source) !== source));
+      await loadOpenAbuseFlagSummary({ silent: true });
+      await loadModerationFlagRows();
+      setModerationFlagsLoading(false);
+      return;
+    }
+
+    setModerationFlagsError(String(lastErr?.message || lastErr || "Unable to acknowledge moderation flag"));
+    setModerationFlagsLoading(false);
+  }, [isAdmin, loadModerationFlagRows, loadOpenAbuseFlagSummary, session?.user?.id]);
 
   useEffect(() => {
     if (!moderationFlagsOpen) return;
@@ -14937,8 +18879,7 @@ export default function App({ onBackToHub = null }) {
 
     setForgotPasswordError("");
     setAuthResetLoading(true);
-    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
     setAuthResetLoading(false);
 
     if (error) {
@@ -15073,6 +19014,7 @@ export default function App({ onBackToHub = null }) {
     setAuthEmail("");
     setAuthPassword("");
     setAccountMenuOpen(false);
+    setFollowedLocationsOpen(false);
   }
 
   async function saveManagedProfile() {
@@ -15268,18 +19210,39 @@ export default function App({ onBackToHub = null }) {
   // Load reports + fixed + official
   // -------------------------
   // CMD+F: async function fetchAllOfficialLights
-  async function fetchAllOfficialLights() {
+  async function fetchAllOfficialLights(client = supabase, tenantKey = "") {
     const pageSize = 1000;
     let from = 0;
     let all = [];
 
     while (true) {
-      const { data, error } = await supabase
+      const baseQuery = client
         .from("official_lights")
         .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark")
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
+      let data = null;
+      let error = null;
+      if (tenantKey) {
+        const scoped = await baseQuery.eq("tenant_key", tenantKey);
+        data = scoped.data || null;
+        error = scoped.error || null;
+        if (error && isMissingTenantKeyColumnError(error)) {
+          const fallback = await client
+            .from("official_lights")
+            .select("id, sl_id, lat, lng, nearest_address, nearest_cross_street, nearest_landmark")
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          data = fallback.data || null;
+          error = fallback.error || null;
+        }
+      } else {
+        const result = await baseQuery;
+        data = result.data || null;
+        error = result.error || null;
+      }
 
       if (error) throw error;
 
@@ -15292,19 +19255,41 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
-  async function fetchAllOfficialSigns() {
+  async function fetchAllOfficialSigns(client = supabase, tenantKey = "") {
     const pageSize = 1000;
     let from = 0;
     let all = [];
 
     while (true) {
-      const { data, error } = await supabase
+      const baseQuery = client
         .from("official_signs")
         .select("id, sign_type, lat, lng, active")
         .eq("active", true)
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
+      let data = null;
+      let error = null;
+      if (tenantKey) {
+        const scoped = await baseQuery.eq("tenant_key", tenantKey);
+        data = scoped.data || null;
+        error = scoped.error || null;
+        if (error && isMissingTenantKeyColumnError(error)) {
+          const fallback = await client
+            .from("official_signs")
+            .select("id, sign_type, lat, lng, active")
+            .eq("active", true)
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          data = fallback.data || null;
+          error = fallback.error || null;
+        }
+      } else {
+        const result = await baseQuery;
+        data = result.data || null;
+        error = result.error || null;
+      }
 
       if (error) throw error;
       all = all.concat(data || []);
@@ -15315,18 +19300,40 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
-  async function fetchAllIncidentStateCurrent() {
+  async function fetchAllIncidentStateCurrent(client = supabase, tenantKey = "") {
     const pageSize = 1000;
     let from = 0;
     let all = [];
     while (true) {
-      const { data, error } = await supabase
+      const baseQuery = client
         .from("incident_state_current")
         .select("domain, incident_id, state, last_changed_at")
         .order("last_changed_at", { ascending: false })
         .order("domain", { ascending: true })
         .order("incident_id", { ascending: true })
         .range(from, from + pageSize - 1);
+      let data = null;
+      let error = null;
+      if (tenantKey) {
+        const scoped = await baseQuery.eq("tenant_key", tenantKey);
+        data = scoped.data || null;
+        error = scoped.error || null;
+        if (error && isMissingTenantKeyColumnError(error)) {
+          const fallback = await client
+            .from("incident_state_current")
+            .select("domain, incident_id, state, last_changed_at")
+            .order("last_changed_at", { ascending: false })
+            .order("domain", { ascending: true })
+            .order("incident_id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          data = fallback.data || null;
+          error = fallback.error || null;
+        }
+      } else {
+        const result = await baseQuery;
+        data = result.data || null;
+        error = result.error || null;
+      }
       if (error) throw error;
       const batch = data || [];
       all = all.concat(batch);
@@ -15336,17 +19343,38 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
-  async function fetchAllWaterDrainIncidents() {
+  async function fetchAllWaterDrainIncidents(client = supabase, tenantKey = "") {
     const pageSize = 1000;
     let from = 0;
     let all = [];
     while (true) {
-      const { data, error } = await supabase
+      const baseQuery = client
         .from("water_drain_incidents")
         .select("incident_id, wd_id, issue_type, lat, lng, nearest_address, nearest_cross_street, nearest_landmark, geo_updated_at, updated_at")
         .order("updated_at", { ascending: false })
         .order("incident_id", { ascending: true })
         .range(from, from + pageSize - 1);
+      let data = null;
+      let error = null;
+      if (tenantKey) {
+        const scoped = await baseQuery.eq("tenant_key", tenantKey);
+        data = scoped.data || null;
+        error = scoped.error || null;
+        if (error && isMissingTenantKeyColumnError(error)) {
+          const fallback = await client
+            .from("water_drain_incidents")
+            .select("incident_id, wd_id, issue_type, lat, lng, nearest_address, nearest_cross_street, nearest_landmark, geo_updated_at, updated_at")
+            .order("updated_at", { ascending: false })
+            .order("incident_id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          data = fallback.data || null;
+          error = fallback.error || null;
+        }
+      } else {
+        const result = await baseQuery;
+        data = result.data || null;
+        error = result.error || null;
+      }
       if (error) throw error;
       const batch = data || [];
       all = all.concat(batch);
@@ -15356,15 +19384,19 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
-  async function fetchTenantDomainPublicConfig() {
-    const { data, error } = await supabase.rpc("tenant_domain_public_config");
+  async function fetchTenantDomainPublicConfig(client = supabase) {
+    const { data, error } = await client.rpc("tenant_domain_public_config");
     if (error) throw error;
     return Array.isArray(data) ? data : [];
   }
 
   useEffect(() => {
     if (!authReady) return; // ✅ wait until auth restored
+    if (tenant?.ready === false) return;
+    let cancelled = false;
     async function loadAll() {
+      const loadTenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+      const readClient = tenantScopedReadClient || supabase;
       setLoading(true);
       setError("");
 
@@ -15377,49 +19409,54 @@ export default function App({ onBackToHub = null }) {
       const actionsSelectFull = "id, light_id, action, note, created_at, actor_user_id";
 
       const reportsPromise = reportsAdminView
-        ? supabase.from("reports").select(reportSelectFull).order("created_at", { ascending: false })
+        ? readClient.from("reports").select(reportSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
         : (async () => {
-            const first = await supabase
+            const first = await readClient
               .from("reports_public")
               .select(reportSelectPublic)
+              .eq("tenant_key", loadTenantKey)
               .order("created_at", { ascending: false });
             const msg = String(first?.error?.message || "").toLowerCase();
             const missingReportNumber =
               first?.error && msg.includes("report_number") && msg.includes("does not exist");
-            if (!missingReportNumber) return first;
-            return supabase
+            const missingTenantKey =
+              first?.error && isMissingTenantKeyColumnError(first.error);
+            if (!missingReportNumber && !missingTenantKey) return first;
+            return readClient
               .from("reports_public")
               .select(reportSelectPublicLegacy)
+              .eq("tenant_key", loadTenantKey)
               .order("created_at", { ascending: false });
           })();
 
       const ownReportsPromise = (!reportsAdminView && isAuthed)
-        ? supabase
+        ? readClient
             .from("reports")
             .select(reportSelectFull)
+            .eq("tenant_key", loadTenantKey)
             .eq("reporter_user_id", session.user.id)
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
       const utilityStatusPromise = isAuthed
-        ? supabase
+        ? readClient
             .from("utility_report_status")
             .select("incident_id, report_reference, updated_at, reported_at")
-            .eq("tenant_key", activeTenantKey())
+            .eq("tenant_key", loadTenantKey)
             .eq("user_id", session.user.id)
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
-      const utilitySignalCountsPromise = supabase.rpc("streetlight_utility_signal_counts");
+      const utilitySignalCountsPromise = readClient.rpc("streetlight_utility_signal_counts");
       const utilityStatusAllPromise = reportsAdminView
-        ? supabase
+        ? readClient
             .from("utility_report_status")
             .select("incident_id")
-            .eq("tenant_key", activeTenantKey())
+            .eq("tenant_key", loadTenantKey)
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
 
       const actionsPromise = reportsAdminView
-        ? supabase.from("light_actions").select(actionsSelectFull).order("created_at", { ascending: false })
-        : supabase.from("light_actions_public").select(actionsSelectPublic).order("created_at", { ascending: false });
+        ? readClient.from("light_actions").select(actionsSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
+        : readClient.from("light_actions_public").select(actionsSelectPublic).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false });
 
       const [
         { data: reportDataRaw, error: repErrRaw },
@@ -15435,16 +19472,16 @@ export default function App({ onBackToHub = null }) {
         utilityStatusPromise,
         utilitySignalCountsPromise,
         utilityStatusAllPromise,
-        supabase.from("fixed_lights").select("*"),
+        readClient.from("fixed_lights").select("*").eq("tenant_key", loadTenantKey),
         actionsPromise,
       ]);
       let utilityStatusData = utilityStatusDataRaw;
       let utilityStatusErr = utilityStatusErrRaw;
       if (utilityStatusErr && isMissingUtilityReportReferenceColumnError(utilityStatusErr) && isAuthed) {
-        const fallback = await supabase
+        const fallback = await readClient
           .from("utility_report_status")
           .select("incident_id, updated_at, reported_at")
-          .eq("tenant_key", activeTenantKey())
+          .eq("tenant_key", loadTenantKey)
           .eq("user_id", session.user.id)
           .order("updated_at", { ascending: false });
         utilityStatusData = fallback.data || [];
@@ -15454,9 +19491,10 @@ export default function App({ onBackToHub = null }) {
       let repErr = repErrRaw;
       if (!reportsAdminView && (repErr || !(Array.isArray(reportData) && reportData.length))) {
         try {
-          const fallback = await supabase
+          const fallback = await readClient
             .from("reports")
             .select(reportSelectPublicWithNumber)
+            .eq("tenant_key", loadTenantKey)
             .order("created_at", { ascending: false });
           if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length) {
             reportData = fallback.data;
@@ -15477,8 +19515,8 @@ export default function App({ onBackToHub = null }) {
       let potholeRepErr = null;
       try {
         const [{ data: pd, error: pe }, { data: prd, error: pre }] = await Promise.all([
-          supabase.from("potholes").select(potholeSelect).order("created_at", { ascending: true }),
-          supabase.from("pothole_reports").select(potholeReportSelect).order("created_at", { ascending: false }),
+          readClient.from("potholes").select(potholeSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: true }),
+          readClient.from("pothole_reports").select(potholeReportSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false }),
         ]);
         potholeData = pd || [];
         potholeRepData = prd || [];
@@ -15498,19 +19536,19 @@ export default function App({ onBackToHub = null }) {
       let waterDrainIncidentErr = null;
       let cityBoundaryErr = null;
       try {
-        officialData = await fetchAllOfficialLights();
+        officialData = await fetchAllOfficialLights(readClient, loadTenantKey);
       } catch (e) {
         offErr = e;
         console.error("[official_lights] load error:", e);
       }
       try {
-        officialSignData = await fetchAllOfficialSigns();
+        officialSignData = await fetchAllOfficialSigns(readClient, loadTenantKey);
       } catch (e) {
         signErr = e;
         console.error("[official_signs] load error:", e);
       }
       try {
-        incidentStateRows = await fetchAllIncidentStateCurrent();
+        incidentStateRows = await fetchAllIncidentStateCurrent(readClient, loadTenantKey);
       } catch (e) {
         incidentStateErr = e;
         if (!isExpectedPermissionError(e)) {
@@ -15518,7 +19556,7 @@ export default function App({ onBackToHub = null }) {
         }
       }
       try {
-        waterDrainIncidentRows = await fetchAllWaterDrainIncidents();
+        waterDrainIncidentRows = await fetchAllWaterDrainIncidents(readClient, loadTenantKey);
       } catch (e) {
         waterDrainIncidentErr = e;
         const msg = String(e?.message || "").toLowerCase();
@@ -15528,8 +19566,8 @@ export default function App({ onBackToHub = null }) {
       }
       try {
         let boundaryKey = tenantBoundaryConfigKey();
-        const tenantKey = activeTenantKey();
-        const tenantBoundary = await supabase
+        const tenantKey = loadTenantKey;
+        const tenantBoundary = await readClient
           .from("tenants")
           .select("boundary_config_key")
           .eq("tenant_key", tenantKey)
@@ -15538,13 +19576,13 @@ export default function App({ onBackToHub = null }) {
           const configuredBoundaryKey = String(tenantBoundary.data.boundary_config_key || "").trim();
           if (configuredBoundaryKey) boundaryKey = configuredBoundaryKey;
         }
-        let { data: cfg, error: cfgErr } = await supabase
+        let { data: cfg, error: cfgErr } = await readClient
           .from("app_config")
           .select("value")
           .eq("key", boundaryKey)
           .maybeSingle();
         if ((!cfg?.value || cfgErr) && tenantKey === "ashtabulacity" && boundaryKey !== "ashtabula_city_geojson") {
-          const fallback = await supabase
+          const fallback = await readClient
             .from("app_config")
             .select("value")
             .eq("key", "ashtabula_city_geojson")
@@ -15555,7 +19593,7 @@ export default function App({ onBackToHub = null }) {
           }
         }
         if (!cfg?.value || cfgErr) {
-          const { data: boundaryFiles, error: boundaryFilesErr } = await supabase
+          const { data: boundaryFiles, error: boundaryFilesErr } = await readClient
             .from("tenant_files")
             .select("storage_bucket,storage_path")
             .eq("tenant_key", tenantKey)
@@ -15568,7 +19606,7 @@ export default function App({ onBackToHub = null }) {
             const bucket = String(newest?.storage_bucket || "tenant-files").trim() || "tenant-files";
             const path = String(newest?.storage_path || "").trim();
             if (path) {
-              const signed = await supabase.storage.from(bucket).createSignedUrl(path, 90);
+              const signed = await readClient.storage.from(bucket).createSignedUrl(path, 90);
               const signedUrl = String(signed?.data?.signedUrl || "").trim();
               if (!signed?.error && signedUrl) {
                 try {
@@ -15594,6 +19632,7 @@ export default function App({ onBackToHub = null }) {
         cityBoundaryErr = e;
         setCityBoundaryGeojson(null);
       }
+      if (cancelled) return;
       if (cityBoundaryErr) {
         console.warn("[app_config city boundary] load warning:", cityBoundaryErr?.message || cityBoundaryErr);
       }
@@ -15881,11 +19920,15 @@ export default function App({ onBackToHub = null }) {
       if (loadHadConnectionFailure) notifyDbConnectionIssue({ message: "connection check failed" });
       else resetDbConnectionIssueStreak();
 
+      if (cancelled) return;
       setLoading(false);
     }
 
-    loadAll();
-  }, [authReady, reportsAdminView, session?.user?.id]);
+    void loadAll();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, reportsAdminView, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, visibleDomainOptions]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -16400,10 +20443,76 @@ export default function App({ onBackToHub = null }) {
   const isStreetSignsDomain = adminReportDomain === "street_signs";
   const isPotholesDomain = adminReportDomain === "potholes";
   const isWaterDrainDomain = adminReportDomain === "water_drain_issues";
-  const isAssetReportingDomain = isStreetlightsDomain || isStreetSignsDomain;
+  const isStreetlightsLayerActive = activeMapLayerKey === "streetlights";
+  const isStreetSignsLayerActive = activeMapLayerKey === "street_signs";
+  const isAssetReportingDomain = isStreetlightsLayerActive || isStreetSignsLayerActive;
   const isAggregatedReportingDomain = !isAssetReportingDomain;
-  const canUseStreetlightBulk = isStreetlightsDomain;
-  const mappingUnitLabel = isStreetSignsDomain ? "Sign" : "Light";
+  const incidentLayerMeta = useMemo(() => ({
+    key: INCIDENT_REPORTING_LAYER_KEY,
+    label: "Incident Reporting",
+    icon: "📍",
+    iconSrc: UI_ICON_SRC.incidentReportingLayer,
+    enabled: true,
+  }), []);
+  const activeLayerMeta =
+    (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY ? incidentLayerMeta : null)
+    || layerOptions.find((d) => d.key === activeMapLayerKey)
+    || layerOptions[0]
+    || (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY ? incidentLayerMeta : null)
+    || visibleDomainOptions.find((d) => d.key === adminReportDomain)
+    || REPORT_DOMAIN_OPTIONS[0];
+  const mobilePrimaryLayerOptions = useMemo(() => {
+    const opts = [];
+    if (incidentLayerDomainOptions.length) {
+      opts.push(incidentLayerMeta);
+    }
+    const streetlightLayerMeta =
+      layerOptions.find((d) => d.key === "streetlights")
+      || visibleDomainOptions.find((d) => d.key === "streetlights")
+      || { key: "streetlights", label: "Streetlights", iconSrc: UI_ICON_SRC.streetlight, enabled: true };
+    if (streetlightLayerMeta?.key === "streetlights") {
+      opts.push({
+        ...streetlightLayerMeta,
+        iconSrc: streetlightLayerMeta?.iconSrc || UI_ICON_SRC.streetlight,
+        enabled: streetlightLayerMeta?.enabled !== false,
+      });
+    }
+    return opts;
+  }, [incidentLayerDomainOptions.length, incidentLayerMeta, layerOptions, visibleDomainOptions]);
+  const canUseStreetlightBulk = isStreetlightsLayerActive;
+  const showMobileMapTabContent =
+    !myReportsOpen &&
+    !alertsWindowOpen &&
+    !eventsWindowOpen &&
+    !accountMenuOpen &&
+    !notificationPreferencesOpen &&
+    !followedLocationsOpen &&
+    !manageOpen &&
+    !contactUsOpen &&
+    !infoMenuOpen &&
+    !citySwitcherOpen &&
+    !mobileHeaderMenuOpen;
+  const accountTabActive = accountMenuOpen || manageOpen || notificationPreferencesOpen || followedLocationsOpen;
+  const activeMobileTabKey = myReportsOpen
+    ? "reports"
+    : alertsWindowOpen
+      ? "alerts"
+      : eventsWindowOpen
+        ? "events"
+        : accountTabActive
+          ? "account"
+          : "map";
+  const setMobileTabTransitionFor = useCallback((nextKey) => {
+    const order = ["map", "reports", "alerts", "events", "account"];
+    const currentIndex = order.indexOf(activeMobileTabKey);
+    const nextIndex = order.indexOf(String(nextKey || "map").trim());
+    if (currentIndex < 0 || nextIndex < 0 || currentIndex === nextIndex) return;
+    setMobileTabTransitionDirection(nextIndex < currentIndex ? "back" : "forward");
+  }, [activeMobileTabKey]);
+  const mobileStreetlightModeButtonCount =
+    (canUseStreetlightBulk ? 1 : 0) +
+    (showAdminTools && isStreetlightsLayerActive ? 1 : 0);
+  const mappingUnitLabel = isStreetSignsLayerActive ? "Sign" : "Light";
   const cityLimitPolygons = useMemo(
     () => extractPolygonsFromGeoJson(cityBoundaryGeojson),
     [cityBoundaryGeojson]
@@ -16412,6 +20521,23 @@ export default function App({ onBackToHub = null }) {
     () => boundaryViewportFromPolygons(cityLimitPolygons),
     [cityLimitPolygons]
   );
+  const tenantDataViewport = useMemo(() => {
+    const points = [];
+    for (const row of officialLights || []) {
+      points.push({ lat: Number(row?.lat), lng: Number(row?.lng) });
+    }
+    for (const row of officialSigns || []) {
+      points.push({ lat: Number(row?.lat), lng: Number(row?.lng) });
+    }
+    for (const row of potholes || []) {
+      points.push({ lat: Number(row?.lat), lng: Number(row?.lng) });
+    }
+    for (const row of reports || []) {
+      points.push({ lat: Number(row?.lat), lng: Number(row?.lng) });
+    }
+    return viewportFromPoints(points);
+  }, [officialLights, officialSigns, potholes, reports]);
+  const tenantHomeViewport = cityBoundaryViewport || tenantDataViewport;
   const cityBoundaryOuterRings = useMemo(
     () => (cityLimitPolygons || []).map((poly) => poly?.[0]).filter((ring) => Array.isArray(ring) && ring.length >= 3),
     [cityLimitPolygons]
@@ -16427,8 +20553,14 @@ export default function App({ onBackToHub = null }) {
   const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
   const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
   const hasMapSession = Boolean(session?.user?.id);
-  const showMapAlertIcon = hasMapSession && tenantMapFeatures?.show_alert_icon !== false;
-  const showMapEventIcon = hasMapSession && tenantMapFeatures?.show_event_icon !== false;
+  const showMapAlertIcon = tenantMapFeatures?.show_alert_icon !== false;
+  const showMapEventIcon = tenantMapFeatures?.show_event_icon !== false;
+  const showMobileAdminRailButton = false;
+  const mobileBottomRailColumnCount =
+    3 +
+    (showMapAlertIcon ? 1 : 0) +
+    (showMapEventIcon ? 1 : 0) +
+    (showMobileAdminRailButton ? 1 : 0);
   const cityOutsideShadeOpacity = Number.isFinite(Number(tenantMapFeatures?.outside_shade_opacity))
     ? Math.max(0, Math.min(1, Number(tenantMapFeatures.outside_shade_opacity)))
     : 0.42;
@@ -16451,6 +20583,60 @@ export default function App({ onBackToHub = null }) {
   useEffect(() => {
     if (!showMapEventIcon) setEventsWindowOpen(false);
   }, [showMapEventIcon]);
+
+  const recenterToTenantHome = useCallback((reason = "manual") => {
+    const viewport = tenantHomeViewport;
+    if (!viewport) return false;
+
+    const map = mapRef.current;
+    const nextCenter = viewport.center;
+    setMapCenter((prev) => {
+      if (!prev) return nextCenter;
+      if (
+        Math.abs(Number(prev.lat) - Number(nextCenter.lat)) < 0.000001 &&
+        Math.abs(Number(prev.lng) - Number(nextCenter.lng)) < 0.000001
+      ) {
+        return prev;
+      }
+      return nextCenter;
+    });
+
+    if (!map || !window?.google?.maps?.LatLngBounds) return true;
+
+    try {
+      const bounds = new window.google.maps.LatLngBounds(
+        { lat: viewport.south, lng: viewport.west },
+        { lat: viewport.north, lng: viewport.east }
+      );
+      map.fitBounds(bounds, 42);
+      window.requestAnimationFrame(() => {
+        const c = map.getCenter?.();
+        const z = Number(map.getZoom?.());
+        const lat = Number(c?.lat?.());
+        const lng = Number(c?.lng?.());
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          setMapCenter({ lat, lng });
+        }
+        if (Number.isFinite(z)) {
+          mapZoomRef.current = z;
+          setMapZoom(Math.round(z));
+        }
+      });
+    } catch (err) {
+      console.warn("[home camera] fitBounds failed:", err?.message || err);
+    }
+
+    return true;
+  }, [tenantHomeViewport]);
+
+  useEffect(() => {
+    const tenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
+    if (!tenantKey) return;
+    if (pendingTenantHomeRecenterRef.current !== tenantKey) return;
+    if (!tenantHomeViewport) return;
+    recenterToTenantHome("tenant-switch");
+    pendingTenantHomeRecenterRef.current = "";
+  }, [tenant?.tenantKey, tenantHomeViewport, recenterToTenantHome]);
 
   useEffect(() => {
     if (!cityBoundaryViewport) {
@@ -16556,7 +20742,7 @@ export default function App({ onBackToHub = null }) {
   }, [actionsByLightId, incidentStateByKey]);
 
   const renderedOfficialLights = useMemo(() => {
-    if (!isStreetlightsDomain) return [];
+    if (!isStreetlightsLayerActive) return [];
     const base = (Array.isArray(officialLights) ? officialLights : []).map(normalizeOfficialLightRow).filter(Boolean);
     const cityFiltered = restrictPublicMarkersToCity
       ? base.filter((l) => isWithinAshtabulaCityLimits(l.lat, l.lng))
@@ -16567,7 +20753,7 @@ export default function App({ onBackToHub = null }) {
     return cityFiltered.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
   }, [
     officialLights,
-    isStreetlightsDomain,
+    isStreetlightsLayerActive,
     isAdmin,
     mappingMode,
     openReportMapFilterOn,
@@ -16583,7 +20769,7 @@ export default function App({ onBackToHub = null }) {
     const radius = Number(deleteCircleDraft.radiusMeters || 0);
     if (!isValidLatLng(centerLat, centerLng) || !Number.isFinite(radius) || radius <= 0) return [];
     const ids = [];
-    if (isStreetlightsDomain) {
+    if (isStreetlightsLayerActive) {
       for (const row of officialLights || []) {
         const light = normalizeOfficialLightRow(row);
         if (!light) continue;
@@ -16611,7 +20797,7 @@ export default function App({ onBackToHub = null }) {
       }
       return Array.from(new Set(ids.filter(Boolean)));
     }
-    if (isWaterDrainDomain || isStreetSignsDomain) {
+    if (isWaterDrainDomain || isStreetSignsLayerActive) {
       const byIncident = new Map();
       for (const r of selectedDomainReports || []) {
         const incidentId = String(r?.light_id || "").trim();
@@ -16633,10 +20819,10 @@ export default function App({ onBackToHub = null }) {
     return Array.from(new Set(ids.filter(Boolean)));
   }, [
     deleteCircleDraft,
-    isStreetlightsDomain,
+    isStreetlightsLayerActive,
     isPotholesDomain,
     isWaterDrainDomain,
-    isStreetSignsDomain,
+    isStreetSignsLayerActive,
     officialLights,
     openReportOfficialIdSet,
     potholes,
@@ -16645,123 +20831,145 @@ export default function App({ onBackToHub = null }) {
     selectedDomainReports,
   ]);
 
-  const nonStreetlightDomainMarkers = useMemo(() => {
-    if (isStreetlightsDomain) return [];
-    if (isPotholesDomain) {
-      const byId = new Map();
-      for (const p of potholes || []) {
-        if (!p?.id || !isValidLatLng(Number(p.lat), Number(p.lng))) continue;
-        byId.set(p.id, {
-          id: String(p.ph_id || "").trim() || makePotholeIdFromCoords(Number(p.lat), Number(p.lng)),
-          pothole_id: p.id,
-          lat: Number(p.lat),
-          lng: Number(p.lng),
-          count: 0,
-          lastTs: 0,
-          lastFixTs: Number(potholeLastFixById?.[String(p.id).trim()] || 0),
-          location_label: p.location_label || "",
+  const potholeDomainMarkers = useMemo(() => {
+    const byId = new Map();
+    for (const p of potholes || []) {
+      if (!p?.id || !isValidLatLng(Number(p.lat), Number(p.lng))) continue;
+      byId.set(p.id, {
+        id: String(p.ph_id || "").trim() || makePotholeIdFromCoords(Number(p.lat), Number(p.lng)),
+        pothole_id: p.id,
+        domain: "potholes",
+        lat: Number(p.lat),
+        lng: Number(p.lng),
+        count: 0,
+        lastTs: 0,
+        lastFixTs: Number(potholeLastFixById?.[String(p.id).trim()] || 0),
+        location_label: p.location_label || "",
+      });
+    }
+    for (const r of potholeReports || []) {
+      const pid = (r.pothole_id || "").trim();
+      if (!pid) continue;
+      const m = byId.get(pid);
+      if (!m) continue;
+      const lastFixTs = Number(m.lastFixTs || 0);
+      const ts = Number(r.ts || 0);
+      if (lastFixTs && ts <= lastFixTs) continue;
+      m.count += 1;
+      if (ts > m.lastTs) m.lastTs = ts;
+    }
+    return Array.from(byId.values()).sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+  }, [potholes, potholeReports, potholeLastFixById, isValidLatLng]);
+
+  const streetSignDomainMarkers = useMemo(() => {
+    const byId = new Map();
+    for (const s of officialSigns || []) {
+      const id = String(s?.id || "").trim();
+      if (!id || !isValidLatLng(Number(s?.lat), Number(s?.lng))) continue;
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[id] || 0), Number(fixedLights?.[id] || 0));
+      byId.set(id, {
+        id,
+        domain: "street_signs",
+        sign_type: String(s?.sign_type || "other").trim().toLowerCase() || "other",
+        lat: Number(s.lat),
+        lng: Number(s.lng),
+        count: 0,
+        lastTs: 0,
+        lastFixTs,
+      });
+    }
+    for (const r of selectedDomainReports || []) {
+      const lid = String(r?.light_id || "").trim();
+      const marker = byId.get(lid);
+      if (!marker) continue;
+      const ts = Number(r?.ts || 0);
+      const lastFixTs = Number(marker.lastFixTs || 0);
+      if (lastFixTs && ts <= lastFixTs) continue;
+      marker.count += 1;
+      if (ts > marker.lastTs) marker.lastTs = ts;
+    }
+    return Array.from(byId.values())
+      .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+  }, [officialSigns, selectedDomainReports, lastFixByLightId, fixedLights, isValidLatLng]);
+
+  const waterDrainDomainMarkers = useMemo(() => {
+    const sourceRows = (reports || [])
+      .filter((r) => reportDomainForRow(r, officialIdSet, officialSignIdSet) === "water_drain_issues")
+      .filter((r) => isValidLatLng(Number(r?.lat), Number(r?.lng)))
+      .map((r) => ({
+        ...r,
+        lat: Number(r.lat),
+        lng: Number(r.lng),
+        light_id: String(r?.light_id || "").trim() || lightIdFor(Number(r.lat), Number(r.lng)),
+      }));
+    const clustered = groupIntoLights(sourceRows);
+    return clustered
+      .map((c) => {
+        const fallbackIncidentId = String(c?.lightId || lightIdFor(Number(c?.lat || 0), Number(c?.lng || 0))).trim();
+        const allRows = [...(c?.reports || [])].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+        const incidentIds = collectIncidentIdsFromRows(allRows, fallbackIncidentId);
+        const canonicalIncidentId = canonicalWaterDrainIncidentIdFromRows(allRows, fallbackIncidentId);
+        const maxLastFixTs = incidentIds.reduce(
+          (max, incidentId) => Math.max(max, Number(lastFixByLightId?.[String(incidentId || "").trim()] || 0)),
+          0
+        );
+        const rows = allRows.filter((r) => {
+          const rowIncidentId = String(r?.light_id || canonicalIncidentId).trim();
+          const fixTs = Number(lastFixByLightId?.[rowIncidentId] || 0);
+          return Number(r?.ts || 0) > fixTs;
         });
-      }
-      for (const r of potholeReports || []) {
-        const pid = (r.pothole_id || "").trim();
-        if (!pid) continue;
-        const m = byId.get(pid);
-        if (!m) continue;
-        const lastFixTs = Number(m.lastFixTs || 0);
-        const ts = Number(r.ts || 0);
-        if (lastFixTs && ts <= lastFixTs) continue;
-        m.count += 1;
-        if (ts > m.lastTs) m.lastTs = ts;
-      }
-      return Array.from(byId.values()).sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
-    }
-    if (isStreetSignsDomain) {
-      const byId = new Map();
-      for (const s of officialSigns || []) {
-        const id = String(s?.id || "").trim();
-        if (!id || !isValidLatLng(Number(s?.lat), Number(s?.lng))) continue;
-        const lastFixTs = Math.max(Number(lastFixByLightId?.[id] || 0), Number(fixedLights?.[id] || 0));
-        byId.set(id, {
-          id,
-          sign_type: String(s?.sign_type || "other").trim().toLowerCase() || "other",
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-          count: 0,
-          lastTs: 0,
-          lastFixTs,
-        });
-      }
-      for (const r of selectedDomainReports || []) {
-        const lid = String(r?.light_id || "").trim();
-        const marker = byId.get(lid);
-        if (!marker) continue;
-        const ts = Number(r?.ts || 0);
-        const lastFixTs = Number(marker.lastFixTs || 0);
-        if (lastFixTs && ts <= lastFixTs) continue;
-        marker.count += 1;
-        if (ts > marker.lastTs) marker.lastTs = ts;
-      }
-      return Array.from(byId.values())
-        .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
-    }
-    if (isWaterDrainDomain) {
-      const clustered = groupIntoLights(
-        (selectedDomainReports || [])
-          .filter((r) => isValidLatLng(Number(r?.lat), Number(r?.lng)))
-          .map((r) => ({
-            ...r,
-            lat: Number(r.lat),
-            lng: Number(r.lng),
-            light_id: String(r?.light_id || "").trim() || lightIdFor(Number(r.lat), Number(r.lng)),
-          }))
-      );
-      return clustered
-        .map((c) => {
-          const fallbackIncidentId = String(c?.lightId || lightIdFor(Number(c?.lat || 0), Number(c?.lng || 0))).trim();
-          const allRows = [...(c?.reports || [])].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
-          const incidentIds = collectIncidentIdsFromRows(allRows, fallbackIncidentId);
-          const canonicalIncidentId = canonicalWaterDrainIncidentIdFromRows(allRows, fallbackIncidentId);
-          const maxLastFixTs = incidentIds.reduce(
-            (max, incidentId) => Math.max(max, Number(lastFixByLightId?.[String(incidentId || "").trim()] || 0)),
-            0
-          );
-          const rows = allRows.filter((r) => {
-            const rowIncidentId = String(r?.light_id || canonicalIncidentId).trim();
-            const fixTs = Number(lastFixByLightId?.[rowIncidentId] || 0);
-            return Number(r?.ts || 0) > fixTs;
-          });
-          return {
-            id: canonicalIncidentId || fallbackIncidentId,
-            incident_ids: incidentIds,
-            display_id: makeWaterDrainIdFromIncidentId(canonicalIncidentId || fallbackIncidentId),
-            lat: Number(c?.lat),
-            lng: Number(c?.lng),
-            count: rows.length,
-            lastTs: Number(rows?.[0]?.ts || 0),
-            location_label: readLocationFromNote(rows?.[0]?.note) || "",
-            rows,
-            lastFixTs: maxLastFixTs,
-          };
-        })
-        .filter((x) => isValidLatLng(Number(x?.lat), Number(x?.lng)) && Number(x?.count || 0) > 0)
-        .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
-    }
+        return {
+          id: canonicalIncidentId || fallbackIncidentId,
+          domain: "water_drain_issues",
+          incident_ids: incidentIds,
+          display_id: makeWaterDrainIdFromIncidentId(canonicalIncidentId || fallbackIncidentId),
+          lat: Number(c?.lat),
+          lng: Number(c?.lng),
+          count: rows.length,
+          lastTs: Number(rows?.[0]?.ts || 0),
+          location_label: readLocationFromNote(rows?.[0]?.note) || "",
+          rows,
+          lastFixTs: maxLastFixTs,
+        };
+      })
+      .filter((x) => isValidLatLng(Number(x?.lat), Number(x?.lng)) && Number(x?.count || 0) > 0)
+      .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
+  }, [reports, officialIdSet, officialSignIdSet, isValidLatLng, lastFixByLightId]);
+
+  const genericDomainMarkers = useMemo(() => {
     const byLight = new Map();
-    for (const r of selectedDomainReports) {
-      const lat = Number(r.lat);
-      const lng = Number(r.lng);
+    for (const r of selectedDomainReports || []) {
+      const lat = Number(r?.lat);
+      const lng = Number(r?.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-      const lid = String(r.light_id || `${lat.toFixed(5)}:${lng.toFixed(5)}`).trim();
+      const lid = String(r?.light_id || `${lat.toFixed(5)}:${lng.toFixed(5)}`).trim();
       const prev = byLight.get(lid);
       if (!prev) {
-        byLight.set(lid, { id: lid, lat, lng, count: 1, lastTs: Number(r.ts || 0) || 0 });
+        byLight.set(lid, { id: lid, domain: adminReportDomain, lat, lng, count: 1, lastTs: Number(r?.ts || 0) || 0 });
       } else {
         prev.count += 1;
-        if (Number(r.ts || 0) > prev.lastTs) prev.lastTs = Number(r.ts || 0);
+        if (Number(r?.ts || 0) > prev.lastTs) prev.lastTs = Number(r?.ts || 0);
       }
     }
     return Array.from(byLight.values());
-  }, [isStreetlightsDomain, isPotholesDomain, isStreetSignsDomain, isWaterDrainDomain, potholes, potholeReports, selectedDomainReports, potholeLastFixById, officialSigns, lastFixByLightId, fixedLights]);
+  }, [selectedDomainReports, adminReportDomain]);
+
+  const nonStreetlightDomainMarkers = useMemo(() => {
+    if (isStreetlightsLayerActive) return [];
+    if (isPotholesDomain) return potholeDomainMarkers;
+    if (isStreetSignsLayerActive) return streetSignDomainMarkers;
+    if (isWaterDrainDomain) return waterDrainDomainMarkers;
+    return genericDomainMarkers;
+  }, [
+    isStreetlightsLayerActive,
+    isPotholesDomain,
+    isStreetSignsLayerActive,
+    isWaterDrainDomain,
+    potholeDomainMarkers,
+    streetSignDomainMarkers,
+    waterDrainDomainMarkers,
+    genericDomainMarkers,
+  ]);
 
   const viewerIdentityKey = useMemo(
     () => reporterIdentityKey({ session, profile, guestInfo }),
@@ -16825,7 +21033,8 @@ export default function App({ onBackToHub = null }) {
 
   const refreshIncidentRepairProgress = useCallback(async (identityKey = viewerIdentityKey) => {
     try {
-      const { data, error } = await supabase.rpc("incident_repair_progress_public", {
+      const readClient = tenantScopedReadClient || supabase;
+      const { data, error } = await readClient.rpc("incident_repair_progress_public", {
         p_viewer_identity_hash: String(identityKey || "").trim() || null,
       });
       if (error) throw error;
@@ -16854,13 +21063,13 @@ export default function App({ onBackToHub = null }) {
       }
       setIncidentRepairProgressByKey({});
     }
-  }, [viewerIdentityKey]);
+  }, [viewerIdentityKey, tenantScopedReadClient]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadDomainPublicConfig() {
       try {
-        const rows = await fetchTenantDomainPublicConfig();
+        const rows = await fetchTenantDomainPublicConfig(tenantScopedReadClient || supabase);
         if (cancelled) return;
         const next = {};
         for (const row of rows || []) {
@@ -16884,12 +21093,12 @@ export default function App({ onBackToHub = null }) {
     return () => {
       cancelled = true;
     };
-  }, [authReady]);
+  }, [authReady, tenant?.tenantKey]);
 
   useEffect(() => {
     if (!authReady) return;
     void refreshIncidentRepairProgress(viewerIdentityKey);
-  }, [authReady, viewerIdentityKey, refreshIncidentRepairProgress]);
+  }, [authReady, tenant?.tenantKey, viewerIdentityKey, refreshIncidentRepairProgress]);
 
   useEffect(() => {
     if (!authReady) return undefined;
@@ -16902,7 +21111,7 @@ export default function App({ onBackToHub = null }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [authReady, viewerIdentityKey, refreshIncidentRepairProgress]);
+  }, [authReady, tenant?.tenantKey, viewerIdentityKey, refreshIncidentRepairProgress]);
 
   const getIncidentRepairSnapshot = useCallback((domain, incidentId) => {
     const key = incidentSnapshotKey(domain, incidentId);
@@ -17054,42 +21263,60 @@ export default function App({ onBackToHub = null }) {
   const viewerReportedWaterIncidentIdSet = useMemo(() => {
     const out = new Set();
     if (!viewerIdentityKey) return out;
-    if (!isWaterDrainDomain) return out;
-    for (const m of nonStreetlightDomainMarkers || []) {
+    for (const m of waterDrainDomainMarkers || []) {
       const incidentId = String(m?.id || "").trim();
       if (!incidentId) continue;
       const rows = Array.isArray(m?.rows) ? m.rows : [];
       if (rows.some((r) => reportIdentityKey(r) === viewerIdentityKey)) out.add(incidentId);
     }
     return out;
-  }, [viewerIdentityKey, isWaterDrainDomain, nonStreetlightDomainMarkers]);
+  }, [viewerIdentityKey, waterDrainDomainMarkers]);
 
   const renderedDomainMarkers = useMemo(() => {
-    if (isStreetSignsDomain) {
+    const shapePotholeMarkers = () => {
+      const isLoggedIn = Boolean(session?.user?.id);
       const adminView = Boolean(reportsAdminView);
-      const shaped = (nonStreetlightDomainMarkers || [])
+      const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("potholes");
+      const shaped = (potholeDomainMarkers || [])
         .map((m) => {
+          const pid = String(m?.pothole_id || "").trim();
           const count = Number(m?.count || 0);
-          if (!adminView && count < 1) return null;
+          const incidentId = pid ? `pothole:${pid}` : "";
+          const repairSnapshot = getIncidentRepairSnapshot("potholes", incidentId);
+          if (usePublicRepairLifecycle && repairSnapshot?.archived) return null;
+          const userReported = pid ? viewerReportedPotholeIdSet.has(pid) : false;
+          const resolvedByCommunity = usePublicRepairLifecycle && repairSnapshot?.likelyFixed === true;
+          if (adminView) {
+            if (count < 1) return null;
+            return {
+              ...m,
+              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
+              ringColor: userReported ? "#1e88e5" : "#fff",
+              glyph: "",
+              glyphSrc: UI_ICON_SRC.pothole,
+            };
+          }
+          const isPublic = count >= 2;
+          const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          if (!isPublic && !isPrivateOwn) return null;
           return {
             ...m,
-            color: officialStatusFromSinceFixCount(count).color,
-            ringColor: "#fff",
-            glyph: signMarkerGlyphForType(m?.sign_type),
-            glyphSrc: signMarkerIconSrcForType(m?.sign_type),
+            color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
+            ringColor: userReported ? "#1e88e5" : "#fff",
+            glyph: "",
+            glyphSrc: UI_ICON_SRC.pothole,
           };
         })
         .filter(Boolean)
         .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
       if (!restrictPublicMarkersToCity) return shaped;
       return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
-    }
-
-    if (isWaterDrainDomain) {
+    };
+    const shapeWaterDrainMarkers = () => {
       const isLoggedIn = Boolean(session?.user?.id);
       const adminView = Boolean(reportsAdminView);
       const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("water_drain_issues");
-      const shaped = (nonStreetlightDomainMarkers || [])
+      const shaped = (waterDrainDomainMarkers || [])
         .map((m) => {
           const count = Number(m?.count || 0);
           const incidentId = String(m?.id || "").trim();
@@ -17125,6 +21352,35 @@ export default function App({ onBackToHub = null }) {
         .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
       if (!restrictPublicMarkersToCity) return shaped;
       return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    };
+
+    if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
+      return [...shapePotholeMarkers(), ...shapeWaterDrainMarkers()]
+        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+    }
+
+    if (isStreetSignsLayerActive) {
+      const adminView = Boolean(reportsAdminView);
+      const shaped = (streetSignDomainMarkers || [])
+        .map((m) => {
+          const count = Number(m?.count || 0);
+          if (!adminView && count < 1) return null;
+          return {
+            ...m,
+            color: officialStatusFromSinceFixCount(count).color,
+            ringColor: "#fff",
+            glyph: signMarkerGlyphForType(m?.sign_type),
+            glyphSrc: signMarkerIconSrcForType(m?.sign_type),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+      if (!restrictPublicMarkersToCity) return shaped;
+      return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    }
+
+    if (isWaterDrainDomain) {
+      return shapeWaterDrainMarkers();
     }
 
     if (!isPotholesDomain) {
@@ -17132,47 +21388,15 @@ export default function App({ onBackToHub = null }) {
       if (!restrictPublicMarkersToCity) return base;
       return base.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
     }
-    const isLoggedIn = Boolean(session?.user?.id);
-    const adminView = Boolean(reportsAdminView);
-    const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("potholes");
-    const shaped = (nonStreetlightDomainMarkers || [])
-      .map((m) => {
-        const pid = String(m?.pothole_id || "").trim();
-        const count = Number(m?.count || 0);
-        const incidentId = pid ? `pothole:${pid}` : "";
-        const repairSnapshot = getIncidentRepairSnapshot("potholes", incidentId);
-        if (usePublicRepairLifecycle && repairSnapshot?.archived) return null;
-        const userReported = pid ? viewerReportedPotholeIdSet.has(pid) : false;
-        const resolvedByCommunity = usePublicRepairLifecycle && repairSnapshot?.likelyFixed === true;
-        if (adminView) {
-          if (count < 1) return null;
-          return {
-            ...m,
-            color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
-            ringColor: userReported ? "#1e88e5" : "#fff",
-            glyph: "",
-            glyphSrc: UI_ICON_SRC.pothole,
-          };
-        }
-        const isPublic = count >= 2;
-        const isPrivateOwn = isLoggedIn && userReported && count === 1;
-        if (!isPublic && !isPrivateOwn) return null;
-        return {
-          ...m,
-          color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
-          ringColor: userReported ? "#1e88e5" : "#fff",
-          glyph: "",
-          glyphSrc: UI_ICON_SRC.pothole,
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
-    if (!restrictPublicMarkersToCity) return shaped;
-    return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    return shapePotholeMarkers();
   }, [
-    isStreetSignsDomain,
+    activeMapLayerKey,
+    isStreetSignsLayerActive,
     isWaterDrainDomain,
     isPotholesDomain,
+    streetSignDomainMarkers,
+    potholeDomainMarkers,
+    waterDrainDomainMarkers,
     nonStreetlightDomainMarkers,
     viewerReportedWaterIncidentIdSet,
     viewerReportedPotholeIdSet,
@@ -17186,11 +21410,11 @@ export default function App({ onBackToHub = null }) {
   ]);
 
   const selectedOfficialLightForPopup = useMemo(() => {
-    if (bulkMode || !isStreetlightsDomain) return null;
+    if (bulkMode || !isStreetlightsLayerActive) return null;
     const id = (selectedOfficialId || "").trim();
     if (!id) return null;
     return (officialLights || []).find((x) => (x.id || "").trim() === id) || null;
-  }, [bulkMode, isStreetlightsDomain, selectedOfficialId, officialLights]);
+  }, [bulkMode, isStreetlightsLayerActive, selectedOfficialId, officialLights]);
 
   const selectedOfficialPopupPixel = useMemo(() => {
     const ol = selectedOfficialLightForPopup;
@@ -17204,7 +21428,7 @@ export default function App({ onBackToHub = null }) {
 
   useEffect(() => {
     const selected = selectedOfficialLightForPopup;
-    if (!(isStreetlightsDomain && selected)) {
+    if (!(isStreetlightsLayerActive && selected)) {
       setStreetlightUtilityContext({
         lightId: "",
         loading: false,
@@ -17228,7 +21452,7 @@ export default function App({ onBackToHub = null }) {
       nearestLandmark: String(selected?.nearest_landmark || "").trim(),
     });
   }, [
-    isStreetlightsDomain,
+    isStreetlightsLayerActive,
     selectedOfficialLightForPopup?.id,
     selectedOfficialLightForPopup?.nearest_address,
     selectedOfficialLightForPopup?.nearest_cross_street,
@@ -17331,6 +21555,7 @@ export default function App({ onBackToHub = null }) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(lat, lng) || null;
   }, [selectedDomainMarker, mapCenter, mapZoom, mapInteracting]);
+  const selectedDomainMarkerDomain = normalizeDomainKey(selectedDomainMarker?.domain || adminReportDomain);
 
   const selectedOfficialLifecycleSnapshot = useMemo(() => {
     if (!selectedOfficialLightForPopup) return null;
@@ -17338,14 +21563,14 @@ export default function App({ onBackToHub = null }) {
   }, [selectedOfficialLightForPopup, getIncidentSnapshot]);
 
   const selectedStreetSignLifecycleSnapshot = useMemo(() => {
-    if (!(adminReportDomain === "street_signs" && selectedDomainMarker)) return null;
+    if (!(selectedDomainMarkerDomain === "street_signs" && selectedDomainMarker)) return null;
     const signId = String(selectedDomainMarker?.id || "").trim();
     if (!signId) return null;
     return getIncidentSnapshot("street_signs", signId);
-  }, [adminReportDomain, selectedDomainMarker, getIncidentSnapshot]);
+  }, [selectedDomainMarkerDomain, selectedDomainMarker, getIncidentSnapshot]);
 
   const selectedPotholeInfo = useMemo(() => {
-    if (!(adminReportDomain === "potholes" && selectedDomainMarker)) return null;
+    if (!(selectedDomainMarkerDomain === "potholes" && selectedDomainMarker)) return null;
     const pid = String(selectedDomainMarker?.pothole_id || "").trim();
     if (!pid) return null;
     const lastFixTs = Number(potholeLastFixById?.[pid] || 0);
@@ -17394,10 +21619,10 @@ export default function App({ onBackToHub = null }) {
       currentState: derivedState,
       lastChangedAt: derivedLastChangedAt,
     };
-  }, [adminReportDomain, selectedDomainMarker, potholeReports, potholeLastFixById, getIncidentSnapshot, potholes]);
+  }, [selectedDomainMarkerDomain, selectedDomainMarker, potholeReports, potholeLastFixById, getIncidentSnapshot, potholes]);
 
   const selectedWaterDrainInfo = useMemo(() => {
-    if (!(adminReportDomain === "water_drain_issues" && selectedDomainMarker)) return null;
+    if (!(selectedDomainMarkerDomain === "water_drain_issues" && selectedDomainMarker)) return null;
     const markerIncidentId = String(selectedDomainMarker?.id || "").trim();
     const allRows = Array.isArray(selectedDomainMarker?.rows) ? [...selectedDomainMarker.rows] : [];
     allRows.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
@@ -17488,10 +21713,10 @@ export default function App({ onBackToHub = null }) {
       incidentId,
       incidentIds,
     };
-  }, [adminReportDomain, selectedDomainMarker, lastFixByLightId, getIncidentSnapshot, waterDrainIncidentsById]);
+  }, [selectedDomainMarkerDomain, selectedDomainMarker, lastFixByLightId, getIncidentSnapshot, waterDrainIncidentsById]);
 
   useEffect(() => {
-    if (!isStreetlightsDomain) {
+    if (!isStreetlightsLayerActive) {
       if (selectedOfficialId) setSelectedOfficialId(null);
       return;
     }
@@ -17499,15 +21724,19 @@ export default function App({ onBackToHub = null }) {
     const id = (selectedOfficialId || "").trim();
     if (!id) return;
     if (!openReportOfficialIdSet.has(id)) setSelectedOfficialId(null);
-  }, [isStreetlightsDomain, isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
+  }, [isStreetlightsLayerActive, isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
 
   useEffect(() => {
-    const keep =
-      adminReportDomain === "potholes" ||
-      adminReportDomain === "street_signs" ||
-      adminReportDomain === "water_drain_issues";
-    if (!keep && selectedDomainMarker) setSelectedDomainMarker(null);
-  }, [adminReportDomain, selectedDomainMarker]);
+    if (!selectedDomainMarker) return;
+    const markerDomain = normalizeDomainKey(selectedDomainMarker?.domain || "");
+    const keepForMarkerDomain =
+      markerDomain === "potholes" ||
+      markerDomain === "street_signs" ||
+      markerDomain === "water_drain_issues";
+    if (!keepForMarkerDomain || activeMapLayerKey === "streetlights") {
+      setSelectedDomainMarker(null);
+    }
+  }, [activeMapLayerKey, selectedDomainMarker]);
 
   useEffect(() => {
     if (!queueSignTypeOpen) return;
@@ -17953,7 +22182,7 @@ export default function App({ onBackToHub = null }) {
       return isPointInBounds(lat, lng, mapBounds);
     };
 
-    if (adminReportDomain === "streetlights") {
+    if (isStreetlightsLayerActive) {
       let count = 0;
       for (const l of renderedOfficialLights || []) {
         const lid = String(l?.id || "").trim();
@@ -17976,11 +22205,11 @@ export default function App({ onBackToHub = null }) {
       if (inView(lat, lng) && Number(m?.count || 0) > 0) count += 1;
     }
     return count;
-  }, [adminReportDomain, renderedOfficialLights, renderedDomainMarkers, officialMarkerColorForViewer, mapBounds]);
+  }, [isStreetlightsLayerActive, renderedOfficialLights, renderedDomainMarkers, officialMarkerColorForViewer, mapBounds]);
 
   const streetlightPersonalInViewStats = useMemo(() => {
     const empty = { saved: 0, utility: 0 };
-    if (!isStreetlightsDomain) return empty;
+    if (!isStreetlightsLayerActive) return empty;
 
     const inView = (lat, lng) => {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
@@ -18012,7 +22241,7 @@ export default function App({ onBackToHub = null }) {
 
     return { saved, utility };
   }, [
-    isStreetlightsDomain,
+    isStreetlightsLayerActive,
     isAdmin,
     mapBounds,
     renderedOfficialLights,
@@ -18024,20 +22253,20 @@ export default function App({ onBackToHub = null }) {
   ]);
 
   const visibleOfficialLights = useMemo(() => {
-    if (!isStreetlightsDomain) return renderedOfficialLights;
+    if (!isStreetlightsLayerActive) return renderedOfficialLights;
     return (renderedOfficialLights || []).filter((l) => {
       const lid = String(l?.id || "").trim();
       return streetlightFilterMatchesLight(lid);
     });
-  }, [isStreetlightsDomain, renderedOfficialLights, streetlightFilterMatchesLight]);
+  }, [isStreetlightsLayerActive, renderedOfficialLights, streetlightFilterMatchesLight]);
 
   useEffect(() => {
-    if (!isStreetlightsDomain) return;
+    if (!isStreetlightsLayerActive) return;
     const selectedId = String(selectedOfficialId || "").trim();
     if (!selectedId) return;
     const stillVisible = (visibleOfficialLights || []).some((l) => String(l?.id || "").trim() === selectedId);
     if (!stillVisible) setSelectedOfficialId(null);
-  }, [isStreetlightsDomain, selectedOfficialId, visibleOfficialLights]);
+  }, [isStreetlightsLayerActive, selectedOfficialId, visibleOfficialLights]);
 
   const openReportsModalGroupsBase = useMemo(() => {
     return (openIncidentGroupsNormalized || [])
@@ -18076,6 +22305,9 @@ export default function App({ onBackToHub = null }) {
       return isPointInBounds(lat, lng, mapBounds);
     });
   }, [openReportsModalGroupsBase, openReportsInViewOnly, mapBounds]);
+  const showAllInMyReports = canToggleReportedByInMyReports && myReportsReportedByMode === "all";
+  const myReportsModalGroups = showAllInMyReports ? openReportsModalGroups : myReportsStandardGroups;
+  const myReportsModalRows = showAllInMyReports ? selectedDomainReports : myReportsAllDomainRows;
 
   // -------------------------
   // Google Maps marker status helper
@@ -18197,6 +22429,27 @@ export default function App({ onBackToHub = null }) {
     // Leaflet legacy (safe no-op if not present)
     try { mapRef.current?.closePopup?.(); } catch {}
   }
+
+  const hasToolPopoutOpen =
+    accountMenuOpen ||
+    infoMenuOpen ||
+    citySwitcherOpen ||
+    alertsWindowOpen ||
+    eventsWindowOpen ||
+    openReportsOpen ||
+    myReportsOpen ||
+    adminDomainMenuOpen ||
+    adminToolboxOpen ||
+    locationDiagnosticsOpen ||
+    manageOpen ||
+    notificationPreferencesOpen ||
+    followedLocationsOpen ||
+    contactUsOpen;
+
+  useEffect(() => {
+    if (!hasToolPopoutOpen) return;
+    closeAnyPopup();
+  }, [hasToolPopoutOpen]);
 
   // CMD+F: function suppressPopupsSafe
   function suppressPopupsSafe(_ms = 800) {
@@ -19399,7 +23652,7 @@ export default function App({ onBackToHub = null }) {
     let target = targetRaw;
     const targetDomain = normalizeDomainKey(targetRaw?.domain);
     if (targetDomain === "water_drain_issues") {
-      const near = nearestWaterDrainMarkerForPoint(targetRaw?.lat, targetRaw?.lng, nonStreetlightDomainMarkers);
+      const near = nearestWaterDrainMarkerForPoint(targetRaw?.lat, targetRaw?.lng, waterDrainDomainMarkers);
       const resolvedIncidentId = String(near?.marker?.id || "").trim();
       if (resolvedIncidentId && resolvedIncidentId !== String(targetRaw?.lightId || "").trim()) {
         target = {
@@ -19874,7 +24127,12 @@ export default function App({ onBackToHub = null }) {
       setDomainReportIssue(defaultDomainIssueFor(target.domain));
       setPotholeConsentChecked(false);
       setDomainReportTarget(null);
-      openNotice("✅", "Reported", `${target.domainLabel || "Issue"} reported successfully.`);
+      openReportSuccess({
+        kind: "incident",
+        domainKey: target.domain,
+        title: `${target.domainLabel || "Issue"} reported`,
+        message: "Your report is now visible on the map and in Reports. You can track it there anytime.",
+      });
     } finally {
       if (!persistedSubmission && submitKey) {
         domainSubmitDedupRef.current.delete(submitKey);
@@ -19893,6 +24151,11 @@ function canRetryInsertWithoutSelect(err) {
     msg.includes("select") ||
     msg.includes("violates row-level security policy")
   );
+}
+
+function isMissingTenantKeyColumnError(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("tenant_key") && (msg.includes("does not exist") || msg.includes("schema cache"));
 }
 
 async function insertReportWithFallback(payload) {
@@ -20011,6 +24274,7 @@ async function insertReportWithFallback(payload) {
       return;
     }
 
+    setSaving(true);
     const abuseGate = await registerAbuseEventWithServer({
       session,
       profile,
@@ -20019,11 +24283,10 @@ async function insertReportWithFallback(payload) {
       bypass: false,
     });
     if (!abuseGate.allowed) {
+      setSaving(false);
       openRateLimitNotice(openNotice, abuseGate);
       return;
     }
-
-    setSaving(true);
 
     const normName = (name || "").trim() || null;
     const normEmail = normalizeEmail(email) || null;
@@ -20183,6 +24446,7 @@ async function insertReportWithFallback(payload) {
       return;
     }
 
+    setSaving(true);
     const abuseGate = await registerAbuseEventWithServer({
       session,
       profile,
@@ -20191,11 +24455,11 @@ async function insertReportWithFallback(payload) {
       bypass: false,
     });
     if (!abuseGate.allowed) {
+      setSaving(false);
       openRateLimitNotice(openNotice, abuseGate);
       return;
     }
 
-    setSaving(true);
     const { error } = await supabase
       .from("incident_repair_signals")
       .insert([{
@@ -20307,6 +24571,7 @@ async function insertReportWithFallback(payload) {
           return;
         }
 
+        setSaving(true);
         const abuseGate = await registerAbuseEventWithServer({
           session,
           profile,
@@ -20315,6 +24580,7 @@ async function insertReportWithFallback(payload) {
           bypass: false,
         });
         if (!abuseGate.allowed) {
+          setSaving(false);
           openRateLimitNotice(openNotice, abuseGate);
           return;
         }
@@ -20363,8 +24629,6 @@ async function insertReportWithFallback(payload) {
             }
           }
         }
-
-        setSaving(true);
 
         const payload = {
           lat: picked[0],
@@ -20432,7 +24696,12 @@ async function insertReportWithFallback(payload) {
     setTimeout(() => closeAnyPopup(), 0);
     suppressMapClickRef.current.until = Date.now() + 900;
 
-    openNotice("✅", "Report saved", "Saved to My Reports for utility follow-up.", { autoCloseMs: 1200 });
+    openReportSuccess({
+      kind: "streetlight",
+      domainKey: "streetlights",
+      title: "Light saved",
+      message: "This light is now in Reports so you can follow it and report it to the utility.",
+    });
   }
 
   // ✅ Auto-resume pending report after successful login
@@ -20680,6 +24949,12 @@ async function insertReportWithFallback(payload) {
     }
   }
 
+  if (reportType === "other" && !note.trim()) {
+    openNotice("⚠️", "Notes required", "Please add a brief note for “Other”.");
+    return;
+  }
+
+  setSaving(true);
   const abuseGate = await registerAbuseEventWithServer({
     session,
     profile,
@@ -20691,6 +24966,7 @@ async function insertReportWithFallback(payload) {
     bypass: false,
   });
   if (!abuseGate.allowed) {
+    setSaving(false);
     openRateLimitNotice(openNotice, abuseGate);
     return;
   }
@@ -20699,8 +24975,6 @@ async function insertReportWithFallback(payload) {
   // close any popup + suppress popups while modal closes
   closeAnyPopup();
   suppressPopupsSafe(1600);
-
-  setSaving(true);
 
   let okCount = 0;
   let skipAlreadyReported = 0;
@@ -20726,13 +25000,6 @@ async function insertReportWithFallback(payload) {
 
     const ol = officialLights.find((x) => x.id === lightId);
     if (!ol) continue;
-
-    // notes required rule
-    if (reportType === "other" && !note.trim()) {
-      openNotice("⚠️", "Notes required", "Please add a brief note for “Other”.");
-      setSaving(false);
-      return;
-    }
 
     const payload = {
       lat: ol.lat,
@@ -21449,13 +25716,17 @@ async function insertReportWithFallback(payload) {
 
     const headingNum = Number(heading);
     const hasHeading = Number.isFinite(headingNum);
+    const targetCenter =
+      travelFollowMode && hasHeading
+        ? destinationPointMeters({ lat, lng }, TRAVEL_FOLLOW_LOOKAHEAD_METERS, headingNum)
+        : { lat, lng };
     const currentZoom = Number(map.getZoom?.() ?? mapZoomRef.current ?? LOCATE_ZOOM);
     const targetZoom = Number.isFinite(currentZoom) ? currentZoom : LOCATE_ZOOM;
 
     try {
       if (map.moveCamera) {
         const camera = {
-          center: { lat, lng },
+          center: targetCenter,
           zoom: targetZoom,
           tilt: 0,
         };
@@ -21463,7 +25734,7 @@ async function insertReportWithFallback(payload) {
         if (hasHeading) camera.heading = headingNum;
         map.moveCamera(camera);
       } else {
-        map.setCenter?.({ lat, lng });
+        map.setCenter?.(targetCenter);
         map.setZoom?.(targetZoom);
         if (hasHeading) map.setHeading?.(headingNum);
       }
@@ -21472,7 +25743,7 @@ async function insertReportWithFallback(payload) {
     }
 
     if (syncState) {
-      setMapCenter({ lat, lng });
+      setMapCenter(targetCenter);
       if (Number.isFinite(targetZoom)) setMapZoom(Math.round(targetZoom));
     }
   }
@@ -21494,19 +25765,65 @@ async function insertReportWithFallback(payload) {
       let targetHeading = Number(target.heading);
       if (!followHeadingEnabledRef.current) targetHeading = NaN;
 
+      const animated = followAnimatedCameraRef.current;
+      const currentLat = Number.isFinite(animated?.lat) ? animated.lat : targetLat;
+      const currentLng = Number.isFinite(animated?.lng) ? animated.lng : targetLng;
+      const currentHeading = Number.isFinite(animated?.heading) ? animated.heading : targetHeading;
+      const remainingMeters = metersBetween({ lat: currentLat, lng: currentLng }, { lat: targetLat, lng: targetLng });
+      const positionAlpha =
+        remainingMeters >= 35 ? 0.34 :
+        remainingMeters >= 18 ? 0.28 :
+        remainingMeters >= 8 ? 0.22 :
+        remainingMeters >= 3 ? 0.16 :
+        1;
+      const nextLat = remainingMeters <= 0.8 ? targetLat : currentLat + (targetLat - currentLat) * positionAlpha;
+      const nextLng = remainingMeters <= 0.8 ? targetLng : currentLng + (targetLng - currentLng) * positionAlpha;
+
+      let nextHeading = null;
+      let headingRemaining = 0;
+      if (Number.isFinite(targetHeading) && Number.isFinite(currentHeading)) {
+        const delta = ((targetHeading - currentHeading + 540) % 360) - 180;
+        headingRemaining = Math.abs(delta);
+        const headingAlpha =
+          travelFollowMode
+            ? headingRemaining >= 45 ? 0.62
+              : headingRemaining >= 24 ? 0.52
+                : headingRemaining >= 10 ? 0.38
+                  : 0.24
+            : headingRemaining >= 40 ? 0.30
+              : headingRemaining >= 18 ? 0.22
+                : headingRemaining >= 8 ? 0.16
+                  : 1;
+        const snapDegrees = travelFollowMode ? 0.7 : 2;
+        nextHeading = headingRemaining <= snapDegrees ? targetHeading : (currentHeading + delta * headingAlpha + 360) % 360;
+      } else if (Number.isFinite(targetHeading)) {
+        nextHeading = targetHeading;
+      }
+
+      followAnimatedCameraRef.current = {
+        lat: nextLat,
+        lng: nextLng,
+        heading: Number.isFinite(nextHeading) ? nextHeading : null,
+      };
+
       moveFollowCamera({
-        lat: targetLat,
-        lng: targetLng,
-        heading: Number.isFinite(targetHeading) ? targetHeading : null,
+        lat: nextLat,
+        lng: nextLng,
+        heading: Number.isFinite(nextHeading) ? nextHeading : null,
         syncState: false,
       });
 
       const now = Date.now();
       if (now - lastFollowStateSyncRef.current >= 120) {
-        setMapCenter({ lat: targetLat, lng: targetLng });
+        setMapCenter({ lat: nextLat, lng: nextLng });
         const z = Number(map.getZoom?.() ?? mapZoomRef.current);
         if (Number.isFinite(z)) setMapZoom(Math.round(z));
         lastFollowStateSyncRef.current = now;
+      }
+
+      if (remainingMeters > 0.8 || headingRemaining > (travelFollowMode ? 0.7 : 2)) {
+        followRafRef.current = requestAnimationFrame(step);
+        return;
       }
 
       followRafRef.current = null;
@@ -21517,13 +25834,66 @@ async function insertReportWithFallback(payload) {
 
 
 
+  function applyLocatedPosition(pos) {
+    const lat = Number(pos?.coords?.latitude);
+    const lng = Number(pos?.coords?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new Error("Invalid location coordinates");
+    }
+    updateUserLocUi(lat, lng, true);
+    lastTrackedPosRef.current = { lat, lng };
+    smoothedHeadingRef.current = null;
+    navigationHeadingRef.current = null;
+    lastFollowCameraRef.current = { lat, lng, heading: null };
+    followAnimatedCameraRef.current = { lat, lng, heading: null };
+    stationaryAnchorRef.current = { lat, lng, ts: Date.now() };
+    stationaryReleaseStreakRef.current = 0;
+    flyToTarget([lat, lng], LOCATE_ZOOM);
+    setAutoFollow(true);
+    setFollowCamera(true);
+  }
+
+  function toggleTravelFollowMode(force = null) {
+    setTravelFollowMode((prev) => {
+      const next = typeof force === "boolean" ? force : !prev;
+      if (next) {
+        setAutoFollow(true);
+        setFollowCamera(true);
+        followHeadingEnabledRef.current = true;
+        const liveLat = Number(liveMotionRef.current?.lat);
+        const liveLng = Number(liveMotionRef.current?.lng);
+        const liveHeading = Number(liveMotionRef.current?.heading);
+        if (Number.isFinite(liveLat) && Number.isFinite(liveLng)) {
+          lastFollowCameraRef.current = {
+            lat: liveLat,
+            lng: liveLng,
+            heading: Number.isFinite(liveHeading) ? liveHeading : null,
+          };
+          followAnimatedCameraRef.current = {
+            lat: liveLat,
+            lng: liveLng,
+            heading: Number.isFinite(liveHeading) ? liveHeading : null,
+          };
+          queueFollowCameraTarget({
+            lat: liveLat,
+            lng: liveLng,
+            heading: Number.isFinite(liveHeading) ? liveHeading : null,
+          });
+        } else {
+          void findMyLocation(false);
+        }
+      }
+      return next;
+    });
+  }
+
   async function findMyLocation(force = false) {
-    if (!window.isSecureContext) {
+    if (!isNativeAppRuntime() && !window.isSecureContext) {
       openNotice("⚠️", "Needs HTTPS", "Location requires HTTPS. Use your ngrok HTTPS URL when testing.");
       return;
     }
 
-    if (!navigator.geolocation) {
+    if (!isNativeAppRuntime() && !navigator.geolocation) {
       openNotice("⚠️", "Location unavailable", "Location is not available on this device.");
       return;
     }
@@ -21534,9 +25904,21 @@ async function insertReportWithFallback(payload) {
       return;
     }
 
-    // Best-effort: check permission state when available
+    // Best-effort: check/request permission state using the native bridge when available.
     try {
-      if (navigator.permissions?.query) {
+      if (isNativeAppRuntime()) {
+        const status = await Geolocation.checkPermissions();
+        if (status.location !== "granted") {
+          const requested = await Geolocation.requestPermissions({ permissions: ["location"] });
+          if (requested.location !== "granted") {
+            setGeoDeniedPersist(true);
+            setShowLocationPrompt(true);
+            openNotice("⚠️", "Location denied", "Unable to access location. You can still pan and tap the map.");
+            return;
+          }
+        }
+        if (geoDenied) setGeoDeniedPersist(false);
+      } else if (navigator.permissions?.query) {
         const status = await navigator.permissions.query({ name: "geolocation" });
 
         if (status.state === "denied" && !force) {
@@ -21549,110 +25931,119 @@ async function insertReportWithFallback(payload) {
           setGeoDeniedPersist(false);
         }
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = String(err?.message || err || "").toLowerCase();
+      if (msg.includes("disabled") || msg.includes("location services")) {
+        openNotice("⚠️", "Location disabled", "Turn on Location Services for CityReport in your device settings.");
+        return;
+      }
+      // ignore other preflight errors and continue to the request path
     }
 
     setLocating(true);
     // Explicit locate action re-enables heading orientation while tracking.
     followHeadingEnabledRef.current = true;
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        updateUserLocUi(lat, lng, true);
-        lastTrackedPosRef.current = { lat, lng };
-        smoothedHeadingRef.current = null;
-        lastFollowCameraRef.current = { lat, lng, heading: null };
-        flyToTarget([lat, lng], LOCATE_ZOOM);
+    try {
+      const pos = await requestCurrentPositionReliable({
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 0,
+      });
+      applyLocatedPosition(pos);
+      if (geoDenied) setGeoDeniedPersist(false);
+    } catch (err) {
+      const code = Number(err?.code);
+      if (code === 1) {
+        setGeoDeniedPersist(true);
+        setShowLocationPrompt(true);
+        openNotice("⚠️", "Location denied", "Unable to access location. You can still pan and tap the map.");
+        return;
+      }
 
-        setAutoFollow(true);
-        setFollowCamera(true);
+      // Timeout/unavailable are not permission denials.
+      setGeoDeniedPersist(false);
 
-        if (geoDenied) setGeoDeniedPersist(false);
-        setLocating(false);
-      },
-      (err) => {
-        setLocating(false);
-
-        const code = Number(err?.code);
-        if (code === 1) {
-          setGeoDeniedPersist(true);
-          setShowLocationPrompt(true);
-          openNotice("⚠️", "Location denied", "Unable to access location. You can still pan and tap the map.");
+      if (code === 3) {
+        try {
+          const fallbackPos = await requestCurrentPositionReliable({
+            enableHighAccuracy: false,
+            timeout: 15000,
+            maximumAge: 10000,
+          });
+          applyLocatedPosition(fallbackPos);
+          return;
+        } catch {
+          openNotice("⚠️", "Location timeout", "Couldn’t get GPS quickly. Try again in a clearer area.");
           return;
         }
+      }
 
-        // Timeout/unavailable are not permission denials.
-        setGeoDeniedPersist(false);
-
-        if (code === 3) {
-          navigator.geolocation.getCurrentPosition(
-            (fallbackPos) => {
-              const lat = fallbackPos.coords.latitude;
-              const lng = fallbackPos.coords.longitude;
-              updateUserLocUi(lat, lng, true);
-              lastTrackedPosRef.current = { lat, lng };
-              flyToTarget([lat, lng], LOCATE_ZOOM);
-              setAutoFollow(true);
-              setFollowCamera(true);
-            },
-            () => {
-              openNotice("⚠️", "Location timeout", "Couldn’t get GPS quickly. Try again in a clearer area.");
-            },
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 10000 }
-          );
+      if (code === 2) {
+        try {
+          const fallbackPos = await requestCurrentPositionReliable({
+            enableHighAccuracy: false,
+            timeout: 15000,
+            maximumAge: 30000,
+          });
+          applyLocatedPosition(fallbackPos);
+          return;
+        } catch {
+          openNotice("⚠️", "Location unavailable", "Your device could not determine location right now.");
           return;
         }
+      }
 
-        if (code === 2) {
-          navigator.geolocation.getCurrentPosition(
-            (fallbackPos) => {
-              const lat = fallbackPos.coords.latitude;
-              const lng = fallbackPos.coords.longitude;
-              updateUserLocUi(lat, lng, true);
-              lastTrackedPosRef.current = { lat, lng };
-              flyToTarget([lat, lng], LOCATE_ZOOM);
-              setAutoFollow(true);
-              setFollowCamera(true);
-            },
-            () => {
-              openNotice("⚠️", "Location unavailable", "Your device could not determine location right now.");
-            },
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
-          );
-          return;
-        }
+      const msg = String(err?.message || err || "").toLowerCase();
+      if (msg.includes("disabled") || msg.includes("location services")) {
+        openNotice("⚠️", "Location disabled", "Turn on Location Services for CityReport in your device settings.");
+        return;
+      }
 
-        openNotice("⚠️", "Location error", "Could not determine your location right now.");
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-    );
+      openNotice("⚠️", "Location error", "Could not determine your location right now.");
+    } finally {
+      setLocating(false);
+    }
   }
 
 
   // Watch position (smoother + heading updates)
   useEffect(() => {
     if (!autoFollow) return;
-    if (!window.isSecureContext || !navigator.geolocation) return;
+    if (!isNativeAppRuntime() && (!window.isSecureContext || !navigator.geolocation)) return;
 
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
+    const handlePosition = (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         const nextPos = { lat, lng };
         const prevPos = lastTrackedPosRef.current;
         const ts = Number(pos?.timestamp) || Date.now();
         const accuracyM = Number(pos?.coords?.accuracy);
+        const rawHeadingAccuracy =
+          Number(pos?.coords?.headingAccuracy ?? pos?.coords?.heading_accuracy);
+        const rawHeadingForUi = Number(
+          pos?.coords?.trueHeading ??
+          pos?.coords?.heading ??
+          pos?.coords?.magneticHeading
+        );
 
-        updateUserLocUi(lat, lng, false);
-        lastTrackedPosRef.current = nextPos;
+        const updateUserHeadingUi = (nextHeading) => {
+          const headingValue = Number(nextHeading);
+          setUserHeading((prev) => {
+            const prevNum = Number(prev);
+            if (!Number.isFinite(headingValue)) {
+              return Number.isFinite(prevNum) ? null : prev;
+            }
+            if (!Number.isFinite(prevNum)) return headingValue;
+            const delta = Math.abs(((headingValue - prevNum + 540) % 360) - 180);
+            return delta >= 3 ? headingValue : prev;
+          });
+        };
 
         const rawSpeed = Number(pos?.coords?.speed);
         let speedMps = Number.isFinite(rawSpeed) && rawSpeed >= 0 ? rawSpeed : NaN;
-        const headingFreezeMps = 1.6; // ~3.6 mph
-        const headingHeavyDampMps = 3.6; // ~8 mph
+        const headingFreezeMps = 2.2; // ~5 mph
+        const headingHeavyDampMps = 5.0; // ~11 mph
 
         const prevMotionTs = Number(liveMotionRef.current?.ts);
         if ((!Number.isFinite(speedMps) || speedMps < 0) && prevPos && Number.isFinite(prevMotionTs)) {
@@ -21660,11 +26051,113 @@ async function insertReportWithFallback(payload) {
           if (dtSec > 0.2) speedMps = metersBetween(prevPos, nextPos) / dtSec;
         }
 
+        const movedMetersFromPrev = prevPos ? metersBetween(prevPos, nextPos) : 0;
+        const lowSpeedLikely = !Number.isFinite(speedMps) || speedMps < 1.15;
+        const stationaryAnchor =
+          stationaryAnchorRef.current ||
+          (prevPos ? { lat: prevPos.lat, lng: prevPos.lng, ts } : null);
+        const driftFromAnchor = stationaryAnchor
+          ? metersBetween({ lat: stationaryAnchor.lat, lng: stationaryAnchor.lng }, nextPos)
+          : Infinity;
+        const stationaryReleaseMeters = Number.isFinite(accuracyM)
+          ? Math.max(10, Math.min(22, accuracyM * 1.35))
+          : 12;
+        const hasConvincingStep = movedMetersFromPrev >= Math.max(4.5, stationaryReleaseMeters * 0.42);
+        const strongReleaseSignal =
+          (Number.isFinite(speedMps) && speedMps >= 1.6) ||
+          driftFromAnchor >= stationaryReleaseMeters * 1.45;
+        const recordStationaryLock = (status = "Stationary lock") => {
+          const lockedLat = Number(liveMotionRef.current?.lat);
+          const lockedLng = Number(liveMotionRef.current?.lng);
+          const fallbackLat = Number(stationaryAnchor?.lat);
+          const fallbackLng = Number(stationaryAnchor?.lng);
+          const displayLat = Number.isFinite(lockedLat) ? lockedLat : fallbackLat;
+          const displayLng = Number.isFinite(lockedLng) ? lockedLng : fallbackLng;
+          recordLocationDiagnostics({
+            status,
+            rawLat: lat,
+            rawLng: lng,
+            displayLat,
+            displayLng,
+            rawToDisplayM:
+              Number.isFinite(displayLat) && Number.isFinite(displayLng)
+                ? metersBetween(nextPos, { lat: displayLat, lng: displayLng })
+                : null,
+            accuracyM,
+            speedMps: Number.isFinite(speedMps) ? speedMps : null,
+            headingDeg: Number.isFinite(liveMotionRef.current?.heading) ? liveMotionRef.current.heading : null,
+            rawHeadingDeg: Number.isFinite(rawHeadingForUi) ? rawHeadingForUi : null,
+            headingAccuracyDeg: Number.isFinite(rawHeadingAccuracy) ? rawHeadingAccuracy : null,
+            fixAgeMs: Date.now() - ts,
+            movedMeters: movedMetersFromPrev,
+            stationaryDriftM: driftFromAnchor,
+            stationaryLocked: true,
+            predictionActive: false,
+            followCamera,
+            travelFollowMode,
+            timestamp: ts,
+          });
+        };
+
+        if (lowSpeedLikely && stationaryAnchor) {
+          stationaryAnchorRef.current = stationaryAnchor;
+          if (Number.isFinite(rawHeadingForUi) && (!Number.isFinite(rawHeadingAccuracy) || rawHeadingAccuracy <= 15)) {
+            updateUserHeadingUi(rawHeadingForUi);
+          }
+          if (driftFromAnchor < stationaryReleaseMeters || !hasConvincingStep || !strongReleaseSignal) {
+            stationaryReleaseStreakRef.current = 0;
+            liveMotionRef.current = {
+              lat: Number.isFinite(liveMotionRef.current?.lat) ? liveMotionRef.current.lat : stationaryAnchor.lat,
+              lng: Number.isFinite(liveMotionRef.current?.lng) ? liveMotionRef.current.lng : stationaryAnchor.lng,
+              heading: Number.isFinite(liveMotionRef.current?.heading) ? liveMotionRef.current.heading : null,
+              speed: 0,
+              ts,
+            };
+            recordStationaryLock();
+            return;
+          }
+
+          stationaryReleaseStreakRef.current += 1;
+          if (stationaryReleaseStreakRef.current < 3) {
+            liveMotionRef.current = {
+              lat: Number.isFinite(liveMotionRef.current?.lat) ? liveMotionRef.current.lat : stationaryAnchor.lat,
+              lng: Number.isFinite(liveMotionRef.current?.lng) ? liveMotionRef.current.lng : stationaryAnchor.lng,
+              heading: Number.isFinite(liveMotionRef.current?.heading) ? liveMotionRef.current.heading : null,
+              speed: 0,
+              ts,
+            };
+            recordStationaryLock("Confirming movement");
+            return;
+          }
+        } else {
+          stationaryReleaseStreakRef.current = 0;
+        }
+
+        if (lowSpeedLikely && !stationaryAnchorRef.current) {
+          stationaryAnchorRef.current = { lat, lng, ts };
+        } else if (!lowSpeedLikely || driftFromAnchor >= stationaryReleaseMeters) {
+          stationaryAnchorRef.current = { lat, lng, ts };
+        }
+
         let heading = Number(pos?.coords?.heading);
-        if (!Number.isFinite(heading) || heading < 0) {
-          if (prevPos) {
-            const movedMeters = metersBetween(prevPos, nextPos);
-            if (movedMeters >= 4) heading = bearingBetween(prevPos, nextPos);
+        const poorHeadingAccuracy =
+          (Number.isFinite(rawHeadingAccuracy) && rawHeadingAccuracy > 18) ||
+          (Number.isFinite(accuracyM) &&
+            (
+              accuracyM > 28 ||
+              (accuracyM > 18 && (!Number.isFinite(speedMps) || speedMps < headingHeavyDampMps))
+            ));
+        if (!Number.isFinite(heading) || heading < 0 || poorHeadingAccuracy) {
+          if (
+            prevPos &&
+            movedMetersFromPrev >= 8 &&
+            Number.isFinite(speedMps) &&
+            speedMps >= headingFreezeMps &&
+            (!Number.isFinite(accuracyM) || accuracyM <= 20)
+          ) {
+            heading = bearingBetween(prevPos, nextPos);
+          } else {
+            heading = NaN;
           }
         }
 
@@ -21677,16 +26170,16 @@ async function insertReportWithFallback(payload) {
           } else {
             const speedForSmoothing = Number.isFinite(speedMps) ? speedMps : 0;
             const headingAlpha =
-              speedForSmoothing >= 12 ? 0.62 :
-              speedForSmoothing >= 6 ? 0.48 :
-              speedForSmoothing >= headingHeavyDampMps ? 0.32 :
-              0.20;
+              speedForSmoothing >= 12 ? 0.50 :
+              speedForSmoothing >= 8 ? 0.36 :
+              speedForSmoothing >= headingHeavyDampMps ? 0.24 :
+              0.14;
             const delta = ((heading - prev + 540) % 360) - 180;
             const headingDeadband =
-              speedForSmoothing >= 12 ? 0.8 :
-              speedForSmoothing >= 6 ? 1.2 :
-              speedForSmoothing >= headingHeavyDampMps ? 2 :
-              5;
+              speedForSmoothing >= 12 ? 1.5 :
+              speedForSmoothing >= 8 ? 2.4 :
+              speedForSmoothing >= headingHeavyDampMps ? 4 :
+              8;
             if (speedForSmoothing >= headingFreezeMps && Math.abs(delta) >= headingDeadband) {
               smoothedHeadingRef.current = (prev + delta * headingAlpha + 360) % 360;
             }
@@ -21698,12 +26191,69 @@ async function insertReportWithFallback(payload) {
           speedForHeading < headingFreezeMps
             ? Number(liveMotionRef.current?.heading)
             : (Number.isFinite(smoothedHeadingRef.current) ? smoothedHeadingRef.current : heading);
+        let navigationHeading = Number(navigationHeadingRef.current);
+        if (Number.isFinite(heading) && speedForHeading >= headingFreezeMps) {
+          const prevNavHeading = Number(navigationHeadingRef.current);
+          if (!Number.isFinite(prevNavHeading)) {
+            navigationHeading = heading;
+          } else {
+            const navDelta = ((heading - prevNavHeading + 540) % 360) - 180;
+            const navDeltaAbs = Math.abs(navDelta);
+            const navHeadingAlpha =
+              navDeltaAbs >= 50 ? 0.78 :
+              navDeltaAbs >= 28 ? 0.66 :
+              navDeltaAbs >= 14 ? 0.50 :
+              speedForHeading >= 8 ? 0.34 :
+              0.26;
+            navigationHeading = (prevNavHeading + navDelta * navHeadingAlpha + 360) % 360;
+          }
+          navigationHeadingRef.current = navigationHeading;
+        }
+        const followHeading =
+          travelFollowMode && Number.isFinite(navigationHeading)
+            ? navigationHeading
+            : effectiveHeading;
+        const headingForUi = Number.isFinite(effectiveHeading) ? effectiveHeading : null;
+        updateUserHeadingUi(headingForUi);
+
+        const displayPos = predictedMovingDisplayPosition(
+          nextPos,
+          speedMps,
+          Number.isFinite(followHeading) ? followHeading : headingForUi,
+          accuracyM,
+          ts
+        );
+        const rawToDisplayM = metersBetween(nextPos, displayPos);
+        recordLocationDiagnostics({
+          status: "Tracking",
+          rawLat: lat,
+          rawLng: lng,
+          displayLat: displayPos.lat,
+          displayLng: displayPos.lng,
+          rawToDisplayM,
+          accuracyM,
+          speedMps: Number.isFinite(speedMps) ? speedMps : null,
+          headingDeg: Number.isFinite(headingForUi) ? headingForUi : null,
+          followHeadingDeg: Number.isFinite(followHeading) ? followHeading : null,
+          rawHeadingDeg: Number.isFinite(rawHeadingForUi) ? rawHeadingForUi : null,
+          headingAccuracyDeg: Number.isFinite(rawHeadingAccuracy) ? rawHeadingAccuracy : null,
+          fixAgeMs: Date.now() - ts,
+          movedMeters: movedMetersFromPrev,
+          stationaryDriftM: driftFromAnchor,
+          stationaryLocked: false,
+          predictionActive: Number.isFinite(rawToDisplayM) && rawToDisplayM >= 0.5,
+          followCamera,
+          travelFollowMode,
+          timestamp: ts,
+        });
+        updateUserLocUi(displayPos.lat, displayPos.lng, false);
+        lastTrackedPosRef.current = nextPos;
 
         liveMotionRef.current = {
           lat,
           lng,
-          heading: Number.isFinite(effectiveHeading)
-            ? effectiveHeading
+          heading: Number.isFinite(headingForUi)
+            ? headingForUi
             : Number(liveMotionRef.current?.heading),
           speed: Number.isFinite(speedMps) && speedMps > 0 ? speedMps : 0,
           ts,
@@ -21719,38 +26269,42 @@ async function insertReportWithFallback(payload) {
 
           const last = lastFollowCameraRef.current;
           const movedMeters = Number.isFinite(last.lat) && Number.isFinite(last.lng)
-            ? metersBetween({ lat: last.lat, lng: last.lng }, nextPos)
+            ? metersBetween({ lat: last.lat, lng: last.lng }, displayPos)
             : Infinity;
 
           const headingDelta = !followHeadingEnabledRef.current
             ? 0
-            : Number.isFinite(last.heading) && Number.isFinite(effectiveHeading)
-              ? Math.abs(((effectiveHeading - last.heading + 540) % 360) - 180)
+            : Number.isFinite(last.heading) && Number.isFinite(followHeading)
+              ? Math.abs(((followHeading - last.heading + 540) % 360) - 180)
               : Infinity;
 
           const moveTriggerMeters =
-            Number.isFinite(accuracyM) && accuracyM > 40 ? 3 :
-            Number.isFinite(accuracyM) && accuracyM > 20 ? 2 :
-            speedForThresholds >= 12 ? 1.5 :
-            speedForThresholds >= 6 ? 1.2 :
-            speedForThresholds >= headingHeavyDampMps ? 2.2 : 3.2;
+            travelFollowMode && speedForThresholds >= headingFreezeMps ? 0.9 :
+            Number.isFinite(accuracyM) && accuracyM > 40 ? 4 :
+            Number.isFinite(accuracyM) && accuracyM > 20 ? 2.8 :
+            speedForThresholds >= 12 ? 1.8 :
+            speedForThresholds >= 6 ? 1.4 :
+            speedForThresholds >= headingHeavyDampMps ? 2.4 : 3.4;
           const headingTriggerDeg =
-            speedForThresholds >= 12 ? 3 :
-            speedForThresholds >= 6 ? 4 :
-            speedForThresholds >= headingHeavyDampMps ? 8 :
-            14;
+            travelFollowMode && speedForThresholds >= 12 ? 1.4 :
+            travelFollowMode && speedForThresholds >= headingFreezeMps ? 2.2 :
+            speedForThresholds >= 12 ? 4 :
+            speedForThresholds >= 8 ? 6 :
+            speedForThresholds >= headingHeavyDampMps ? 10 :
+            18;
 
           if (!poorAccuracySmallMove && (movedMeters >= moveTriggerMeters || headingDelta >= headingTriggerDeg || !followTargetRef.current)) {
             const queuedHeading =
               (followHeadingEnabledRef.current && speedForThresholds >= headingFreezeMps)
-                ? effectiveHeading
+                ? followHeading
                 : null;
-            queueFollowCameraTarget({ lat, lng, heading: queuedHeading });
-            lastFollowCameraRef.current = { lat, lng, heading: queuedHeading };
+            queueFollowCameraTarget({ lat: displayPos.lat, lng: displayPos.lng, heading: queuedHeading });
+            lastFollowCameraRef.current = { lat: displayPos.lat, lng: displayPos.lng, heading: queuedHeading };
           }
         }
-      },
-      (err) => {
+      };
+
+    const handleError = (err) => {
         const code = Number(err?.code);
         if (code === 1) {
           setAutoFollow(false);
@@ -21762,7 +26316,36 @@ async function insertReportWithFallback(payload) {
 
         // Keep current mode; non-permission errors should not lock user into denied state.
         setGeoDeniedPersist(false);
-      },
+      };
+
+    if (isNativeAppRuntime()) {
+      let watchId = null;
+      Geolocation.watchPosition(
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 },
+        (pos, err) => {
+          if (err) {
+            handleError(err);
+            return;
+          }
+          if (pos) handlePosition(pos);
+        }
+      )
+        .then((id) => {
+          watchId = id;
+        })
+        .catch((err) => {
+          handleError(err);
+        });
+
+      return () => {
+        if (!watchId) return;
+        Geolocation.clearWatch({ id: watchId }).catch(() => {});
+      };
+    }
+
+    const id = navigator.geolocation.watchPosition(
+      handlePosition,
+      handleError,
       { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 }
     );
 
@@ -21775,12 +26358,22 @@ async function insertReportWithFallback(payload) {
     cancelFlyAnimation();
     clearFlyInfoTimer();
     stopFollowCameraAnimation();
+    if (userLocRafRef.current) {
+      cancelAnimationFrame(userLocRafRef.current);
+      userLocRafRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
     if (followCamera) return;
     stopFollowCameraAnimation();
   }, [followCamera]);
+
+  useEffect(() => {
+    if (!followCamera && travelFollowMode) {
+      setTravelFollowMode(false);
+    }
+  }, [followCamera, travelFollowMode]);
 
 
   // -------------------------
@@ -21820,13 +26413,55 @@ async function insertReportWithFallback(payload) {
     cursor: "pointer",
   };
   const mapAlertsUnreadCount = useMemo(
-    () => countUnreadMapCommunityFeedItems(mapCommunityAlerts, mapCommunityFeedReadState, "alerts"),
-    [mapCommunityAlerts, mapCommunityFeedReadState]
+    () => {
+      if (!hasMapSession) return 0;
+      const enabledAlerts = filterResidentFeedItemsForInAppPreferences(
+        filterVisibleResidentCommunityItems(mapCommunityAlerts),
+        savedNotificationPreferencesByTopic,
+        notificationTopics,
+      );
+      return countUnreadMapCommunityFeedItems(enabledAlerts, mapCommunityFeedReadState, "alerts");
+    },
+    [hasMapSession, mapCommunityAlerts, mapCommunityFeedReadState, notificationTopics, savedNotificationPreferencesByTopic]
   );
   const mapEventsUnreadCount = useMemo(
-    () => countUnreadMapCommunityFeedItems(mapCommunityEvents, mapCommunityFeedReadState, "events"),
-    [mapCommunityEvents, mapCommunityFeedReadState]
+    () => {
+      if (!hasMapSession) return 0;
+      const enabledEvents = filterResidentFeedItemsForInAppPreferences(
+        filterVisibleResidentCommunityItems(mapCommunityEvents),
+        savedNotificationPreferencesByTopic,
+        notificationTopics,
+      );
+      return countUnreadMapCommunityFeedItems(enabledEvents, mapCommunityFeedReadState, "events");
+    },
+    [hasMapSession, mapCommunityEvents, mapCommunityFeedReadState, notificationTopics, savedNotificationPreferencesByTopic]
   );
+
+  useEffect(() => {
+    if (!isNativeAppRuntime()) return;
+    let cancelled = false;
+    const nextCount = Math.max(0, Number(mapAlertsUnreadCount || 0) + Number(mapEventsUnreadCount || 0));
+
+    async function syncBadgeCount() {
+      try {
+        const supported = await Badge.isSupported();
+        if (cancelled || !supported?.isSupported) return;
+        if (nextCount > 0) {
+          await Badge.set({ count: nextCount });
+        } else {
+          await Badge.clear();
+        }
+      } catch (error) {
+        if (!cancelled) console.warn("[native badge]", error?.message || error);
+      }
+    }
+
+    void syncBadgeCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [mapAlertsUnreadCount, mapEventsUnreadCount]);
+
   const markerPopupCardStyle = {
     minWidth: 210,
     display: "grid",
@@ -21837,7 +26472,87 @@ async function insertReportWithFallback(payload) {
     boxShadow: "var(--sl-ui-modal-shadow)",
     padding: 10,
     color: "var(--sl-ui-text)",
+    maxHeight: "min(430px, calc(100dvh - 190px))",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
   };
+  const getMarkerPopupPlacement = (pixel, { estimatedHeight = 320, maxWidth = 280 } = {}) => {
+    const x = Number(pixel?.x);
+    const y = Number(pixel?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return {
+        frameStyle: { display: "none" },
+        arrowStyle: { display: "none" },
+      };
+    }
+    const viewportW = typeof window !== "undefined" ? Number(window.innerWidth || 0) : 0;
+    const viewportH = typeof window !== "undefined" ? Number(window.innerHeight || 0) : 0;
+    const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
+    const topSafe = isMobile ? 150 : 102;
+    const bottomSafe = isMobile ? 92 : 20;
+    const gap = 14;
+    const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
+    const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
+    const fitsAbove = y - estimatedHeight - gap >= topSafe;
+    const fitsBelow = y + estimatedHeight + gap <= usableBottom;
+    const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
+    const top = placeBelow
+      ? clamp(y + gap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
+      : clamp(y - gap, topSafe + estimatedHeight, usableBottom);
+    return {
+      frameStyle: {
+        position: "absolute",
+        left: clampedX,
+        top,
+        transform: placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+        zIndex: 2600,
+        pointerEvents: "auto",
+        width,
+        maxWidth: "calc(100vw - 20px)",
+        maxHeight: `min(430px, ${Math.max(160, Math.round(usableBottom - topSafe - 18))}px)`,
+      },
+      arrowStyle: placeBelow
+        ? {
+            position: "absolute",
+            left: "50%",
+            top: -7,
+            width: 12,
+            height: 12,
+            background: "var(--sl-ui-modal-bg)",
+            borderLeft: "1px solid var(--sl-ui-modal-border)",
+            borderTop: "1px solid var(--sl-ui-modal-border)",
+            transform: "translateX(-50%) rotate(45deg)",
+          }
+        : {
+            position: "absolute",
+            left: "50%",
+            bottom: -7,
+            width: 12,
+            height: 12,
+            background: "var(--sl-ui-modal-bg)",
+            borderRight: "1px solid var(--sl-ui-modal-border)",
+            borderBottom: "1px solid var(--sl-ui-modal-border)",
+            transform: "translateX(-50%) rotate(45deg)",
+          },
+    };
+  };
+  const selectedOfficialPopupPlacement = getMarkerPopupPlacement(selectedOfficialPopupPixel, { estimatedHeight: 390 });
+  const selectedDomainPopupPlacement = getMarkerPopupPlacement(selectedDomainPopupPixel, { estimatedHeight: 340 });
+  const selectedQueuedPopupPlacement = getMarkerPopupPlacement(selectedQueuedPopupPixel, { estimatedHeight: 230 });
+  const mapHasAnyLoadedData =
+    reports.length > 0 ||
+    officialLights.length > 0 ||
+    potholes.length > 0 ||
+    officialSigns.length > 0 ||
+    waterDrainDomainMarkers.length > 0;
+  const showInitialMapDataLoading =
+    loading &&
+    !mapHasAnyLoadedData;
+  const mapLoadingMessage = tenant?.switchingTenant
+    ? "Switching city..."
+    : showInitialMapDataLoading
+      ? "Loading map data..."
+      : "";
   const markerPopupActionSecondary = {
     ...btnPopupSecondary,
     padding: "8px 10px",
@@ -21884,8 +26599,8 @@ async function insertReportWithFallback(payload) {
       : adminReportDomain === "water_main"
         ? "#1e88e5"
         : "#111";
-  const isSavedStreetlightFilterOn = isStreetlightsDomain && streetlightInViewFilterMode === "saved";
-  const isUtilityStreetlightFilterOn = isStreetlightsDomain && streetlightInViewFilterMode === "utility";
+  const isSavedStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "saved";
+  const isUtilityStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "utility";
   const inViewCounterColor = "var(--sl-ui-text)";
   const inViewCounterBg = "var(--sl-ui-surface-bg)";
   const inViewCounterBorder = "var(--sl-ui-surface-border)";
@@ -21909,7 +26624,7 @@ async function insertReportWithFallback(payload) {
   }, [canShowOfficialLightsByZoom, selectedOfficialId]);
 
   useEffect(() => {
-    if (isStreetlightsDomain || isStreetSignsDomain) return;
+    if (isStreetlightsLayerActive || isStreetSignsLayerActive) return;
     if (bulkMode) {
       setBulkMode(false);
       setBulkConfirmOpen(false);
@@ -21923,8 +26638,8 @@ async function insertReportWithFallback(payload) {
     if (streetlightInViewFilterMode) setStreetlightInViewFilterMode("");
     if (selectedOfficialId) setSelectedOfficialId(null);
   }, [
-    isStreetlightsDomain,
-    isStreetSignsDomain,
+    isStreetlightsLayerActive,
+    isStreetSignsLayerActive,
     bulkMode,
     mappingMode,
     openReportMapFilterOn,
@@ -21981,12 +26696,32 @@ async function insertReportWithFallback(payload) {
   if (!GMAPS_ACTIVE_KEY) {
     return (
       <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        Google Maps key is missing. Set `VITE_GOOGLE_MAPS_API_KEY` (and optionally `VITE_GOOGLE_MAPS_API_KEY_DEV` for localhost/ngrok).
+        {isNativeAppRuntime()
+          ? "Google Maps key is missing. Set `VITE_GOOGLE_MAPS_API_KEY_NATIVE` (or platform-specific `VITE_GOOGLE_MAPS_API_KEY_IOS` / `VITE_GOOGLE_MAPS_API_KEY_ANDROID`)."
+          : "Google Maps key is missing. Set `VITE_GOOGLE_MAPS_API_KEY` (and optionally `VITE_GOOGLE_MAPS_API_KEY_DEV` for localhost/ngrok)."}
       </div>
     );
   }
 
   if (loadError || googleMapsAuthError) {
+    if (isNativeAppRuntime()) {
+      return (
+        <div style={{ padding: 16, fontFamily: "system-ui" }}>
+          <div style={{ marginBottom: 8 }}>
+            {googleMapsAuthError || "Google Maps failed to load in the native app."}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.85 }}>
+            Use a native-safe Google Maps key in `VITE_GOOGLE_MAPS_API_KEY_NATIVE`
+            {GMAPS_PLATFORM === "ios"
+              ? " or `VITE_GOOGLE_MAPS_API_KEY_IOS`"
+              : GMAPS_PLATFORM === "android"
+                ? " or `VITE_GOOGLE_MAPS_API_KEY_ANDROID`"
+                : ""}
+            . Browser referrer-restricted keys usually fail inside Capacitor because the app loads from `capacitor://localhost`.
+          </div>
+        </div>
+      );
+    }
     const activeHost = typeof window !== "undefined" ? String(window.location.host || "").trim() : "";
     const referrerHint = activeHost
       ? `${typeof window !== "undefined" ? window.location.protocol : "https:"}//${activeHost}/*`
@@ -22006,9 +26741,12 @@ async function insertReportWithFallback(payload) {
 
   if (!isLoaded) {
     return (
-      <div style={{ padding: 16, fontFamily: "system-ui" }}>
-        Loading map…
-      </div>
+      <AppLaunchScreen
+        eyebrow="Reporting Map"
+        title={organizationDisplayName || "CityReport.io"}
+        subtitle="Loading map layers, city boundaries, and reporting tools..."
+        status="Loading map..."
+      />
     );
   }
 
@@ -22023,6 +26761,7 @@ async function insertReportWithFallback(payload) {
         width: "100%",
         maxWidth: "100%",
         overflow: "hidden",
+        "--sl-mobile-page-enter-x": mobileTabTransitionDirection === "back" ? "-18px" : "18px",
       }}
     >
       <style>{`
@@ -22077,6 +26816,11 @@ async function insertReportWithFallback(payload) {
           --sl-ui-tool-active-bg: var(--sl-ui-brand-green);
           --sl-ui-tool-active-border: var(--sl-ui-brand-green-border);
           --sl-ui-tool-active-text: #fff;
+          --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
+          --mobile-header-border: 1px solid rgba(23, 49, 79, 0.08);
+          --mobile-header-menu-background: rgba(255,255,255,0.92);
+          --mobile-header-menu-border: 1px solid rgba(26, 49, 83, 0.22);
+          --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
         }
 
         @media (prefers-color-scheme: dark) {
@@ -22128,9 +26872,34 @@ async function insertReportWithFallback(payload) {
 
         .sl-desktop-only { display: block; }
         .sl-mobile-only { display: none; }
+
+        @keyframes sl-modal-overlay-enter {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes sl-modal-panel-enter {
+          from { opacity: 0; transform: translateY(8px) scale(0.985); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        @keyframes sl-mobile-page-enter {
+          from { transform: translate3d(var(--sl-mobile-page-enter-x, 18px), 0, 0); }
+          to { transform: translate3d(0, 0, 0); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          * {
+            animation-duration: 1ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+          }
+        }
+
         @media (max-width: 640px) {
           .sl-desktop-only { display: none; }
           .sl-mobile-only { display: block; }
+          .sl-mobile-hide-bottom-rail { display: none !important; }
         }
 
         .sl-map-tool {
@@ -22362,6 +27131,16 @@ async function insertReportWithFallback(payload) {
         }}
       />
 
+      <LocationDiagnosticsModal
+        open={locationDiagnosticsOpen}
+        onClose={() => setLocationDiagnosticsOpen(false)}
+        debug={locationDiagnostics}
+        onCopy={copyLocationDiagnostics}
+        isMobile={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+      />
+
       <ContactRequiredModal
         open={contactChoiceOpen}
         onClose={() => {
@@ -22409,6 +27188,35 @@ async function insertReportWithFallback(payload) {
         isAdmin={isAdmin}
         onOpenTerms={() => setTermsOpen(true)}
         onOpenPrivacy={() => setPrivacyOpen(true)}
+        showCitySwitcher={citySwitchAvailable}
+        currentCityLabel={organizationDisplayName}
+        environmentGuardrailLabel={environmentGuardrailLabel}
+        signedIn={Boolean(session?.user?.id)}
+        currentCityFollowed={currentCityFollowed}
+        followCitySaving={followCitySaving}
+        onToggleFollowCity={toggleFollowCurrentCity}
+        onOpenCitySwitcher={() => {
+          setInfoMenuOpen(false);
+          setCitySwitcherOpen(true);
+        }}
+      />
+
+      <CitySwitcherModal
+        open={citySwitcherOpen}
+        onClose={() => setCitySwitcherOpen(false)}
+        cities={tenant?.availableTenants || []}
+        followedCities={followedCityOptions}
+        followedCitiesLoading={followedTenantKeysLoading}
+        signedIn={Boolean(session?.user?.id)}
+        currentTenantKey={tenant?.tenantKey || ""}
+        currentCityLabel={organizationDisplayName}
+        switchingTenant={tenant?.switchingTenant || ""}
+        onSwitchTenant={async (nextTenantKey) => {
+          closeAnyPopup();
+          setCitySwitcherOpen(false);
+          setInfoMenuOpen(false);
+          await tenant?.switchTenant?.(nextTenantKey);
+        }}
       />
 
       <NoticeModal
@@ -22419,6 +27227,26 @@ async function insertReportWithFallback(payload) {
         compact={notice.compact}
         buttonText="OK"
         onClose={closeNotice}
+      />
+
+      <ReportSuccessModal
+        open={reportSuccess.open}
+        kind={reportSuccess.kind}
+        title={reportSuccess.title}
+        message={reportSuccess.message}
+        onClose={() => {
+          closeReportSuccess();
+        }}
+        onViewReports={() => {
+          const domainKey = String(reportSuccess.domainKey || "potholes").trim() || "potholes";
+          closeReportSuccess();
+          openMyReports({ domainKey, reportedByMode: "me", inViewOnly: false });
+        }}
+        onReportToUtility={() => {
+          closeReportSuccess();
+          openMyReports({ domainKey: "streetlights", reportedByMode: "me", inViewOnly: false });
+          void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
+        }}
       />
 
       <ModalShell open={exitMappingConfirmOpen} zIndex={10012}>
@@ -22804,6 +27632,23 @@ async function insertReportWithFallback(payload) {
         onSubmit={submitDomainReport}
       />
 
+      <IncidentTypePickerModal
+        open={incidentTypePickerOpen}
+        onClose={closeIncidentTypePicker}
+        onSelectPothole={() => {
+          const target = pendingIncidentTypeTarget;
+          closeIncidentTypePicker();
+          if (!target) return;
+          startIncidentReportAtPoint("potholes", target.lat, target.lng);
+        }}
+        onSelectWaterDrain={() => {
+          const target = pendingIncidentTypeTarget;
+          closeIncidentTypePicker();
+          if (!target) return;
+          startIncidentReportAtPoint("water_drain_issues", target.lat, target.lng);
+        }}
+      />
+
       <ModalShell open={isWorkingConfirmOpen} zIndex={10012}>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Is Working</div>
@@ -23129,6 +27974,62 @@ async function insertReportWithFallback(payload) {
         loading={moderationFlagsLoading}
         error={moderationFlagsError}
         onRefresh={() => void loadModerationFlagRows()}
+        onAcknowledge={(row, note) => void acknowledgeModerationFlag(row, note)}
+        isMobile={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+      />
+
+      <AlertsWindow
+        open={alertsWindowOpen}
+        onClose={() => setAlertsWindowOpen(false)}
+        alerts={mapCommunityAlerts}
+        loading={mapCommunityFeedLoading}
+        error={mapCommunityFeedError}
+        darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+        canCreate={canManageCommunityFeed}
+        canEdit={canManageCommunityFeed}
+        onCreate={() => openCommunityFeedEditor("alert")}
+        onEdit={(alert) => openCommunityFeedEditor("alert", alert)}
+      />
+
+      <EventsWindow
+        open={eventsWindowOpen}
+        onClose={() => setEventsWindowOpen(false)}
+        events={mapCommunityEvents}
+        loading={mapCommunityFeedLoading}
+        error={mapCommunityFeedError}
+        darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+        canCreate={canManageCommunityFeed}
+        canEdit={canManageCommunityFeed}
+        onCreate={() => openCommunityFeedEditor("event")}
+        onEdit={(eventRow) => openCommunityFeedEditor("event", eventRow)}
+      />
+
+      <CommunityFeedEditorModal
+        open={communityFeedEditor.open}
+        kind={communityFeedEditor.kind}
+        mode={communityFeedEditor.mode}
+        topics={communityFeedTopicOptions}
+        form={communityFeedForm}
+        setForm={setCommunityFeedForm}
+        saving={communityFeedSaving}
+        deleting={communityFeedDeleting}
+        canDelete={canDeleteCommunityFeed}
+        error={communityFeedEditorError}
+        darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+        onClose={closeCommunityFeedEditor}
+        onDelete={deleteCommunityFeedItem}
+        onSubmit={saveCommunityFeedEditor}
       />
 
       <OpenReportsModal
@@ -23145,12 +28046,12 @@ async function insertReportWithFallback(payload) {
           setAdminReportDomain(domainKey);
           setMyReportsExpanded(new Set());
         }}
-        groups={myReportsStandardGroups}
+        groups={myReportsModalGroups}
         expandedSet={myReportsExpanded}
         onToggleExpand={toggleMyReportsExpanded}
         reports={reports}
         potholes={potholes}
-        allDomainReports={myReportsAllDomainRows}
+        allDomainReports={myReportsModalRows}
         officialLights={officialLights}
         slIdByUuid={slIdByUuid}
         fixedLights={fixedLights}
@@ -23190,6 +28091,11 @@ async function insertReportWithFallback(payload) {
           setMyReportsFocusQuery("");
         }}
         inViewOnly={myReportsInViewOnly}
+        canToggleReportedBy={canToggleReportedByInMyReports}
+        reportedByMode={myReportsReportedByMode}
+        onReportedByModeChange={setMyReportsReportedByMode}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
       />
 
       <OpenReportsModal
@@ -23357,6 +28263,12 @@ async function insertReportWithFallback(payload) {
           setManageOpen(false);
           setManageEditing(false);
         }}
+        onBack={() => {
+          setManageOpen(false);
+          setManageEditing(false);
+          setAccountView("menu");
+          setAccountMenuOpen(true);
+        }}
         profile={profile}
         session={session}
         saving={manageSaving}
@@ -23367,6 +28279,9 @@ async function insertReportWithFallback(payload) {
         onSave={saveManagedProfile}
         onRequestEdit={requestEditManagedProfile}
         darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
         onOpenChangePassword={() => {
           setChangePasswordValue("");
           setChangePasswordValue2("");
@@ -23428,143 +28343,157 @@ async function insertReportWithFallback(payload) {
       {/* =========================
           Map (Google Maps)
          ========================= */}
-      <GoogleMap
-        mapContainerStyle={containerStyle}
-        center={mapCenter}
-        zoom={mapZoom}
-        onLoad={(map) => {
-          setGmapsRef(map);
-          mapRef.current = map; // keep your existing ref name working
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          bottom: isMobile ? mobileBottomRailHeight : 0,
+          display: isMobile && (myReportsOpen || accountMenuOpen || alertsWindowOpen || eventsWindowOpen || notificationPreferencesOpen || followedLocationsOpen) ? "none" : "block",
         }}
-        onDragStart={() => {
-          beginMapInteraction();
-          userDragPanRef.current = true;
-          if (followCamera) {
-            stopFollowCameraAnimation();
-            setFollowCamera(false);
-          }
-        }}
-        onZoomChanged={() => {
-          beginMapInteraction();
-          lastZoomGestureAtRef.current = Date.now();
-          const z = Number(mapRef.current?.getZoom?.());
-          if (!Number.isFinite(z)) return;
-          mapZoomRef.current = z;
-          const rounded = Math.round(z);
-          setMapZoom((prev) => (prev === rounded ? prev : rounded));
-        }}
-        onIdle={() => {
-          endMapInteractionSoon(750);
-          userDragPanRef.current = false;
-          const map = mapRef.current;
-          if (!map) return;
-
-          const z = Number(map.getZoom?.());
-          if (Number.isFinite(z)) {
+      >
+        <GoogleMap
+          key={`tenant-map:${String(tenant?.tenantKey || "unknown").trim().toLowerCase()}`}
+          mapContainerStyle={containerStyle}
+          center={mapCenter}
+          zoom={mapZoom}
+          onLoad={(map) => {
+            setGmapsRef(map);
+            mapRef.current = map; // keep your existing ref name working
+          }}
+          onDragStart={() => {
+            beginMapInteraction();
+            userDragPanRef.current = true;
+            if (followCamera) {
+              stopFollowCameraAnimation();
+              setFollowCamera(false);
+              setTravelFollowMode(false);
+            }
+          }}
+          onZoomChanged={() => {
+            beginMapInteraction();
+            lastZoomGestureAtRef.current = Date.now();
+            const z = Number(mapRef.current?.getZoom?.());
+            if (!Number.isFinite(z)) return;
+            mapZoomRef.current = z;
             const rounded = Math.round(z);
             setMapZoom((prev) => (prev === rounded ? prev : rounded));
-          }
+          }}
+          onIdle={() => {
+            endMapInteractionSoon(750);
+            userDragPanRef.current = false;
+            const map = mapRef.current;
+            if (!map) return;
 
-          const c = map.getCenter?.();
-          const lat = Number(c?.lat?.());
-          const lng = Number(c?.lng?.());
-          if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            setMapCenter((prev) => {
-              if (!prev) return { lat, lng };
-              if (Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001) return prev;
-              return { lat, lng };
-            });
-          }
+            const z = Number(map.getZoom?.());
+            if (Number.isFinite(z)) {
+              const rounded = Math.round(z);
+              setMapZoom((prev) => (prev === rounded ? prev : rounded));
+            }
 
-          const b = map.getBounds?.();
-          const ne = b?.getNorthEast?.();
-          const sw = b?.getSouthWest?.();
-          const north = Number(ne?.lat?.());
-          const east = Number(ne?.lng?.());
-          const south = Number(sw?.lat?.());
-          const west = Number(sw?.lng?.());
-          if ([north, east, south, west].every(Number.isFinite)) {
-            setMapBounds((prev) => {
-              if (
-                prev &&
-                Math.abs(prev.north - north) < 0.000001 &&
-                Math.abs(prev.east - east) < 0.000001 &&
-                Math.abs(prev.south - south) < 0.000001 &&
-                Math.abs(prev.west - west) < 0.000001
-              ) {
-                return prev;
+            const c = map.getCenter?.();
+            const lat = Number(c?.lat?.());
+            const lng = Number(c?.lng?.());
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+              setMapCenter((prev) => {
+                if (!prev) return { lat, lng };
+                if (Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001) return prev;
+                return { lat, lng };
+              });
+            }
+
+            const b = map.getBounds?.();
+            const ne = b?.getNorthEast?.();
+            const sw = b?.getSouthWest?.();
+            const north = Number(ne?.lat?.());
+            const east = Number(ne?.lng?.());
+            const south = Number(sw?.lat?.());
+            const west = Number(sw?.lng?.());
+            if ([north, east, south, west].every(Number.isFinite)) {
+              setMapBounds((prev) => {
+                if (
+                  prev &&
+                  Math.abs(prev.north - north) < 0.000001 &&
+                  Math.abs(prev.east - east) < 0.000001 &&
+                  Math.abs(prev.south - south) < 0.000001 &&
+                  Math.abs(prev.west - west) < 0.000001
+                ) {
+                  return prev;
+                }
+                return { north, east, south, west };
+              });
+            }
+          }}
+          options={{
+            mapTypeId: mapType,
+            mapId: GMAPS_MAP_ID || undefined,
+            gestureHandling: "greedy",
+            disableDoubleClickZoom: isTouchDevice,
+            isFractionalZoomEnabled: false,
+            fullscreenControl: false,
+            streetViewControl: false,
+            mapTypeControl: false,
+            clickableIcons: false,
+            rotateControl: true,
+            headingInteractionEnabled: true,
+            tiltInteractionEnabled: false,
+          }}
+          onClick={(e) => {
+            setAdminDomainMenuOpen(false);
+            setAdminToolboxOpen(false);
+            if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
+            const lat = Number(e?.latLng?.lat?.());
+            const lng = Number(e?.latLng?.lng?.());
+            if (deleteCircleMode && isAdmin) {
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+              if (!deleteCircleDraft?.center) {
+                setDeleteCircleDraft({ center: { lat, lng }, radiusMeters: 0 });
+                openNotice("🟢", "Circle center set", "Tap a second point to set the radius.", { autoCloseMs: 1200, compact: true });
+                return;
               }
-              return { north, east, south, west };
-            });
-          }
-        }}
-        options={{
-          mapTypeId: mapType,
-          mapId: GMAPS_MAP_ID || undefined,
-          gestureHandling: "greedy",
-          disableDoubleClickZoom: isTouchDevice,
-          isFractionalZoomEnabled: false,
-          fullscreenControl: false,
-          streetViewControl: false,
-          mapTypeControl: false,
-          clickableIcons: false,
-          rotateControl: true,
-          headingInteractionEnabled: true,
-          tiltInteractionEnabled: false,
-        }}
-        onClick={(e) => {
-          setAdminDomainMenuOpen(false);
-          setAdminToolboxOpen(false);
-          if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
-          const lat = Number(e?.latLng?.lat?.());
-          const lng = Number(e?.latLng?.lng?.());
-          if (deleteCircleMode && isAdmin) {
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-            if (!deleteCircleDraft?.center) {
-              setDeleteCircleDraft({ center: { lat, lng }, radiusMeters: 0 });
-              openNotice("🟢", "Circle center set", "Tap a second point to set the radius.", { autoCloseMs: 1200, compact: true });
+              const center = deleteCircleDraft.center;
+              const radiusMeters = metersBetween(
+                { lat: Number(center.lat), lng: Number(center.lng) },
+                { lat, lng }
+              );
+              if (!Number.isFinite(radiusMeters) || radiusMeters < 2) {
+                openNotice("⚠️", "Radius too small", "Tap farther from the center to define a larger circle.");
+                return;
+              }
+              setDeleteCircleDraft({ center, radiusMeters });
+              setDeleteCircleConfirmOpen(true);
               return;
             }
-            const center = deleteCircleDraft.center;
-            const radiusMeters = metersBetween(
-              { lat: Number(center.lat), lng: Number(center.lng) },
-              { lat, lng }
-            );
-            if (!Number.isFinite(radiusMeters) || radiusMeters < 2) {
-              openNotice("⚠️", "Radius too small", "Tap farther from the center to define a larger circle.");
+            if (showOfficialLights && Number.isFinite(lat) && Number.isFinite(lng)) {
+              const hitOfficialId = officialCanvasOverlayRef.current?.hitTestByLatLng?.(lat, lng);
+              if (hitOfficialId) {
+                handleOfficialMarkerClick(hitOfficialId);
+                return;
+              }
+            }
+
+            // Clicking map background should close any open info windows.
+            if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker) {
+              setSelectedOfficialId(null);
+              setSelectedQueuedTempId(null);
+              setSelectedDomainMarker(null);
+            }
+
+            if (
+              activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
+              && !isAdmin
+              && !visibleDomainOptions.some((d) => d.key === adminReportDomain)
+            ) {
+              openNotice("⚠️", "Domain unavailable", "This report domain is not enabled for public reporting.");
               return;
             }
-            setDeleteCircleDraft({ center, radiusMeters });
-            setDeleteCircleConfirmOpen(true);
-            return;
-          }
-          if (showOfficialLights && Number.isFinite(lat) && Number.isFinite(lng)) {
-            const hitOfficialId = officialCanvasOverlayRef.current?.hitTestByLatLng?.(lat, lng);
-            if (hitOfficialId) {
-              handleOfficialMarkerClick(hitOfficialId);
+
+            if (mappingMode && isAdmin && adminReportDomain === "street_signs") {
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+              requestQueueOfficialSign(lat, lng);
               return;
             }
-          }
 
-          // Clicking map background should close any open info windows.
-          if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker) {
-            setSelectedOfficialId(null);
-            setSelectedQueuedTempId(null);
-            setSelectedDomainMarker(null);
-          }
-
-          if (!isAdmin && !visibleDomainOptions.some((d) => d.key === adminReportDomain)) {
-            openNotice("⚠️", "Domain unavailable", "This report domain is not enabled for public reporting.");
-            return;
-          }
-
-          if (mappingMode && isAdmin && adminReportDomain === "street_signs") {
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-            requestQueueOfficialSign(lat, lng);
-            return;
-          }
-
-          if (adminReportDomain !== "streetlights") {
+          if (activeMapLayerKey !== "streetlights") {
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
             (async () => {
               if (adminReportDomain === "street_signs") {
@@ -23575,89 +28504,28 @@ async function insertReportWithFallback(payload) {
                 openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before placing a report.`);
                 return;
               }
-              if (!municipalBoundaryGate(adminReportDomain, lat, lng, { showNotice: true })) {
+              const targetIncidentDomain = activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+                ? String(incidentLayerDomainOptions?.[0]?.key || "potholes")
+                : adminReportDomain;
+              if (!municipalBoundaryGate(targetIncidentDomain, lat, lng, { showNotice: true })) {
                 return;
               }
-              if (adminReportDomain === "potholes") {
-                const domainLabel =
-                  visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Report";
-                const targetToken = `pothole:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-                const provisionalTarget = {
-                  domain: adminReportDomain,
-                  domainLabel,
-                  lat,
-                  lng,
-                  sourceLat: lat,
-                  sourceLng: lng,
-                  lightId: makePotholeIdFromCoords(lat, lng),
-                  pothole_id: null,
-                  locationLabel: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-                  nearestAddress: "",
-                  nearestLandmark: "",
-                  nearestCrossStreet: "",
-                  nearestIntersection: "",
-                  _targetToken: targetToken,
-                };
-                setPendingPotholeDomainTarget(provisionalTarget);
-                setPotholeAdvisoryOpen(true);
+              if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY || (!isAdmin && (adminReportDomain === "potholes" || adminReportDomain === "water_drain_issues"))) {
+                setPendingIncidentTypeTarget({ lat, lng });
+                setIncidentTypePickerOpen(true);
                 return;
               }
-              const geo = {
-                isRoad: true,
-                label: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-                nearestAddress: "",
-                nearestLandmark: "",
-                nearestCrossStreet: "",
-                nearestIntersection: "",
-                nearestStreet: "",
-                snappedLat: lat,
-                snappedLng: lng,
-              };
-              const targetLat = lat;
-              const targetLng = lng;
-              const nearestWaterMarker = adminReportDomain === "water_drain_issues"
-                ? nearestWaterDrainMarkerForPoint(targetLat, targetLng, nonStreetlightDomainMarkers)
-                : null;
-              const resolvedWaterIncidentId = String(nearestWaterMarker?.marker?.id || "").trim();
-              const lightId = adminReportDomain === "water_drain_issues"
-                ? (resolvedWaterIncidentId || `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`)
-                : `${adminReportDomain}:${targetLat.toFixed(5)}:${targetLng.toFixed(5)}`;
-              const domainLabel =
-                visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Report";
-              const nextTarget = {
-                domain: adminReportDomain,
-                domainLabel,
-                lat: targetLat,
-                lng: targetLng,
-                sourceLat: lat,
-                sourceLng: lng,
-                lightId,
-                pothole_id: null,
-                locationLabel:
-                  String(nearestWaterMarker?.marker?.location_label || "").trim()
-                  || geo.nearestAddress
-                  || geo.label
-                  || `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
-                nearestAddress: geo.nearestAddress || "",
-                nearestLandmark: geo.nearestLandmark || "",
-                nearestCrossStreet: geo.nearestCrossStreet || "",
-                nearestIntersection: geo.nearestIntersection || "",
-              };
-              setDomainReportTarget(nextTarget);
-              setDomainReportNote("");
-
-              // Cost guardrail: no passive geocode on click.
-              // Geocoding runs only during explicit submit flows.
+              startIncidentReportAtPoint(targetIncidentDomain, lat, lng);
             })();
             return;
           }
 
-          if (!mappingMode) return;
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            if (!mappingMode) return;
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-          queueOfficialLight(lat, lng);
-        }}
-      >
+            queueOfficialLight(lat, lng);
+          }}
+        >
         {showCityOutsideShade && cityOutsideMaskPaths.length > 0 && (
           <PolygonF
             paths={cityOutsideMaskPaths}
@@ -23685,7 +28553,11 @@ async function insertReportWithFallback(payload) {
           />
         ))}
         {userLoc && (
-          <SmoothUserMarker position={{ lat: userLoc[0], lng: userLoc[1] }} />
+          <SmoothUserMarker
+            position={{ lat: userLoc[0], lng: userLoc[1] }}
+            heading={userHeading}
+            travelFollowMode={travelFollowMode}
+          />
         )}
         {/* Canvas overlay replaces thousands of MarkerF nodes for smoother pan/zoom */}
         <OfficialLightsCanvasOverlay
@@ -23716,32 +28588,33 @@ async function insertReportWithFallback(payload) {
           />
         )}
 
-        {!isStreetlightsDomain && renderedDomainMarkers.map((m) => (
+        {activeMapLayerKey !== "streetlights" && renderedDomainMarkers.map((m) => (
           <MarkerF
-            key={`domain-${adminReportDomain}-${m.id}`}
+            key={`domain-${String(m?.domain || adminReportDomain)}-${m.id}`}
             position={{ lat: m.lat, lng: m.lng }}
             icon={
-              adminReportDomain === "street_signs"
+              String(m?.domain || adminReportDomain) === "street_signs"
                 ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
                 : gmapsDotIcon(
                     m.color || domainMarkerColor,
                     m.ringColor || "#fff",
-                    m.glyph || adminDomainMeta.icon || "💡",
-                    m.glyphSrc || adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight
+                    m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
+                    m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight))
                   )
             }
             onClick={() => {
               setSelectedQueuedTempId(null);
               setSelectedOfficialId(null);
-              if (adminReportDomain === "potholes") {
+              const markerDomain = String(m?.domain || adminReportDomain).trim();
+              if (markerDomain === "potholes") {
                 selectDomainMarkerWithGeo(m);
                 return;
               }
-              if (adminReportDomain === "street_signs") {
+              if (markerDomain === "street_signs") {
                 setSelectedDomainMarker(m);
                 return;
               }
-              if (adminReportDomain === "water_drain_issues") {
+              if (markerDomain === "water_drain_issues") {
                 selectDomainMarkerWithGeo(m);
                 return;
               }
@@ -23780,19 +28653,54 @@ async function insertReportWithFallback(payload) {
           />
         ))}
 
-      </GoogleMap>
+        </GoogleMap>
+      </div>
+
+      {mapLoadingMessage && (
+        <div
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: isMobile
+              ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 14px)"
+              : "calc(var(--desktop-header-height) + 14px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 2350,
+            pointerEvents: "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            borderRadius: 999,
+            color: "var(--sl-ui-text)",
+            background: "color-mix(in srgb, var(--sl-ui-surface-bg) 92%, transparent)",
+            border: "1px solid var(--sl-ui-surface-border)",
+            boxShadow: "0 8px 22px rgba(0,0,0,0.22)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            fontSize: isMobile ? 12 : 13,
+            fontWeight: 850,
+            letterSpacing: 0.15,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: "#28c39a",
+              boxShadow: "0 0 0 5px rgba(40,195,154,0.18)",
+            }}
+          />
+          {mapLoadingMessage}
+        </div>
+      )}
 
       {!bulkMode && selectedOfficialLightForPopup && selectedOfficialPopupPixel && (
         <div
-          style={{
-            position: "absolute",
-            left: selectedOfficialPopupPixel.x,
-            top: selectedOfficialPopupPixel.y,
-            transform: "translate(-50%, calc(-100% - 14px))",
-            zIndex: 2600,
-            pointerEvents: "auto",
-            maxWidth: "min(280px, calc(100vw - 20px))",
-          }}
+          style={selectedOfficialPopupPlacement.frameStyle}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -23845,9 +28753,7 @@ async function insertReportWithFallback(payload) {
             <button
               type="button"
               onClick={() => {
-                if (typeof window !== "undefined") {
-                  window.open(STREETLIGHT_UTILITY_REPORT_URL, "_blank", "noopener,noreferrer");
-                }
+                void openExternalUrl(STREETLIGHT_UTILITY_REPORT_URL);
               }}
               style={{ ...btnPopupPrimary, background: "var(--sl-ui-brand-blue)" }}
             >
@@ -23994,32 +28900,14 @@ async function insertReportWithFallback(payload) {
           </div>
 
           <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: -7,
-              width: 12,
-              height: 12,
-              background: "var(--sl-ui-modal-bg)",
-              borderRight: "1px solid var(--sl-ui-modal-border)",
-              borderBottom: "1px solid var(--sl-ui-modal-border)",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}
+            style={selectedOfficialPopupPlacement.arrowStyle}
           />
         </div>
       )}
 
-      {!bulkMode && adminReportDomain === "potholes" && selectedDomainMarker && selectedDomainPopupPixel && (
+      {!bulkMode && selectedDomainMarkerDomain === "potholes" && selectedDomainMarker && selectedDomainPopupPixel && (
         <div
-          style={{
-            position: "absolute",
-            left: selectedDomainPopupPixel.x,
-            top: selectedDomainPopupPixel.y,
-            transform: "translate(-50%, calc(-100% - 14px))",
-            zIndex: 2600,
-            pointerEvents: "auto",
-            maxWidth: "min(280px, calc(100vw - 20px))",
-          }}
+          style={selectedDomainPopupPlacement.frameStyle}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -24193,32 +29081,14 @@ async function insertReportWithFallback(payload) {
             })()}
           </div>
           <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: -7,
-              width: 12,
-              height: 12,
-              background: "var(--sl-ui-modal-bg)",
-              borderRight: "1px solid var(--sl-ui-modal-border)",
-              borderBottom: "1px solid var(--sl-ui-modal-border)",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}
+            style={selectedDomainPopupPlacement.arrowStyle}
           />
         </div>
       )}
 
-      {!bulkMode && adminReportDomain === "water_drain_issues" && selectedDomainMarker && selectedDomainPopupPixel && (
+      {!bulkMode && selectedDomainMarkerDomain === "water_drain_issues" && selectedDomainMarker && selectedDomainPopupPixel && (
         <div
-          style={{
-            position: "absolute",
-            left: selectedDomainPopupPixel.x,
-            top: selectedDomainPopupPixel.y,
-            transform: "translate(-50%, calc(-100% - 14px))",
-            zIndex: 2600,
-            pointerEvents: "auto",
-            maxWidth: "min(280px, calc(100vw - 20px))",
-          }}
+          style={selectedDomainPopupPlacement.frameStyle}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -24391,32 +29261,14 @@ async function insertReportWithFallback(payload) {
             })()}
           </div>
           <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: -7,
-              width: 12,
-              height: 12,
-              background: "var(--sl-ui-modal-bg)",
-              borderRight: "1px solid var(--sl-ui-modal-border)",
-              borderBottom: "1px solid var(--sl-ui-modal-border)",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}
+            style={selectedDomainPopupPlacement.arrowStyle}
           />
         </div>
       )}
 
-      {!bulkMode && adminReportDomain === "street_signs" && selectedDomainMarker && selectedDomainPopupPixel && (
+      {!bulkMode && selectedDomainMarkerDomain === "street_signs" && selectedDomainMarker && selectedDomainPopupPixel && (
         <div
-          style={{
-            position: "absolute",
-            left: selectedDomainPopupPixel.x,
-            top: selectedDomainPopupPixel.y,
-            transform: "translate(-50%, calc(-100% - 14px))",
-            zIndex: 2600,
-            pointerEvents: "auto",
-            maxWidth: "min(280px, calc(100vw - 20px))",
-          }}
+          style={selectedDomainPopupPlacement.frameStyle}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -24555,32 +29407,14 @@ async function insertReportWithFallback(payload) {
             </button>
           </div>
           <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: -7,
-              width: 12,
-              height: 12,
-              background: "var(--sl-ui-modal-bg)",
-              borderRight: "1px solid var(--sl-ui-modal-border)",
-              borderBottom: "1px solid var(--sl-ui-modal-border)",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}
+            style={selectedDomainPopupPlacement.arrowStyle}
           />
         </div>
       )}
 
       {!bulkMode && selectedQueuedLightForPopup && selectedQueuedPopupPixel && (
         <div
-          style={{
-            position: "absolute",
-            left: selectedQueuedPopupPixel.x,
-            top: selectedQueuedPopupPixel.y,
-            transform: "translate(-50%, calc(-100% - 14px))",
-            zIndex: 2600,
-            pointerEvents: "auto",
-            maxWidth: "min(280px, calc(100vw - 20px))",
-          }}
+          style={selectedQueuedPopupPlacement.frameStyle}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -24676,17 +29510,7 @@ async function insertReportWithFallback(payload) {
           </div>
 
           <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              bottom: -7,
-              width: 12,
-              height: 12,
-              background: "var(--sl-ui-modal-bg)",
-              borderRight: "1px solid var(--sl-ui-modal-border)",
-              borderBottom: "1px solid var(--sl-ui-modal-border)",
-              transform: "translateX(-50%) rotate(45deg)",
-            }}
+            style={selectedQueuedPopupPlacement.arrowStyle}
           />
         </div>
       )}
@@ -24697,7 +29521,7 @@ async function insertReportWithFallback(payload) {
           Floating tool buttons (mobile + desktop)
          ========================= */}
       <div className="sl-map-tool">
-        {!!toolHintText && (
+        {!!toolHintText && !isMobile && (
           <div
             style={{
               position: "absolute",
@@ -24712,88 +29536,126 @@ async function insertReportWithFallback(payload) {
           </div>
         )}
 
-        {/* Satellite toggle */}
-        <button
-          type="button"
-          className="sl-map-tool-mini"
-                    onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setMapType((t) => {
-              const next = t === "roadmap" ? "satellite" : "roadmap";
-              showToolHint(next === "satellite" ? "Satellite view" : "Map view", 1100, 0);
-              return next;
-            });
-          }}
-          title={mapType === "satellite" ? "Satellite" : "Street map"}
-          aria-label="Toggle satellite map"
-        >
-            <AppIcon
-              src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite}
-              size={38}
-            />
-          </button>
-
-        <button
-          type="button"
-          className="sl-map-tool-mini"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            // Freeze heading orientation until the user explicitly taps location again.
-            followHeadingEnabledRef.current = false;
-            try {
-              if (mapRef.current?.moveCamera) {
-                mapRef.current.moveCamera({
-                  heading: 0,
-                  tilt: 0,
+        {!isMobile && (
+          <>
+            {/* Satellite toggle */}
+            <button
+              type="button"
+              className="sl-map-tool-mini"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMapType((t) => {
+                  const next = t === "roadmap" ? "satellite" : "roadmap";
+                  showToolHint(next === "satellite" ? "Satellite view" : "Map view", 1100, 0);
+                  return next;
                 });
-              } else if (mapRef.current?.setHeading) {
-                mapRef.current.setHeading(0);
-                mapRef.current?.setTilt?.(0);
-              }
-            } catch {
-              // ignore
-            }
-            showToolHint("Realigned to north", 1100, 1);
-          }}
-          title="Reset heading"
-          aria-label="Reset heading"
-        >
-          <AppIcon src={UI_ICON_SRC.headingReset} size={38} />
-        </button>
+              }}
+              title={mapType === "satellite" ? "Satellite" : "Street map"}
+              aria-label="Toggle satellite map"
+            >
+              <AppIcon
+                src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite}
+                size={38}
+              />
+            </button>
 
-        <button
-          type="button"
-          className={`sl-map-tool-mini ${locating ? "is-on" : ""}`}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
+            <button
+              type="button"
+              className="sl-map-tool-mini"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // Freeze heading orientation until the user explicitly taps location again.
+                setTravelFollowMode(false);
+                followHeadingEnabledRef.current = false;
+                try {
+                  if (mapRef.current?.moveCamera) {
+                    mapRef.current.moveCamera({
+                      heading: 0,
+                      tilt: 0,
+                    });
+                  } else if (mapRef.current?.setHeading) {
+                    mapRef.current.setHeading(0);
+                    mapRef.current?.setTilt?.(0);
+                  }
+                } catch {
+                  // ignore
+                }
+                showToolHint("Realigned to north", 1100, 1);
+              }}
+              title="Reset heading"
+              aria-label="Reset heading"
+            >
+              <AppIcon src={UI_ICON_SRC.headingReset} size={38} />
+            </button>
 
-            // If denied previously → show prompt modal (which calls forced retry)
-            if (geoDenied) {
-            setShowLocationPrompt(true);
-            return;
-          }
+            <button
+              type="button"
+              className={`sl-map-tool-mini ${locating ? "is-on" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
 
-            // Normal locate
-            showToolHint("Location", 1100, 2);
-            followHeadingEnabledRef.current = true;
-            findMyLocation(false);
-          }}
-          title="Find my location"
-          aria-label="Find my location"
-        >
-            <AppIcon src={UI_ICON_SRC.location} size={38} />
-          </button>
+                // If denied previously -> show prompt modal (which calls forced retry)
+                if (geoDenied) {
+                  setShowLocationPrompt(true);
+                  return;
+                }
 
-        {
+                // Normal locate
+                showToolHint("Location", 1100, 2);
+                followHeadingEnabledRef.current = true;
+                findMyLocation(false);
+              }}
+              title="Find my location"
+              aria-label="Find my location"
+            >
+              <AppIcon src={UI_ICON_SRC.location} size={38} />
+            </button>
+
+            <button
+              type="button"
+              className={`sl-map-tool-mini ${travelFollowMode ? "is-on" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showToolHint(travelFollowMode ? "Travel follow off" : "Travel follow", 1100, 3);
+                toggleTravelFollowMode();
+              }}
+              title="Travel follow"
+              aria-label="Toggle travel follow"
+            >
+              <AppIcon src={UI_ICON_SRC.navigationArrow} size={34} />
+            </button>
+
+            <button
+              type="button"
+              className="sl-map-tool-mini"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setAutoFollow(false);
+                setFollowCamera(false);
+                setTravelFollowMode(false);
+                recenterToTenantHome("home-button");
+                showToolHint("City home", 1100, 4);
+              }}
+              title="City home"
+              aria-label="Recenter to city"
+            >
+              <AppIcon src={UI_ICON_SRC.homeRecenter} size={36} />
+            </button>
+          </>
+        )}
+
+        {!isMobile && (
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              className={`sl-map-tool-mini sl-has-submenu ${adminDomainMenuOpen ? "is-on" : ""}`}
-              title={`Report domain: ${adminDomainMeta.label}`}
-              aria-label="Select report domain"
+              className={`sl-map-tool-mini sl-has-submenu sl-mobile-hide-bottom-rail ${adminDomainMenuOpen ? "is-on" : ""}`}
+              title={`Map layer: ${activeLayerMeta?.label || adminDomainMeta.label}`}
+              aria-label="Select map layer"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -24802,10 +29664,10 @@ async function insertReportWithFallback(payload) {
                   if (next) setAdminToolboxOpen(false);
                   return next;
                 });
-                showToolHint(`Domain: ${adminDomainMeta.label}`, 1000, 3);
+                showToolHint(`Layer: ${activeLayerMeta?.label || adminDomainMeta.label}`, 1000, 3);
               }}
             >
-              <AppIcon src={adminDomainMeta.iconSrc} size={38} />
+              <AppIcon src={activeLayerMeta?.iconSrc || adminDomainMeta.iconSrc} size={38} />
             </button>
             {adminDomainMenuOpen && (
               <div
@@ -24827,15 +29689,15 @@ async function insertReportWithFallback(payload) {
                   minWidth: 170,
                 }}
               >
-                {visibleDomainOptions.map((d) => {
-                  const isOn = d.key === adminReportDomain;
+                {layerOptions.map((d) => {
+                  const isOn = d.key === activeMapLayerKey;
                   return (
                     <button
                       key={d.key}
                       type="button"
                       onClick={() => {
                         if (!d.enabled) return;
-                        requestAdminDomainSwitch(d.key, d.label);
+                        requestMapLayerSwitch(d.key, d.label);
                       }}
                       disabled={!d.enabled}
                       style={{
@@ -24867,12 +29729,12 @@ async function insertReportWithFallback(payload) {
               </div>
             )}
           </div>
-        }
+        )}
 
-        {canOpenDomainReports && (
+        {!isMobile && canOpenDomainReports && (
           <button
             type="button"
-            className={`sl-map-tool-mini ${openReportsOpen ? "is-on" : ""}`}
+            className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${openReportsOpen ? "is-on" : ""}`}
             title="Reports"
             aria-label="Open reports"
             onClick={(e) => {
@@ -24892,7 +29754,7 @@ async function insertReportWithFallback(payload) {
           </button>
         )}
 
-        {canUseStreetlightBulk && (
+        {!isMobile && canUseStreetlightBulk && (
           <button
             type="button"
             className={`sl-map-tool-mini sl-bulk-tool-btn ${bulkMode ? "is-on" : ""}`}
@@ -24929,11 +29791,11 @@ async function insertReportWithFallback(payload) {
             <AppIcon src={UI_ICON_SRC.bulk} size={38} />
           </button>
         )}
-        {(isAdmin || showAdminTools) && (
+        {!isMobile && (isAdmin || showAdminTools) && (
           <div style={{ position: "relative" }}>
             <button
               type="button"
-              className={`sl-map-tool-mini sl-has-submenu ${adminToolboxOpen ? "is-on" : ""}`}
+              className={`sl-map-tool-mini sl-has-submenu sl-mobile-hide-bottom-rail ${adminToolboxOpen ? "is-on" : ""}`}
               title="Admin tools"
               aria-label="Admin tools"
               onClick={(e) => {
@@ -24970,37 +29832,7 @@ async function insertReportWithFallback(payload) {
                   minWidth: 180,
                 }}
               >
-                {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (mappingMode) requestExitMappingMode();
-                      if (bulkMode) setBulkMode(false);
-                      openOpenReports({ inViewOnly: false });
-                      setAdminToolboxOpen(false);
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "7px 9px",
-                      borderRadius: 9,
-                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      background: "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: "var(--sl-ui-modal-btn-secondary-text)",
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      justifyContent: "flex-start",
-                    }}
-                  >
-                      <AppIcon src={UI_ICON_SRC.openReports} size={30} />
-                      <span style={{ fontSize: 12.5 }}>Reports</span>
-                    </button>
-                )}
-
-                {isAdmin && isStreetlightsDomain && (
+                {isAdmin && isStreetlightsLayerActive && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -25056,7 +29888,41 @@ async function insertReportWithFallback(payload) {
                   </button>
                 )}
 
-                {showAdminTools && (isStreetlightsDomain || isStreetSignsDomain) && (
+                {showAdminTools && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setAdminToolboxOpen(false);
+                      setLocationDiagnosticsOpen(true);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "7px 9px",
+                      borderRadius: 9,
+                      border: locationDiagnosticsOpen
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: locationDiagnosticsOpen
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: locationDiagnosticsOpen
+                        ? "var(--sl-ui-tool-active-text)"
+                        : "var(--sl-ui-modal-btn-secondary-text)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    <AppIcon src={UI_ICON_SRC.location} size={30} />
+                    <span style={{ fontSize: 12.5 }}>Location Diagnostics</span>
+                  </button>
+                )}
+
+                {showAdminTools && (isStreetlightsLayerActive || isStreetSignsLayerActive) && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -25115,12 +29981,49 @@ async function insertReportWithFallback(payload) {
         )}
       </div>
 
+      <FollowedLocationsModal
+        open={followedLocationsOpen}
+        onClose={() => setFollowedLocationsOpen(false)}
+        onBack={() => {
+          setFollowedLocationsOpen(false);
+          setAccountView("menu");
+          setAccountMenuOpen(true);
+        }}
+        cities={tenant?.availableTenants || []}
+        followedTenantKeys={followedTenantKeys}
+        loading={followedTenantKeysLoading}
+        busyKey={followedTenantBusyKey}
+        onSetFollowed={(tenantKeyValue, shouldFollow) => {
+          const city = (tenant?.availableTenants || []).find(
+            (item) => String(item?.tenantKey || "").trim().toLowerCase() === String(tenantKeyValue || "").trim().toLowerCase()
+          );
+          void setTenantFollowStatus(tenantKeyValue, shouldFollow, {
+            label: String(city?.displayName || city?.name || tenantKeyValue).trim() || "City",
+          });
+        }}
+        darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+      />
+
       <NotificationPreferencesModal
         open={notificationPreferencesOpen}
         onClose={() => {
           setNotificationPreferencesByTopic(savedNotificationPreferencesByTopic);
           setNotificationPreferencesStatus("");
           setNotificationPreferencesOpen(false);
+        }}
+        onBack={() => {
+          setNotificationPreferencesByTopic(savedNotificationPreferencesByTopic);
+          setNotificationPreferencesStatus("");
+          setNotificationPreferencesOpen(false);
+          setAccountView("menu");
+          setAccountMenuOpen(true);
+        }}
+        onResetDraft={() => {
+          setNotificationPreferencesByTopic(savedNotificationPreferencesByTopic);
+          setNotificationPreferencesStatus("");
         }}
         onSave={() => void saveNotificationPreferences()}
         topics={notificationTopics}
@@ -25130,6 +30033,9 @@ async function insertReportWithFallback(payload) {
         loading={notificationPreferencesLoading}
         status={notificationPreferencesStatus}
         darkMode={prefersDarkMode}
+        pageMode={isMobile}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
       />
       <ContactUsModal
         open={contactUsOpen}
@@ -25140,23 +30046,6 @@ async function insertReportWithFallback(payload) {
         websiteUrl={headerOrganizationProfile?.website_url}
         darkMode={prefersDarkMode}
       />
-      <AlertsWindow
-        open={alertsWindowOpen}
-        onClose={() => setAlertsWindowOpen(false)}
-        alerts={mapCommunityAlerts}
-        loading={mapCommunityFeedLoading}
-        error={mapCommunityFeedError}
-        darkMode={prefersDarkMode}
-      />
-      <EventsWindow
-        open={eventsWindowOpen}
-        onClose={() => setEventsWindowOpen(false)}
-        events={mapCommunityEvents}
-        loading={mapCommunityFeedLoading}
-        error={mapCommunityFeedError}
-        darkMode={prefersDarkMode}
-      />
-
       {/* =========================
           Mobile UI overlays
          ========================= */}
@@ -25246,6 +30135,27 @@ async function insertReportWithFallback(payload) {
                 }}
               >
                 <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor }}>Reporting Map</span>
+                {!!environmentGuardrailLabel && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "4px 9px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(210, 96, 25, 0.24)",
+                      background: "rgba(210, 96, 25, 0.12)",
+                      color: "#d26019",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      letterSpacing: "0.05em",
+                      textTransform: "uppercase",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {environmentGuardrailLabel}
+                  </div>
+                )}
                 <h1
                   style={{
                     margin: 0,
@@ -25533,7 +30443,7 @@ async function insertReportWithFallback(payload) {
                       Reports in view: <b>{openReportsInViewCount}</b>
                     </div>
                   )}
-                  {isStreetlightsDomain && (
+                  {isStreetlightsLayerActive && (
                     <>
                       <div
                         onClick={() => toggleStreetlightInViewFilter("saved")}
@@ -25659,11 +30569,23 @@ async function insertReportWithFallback(payload) {
           }}
           onManage={() => {
             setAccountMenuOpen(false);
+            setNotificationPreferencesOpen(false);
+            setFollowedLocationsOpen(false);
             setManageEditing(false);
             setManageOpen(true);
           }}
+          onFollowedLocations={() => {
+            setAccountMenuOpen(false);
+            setManageOpen(false);
+            setManageEditing(false);
+            setNotificationPreferencesOpen(false);
+            setFollowedLocationsOpen(true);
+          }}
           onNotificationPreferences={() => {
             setAccountMenuOpen(false);
+            setManageOpen(false);
+            setManageEditing(false);
+            setFollowedLocationsOpen(false);
             setNotificationPreferencesStatus("");
             setNotificationPreferencesOpen(true);
           }}
@@ -25676,6 +30598,11 @@ async function insertReportWithFallback(payload) {
             setAccountMenuOpen(false);
             setContactUsOpen(true);
           }}
+          onOpenInfo={() => {
+            setAccountMenuOpen(false);
+            setCitySwitcherOpen(false);
+            setInfoMenuOpen(true);
+          }}
           onLogout={() => {
             signOut();
             setAccountMenuOpen(false);
@@ -25685,14 +30612,14 @@ async function insertReportWithFallback(payload) {
         {/* =========================
               Bulk Action Bar (desktop)
             ========================= */}
-          {canUseStreetlightBulk && bulkMode && (
+          {showMobileMapTabContent && canUseStreetlightBulk && bulkMode && (
             <div
               className="sl-overlay-pass"
               style={{
                 position: "fixed",
                 left: 0,
                 right: 0,
-                bottom: "calc(14px + 86px)", // sits above the disclaimer card
+                bottom: "14px",
                 zIndex: 1601,
                 padding: "0 16px",
               }}
@@ -25791,14 +30718,14 @@ async function insertReportWithFallback(payload) {
             </div>
           )}
 
-          {mappingMode && mappingQueue.length > 0 && (
+          {showMobileMapTabContent && mappingMode && mappingQueue.length > 0 && (
             <div
               className="sl-overlay-pass"
               style={{
                 position: "fixed",
                 left: 0,
                 right: 0,
-                bottom: "calc(14px + 86px)",
+                bottom: "14px",
                 zIndex: 1601,
                 padding: "0 16px",
               }}
@@ -25843,91 +30770,6 @@ async function insertReportWithFallback(payload) {
               </div>
             </div>
           )}
-
-
-        {/* BOTTOM about/disclaimer */}
-        <div
-          className="sl-overlay-pass"
-          style={{
-            position: "fixed",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 1600,
-            padding: "0 16px 14px",
-          }}
-        >
-          <div
-            style={{
-              display: "none",
-              width: "fit-content",
-              maxWidth: "min(720px, calc(100vw - 32px))",
-              margin: "0 auto 6px",
-              fontSize: 11.5,
-              opacity: 1,
-              textAlign: "left",
-              color: inViewCounterColor,
-              padding: "4px 8px",
-              borderRadius: 999,
-              border: `1px solid ${inViewCounterBorder}`,
-              background: inViewCounterBg,
-              boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-              backdropFilter: "blur(2px)",
-              WebkitBackdropFilter: "blur(2px)",
-            }}
-          >
-            Reports in view: <b>{openReportsInViewCount}</b>
-          </div>
-          <div
-              style={{
-                width: "calc(100vw - 32px)",
-                margin: "0 auto",
-                background: "var(--sl-ui-surface-bg)",
-                border: "1px solid var(--sl-ui-surface-border)",
-                borderRadius: 14,
-                boxShadow: "var(--sl-ui-surface-shadow-bottom)",
-              padding: 12,
-              display: "grid",
-              gap: 8,
-              position: "relative",
-                color: "var(--sl-ui-text)",
-              }}
-          >
-            <button
-              type="button"
-              onClick={() => setInfoMenuOpen(true)}
-              title="Info"
-              aria-label="Open info menu"
-              style={{
-                position: "absolute",
-                right: 10,
-                top: 10,
-                width: 32,
-                height: 32,
-                borderRadius: 999,
-                border: "none",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-                lineHeight: 1,
-                pointerEvents: "auto",
-                touchAction: "manipulation",
-                zIndex: 2,
-              }}
-            >
-              <AppIcon src={UI_ICON_SRC.info} size={20} />
-            </button>
-            <div style={{ fontSize: 12.5, opacity: 0.78, lineHeight: 1.35, paddingRight: 34, display: "grid", gap: 4 }}>
-              <div>
-                <b>About:</b> Community-reported issues and repair confirmations are shared here for public visibility.
-              </div>
-              <div>
-                <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
         <div className="sl-mobile-only">
@@ -25936,107 +30778,52 @@ async function insertReportWithFallback(payload) {
           className="sl-overlay-pass"
           style={{
             position: "fixed",
-            top: "calc(8px + env(safe-area-inset-top))",
+            top: 0,
             left: 0,
             right: 0,
-            zIndex: accountMenuOpen ? 2602 : 1600,
+            zIndex: mobileHeaderMenuOpen ? 10080 : accountMenuOpen ? 2602 : 1600,
             display: "grid",
-            placeItems: "center",
-            padding: "0 10px",
+            placeItems: "start stretch",
+            padding: 0,
             fontFamily: "var(--app-header-font-family)",
           }}
         >
             <div
               style={{
                 position: "relative",
-                width: "min(520px, calc(100vw - 20px))",
+                width: "100%",
                 marginLeft: 0,
               }}
             >
-              <div
-                style={{
-                  position: "fixed",
-                  left: 10,
-                  bottom: "calc(10px + env(safe-area-inset-bottom) + 86px)",
-                  transform: "none",
-                  display: "none",
-                  gap: 6,
-                  pointerEvents: "auto",
-                  zIndex: 2201,
-                }}
-              >
-              <button
-                type="button"
-                onClick={() => nudgeMapZoom(1)}
-                aria-label="Zoom in"
-                title="Zoom in"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 20,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                onClick={() => nudgeMapZoom(-1)}
-                aria-label="Zoom out"
-                title="Zoom out"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 20,
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
-              >
-                –
-              </button>
-            </div>
-
             <div
                 style={{
                   position: "relative",
                   display: "grid",
-                  gridTemplateColumns: "var(--mobile-header-side-column) 1fr var(--mobile-header-side-column)",
-                  alignItems: "center",
+                  gridTemplateColumns: "1fr",
+                  justifyItems: "center",
+                  alignItems: "end",
                   gap: 0,
-                  height: "var(--mobile-header-height)",
-                  minHeight: "var(--mobile-header-height)",
-                  padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
-                  border: mapHeaderTheme.mobileBorder,
-                  borderRadius: "var(--mobile-header-radius)",
+                  minHeight: "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)",
+                  padding: `${mobileHeaderContentTopInset} 16px ${mobileHeaderBottomInset}px`,
+                  border: "none",
+                  borderBottom: mapHeaderTheme.mobileBorder,
+                  borderRadius: 0,
                   background: mapHeaderTheme.mobileBackground,
                   boxShadow: "var(--mobile-header-shadow)",
                   color: mapHeaderTheme.textColor,
-                  overflow: accountMenuOpen ? "visible" : "hidden",
+                  overflow: accountMenuOpen || mobileHeaderMenuOpen ? "visible" : "hidden",
+                  width: "100%",
                 }}
             >
               <div
                 style={{
-                  gridColumn: 1,
+                  position: "absolute",
+                  left: 16,
+                  bottom: mobileHeaderBottomInset,
                   width: "var(--mobile-header-side-column)",
-                  minWidth: 0,
-                  alignSelf: "stretch",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "flex-start",
-                  flex: "0 0 auto",
                 }}
               >
                 {titleLogoError ? (
@@ -26069,65 +30856,75 @@ async function insertReportWithFallback(payload) {
               <div
                 className="app-mobile-header-copy"
                 style={{
-                  gridColumn: 2,
                   minWidth: 0,
+                  width: "100%",
+                  maxWidth: "min(420px, calc(100vw - 132px))",
+                  padding: "0 20px",
+                  textAlign: "center",
+                  display: "grid",
+                  justifyItems: "center",
                 }}
               >
                 <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor }}>Reporting Map</span>
+                {!!environmentGuardrailLabel && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      alignSelf: "center",
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(210, 96, 25, 0.24)",
+                      background: "rgba(210, 96, 25, 0.12)",
+                      color: "#d26019",
+                      fontSize: 10,
+                      fontWeight: 900,
+                      letterSpacing: "0.05em",
+                      textTransform: "uppercase",
+                      lineHeight: 1,
+                      marginTop: 2,
+                    }}
+                  >
+                    {environmentGuardrailLabel}
+                  </span>
+                )}
                 <h1 className="app-mobile-header-title" style={{ color: mapHeaderTheme.textColor }}>{organizationDisplayName}</h1>
               </div>
 
-              <div
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setAdminDomainMenuOpen(false);
+                  setAdminToolboxOpen(false);
+                  setMobileHeaderMenuOpen((prev) => !prev);
+                }}
+                aria-label="Open menu"
+                title="Menu"
                 style={{
-                  gridColumn: 3,
-                  position: "static",
-                  width: "auto",
-                  minWidth: "var(--mobile-header-side-column)",
-                  alignSelf: "stretch",
-                  display: "flex",
+                  position: "absolute",
+                  right: 16,
+                  bottom: mobileHeaderBottomInset,
+                  width: 42,
+                  height: 42,
+                  borderRadius: 14,
+                  border: "1px solid var(--sl-ui-tool-border)",
+                  background: "var(--sl-ui-tool-bg)",
+                  boxShadow: "var(--sl-ui-tool-shadow)",
+                  color: "var(--sl-ui-text)",
+                  display: "inline-flex",
                   alignItems: "center",
-                  justifyContent: "flex-end",
-                  zIndex: 2,
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  fontSize: 22,
+                  fontWeight: 900,
+                  lineHeight: 1,
                 }}
               >
-                <button
-                  type="button"
-                  onClick={handleAccountMenuToggle}
-                  aria-label={session?.user?.id ? "Open account menu" : "Login"}
-                  title={session?.user?.id ? "Account" : "Login"}
-                  style={{
-                    width: session?.user?.id ? "var(--mobile-header-menu-size)" : "auto",
-                    minWidth: "var(--mobile-header-side-column)",
-                    height: "var(--mobile-header-menu-size)",
-                    border: session?.user?.id ? mapHeaderTheme.mobileMenuBorder : mapHeaderTheme.mobileMenuBorder,
-                    background: session?.user?.id ? mapHeaderTheme.mobileMenuBackground : mapHeaderTheme.mobileMenuBackground,
-                    color: mapHeaderTheme.textColor,
-                    borderRadius: 999,
-                    padding: session?.user?.id ? 0 : "var(--app-tab-button-padding-y) var(--app-tab-button-padding-x)",
-                    display: "inline-flex",
-                    flexDirection: session?.user?.id ? "column" : "row",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: session?.user?.id ? 4 : 0,
-                    cursor: "pointer",
-                    boxShadow: "none",
-                    fontSize: session?.user?.id ? undefined : "var(--app-tab-button-font-size)",
-                    fontWeight: session?.user?.id ? undefined : "var(--app-tab-button-font-weight)",
-                    textDecoration: "none",
-                    lineHeight: 1,
-                  }}
-                >
-                  {session?.user?.id ? (
-                    <>
-                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                      <span style={{ width: 18, height: 2, borderRadius: 999, background: "currentColor", display: "block" }} />
-                    </>
-                  ) : (
-                    "Login"
-                  )}
-                </button>
-              </div>
+                ☰
+              </button>
 
             {/* Account Menu panel (mobile) */}
             <AccountMenuPanel
@@ -26135,18 +30932,32 @@ async function insertReportWithFallback(payload) {
               session={session}
               profile={profile}
               showNotificationPreferences={showNotificationPreferencesEntry}
-              variant="mobile-popout"
+              variant="mobile-page"
+              pageTopInset={mobileTabPageTopInset}
+              pageBottomInset={mobileReportsPageBottomInset}
               onClose={() => {
                 setAccountMenuOpen(false);
                 setAccountView("menu");
               }}
               onManage={() => {
                 setAccountMenuOpen(false);
+                setNotificationPreferencesOpen(false);
+                setFollowedLocationsOpen(false);
                 setManageEditing(false);
                 setManageOpen(true);
               }}
+              onFollowedLocations={() => {
+                setAccountMenuOpen(false);
+                setManageOpen(false);
+                setManageEditing(false);
+                setNotificationPreferencesOpen(false);
+                setFollowedLocationsOpen(true);
+              }}
               onNotificationPreferences={() => {
                 setAccountMenuOpen(false);
+                setManageOpen(false);
+                setManageEditing(false);
+                setFollowedLocationsOpen(false);
                 setNotificationPreferencesStatus("");
                 setNotificationPreferencesOpen(true);
               }}
@@ -26159,365 +30970,523 @@ async function insertReportWithFallback(payload) {
                 setAccountMenuOpen(false);
                 setContactUsOpen(true);
               }}
+              onOpenInfo={() => {
+                setAccountMenuOpen(false);
+                setCitySwitcherOpen(false);
+                setInfoMenuOpen(true);
+              }}
               onLogout={() => {
                 signOut();
                 setAccountMenuOpen(false);
               }}
             />
 
+              <MobileHeaderMenuPanel
+              open={mobileHeaderMenuOpen}
+              darkMode={prefersDarkMode}
+              pageTopInset={mobileTabPageTopInset}
+              pageBottomInset={mobileReportsPageBottomInset}
+              onClose={() => setMobileHeaderMenuOpen(false)}
+              showCitySwitcher={citySwitchAvailable}
+              onOpenCitySwitcher={() => {
+                setMobileHeaderMenuOpen(false);
+                setInfoMenuOpen(false);
+                setCitySwitcherOpen(true);
+              }}
+              showLocationDiagnostics={showAdminTools}
+              onOpenLocationDiagnostics={() => {
+                setMobileHeaderMenuOpen(false);
+                setLocationDiagnosticsOpen(true);
+              }}
+              onContactUs={() => {
+                setMobileHeaderMenuOpen(false);
+                setContactUsOpen(true);
+              }}
+              onOpenAbout={() => {
+                setMobileHeaderMenuOpen(false);
+                setCitySwitcherOpen(false);
+                setInfoMenuOpen(true);
+              }}
+              residentMenuLinks={residentMenuLinks}
+              onOpenResidentMenuLink={(linkRow) => {
+                const linkType = String(linkRow?.link_type || "").trim().toLowerCase();
+                const href =
+                  linkType === "phone"
+                    ? normalizePhoneHref(linkRow?.phone)
+                    : linkType === "email"
+                      ? buildMailtoHref({ to: String(linkRow?.email || "").trim() })
+                      : normalizeWebsiteHref(linkRow?.url);
+                setMobileHeaderMenuOpen(false);
+                if (href) {
+                  void openExternalUrl(href);
+                }
+              }}
+            />
+
               </div>
 
+            {showMobileMapTabContent ? (
             <div
               style={{
                 marginTop: 8,
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                width: "min(520px, calc(100vw - 20px))",
-                pointerEvents: "auto",
+                position: "relative",
+                width: "100%",
+                padding: "0 10px",
+                pointerEvents: "none",
               }}
             >
-              <div style={{ display: "grid", gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => nudgeMapZoom(1)}
-                  aria-label="Zoom in"
-                  title="Zoom in"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 20,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    lineHeight: 1,
-                  }}
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  onClick={() => nudgeMapZoom(-1)}
-                  aria-label="Zoom out"
-                  title="Zoom out"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: "1px solid var(--sl-ui-zoom-border)",
-                    background: "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: "var(--sl-ui-text)",
-                    fontSize: 20,
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    lineHeight: 1,
-                  }}
-                >
-                  –
-                </button>
-                {showMapAlertIcon ? (
-                <button
-                  type="button"
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  width: 48,
+                  justifyItems: "center",
+                  position: "absolute",
+                  left: 10,
+                  top: 0,
+                  pointerEvents: "auto",
+                }}
+              >
+                <div
+                  role="button"
+                  aria-label={mapType === "satellite" ? "Switch to street map" : "Switch to satellite map"}
+                  title={mapType === "satellite" ? "Street map" : "Satellite"}
                   onClick={() => {
-                    setAdminDomainMenuOpen(false);
-                    setAdminToolboxOpen(false);
-                    setEventsWindowOpen(false);
-                    setAlertsWindowOpen((prev) => !prev);
+                    setMapType((t) => (t === "roadmap" ? "satellite" : "roadmap"));
                   }}
-                  aria-label="Open alerts"
-                  title="Open alerts"
+                  style={mobileMapToolButtonStyle}
+                >
+                  <AppIcon src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite} size={32} />
+                </div>
+                <div
+                  role="button"
+                  aria-label="Reset heading"
+                  title="Reset heading"
+                  onClick={() => {
+                    setTravelFollowMode(false);
+                    followHeadingEnabledRef.current = false;
+                    try {
+                      if (mapRef.current?.moveCamera) {
+                        mapRef.current.moveCamera({
+                          heading: 0,
+                          tilt: 0,
+                        });
+                      } else if (mapRef.current?.setHeading) {
+                        mapRef.current.setHeading(0);
+                        mapRef.current?.setTilt?.(0);
+                      }
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  style={mobileMapToolButtonStyle}
+                >
+                  <AppIcon src={UI_ICON_SRC.headingReset} size={32} />
+                </div>
+                <div
+                  role="button"
+                  aria-label="Find my location"
+                  title="Find my location"
+                  onClick={() => {
+                    if (geoDenied) {
+                      setShowLocationPrompt(true);
+                      return;
+                    }
+                    followHeadingEnabledRef.current = true;
+                    findMyLocation(false);
+                  }}
                   style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: alertsWindowOpen
+                    ...mobileMapToolButtonStyle,
+                    border: locating
                       ? "1px solid var(--sl-ui-tool-active-border)"
-                      : "1px solid var(--sl-ui-zoom-border)",
-                    background: alertsWindowOpen
+                      : mobileMapToolButtonStyle.border,
+                    background: locating
                       ? "var(--sl-ui-tool-active-bg)"
-                      : "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: alertsWindowOpen
-                      ? "var(--sl-ui-tool-active-text)"
-                      : "var(--sl-ui-text)",
-                    cursor: "pointer",
-                    lineHeight: 1,
-                    position: "relative",
-                    display: "grid",
-                    placeItems: "center",
+                      : mobileMapToolButtonStyle.background,
                   }}
                 >
-                  <AppIcon src={UI_ICON_SRC.notification} size={18} />
-                  {mapAlertsUnreadCount > 0 ? (
-                    <span
+                  <AppIcon src={UI_ICON_SRC.location} size={32} />
+                </div>
+                <div
+                  role="button"
+                  aria-label="Toggle travel follow"
+                  title="Travel follow"
+                  onClick={() => {
+                    toggleTravelFollowMode();
+                  }}
+                  style={{
+                    ...mobileMapToolButtonStyle,
+                    border: travelFollowMode
+                      ? "1px solid var(--sl-ui-tool-active-border)"
+                      : mobileMapToolButtonStyle.border,
+                    background: travelFollowMode
+                      ? "var(--sl-ui-tool-active-bg)"
+                      : mobileMapToolButtonStyle.background,
+                    color: travelFollowMode
+                      ? "var(--sl-ui-tool-active-text)"
+                      : mobileMapToolButtonStyle.color,
+                  }}
+                >
+                  <AppIcon src={UI_ICON_SRC.navigationArrow} size={28} />
+                </div>
+                <div
+                  role="button"
+                  aria-label="Recenter to city"
+                  title="City home"
+                  onClick={() => {
+                    setAutoFollow(false);
+                    setFollowCamera(false);
+                    setTravelFollowMode(false);
+                    recenterToTenantHome("home-button");
+                  }}
+                  style={mobileMapToolButtonStyle}
+                >
+                  <AppIcon src={UI_ICON_SRC.homeRecenter} size={30} />
+                </div>
+                {mobilePrimaryLayerOptions.length ? (
+                  <>
+                    <div
+                      aria-hidden="true"
                       style={{
-                        position: "absolute",
-                        top: -4,
-                        right: -4,
-                        minWidth: 16,
-                        height: 16,
-                        padding: "0 4px",
-                        borderRadius: 999,
-                        background: "#c62828",
-                        color: "#fff",
-                        border: "1px solid rgba(255,255,255,0.88)",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 9.5,
-                        fontWeight: 900,
-                        lineHeight: 1,
+                        width: "100%",
+                        height: 1,
+                        background: prefersDarkMode
+                          ? "rgba(200, 220, 242, 0.22)"
+                          : "rgba(17, 39, 64, 0.22)",
+                        margin: "3px 0 1px",
+                        boxShadow: prefersDarkMode
+                          ? "0 1px 0 rgba(255,255,255,0.08), 0 4px 10px rgba(0,0,0,0.16)"
+                          : "0 1px 0 rgba(255,255,255,0.75), 0 4px 10px rgba(17,39,64,0.10)",
                       }}
-                  >
-                    {mapAlertsUnreadCount > 99 ? "99+" : mapAlertsUnreadCount}
-                  </span>
-                ) : null}
-                </button>
-                ) : null}
-                {showMapEventIcon ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminDomainMenuOpen(false);
-                    setAdminToolboxOpen(false);
-                    setAlertsWindowOpen(false);
-                    setEventsWindowOpen((prev) => !prev);
-                  }}
-                  aria-label="Open events"
-                  title="Open events"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: eventsWindowOpen
-                      ? "1px solid var(--sl-ui-tool-active-border)"
-                      : "1px solid var(--sl-ui-zoom-border)",
-                    background: eventsWindowOpen
-                      ? "var(--sl-ui-tool-active-bg)"
-                      : "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: eventsWindowOpen
-                      ? "var(--sl-ui-tool-active-text)"
-                      : "var(--sl-ui-text)",
-                    cursor: "pointer",
-                    lineHeight: 1,
-                    position: "relative",
-                    display: "grid",
-                    placeItems: "center",
-                  }}
-                >
-                  <AppIcon src={UI_ICON_SRC.calendar} size={18} />
-                  {mapEventsUnreadCount > 0 ? (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: -4,
-                        right: -4,
-                        minWidth: 16,
-                        height: 16,
-                        padding: "0 4px",
-                        borderRadius: 999,
-                        background: "#176d78",
-                        color: "#fff",
-                        border: "1px solid rgba(255,255,255,0.88)",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 9.5,
-                        fontWeight: 900,
-                        lineHeight: 1,
-                      }}
-                  >
-                    {mapEventsUnreadCount > 99 ? "99+" : mapEventsUnreadCount}
-                  </span>
-                ) : null}
-                </button>
-                ) : null}
-                {canOpenDomainReports ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminDomainMenuOpen(false);
-                    setAdminToolboxOpen(false);
-                    setAlertsWindowOpen(false);
-                    setEventsWindowOpen(false);
-                    openOpenReports({ inViewOnly: false });
-                  }}
-                  aria-label="Open reports"
-                  title="Open reports"
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    border: openReportsOpen
-                      ? "1px solid var(--sl-ui-tool-active-border)"
-                      : "1px solid var(--sl-ui-zoom-border)",
-                    background: openReportsOpen
-                      ? "var(--sl-ui-tool-active-bg)"
-                      : "var(--sl-ui-zoom-bg)",
-                    boxShadow: "var(--sl-ui-zoom-shadow-mobile)",
-                    color: openReportsOpen
-                      ? "var(--sl-ui-tool-active-text)"
-                      : "var(--sl-ui-text)",
-                    cursor: "pointer",
-                    lineHeight: 1,
-                    position: "relative",
-                    display: "grid",
-                    placeItems: "center",
-                  }}
-                >
-                  <AppIcon src={UI_ICON_SRC.openReports} size={18} />
-                </button>
+                    />
+                    {mobilePrimaryLayerOptions.map((layer, index) => {
+                      const isStreetlightsButton = layer.key === "streetlights";
+                      const isActive = layer.key === activeMapLayerKey;
+                      const showStreetlightSubcontrols =
+                        isStreetlightsButton &&
+                        isStreetlightsLayerActive &&
+                        showMobileMapTabContent &&
+                        (canUseStreetlightBulk || showAdminTools);
+                      return (
+                        <div
+                          key={`mobile-map-layer-${layer.key}`}
+                          style={{
+                            position: "relative",
+                            display: "grid",
+                            justifyItems: "center",
+                            width: 48,
+                          }}
+                        >
+                          <div
+                            role="button"
+                            aria-label={layer.label}
+                            title={layer.label}
+                            onClick={() => {
+                              if (!layer.enabled) return;
+                              requestMapLayerSwitch(layer.key, layer.label);
+                            }}
+                            style={{
+                              ...mobileMapLayerButtonStyle,
+                              border: isActive
+                                ? "1px solid var(--sl-ui-tool-active-border)"
+                                : mobileMapLayerButtonStyle.border,
+                              background: isActive
+                                ? "var(--sl-ui-tool-active-bg)"
+                                : mobileMapLayerButtonStyle.background,
+                              color: isActive
+                                ? "var(--sl-ui-tool-active-text)"
+                                : mobileMapLayerButtonStyle.color,
+                              opacity: layer.enabled === false ? 0.55 : 1,
+                            }}
+                          >
+                            <AppIcon src={layer.iconSrc} size={index === 0 ? 30 : 32} />
+                          </div>
+                          {showStreetlightSubcontrols ? (
+                            <div
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                position: "absolute",
+                                left: "50%",
+                                top: "calc(100% + 8px)",
+                                transform: "translateX(-50%)",
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0, 1fr)",
+                                gap: 8,
+                                width: 48,
+                                padding: "8px 4px 0",
+                                borderRadius: 16,
+                                border: "1px solid var(--sl-ui-modal-border)",
+                                background: "color-mix(in srgb, var(--sl-ui-surface-bg) 90%, rgba(255,255,255,0.06))",
+                                boxShadow: "var(--sl-ui-modal-shadow)",
+                                zIndex: 4,
+                              }}
+                            >
+                              {canUseStreetlightBulk ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setBulkConfirmOpen(false);
+                                    setBulkMode((on) => {
+                                      const next = !on;
+                                      showToolHint(next ? "Save multiple light reports" : "Save one light report", 1100, 4);
+                                      if (next) {
+                                        setDeleteCircleMode(false);
+                                        setDeleteCircleDraft(null);
+                                        setDeleteCircleConfirmOpen(false);
+                                        setSelectedOfficialId(null);
+                                        setMappingMode(false);
+                                        setMappingQueue([]);
+                                        closeAnyPopup();
+                                        suppressPopupsSafe(1600);
+                                      } else {
+                                        clearBulkSelection();
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  style={{
+                                    ...mobileMapLayerButtonStyle,
+                                    border: bulkMode
+                                      ? "1px solid var(--sl-ui-tool-active-border)"
+                                      : "1px solid var(--sl-ui-tool-btn-border)",
+                                    background: bulkMode
+                                      ? "var(--sl-ui-tool-active-bg)"
+                                      : "var(--sl-ui-tool-btn-bg)",
+                                    color: bulkMode
+                                      ? "var(--sl-ui-tool-active-text)"
+                                      : "var(--sl-ui-text)",
+                                    boxShadow: "var(--sl-ui-tool-btn-shadow)",
+                                  }}
+                                  aria-label={bulkMode ? "Turn off bulk reporting" : "Turn on bulk reporting"}
+                                  title={bulkMode ? "Bulk reporting on" : "Bulk reporting off"}
+                                >
+                                  <AppIcon src={UI_ICON_SRC.bulk} size={22} />
+                                </button>
+                              ) : null}
+                              {showAdminTools ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setMappingMode((on) => {
+                                      const next = !on;
+                                      showToolHint(next ? "Mapping mode on" : "Mapping mode off", 1100, 2);
+                                      if (next) {
+                                        setBulkMode(false);
+                                        setBulkConfirmOpen(false);
+                                        clearBulkSelection();
+                                        setDeleteCircleMode(false);
+                                        setDeleteCircleDraft(null);
+                                        setDeleteCircleConfirmOpen(false);
+                                        setDeleteCircleNote("");
+                                        suppressPopupsSafe(1600);
+                                        closeAnyPopup();
+                                      } else if (mappingQueue.length > 0) {
+                                        setExitMappingConfirmOpen(true);
+                                        return true;
+                                      } else {
+                                        setMappingQueue([]);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  style={{
+                                    ...mobileMapLayerButtonStyle,
+                                    border: mappingMode
+                                      ? "1px solid var(--sl-ui-tool-active-border)"
+                                      : "1px solid var(--sl-ui-tool-btn-border)",
+                                    background: mappingMode
+                                      ? "var(--sl-ui-tool-active-bg)"
+                                      : "var(--sl-ui-tool-btn-bg)",
+                                    color: mappingMode
+                                      ? "var(--sl-ui-tool-active-text)"
+                                      : "var(--sl-ui-text)",
+                                    boxShadow: "var(--sl-ui-tool-btn-shadow)",
+                                  }}
+                                  aria-label={mappingMode ? "Turn off light mapping" : "Turn on light mapping"}
+                                  title={mappingMode ? "Light mapping on" : "Light mapping off"}
+                                >
+                                  <AppIcon src={UI_ICON_SRC.mapping} size={22} />
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </>
                 ) : null}
               </div>
-              {isAggregatedReportingDomain && (
+              <div
+                style={{
+                  minWidth: 0,
+                  display: "grid",
+                  justifyItems: "end",
+                  gap: 6,
+                  paddingLeft: 58,
+                  pointerEvents: "none",
+                }}
+              >
                 <div
-                  onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
-                    }
-                  }}
                   style={{
-                    width: "fit-content",
-                    maxWidth: "min(520px, calc(100vw - 90px))",
-                    marginTop: 1,
-                    fontSize: 11,
-                    opacity: 1,
-                    textAlign: "left",
-                    color: inViewCounterColor,
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: `1px solid ${inViewCounterBorder}`,
-                    background: inViewCounterBg,
-                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                    backdropFilter: "blur(2px)",
-                    WebkitBackdropFilter: "blur(2px)",
-                    cursor: "pointer",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    justifyContent: "flex-end",
+                    gap: 6,
+                    maxWidth: "100%",
+                    pointerEvents: "auto",
                   }}
                 >
-                  Reports in view: <b>{openReportsInViewCount}</b>
+                  {isAggregatedReportingDomain && (
+                    <div
+                      onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                        }
+                      }}
+                      style={{
+                        width: "fit-content",
+                        maxWidth: "min(520px, calc(100vw - 100px))",
+                        marginTop: 1,
+                        fontSize: 11,
+                        opacity: 1,
+                        textAlign: "left",
+                        color: inViewCounterColor,
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        border: `1px solid ${inViewCounterBorder}`,
+                        background: inViewCounterBg,
+                        boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                        backdropFilter: "blur(2px)",
+                        WebkitBackdropFilter: "blur(2px)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Reports in view: <b>{openReportsInViewCount}</b>
+                    </div>
+                  )}
+                  {isStreetlightsLayerActive && (
+                    <>
+                      <div
+                        onClick={() => toggleStreetlightInViewFilter("saved")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleStreetlightInViewFilter("saved");
+                          }
+                        }}
+                        style={{
+                          width: "fit-content",
+                          maxWidth: "min(520px, calc(100vw - 100px))",
+                          marginTop: 1,
+                          fontSize: 11,
+                          opacity: 1,
+                          textAlign: "left",
+                          color: inViewCounterColor,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          border: isSavedStreetlightFilterOn
+                            ? "1px solid var(--sl-ui-tool-active-border)"
+                            : `1px solid ${inViewCounterBorder}`,
+                          background: isSavedStreetlightFilterOn
+                            ? "var(--sl-ui-tool-active-bg)"
+                            : inViewCounterBg,
+                          boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                          backdropFilter: "blur(2px)",
+                          WebkitBackdropFilter: "blur(2px)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
+                      </div>
+                      <div
+                        onClick={() => toggleStreetlightInViewFilter("utility")}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggleStreetlightInViewFilter("utility");
+                          }
+                        }}
+                        style={{
+                          width: "fit-content",
+                          maxWidth: "min(520px, calc(100vw - 100px))",
+                          marginTop: 1,
+                          fontSize: 11,
+                          opacity: 1,
+                          textAlign: "left",
+                          color: inViewCounterColor,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          border: isUtilityStreetlightFilterOn
+                            ? "1px solid var(--sl-ui-tool-active-border)"
+                            : `1px solid ${inViewCounterBorder}`,
+                          background: isUtilityStreetlightFilterOn
+                            ? "var(--sl-ui-tool-active-bg)"
+                            : inViewCounterBg,
+                          boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                          backdropFilter: "blur(2px)",
+                          WebkitBackdropFilter: "blur(2px)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
+                      </div>
+                    </>
+                  )}
+                  {isAdmin && openAbuseFlagSummary.total > 0 && (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setModerationFlagsOpen(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setModerationFlagsOpen(true);
+                        }
+                      }}
+                      style={{
+                        width: "fit-content",
+                        maxWidth: "min(720px, calc(100vw - 100px))",
+                        marginTop: 4,
+                        fontSize: 11.5,
+                        fontWeight: 850,
+                        textAlign: "left",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        border: "1px solid rgba(255,255,255,0.18)",
+                        background:
+                          openAbuseFlagSummary.maxSeverity >= 3
+                            ? "rgba(183, 28, 28, 0.86)"
+                            : openAbuseFlagSummary.maxSeverity >= 2
+                              ? "rgba(239, 108, 0, 0.84)"
+                              : "rgba(33, 150, 83, 0.80)",
+                        boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
+                        backdropFilter: "blur(2px)",
+                        WebkitBackdropFilter: "blur(2px)",
+                        cursor: "pointer",
+                      }}
+                      title="Open moderation flags"
+                    >
+                      Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
+                    </div>
+                  )}
                 </div>
-              )}
-              {isStreetlightsDomain && (
-                <>
-                  <div
-                    onClick={() => toggleStreetlightInViewFilter("saved")}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleStreetlightInViewFilter("saved");
-                      }
-                    }}
-                    style={{
-                      width: "fit-content",
-                      maxWidth: "min(520px, calc(100vw - 90px))",
-                      marginTop: 1,
-                      fontSize: 11,
-                      opacity: 1,
-                      textAlign: "left",
-                      color: inViewCounterColor,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      border: isSavedStreetlightFilterOn
-                        ? "1px solid var(--sl-ui-tool-active-border)"
-                        : `1px solid ${inViewCounterBorder}`,
-                      background: isSavedStreetlightFilterOn
-                        ? "var(--sl-ui-tool-active-bg)"
-                        : inViewCounterBg,
-                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                      backdropFilter: "blur(2px)",
-                      WebkitBackdropFilter: "blur(2px)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Saved lights in view: <b>{Number(streetlightPersonalInViewStats.saved || 0)}</b>
-                  </div>
-                  <div
-                    onClick={() => toggleStreetlightInViewFilter("utility")}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleStreetlightInViewFilter("utility");
-                      }
-                    }}
-                    style={{
-                      width: "fit-content",
-                      maxWidth: "min(520px, calc(100vw - 90px))",
-                      marginTop: 1,
-                      fontSize: 11,
-                      opacity: 1,
-                      textAlign: "left",
-                      color: inViewCounterColor,
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      border: isUtilityStreetlightFilterOn
-                        ? "1px solid var(--sl-ui-tool-active-border)"
-                        : `1px solid ${inViewCounterBorder}`,
-                      background: isUtilityStreetlightFilterOn
-                        ? "var(--sl-ui-tool-active-bg)"
-                        : inViewCounterBg,
-                      boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                      backdropFilter: "blur(2px)",
-                      WebkitBackdropFilter: "blur(2px)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Utility reported in view: <b>{Number(streetlightPersonalInViewStats.utility || 0)}</b>
-                  </div>
-                </>
-              )}
-              {isAdmin && openAbuseFlagSummary.total > 0 && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setModerationFlagsOpen(true)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setModerationFlagsOpen(true);
-                    }
-                  }}
-                  style={{
-                    width: "fit-content",
-                    maxWidth: "min(720px, calc(100vw - 100px))",
-                    marginTop: 4,
-                    fontSize: 11.5,
-                    fontWeight: 850,
-                    textAlign: "left",
-                    color: "#fff",
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(255,255,255,0.18)",
-                    background:
-                      openAbuseFlagSummary.maxSeverity >= 3
-                        ? "rgba(183, 28, 28, 0.86)"
-                        : openAbuseFlagSummary.maxSeverity >= 2
-                          ? "rgba(239, 108, 0, 0.84)"
-                          : "rgba(33, 150, 83, 0.80)",
-                    boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-                    backdropFilter: "blur(2px)",
-                    WebkitBackdropFilter: "blur(2px)",
-                    cursor: "pointer",
-                  }}
-                  title="Open moderation flags"
-                >
-                  Moderation flags open: <b>{openAbuseFlagSummary.total}</b>
-                </div>
-              )}
+              </div>
             </div>
+            ) : null}
             </div>
           </div>
 
@@ -26532,7 +31501,7 @@ async function insertReportWithFallback(payload) {
                 position: "fixed",
                 left: 0,
                 right: 0,
-                bottom: "calc(10px + env(safe-area-inset-bottom) + 78px)",
+                bottom: mobileBottomRailOffset,
                 zIndex: 1601,
                 padding: "0 10px",
               }}
@@ -26641,7 +31610,7 @@ async function insertReportWithFallback(payload) {
                 position: "fixed",
                 left: 0,
                 right: 0,
-                bottom: "calc(10px + env(safe-area-inset-bottom) + 78px)",
+                bottom: mobileBottomRailOffset,
                 zIndex: 1601,
                 padding: "0 10px",
               }}
@@ -26714,7 +31683,6 @@ async function insertReportWithFallback(payload) {
         ))}
 
 
-        {/* BOTTOM fixed actions */}
         <div
           className="sl-overlay-pass"
           style={{
@@ -26723,79 +31691,133 @@ async function insertReportWithFallback(payload) {
             right: 0,
             bottom: 0,
             zIndex: 1600,
-            padding: "0 10px calc(10px + env(safe-area-inset-bottom))",
+            pointerEvents: "none",
           }}
         >
           <div
             style={{
-              display: "none",
-              width: "fit-content",
-              maxWidth: "min(520px, calc(100vw - 20px))",
-              margin: "0 auto 6px",
-              fontSize: 11,
-              opacity: 1,
-              textAlign: "left",
-              color: inViewCounterColor,
-              padding: "4px 8px",
-              borderRadius: 999,
-              border: `1px solid ${inViewCounterBorder}`,
-              background: inViewCounterBg,
-              boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
-              backdropFilter: "blur(2px)",
-              WebkitBackdropFilter: "blur(2px)",
+              width: "100%",
+              background: "var(--sl-ui-surface-bg)",
+              borderTop: "1px solid var(--sl-ui-surface-border)",
+              boxShadow: "var(--sl-ui-surface-shadow-bottom)",
+              color: "var(--sl-ui-text)",
+              padding: "6px 10px calc(18px + env(safe-area-inset-bottom))",
+              pointerEvents: "auto",
             }}
           >
-            Reports in view: <b>{openReportsInViewCount}</b>
-          </div>
-          <div
+            <div
               style={{
-                width: "min(520px, calc(100vw - 20px))",
-                margin: "0 auto",
-                background: "var(--sl-ui-surface-bg)",
-                border: "1px solid var(--sl-ui-surface-border)",
-                borderRadius: 14,
-                boxShadow: "var(--sl-ui-surface-shadow-bottom)",
-              padding: 10,
-              display: "grid",
-              gap: 8,
-              position: "relative",
-                color: "var(--sl-ui-text)",
-              }}
-          >
-            <button
-              type="button"
-              onClick={() => setInfoMenuOpen(true)}
-              title="Info"
-              aria-label="Open info menu"
-              style={{
-                position: "absolute",
-                right: 8,
-                top: 8,
-                width: 30,
-                height: 30,
-                borderRadius: 999,
-                border: "none",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-                lineHeight: 1,
-                fontSize: 14,
-                pointerEvents: "auto",
-                touchAction: "manipulation",
-                zIndex: 2,
+                display: "grid",
+                gridTemplateColumns: `repeat(${mobileBottomRailColumnCount}, minmax(0, 1fr))`,
+                gap: 4,
+                alignItems: "start",
               }}
             >
-              <AppIcon src={UI_ICON_SRC.info} size={18} />
-            </button>
+              <MobileBottomRailButton
+                label="Map"
+                iconSrc={UI_ICON_SRC.mapTab}
+                active={showMobileMapTabContent}
+                showDivider={true}
+                onClick={() => {
+                  setMobileTabTransitionFor("map");
+                  setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+                  closeMyReports();
+                  closeAccountSubpages();
+                  setMobileHeaderMenuOpen(false);
+                  setAdminDomainMenuOpen(false);
+                  setAdminToolboxOpen(false);
+                  setAlertsWindowOpen(false);
+                  setEventsWindowOpen(false);
+                }}
+              />
 
-            <div style={{ fontSize: 11.5, opacity: 0.75, lineHeight: 1.35, paddingRight: 30, display: "grid", gap: 4 }}>
-              <div>
-                <b>About:</b> Community-reported issues and repair confirmations are shared here for public visibility.
-              </div>
-              <div>
-                <b>Disclaimer:</b> This does not replace emergency services or official agency reporting.
-              </div>
+              <MobileBottomRailButton
+                label="Reports"
+                iconSrc={UI_ICON_SRC.openReports}
+                active={myReportsOpen}
+                showDivider={showMapAlertIcon || showMapEventIcon || true}
+                onClick={() => {
+                  setMobileTabTransitionFor((!viewerIdentityKey && !hasMapSession) ? "account" : "reports");
+                  setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+                  if (mappingMode) requestExitMappingMode();
+                  if (bulkMode) setBulkMode(false);
+                  closeAccountSubpages();
+                  setMobileHeaderMenuOpen(false);
+                  setAdminDomainMenuOpen(false);
+                  setAdminToolboxOpen(false);
+                  setAlertsWindowOpen(false);
+                  setEventsWindowOpen(false);
+                  if (!viewerIdentityKey && !hasMapSession) {
+                    setAccountMenuOpen(true);
+                    return;
+                  }
+                  openMyReports({ domainKey: adminReportDomain, inViewOnly: false, reportedByMode: "me" });
+                }}
+              />
+
+              {showMapAlertIcon ? (
+                <MobileBottomRailButton
+                  label="Alerts"
+                  iconSrc={UI_ICON_SRC.notification}
+                  active={alertsWindowOpen}
+                  badgeCount={mapAlertsUnreadCount}
+                  showDivider={showMapEventIcon || true}
+                  onClick={() => {
+                    setMobileTabTransitionFor("alerts");
+                    setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+                    closeMyReports();
+                    closeAccountSubpages();
+                    setMobileHeaderMenuOpen(false);
+                    setAdminDomainMenuOpen(false);
+                    setAdminToolboxOpen(false);
+                    setEventsWindowOpen(false);
+                    setAlertsWindowOpen(true);
+                  }}
+                />
+              ) : null}
+
+              {showMapEventIcon ? (
+                <MobileBottomRailButton
+                  label="Events"
+                  iconSrc={UI_ICON_SRC.calendar}
+                  active={eventsWindowOpen}
+                  badgeCount={mapEventsUnreadCount}
+                  showDivider={true}
+                  onClick={() => {
+                    setMobileTabTransitionFor("events");
+                    setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+                    closeMyReports();
+                    closeAccountSubpages();
+                    setMobileHeaderMenuOpen(false);
+                    setAdminDomainMenuOpen(false);
+                    setAdminToolboxOpen(false);
+                    setAlertsWindowOpen(false);
+                    setEventsWindowOpen(true);
+                  }}
+                />
+              ) : null}
+
+              <MobileBottomRailButton
+                label="Account"
+                iconSrc={UI_ICON_SRC.account}
+                active={accountTabActive}
+                onClick={() => {
+                  setMobileTabTransitionFor("account");
+                  setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
+                  closeMyReports();
+                  setManageOpen(false);
+                  setManageEditing(false);
+                  setNotificationPreferencesOpen(false);
+                  setFollowedLocationsOpen(false);
+                  setMobileHeaderMenuOpen(false);
+                  setAdminDomainMenuOpen(false);
+                  setAdminToolboxOpen(false);
+                  setAlertsWindowOpen(false);
+                  setEventsWindowOpen(false);
+                  setAccountView("menu");
+                  setAccountMenuOpen(true);
+                }}
+              />
             </div>
           </div>
         </div>
