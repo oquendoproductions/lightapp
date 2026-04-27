@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { TenantContext } from "./tenant/contextObject";
 import {
@@ -22,8 +22,6 @@ import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 import "./headerStandards.css";
 import "./municipality-app.css";
-
-const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
 
 const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
 const MOBILE_BRAND_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
@@ -5986,14 +5984,45 @@ function populateAlertForm(alert) {
   const toggleAssetSection = useCallback((sectionKey) => {
     setAssetSectionExpanded((prev) => ({ ...prev, [sectionKey]: !prev?.[sectionKey] }));
   }, []);
+  const [ReportWorkspaceComponent, setReportWorkspaceComponent] = useState(null);
+  const [reportWorkspaceError, setReportWorkspaceError] = useState("");
+
+  useEffect(() => {
+    if (routePath !== "/report") {
+      setReportWorkspaceError("");
+      return;
+    }
+    let cancelled = false;
+    setReportWorkspaceError("");
+    import("./MapGoogleFull.jsx")
+      .then((module) => {
+        if (cancelled) return;
+        setReportWorkspaceComponent(() => module?.default || null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("[municipality report workspace import]", error);
+        setReportWorkspaceError(String(error?.message || "Could not load the reporting workspace."));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routePath]);
 
   if (routePath === "/report") {
+    const ReportWorkspace = ReportWorkspaceComponent;
     return (
       <div className="municipality-shell">
         <div className="municipality-main municipality-main--report">
-          <Suspense fallback={<div className="municipality-empty" style={{ margin: 16 }}>Loading reporting workspace…</div>}>
-            <MapGoogleFull onBackToHub={() => navigate("/")} />
-          </Suspense>
+          {reportWorkspaceError ? (
+            <div className="municipality-empty" style={{ margin: 16 }}>
+              {reportWorkspaceError}
+            </div>
+          ) : ReportWorkspace ? (
+            <ReportWorkspace onBackToHub={() => navigate("/")} />
+          ) : (
+            <div className="municipality-empty" style={{ margin: 16 }}>Loading reporting workspace…</div>
+          )}
         </div>
       </div>
     );
