@@ -564,6 +564,19 @@ function summarizeReportIncidentLabel(row) {
   return `${domainLabel} Incident ${shortIncidentKey(row?.incident_id)}`;
 }
 
+function reportTimelineActionLabel(action) {
+  const key = trimOrEmpty(action).toLowerCase();
+  if (key === "fix") return "Marked fixed";
+  if (key === "reopen") return "Re-opened";
+  if (key === "confirm") return "Confirmed";
+  if (key === "archive") return "Archived";
+  return key ? roleKeyToLabel(key) : "Status updated";
+}
+
+function formatReportActorLabel({ name = "", email = "", phone = "", userId = "" } = {}) {
+  return trimOrEmpty(name) || trimOrEmpty(email) || trimOrEmpty(phone) || shortUserId(userId);
+}
+
 function reportStateDotColor(state) {
   const key = trimOrEmpty(state).toLowerCase();
   if (key === "fixed" || key === "archived" || key === "likely_resolved" || key === "operational") return "#1f8b6d";
@@ -1421,6 +1434,34 @@ function MunicipalityReportTable({
   busyIncidentId = "",
   onToggleIncidentState = null,
 }) {
+  const renderTimelineEvent = (event, key) => {
+    const title = trimOrEmpty(event?.title) || "Activity";
+    const actorLabel = formatReportActorLabel({
+      name: event?.actor_name,
+      email: event?.actor_email,
+      phone: event?.actor_phone,
+      userId: event?.actor_user_id,
+    });
+    return (
+      <div key={key} className="municipality-report-detail-item municipality-report-detail-item--timeline">
+        <div className="municipality-report-detail-heading">
+          <strong>{title}</strong>
+          <span>{formatDateTime(event?.ts, { dateStyle: "medium", timeStyle: "short" })}</span>
+        </div>
+        {trimOrEmpty(event?.report_number) ? (
+          <div><strong>Report #:</strong> {trimOrEmpty(event.report_number)}</div>
+        ) : null}
+        {trimOrEmpty(event?.utility_reference) ? (
+          <div><strong>Utility ref:</strong> {trimOrEmpty(event.utility_reference)}</div>
+        ) : null}
+        <div><strong>By:</strong> {actorLabel}</div>
+        {trimOrEmpty(event?.actor_email) ? <div><strong>Email:</strong> {trimOrEmpty(event.actor_email)}</div> : null}
+        {trimOrEmpty(event?.actor_phone) ? <div><strong>Phone:</strong> {trimOrEmpty(event.actor_phone)}</div> : null}
+        {trimOrEmpty(event?.note) ? <div><strong>Note:</strong> {trimOrEmpty(event.note)}</div> : null}
+      </div>
+    );
+  };
+
   if (!items.length) return <div className="municipality-empty">{emptyText}</div>;
   return (
     <div className="municipality-report-results">
@@ -1535,15 +1576,9 @@ function MunicipalityReportTable({
                               <strong>Latest note:</strong> {item.latest_note}
                             </p>
                           ) : null}
-                          {Array.isArray(item.rows) && item.rows.length ? (
+                          {Array.isArray(item.timeline) && item.timeline.length ? (
                             <div className="municipality-report-detail-list">
-                              {item.rows.slice(0, 6).map((detail) => (
-                                <div key={`${item.incident_id}:${detail.report_id}`} className="municipality-report-detail-item">
-                                  <strong>{trimOrEmpty(detail.report_number) || "Report"}</strong>
-                                  <span>{formatDateTime(detail.submitted_at, { dateStyle: "medium", timeStyle: "short" })}</span>
-                                  <span>{trimOrEmpty(detail.note) || "No note provided."}</span>
-                                </div>
-                              ))}
+                              {item.timeline.slice(0, 8).map((event, index) => renderTimelineEvent(event, `${item.incident_id}:timeline:${index}`))}
                             </div>
                           ) : null}
                         </div>
@@ -1626,15 +1661,9 @@ function MunicipalityReportTable({
                       <strong>Latest note:</strong> {item.latest_note}
                     </p>
                   ) : null}
-                  {Array.isArray(item.rows) && item.rows.length ? (
+                  {Array.isArray(item.timeline) && item.timeline.length ? (
                     <div className="municipality-report-detail-list">
-                      {item.rows.slice(0, 6).map((detail) => (
-                        <div key={`${item.incident_id}:${detail.report_id}-mobile`} className="municipality-report-detail-item">
-                          <strong>{trimOrEmpty(detail.report_number) || "Report"}</strong>
-                          <span>{formatDateTime(detail.submitted_at, { dateStyle: "medium", timeStyle: "short" })}</span>
-                          <span>{trimOrEmpty(detail.note) || "No note provided."}</span>
-                        </div>
-                      ))}
+                      {item.timeline.slice(0, 8).map((event, index) => renderTimelineEvent(event, `${item.incident_id}:timeline-mobile:${index}`))}
                     </div>
                   ) : null}
                 </div>
@@ -2531,6 +2560,11 @@ export default function MunicipalityApp() {
         trimOrEmpty(row?.latest_report_number),
         trimOrEmpty(row?.latest_note),
         trimOrEmpty(row?.current_state),
+        ...((row?.rows || []).flatMap((detail) => [
+          trimOrEmpty(detail?.reporter_name),
+          trimOrEmpty(detail?.reporter_phone),
+          trimOrEmpty(detail?.reporter_email),
+        ])),
       ].join(" ").toLowerCase();
       return searchHaystack.includes(normalizedQuery);
     });
@@ -2580,6 +2614,9 @@ export default function MunicipalityApp() {
         trimOrEmpty(row?.incident_id),
         trimOrEmpty(row?.report_number),
         trimOrEmpty(row?.note),
+        trimOrEmpty(row?.reporter_name),
+        trimOrEmpty(row?.reporter_phone),
+        trimOrEmpty(row?.reporter_email),
       ].join(" ").toLowerCase().includes(normalizedQuery);
     });
   }, [filteredReportActivityRows, reportActivityDetailRows, reportFromDate, reportSearchQuery, reportToDate]);
@@ -3053,21 +3090,26 @@ export default function MunicipalityApp() {
       setReportActivityLoading(true);
       setReportActivityStatus("");
 
-      const reportSelect = "id,created_at,report_type,note,light_id,report_number,lat,lng";
-      const potholeReportSelect = "id,pothole_id,note,report_number,created_at,lat,lng";
+      const reportSelect = "id,created_at,report_type,note,light_id,report_number,lat,lng,reporter_user_id,reporter_name,reporter_phone,reporter_email";
+      const potholeReportSelect = "id,pothole_id,note,report_number,created_at,lat,lng,reporter_user_id,reporter_name,reporter_phone,reporter_email";
+      const lightActionSelect = "id,light_id,action,note,actor_user_id,created_at";
+      const utilityStatusSelect = "incident_id,user_id,report_reference,updated_at,reported_at";
 
-      const [reportsResult, potholesResult, statesResult, officialLightsResult, officialSignsResult] = await Promise.allSettled([
+      const [reportsResult, potholesResult, statesResult, officialLightsResult, officialSignsResult, lightActionsResult, utilityStatusResult] = await Promise.allSettled([
         supabase
           .from("reports")
           .select(reportSelect)
+          .eq("tenant_key", tenantKey)
           .order("created_at", { ascending: false }),
         supabase
           .from("pothole_reports")
           .select(potholeReportSelect)
+          .eq("tenant_key", tenantKey)
           .order("created_at", { ascending: false }),
         supabase
           .from("incident_state_current")
           .select("domain,incident_id,state,last_changed_at")
+          .eq("tenant_key", tenantKey)
           .order("last_changed_at", { ascending: false }),
         supabase
           .from("official_lights")
@@ -3075,7 +3117,18 @@ export default function MunicipalityApp() {
         supabase
           .from("official_signs")
           .select("id,lat,lng")
+          .eq("tenant_key", tenantKey)
           .eq("active", true),
+        supabase
+          .from("light_actions")
+          .select(lightActionSelect)
+          .eq("tenant_key", tenantKey)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("utility_report_status")
+          .select(utilityStatusSelect)
+          .eq("tenant_key", tenantKey)
+          .order("updated_at", { ascending: false }),
       ]);
 
       if (cancelled) return;
@@ -3090,6 +3143,8 @@ export default function MunicipalityApp() {
       const statesRes = readSettledData(statesResult);
       const officialLightsRes = readSettledData(officialLightsResult);
       const officialSignsRes = readSettledData(officialSignsResult);
+      const lightActionsRes = readSettledData(lightActionsResult);
+      const utilityStatusRes = readSettledData(utilityStatusResult);
 
       const primaryError = reportsRes.error || potholesRes.error || statesRes.error;
       if (primaryError && reportsRes.error && potholesRes.error) {
@@ -3139,6 +3194,10 @@ export default function MunicipalityApp() {
           submitted_at: trimOrEmpty(row?.created_at),
           report_number: trimOrEmpty(row?.report_number),
           note: trimOrEmpty(row?.note),
+          reporter_user_id: trimOrEmpty(row?.reporter_user_id),
+          reporter_name: trimOrEmpty(row?.reporter_name),
+          reporter_phone: trimOrEmpty(row?.reporter_phone),
+          reporter_email: trimOrEmpty(row?.reporter_email),
           current_state: trimOrEmpty(stateRow?.state) || "reported",
           last_changed_at: trimOrEmpty(stateRow?.last_changed_at),
           coords: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null,
@@ -3159,6 +3218,10 @@ export default function MunicipalityApp() {
           submitted_at: trimOrEmpty(row?.created_at),
           report_number: trimOrEmpty(row?.report_number),
           note: trimOrEmpty(row?.note),
+          reporter_user_id: trimOrEmpty(row?.reporter_user_id),
+          reporter_name: trimOrEmpty(row?.reporter_name),
+          reporter_phone: trimOrEmpty(row?.reporter_phone),
+          reporter_email: trimOrEmpty(row?.reporter_email),
           current_state: trimOrEmpty(stateRow?.state) || "reported",
           last_changed_at: trimOrEmpty(stateRow?.last_changed_at),
           coords: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null,
@@ -3167,10 +3230,45 @@ export default function MunicipalityApp() {
 
       detailRows.sort((a, b) => String(b?.submitted_at || "").localeCompare(String(a?.submitted_at || "")));
 
+      const actorUserIds = [
+        ...new Set([
+          ...(detailRows || []).map((row) => trimOrEmpty(row?.reporter_user_id)),
+          ...((lightActionsRes.data || []).map((row) => trimOrEmpty(row?.actor_user_id))),
+          ...((utilityStatusRes.data || []).map((row) => trimOrEmpty(row?.user_id))),
+        ].filter(Boolean)),
+      ];
+      let profileByUserId = {};
+      if (actorUserIds.length) {
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("user_id,full_name,phone,email")
+          .in("user_id", actorUserIds);
+        if (profileError) {
+          console.warn("[hub report activity profiles]", profileError.message || profileError);
+        } else {
+          profileByUserId = Object.fromEntries((profileData || []).map((row) => [trimOrEmpty(row?.user_id), {
+            full_name: trimOrEmpty(row?.full_name),
+            phone: trimOrEmpty(row?.phone),
+            email: trimOrEmpty(row?.email),
+          }]).filter(([userId]) => userId));
+        }
+      }
+
       const grouped = new Map();
       for (const row of detailRows) {
         const key = `${row.domain}::${row.incident_id}`;
         const existing = grouped.get(key);
+        const reportTimelineEvent = {
+          type: "report_submitted",
+          ts: row.submitted_at,
+          title: "Report submitted",
+          report_number: row.report_number,
+          note: row.note,
+          actor_user_id: row.reporter_user_id || null,
+          actor_name: row.reporter_name || profileByUserId[row.reporter_user_id]?.full_name || null,
+          actor_email: row.reporter_email || profileByUserId[row.reporter_user_id]?.email || null,
+          actor_phone: row.reporter_phone || profileByUserId[row.reporter_user_id]?.phone || null,
+        };
         if (!existing) {
           grouped.set(key, {
             domain: row.domain,
@@ -3188,11 +3286,13 @@ export default function MunicipalityApp() {
             latest_note: row.note,
             coords: row.coords,
             rows: [row],
+            timeline: [reportTimelineEvent],
           });
           continue;
         }
         existing.report_count += 1;
         existing.rows.push(row);
+        existing.timeline.push(reportTimelineEvent);
         if (String(row.submitted_at || "") < String(existing.first_reported_at || "")) {
           existing.first_reported_at = row.submitted_at;
         }
@@ -3206,17 +3306,61 @@ export default function MunicipalityApp() {
         if (!existing.coords && row.coords) existing.coords = row.coords;
       }
 
+      for (const row of utilityStatusRes.data || []) {
+        const incidentId = trimOrEmpty(row?.incident_id);
+        if (!incidentId) continue;
+        const domainKey = normalizeReportDomainKey(reportDomainForRow({ light_id: incidentId }, officialLightIds, officialSignIds));
+        if (!domainKey || !visibleReportDomainSet.has(domainKey)) continue;
+        const groupKey = `${domainKey}::${incidentId}`;
+        const existing = grouped.get(groupKey);
+        if (!existing) continue;
+        const actorUserId = trimOrEmpty(row?.user_id);
+        existing.timeline.push({
+          type: "utility_reported",
+          ts: trimOrEmpty(row?.updated_at) || trimOrEmpty(row?.reported_at),
+          title: "Reported to utility",
+          utility_reference: trimOrEmpty(row?.report_reference),
+          note: "",
+          actor_user_id: actorUserId || null,
+          actor_name: profileByUserId[actorUserId]?.full_name || null,
+          actor_email: profileByUserId[actorUserId]?.email || null,
+          actor_phone: profileByUserId[actorUserId]?.phone || null,
+        });
+      }
+
+      for (const row of lightActionsRes.data || []) {
+        const incidentId = trimOrEmpty(row?.light_id);
+        if (!incidentId) continue;
+        const domainKey = normalizeReportDomainKey(reportDomainForRow({ light_id: incidentId }, officialLightIds, officialSignIds));
+        if (!domainKey || !visibleReportDomainSet.has(domainKey)) continue;
+        const groupKey = `${domainKey}::${incidentId}`;
+        const existing = grouped.get(groupKey);
+        if (!existing) continue;
+        const actorUserId = trimOrEmpty(row?.actor_user_id);
+        existing.timeline.push({
+          type: "state_change",
+          ts: trimOrEmpty(row?.created_at),
+          title: reportTimelineActionLabel(row?.action),
+          note: trimOrEmpty(row?.note),
+          actor_user_id: actorUserId || null,
+          actor_name: profileByUserId[actorUserId]?.full_name || null,
+          actor_email: profileByUserId[actorUserId]?.email || null,
+          actor_phone: profileByUserId[actorUserId]?.phone || null,
+        });
+      }
+
       const nextIncidentRows = [...grouped.values()]
         .map((row) => ({
           ...row,
           rows: (row.rows || []).sort((a, b) => String(b?.submitted_at || "").localeCompare(String(a?.submitted_at || ""))),
+          timeline: (row.timeline || []).sort((a, b) => String(b?.ts || "").localeCompare(String(a?.ts || ""))),
         }))
         .sort((a, b) => String(b?.latest_reported_at || "").localeCompare(String(a?.latest_reported_at || "")));
 
       setReportActivityDetailRows(detailRows);
       setReportActivityRows(nextIncidentRows);
       setReportActivityStatus(
-        reportsRes.error || potholesRes.error || statesRes.error
+        reportsRes.error || potholesRes.error || statesRes.error || lightActionsRes.error || utilityStatusRes.error
           ? "Some report sources were unavailable, so this view is showing the report activity that could be loaded."
           : ""
       );

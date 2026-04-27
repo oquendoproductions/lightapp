@@ -1713,6 +1713,23 @@
   background: rgba(255, 255, 255, 0.88);
 }
 
+.municipality-report-detail-item--timeline {
+  gap: 6px;
+}
+
+.municipality-report-detail-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.municipality-report-detail-heading span {
+  color: #4a617a;
+  font-size: 0.92rem;
+}
+
 .municipality-report-table-footer {
   display: flex;
   flex-wrap: wrap;
