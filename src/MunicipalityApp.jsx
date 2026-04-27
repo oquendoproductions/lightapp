@@ -718,6 +718,47 @@ function statusBadgeClass(status) {
   return "municipality-badge municipality-badge--draft";
 }
 
+function digestRunStatusBadgeClass(status) {
+  const key = trimOrEmpty(status).toLowerCase();
+  if (key === "sent") return "municipality-badge municipality-badge--published";
+  if (key === "processing") return "municipality-badge municipality-badge--info";
+  if (key === "skipped") return "municipality-badge municipality-badge--archived";
+  if (key === "failed") return "municipality-badge municipality-badge--urgent";
+  return "municipality-badge municipality-badge--draft";
+}
+
+function summarizeDigestStatus(status) {
+  const key = trimOrEmpty(status).toLowerCase();
+  if (key === "sent") return "Sent";
+  if (key === "processing") return "Processing";
+  if (key === "skipped") return "Skipped";
+  if (key === "failed") return "Failed";
+  return "Unknown";
+}
+
+function summarizeDigestDomainCounts(domainCounts) {
+  if (!domainCounts || typeof domainCounts !== "object") return "No domain totals recorded";
+  const entries = Object.entries(domainCounts)
+    .map(([domainKey, count]) => {
+      const total = Number(count);
+      if (!Number.isFinite(total) || total <= 0) return null;
+      return `${domainLabel(domainKey)}: ${Math.trunc(total)}`;
+    })
+    .filter(Boolean);
+  return entries.length ? entries.join(" • ") : "No report items included";
+}
+
+function summarizeDigestRecipients(run) {
+  const recipients = [];
+  const primary = trimOrEmpty(run?.recipient_email);
+  const cc = trimOrEmpty(run?.cc_recipient_emails);
+  const urgent = trimOrEmpty(run?.urgent_recipient_email);
+  if (primary) recipients.push(primary);
+  if (cc) recipients.push(`CC: ${cc}`);
+  if (urgent) recipients.push(`Urgent: ${urgent}`);
+  return recipients.join(" • ") || "No recipients recorded";
+}
+
 function activeAlertCount(alerts) {
   const now = Date.now();
   return (alerts || []).filter((alert) => {
@@ -2011,6 +2052,9 @@ export default function MunicipalityApp() {
   const [residentMenuLinkDraft, setResidentMenuLinkDraft] = useState(() => buildResidentMenuLinkDraft());
   const [organizationDigestSettings, setOrganizationDigestSettings] = useState(null);
   const [organizationDigestDraft, setOrganizationDigestDraft] = useState(() => buildOrganizationDigestDraft(null));
+  const [organizationDigestRuns, setOrganizationDigestRuns] = useState([]);
+  const [organizationDigestHistoryStatus, setOrganizationDigestHistoryStatus] = useState("");
+  const [organizationDigestHistoryRefreshKey, setOrganizationDigestHistoryRefreshKey] = useState(0);
   const [assetUploadDraft, setAssetUploadDraft] = useState({
     category: "asset",
     asset_subtype: "",
@@ -3015,17 +3059,10 @@ export default function MunicipalityApp() {
       const potholeReportSelect = "id,pothole_id,note,report_number,created_at,lat,lng";
 
       const [reportsResult, potholesResult, statesResult, officialLightsResult, officialSignsResult] = await Promise.allSettled([
-        (async () => {
-          const publicRes = await supabase
-            .from("reports_public")
-            .select(reportSelect)
-            .order("created_at", { ascending: false });
-          if (!publicRes.error) return publicRes;
-          return supabase
-            .from("reports")
-            .select(reportSelect)
-            .order("created_at", { ascending: false });
-        })(),
+        supabase
+          .from("reports")
+          .select(reportSelect)
+          .order("created_at", { ascending: false }),
         supabase
           .from("pothole_reports")
           .select(potholeReportSelect)
@@ -3470,6 +3507,7 @@ export default function MunicipalityApp() {
         calendar: "",
         map: "",
       });
+      setOrganizationDigestHistoryStatus("");
 
       const locationQueries = Promise.all([
         manageAccess
@@ -3532,6 +3570,14 @@ export default function MunicipalityApp() {
           : Promise.resolve({ data: null, error: null }),
         manageAccess
           ? supabase
+            .from("organization_digest_runs")
+            .select("id,tenant_key,digest_local_date,digest_timezone,window_started_at,window_ended_at,recipient_email,cc_recipient_emails,urgent_recipient_email,status,item_count,domain_counts,provider,provider_message_id,error_text,metadata,created_at,delivered_at,updated_at")
+            .eq("tenant_key", tenantKey)
+            .order("created_at", { ascending: false })
+            .limit(20)
+          : Promise.resolve({ data: [], error: null }),
+        manageAccess
+          ? supabase
             .from("tenant_files")
             .select("id,tenant_key,file_category,file_name,storage_bucket,storage_path,mime_type,size_bytes,uploaded_by,uploaded_at,notes,active,asset_subtype,asset_owner_type")
             .eq("tenant_key", tenantKey)
@@ -3539,7 +3585,7 @@ export default function MunicipalityApp() {
           : Promise.resolve({ data: [], error: null }),
       ]);
 
-      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, menuRes, digestRes, filesRes] = await locationQueries;
+      const [profileRes, mapRes, teamRes, rolesRes, permissionsRes, catalogRes, menuRes, digestRes, digestRunsRes, filesRes] = await locationQueries;
 
       if (cancelled) return;
 
@@ -3590,8 +3636,21 @@ export default function MunicipalityApp() {
       const nextDigestSettings = digestRes?.error && isMissingRelationError(digestRes.error)
         ? null
         : (digestRes?.error ? null : (digestRes?.data || null));
+      const nextDigestRuns = digestRunsRes?.error && isMissingRelationError(digestRunsRes.error)
+        ? []
+        : (digestRunsRes?.error ? [] : (digestRunsRes?.data || []));
       setOrganizationDigestSettings(nextDigestSettings);
       setOrganizationDigestDraft(buildOrganizationDigestDraft(nextDigestSettings, trimOrEmpty(nextProfile?.timezone) || "America/New_York"));
+      setOrganizationDigestRuns(nextDigestRuns);
+      setOrganizationDigestHistoryStatus(
+        digestRunsRes?.error
+          ? (isMissingRelationError(digestRunsRes.error)
+            ? "Digest delivery history will appear after the latest database update is applied."
+            : ((isPermissionError(digestRunsRes.error)
+              ? "Digest delivery history is not available to this account yet."
+              : digestRunsRes.error.message) || "Could not load digest delivery history."))
+          : ""
+      );
       setAssetLibrary(nextAssetLibrary);
       setAssetFiles(filesRes?.error ? [] : (filesRes?.data || []));
       setTeamAssignments(teamRes?.error ? [] : (teamRes?.data || []));
@@ -3646,7 +3705,7 @@ export default function MunicipalityApp() {
     return () => {
       cancelled = true;
     };
-  }, [manageAccess, publishedEvents.length, routePath, session?.user?.id, tenant?.tenantConfig?.boundary_config_key, tenantKey]);
+  }, [manageAccess, organizationDigestHistoryRefreshKey, publishedEvents.length, routePath, session?.user?.id, tenant?.tenantConfig?.boundary_config_key, tenantKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -8255,42 +8314,52 @@ function populateAlertForm(alert) {
                               <h4>Report Digests</h4>
                               <p className="municipality-note">Configure the city-owned inboxes and timing CityReport should use for report digests once automated delivery is enabled.</p>
                             </div>
-                            {settingsSectionEdit.digest ? (
+                            <div className="municipality-actions municipality-actions--compact">
                               <button
                                 type="button"
                                 className="municipality-button municipality-button--ghost"
-                                onClick={() => {
-                                  setOrganizationDigestDraft(
-                                    buildOrganizationDigestDraft(
-                                      organizationDigestSettings,
-                                      trimOrEmpty(organizationProfileDraft?.timezone)
-                                        || trimOrEmpty(organizationProfile?.timezone)
-                                        || "America/New_York"
-                                    )
-                                  );
-                                  setSettingsSectionEdit((prev) => ({ ...prev, digest: false }));
-                                  setSettingsSectionStatus((prev) => ({ ...prev, digest: "" }));
-                                }}
+                                onClick={() => setOrganizationDigestHistoryRefreshKey((prev) => prev + 1)}
+                                disabled={settingsLoading}
                               >
-                                Cancel
+                                {settingsLoading ? "Refreshing…" : "Refresh History"}
                               </button>
-                            ) : (
-                              <HubEditButton
-                                label="Edit report digest settings"
-                                onClick={() => {
-                                  setOrganizationDigestDraft(
-                                    buildOrganizationDigestDraft(
-                                      organizationDigestSettings,
-                                      trimOrEmpty(organizationProfileDraft?.timezone)
-                                        || trimOrEmpty(organizationProfile?.timezone)
-                                        || "America/New_York"
-                                    )
-                                  );
-                                  setSettingsSectionEdit((prev) => ({ ...prev, digest: true }));
-                                  setSettingsSectionStatus((prev) => ({ ...prev, digest: "" }));
-                                }}
-                              />
-                            )}
+                              {settingsSectionEdit.digest ? (
+                                <button
+                                  type="button"
+                                  className="municipality-button municipality-button--ghost"
+                                  onClick={() => {
+                                    setOrganizationDigestDraft(
+                                      buildOrganizationDigestDraft(
+                                        organizationDigestSettings,
+                                        trimOrEmpty(organizationProfileDraft?.timezone)
+                                          || trimOrEmpty(organizationProfile?.timezone)
+                                          || "America/New_York"
+                                      )
+                                    );
+                                    setSettingsSectionEdit((prev) => ({ ...prev, digest: false }));
+                                    setSettingsSectionStatus((prev) => ({ ...prev, digest: "" }));
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <HubEditButton
+                                  label="Edit report digest settings"
+                                  onClick={() => {
+                                    setOrganizationDigestDraft(
+                                      buildOrganizationDigestDraft(
+                                        organizationDigestSettings,
+                                        trimOrEmpty(organizationProfileDraft?.timezone)
+                                          || trimOrEmpty(organizationProfile?.timezone)
+                                          || "America/New_York"
+                                      )
+                                    );
+                                    setSettingsSectionEdit((prev) => ({ ...prev, digest: true }));
+                                    setSettingsSectionStatus((prev) => ({ ...prev, digest: "" }));
+                                  }}
+                                />
+                              )}
+                            </div>
                           </div>
                           <div className="municipality-settings-banner municipality-settings-banner--warning">
                             <strong>Automatic delivery is gated by configuration</strong>
@@ -8299,6 +8368,11 @@ function populateAlertForm(alert) {
                           {settingsSectionStatus.digest ? (
                             <p className={`municipality-inline-status${/could not|enter|available|latest database update/i.test(settingsSectionStatus.digest) ? " is-error" : ""}`}>
                               {settingsSectionStatus.digest}
+                            </p>
+                          ) : null}
+                          {organizationDigestHistoryStatus ? (
+                            <p className={`municipality-inline-status${/could not|available|latest database update/i.test(organizationDigestHistoryStatus) ? " is-error" : ""}`}>
+                              {organizationDigestHistoryStatus}
                             </p>
                           ) : null}
                           {settingsSectionEdit.digest ? (
@@ -8421,53 +8495,116 @@ function populateAlertForm(alert) {
                               </div>
                             </div>
                           ) : (
-                            <div className="municipality-settings-list">
-                              <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>Primary digest inbox</strong>
-                                  <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.primary_recipient_email) || "Not configured yet"}</p>
+                            <>
+                              <div className="municipality-settings-list">
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div>
+                                    <strong>Primary digest inbox</strong>
+                                    <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.primary_recipient_email) || "Not configured yet"}</p>
+                                  </div>
+                                </div>
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div>
+                                    <strong>CC recipients</strong>
+                                    <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.cc_recipient_emails) || "No CC recipients configured"}</p>
+                                  </div>
+                                </div>
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div>
+                                    <strong>Urgent domain inbox</strong>
+                                    <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.urgent_recipient_email) || "No urgent inbox configured"}</p>
+                                  </div>
+                                </div>
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div>
+                                    <strong>Digest timing</strong>
+                                    <p className="municipality-note">
+                                      {(ORGANIZATION_DIGEST_FREQUENCY_OPTIONS.find((option) => option.key === trimOrEmpty(organizationDigestSettings?.digest_frequency))?.label || "Weekdays only")}
+                                      {" • "}
+                                      {(trimOrEmpty(organizationDigestSettings?.digest_time_local) || "07:00")}
+                                      {" • "}
+                                      {(trimOrEmpty(organizationDigestSettings?.digest_timezone)
+                                        || trimOrEmpty(organizationProfile?.timezone)
+                                        || "America/New_York")}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
+                                  <div>
+                                    <strong>Launch readiness</strong>
+                                    <p className="municipality-note">
+                                      {(ORGANIZATION_DIGEST_STATUS_OPTIONS.find((option) => option.key === trimOrEmpty(organizationDigestSettings?.config_status))?.label || "Draft configuration")}
+                                      {" • "}
+                                      {organizationDigestSettings?.digest_enabled ? "Ready for scheduled delivery" : "Digest delivery disabled"}
+                                    </p>
+                                    {trimOrEmpty(organizationDigestSettings?.notes) ? (
+                                      <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.notes)}</p>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </div>
-                              <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>CC recipients</strong>
-                                  <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.cc_recipient_emails) || "No CC recipients configured"}</p>
-                                </div>
+                              <div className="municipality-settings-banner">
+                                <strong>Recent delivery history</strong>
+                                <p className="municipality-note">This log shows the most recent digest attempts for this organization, including recipient info, item counts, provider delivery metadata, and any failure notes.</p>
                               </div>
-                              <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>Urgent domain inbox</strong>
-                                  <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.urgent_recipient_email) || "No urgent inbox configured"}</p>
+                              {settingsLoading ? (
+                                <p className="municipality-inline-status">Loading digest delivery history…</p>
+                              ) : organizationDigestRuns.length ? (
+                                <div className="municipality-settings-list">
+                                  {organizationDigestRuns.map((run) => (
+                                    <div key={run.id} className="municipality-settings-list-item municipality-settings-list-item--stacked municipality-digest-run-card">
+                                      <div className="municipality-digest-run-header">
+                                        <div>
+                                          <strong>{trimOrEmpty(run.digest_local_date) || "Digest run"}</strong>
+                                          <p className="municipality-note">
+                                            Created {formatDateTime(run.created_at, { dateStyle: "medium", timeStyle: "short" })}
+                                            {run.delivered_at ? ` • Delivered ${formatDateTime(run.delivered_at, { dateStyle: "medium", timeStyle: "short" })}` : ""}
+                                          </p>
+                                        </div>
+                                        <span className={digestRunStatusBadgeClass(run.status)}>
+                                          {summarizeDigestStatus(run.status)}
+                                        </span>
+                                      </div>
+                                      <div className="municipality-detail-grid municipality-detail-grid--digest">
+                                        <div className="municipality-detail-item">
+                                          <span>Recipients</span>
+                                          <strong>{summarizeDigestRecipients(run)}</strong>
+                                        </div>
+                                        <div className="municipality-detail-item">
+                                          <span>Digest window</span>
+                                          <strong>
+                                            {formatDateTime(run.window_started_at, { dateStyle: "short", timeStyle: "short" })}
+                                            {" - "}
+                                            {formatDateTime(run.window_ended_at, { dateStyle: "short", timeStyle: "short" })}
+                                          </strong>
+                                        </div>
+                                        <div className="municipality-detail-item">
+                                          <span>Items included</span>
+                                          <strong>{Number.isFinite(Number(run.item_count)) ? Math.max(0, Math.trunc(Number(run.item_count))) : 0}</strong>
+                                        </div>
+                                        <div className="municipality-detail-item">
+                                          <span>Provider</span>
+                                          <strong>
+                                            {trimOrEmpty(run.provider) || "resend"}
+                                            {trimOrEmpty(run.provider_message_id) ? ` • ${trimOrEmpty(run.provider_message_id)}` : ""}
+                                          </strong>
+                                        </div>
+                                      </div>
+                                      <p className="municipality-note municipality-digest-run-domain-summary">
+                                        {summarizeDigestDomainCounts(run.domain_counts)}
+                                      </p>
+                                      {trimOrEmpty(run.error_text) ? (
+                                        <p className="municipality-inline-status is-error">{trimOrEmpty(run.error_text)}</p>
+                                      ) : null}
+                                    </div>
+                                  ))}
                                 </div>
-                              </div>
-                              <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>Digest timing</strong>
-                                  <p className="municipality-note">
-                                    {(ORGANIZATION_DIGEST_FREQUENCY_OPTIONS.find((option) => option.key === trimOrEmpty(organizationDigestSettings?.digest_frequency))?.label || "Weekdays only")}
-                                    {" • "}
-                                    {(trimOrEmpty(organizationDigestSettings?.digest_time_local) || "07:00")}
-                                    {" • "}
-                                    {(trimOrEmpty(organizationDigestSettings?.digest_timezone)
-                                      || trimOrEmpty(organizationProfile?.timezone)
-                                      || "America/New_York")}
-                                  </p>
+                              ) : (
+                                <div className="municipality-empty">
+                                  No digest runs have been recorded for this organization yet.
                                 </div>
-                              </div>
-                              <div className="municipality-settings-list-item municipality-settings-list-item--stacked">
-                                <div>
-                                  <strong>Launch readiness</strong>
-                                  <p className="municipality-note">
-                                    {(ORGANIZATION_DIGEST_STATUS_OPTIONS.find((option) => option.key === trimOrEmpty(organizationDigestSettings?.config_status))?.label || "Draft configuration")}
-                                    {" • "}
-                                    {organizationDigestSettings?.digest_enabled ? "Ready to activate later" : "Not marked ready yet"}
-                                  </p>
-                                  {trimOrEmpty(organizationDigestSettings?.notes) ? (
-                                    <p className="municipality-note">{trimOrEmpty(organizationDigestSettings?.notes)}</p>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )

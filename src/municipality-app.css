@@ -1258,6 +1258,25 @@
   background: linear-gradient(180deg, rgba(255, 249, 233, 0.98) 0%, rgba(255, 244, 214, 0.96) 100%);
 }
 
+.municipality-digest-run-card {
+  gap: 14px;
+}
+
+.municipality-digest-run-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.municipality-detail-grid--digest {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.municipality-digest-run-domain-summary {
+  margin-top: 2px;
+}
+
 .municipality-note,
 .municipality-inline-status {
   margin: 0;
@@ -2011,6 +2030,14 @@
 
   .municipality-report-table-button {
     min-width: 104px;
+  }
+
+  .municipality-detail-grid--digest {
+    grid-template-columns: 1fr;
+  }
+
+  .municipality-digest-run-header {
+    flex-direction: column;
   }
 
   .municipality-permission-matrix {
