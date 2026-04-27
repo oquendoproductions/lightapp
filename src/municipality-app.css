@@ -1243,6 +1243,21 @@
   background: linear-gradient(180deg, rgba(246, 252, 255, 0.98) 0%, rgba(236, 246, 250, 0.96) 100%);
 }
 
+.municipality-settings-banner {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 49, 79, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.municipality-settings-banner--warning {
+  border-color: rgba(184, 112, 0, 0.24);
+  background: linear-gradient(180deg, rgba(255, 249, 233, 0.98) 0%, rgba(255, 244, 214, 0.96) 100%);
+}
+
 .municipality-note,
 .municipality-inline-status {
   margin: 0;

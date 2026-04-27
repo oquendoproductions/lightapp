@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.platform-user-admin]
 verify_jwt = false
+
+[functions.send-report-digests]
+verify_jwt = false
