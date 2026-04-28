@@ -702,6 +702,10 @@ serve(async (req) => {
       const tenantKey = trimOrEmpty(setting.tenant_key).toLowerCase();
       const profile = profilesByTenant.get(tenantKey);
       const effectiveTimeZone = trimOrEmpty(setting.digest_timezone) || trimOrEmpty(profile?.timezone) || "America/New_York";
+      const displayName =
+        trimOrEmpty(profile?.display_name)
+        || trimOrEmpty(profile?.tenant_key)
+        || tenantKey;
       const dueInfo = digestDueNow({ ...setting, digest_timezone: effectiveTimeZone }, now);
       if (!dueInfo.due) {
         results.push({ tenant_key: tenantKey, status: "not_due", local_date: dueInfo.localDate });
@@ -716,12 +720,9 @@ serve(async (req) => {
         continue;
       }
 
+      let digest: Awaited<ReturnType<typeof loadDigestContent>> | null = null;
       try {
-        const digest = await loadDigestContent(admin, tenantKey, windowStartedAtIso);
-        const displayName =
-          trimOrEmpty(profile?.display_name)
-          || trimOrEmpty(profile?.tenant_key)
-          || tenantKey;
+        digest = await loadDigestContent(admin, tenantKey, windowStartedAtIso);
         const sent = await sendDigestEmail({
           admin,
           settings: { ...setting, digest_timezone: effectiveTimeZone },
@@ -764,6 +765,30 @@ serve(async (req) => {
         await updateDigestRun(admin, claim.row.id, {
           status: "failed",
           error_text: message,
+          ...(digest
+            ? {
+                item_count: Number(digest.itemCount || 0),
+                domain_counts: digest.domainCounts,
+                metadata: {
+                  digest_display_name: displayName,
+                  included_report_numbers: digest.includedReportNumbers,
+                  displayed_report_numbers: digest.displayedReportNumbers,
+                  displayed_item_count: digest.items.length,
+                  pending_report_number_count: digest.pendingReportNumberCount,
+                  source_limit_reached: digest.sourceLimitReached,
+                  source_limits: digest.sourceLimits,
+                  source_row_counts: digest.sourceRowCounts,
+                  delivery_attempted: true,
+                  failure_stage: "send",
+                },
+              }
+            : {
+                metadata: {
+                  digest_display_name: displayName,
+                  delivery_attempted: false,
+                  failure_stage: "prepare",
+                },
+              }),
         });
         await logEmailDeliveryEvent(admin, {
           tenantKey,

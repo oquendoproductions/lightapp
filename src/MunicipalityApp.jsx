@@ -796,6 +796,9 @@ function summarizeDigestCoverage(run) {
 
 function summarizeDigestAuditNotes(run) {
   const notes = [];
+  if (trimOrEmpty(run?.status).toLowerCase() === "failed" && run?.metadata?.delivery_attempted) {
+    notes.push("Digest content was prepared, but delivery failed before any inbox received it");
+  }
   const displayedItemCount = Number(run?.metadata?.displayed_item_count);
   if (Number.isFinite(displayedItemCount) && displayedItemCount > 0) {
     notes.push(`Email preview included ${Math.trunc(displayedItemCount)} item${displayedItemCount === 1 ? "" : "s"}`);
