@@ -584,7 +584,10 @@ async function sendDigestEmail(input: {
   items: DigestItem[];
 }) {
   const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
-  const FROM_EMAIL = Deno.env.get("CITYREPORT_DIGEST_FROM") || "CityReport.io <noreply@auth.cityreport.io>";
+  const FROM_EMAIL =
+    Deno.env.get("CITYREPORT_DIGEST_FROM")
+    || Deno.env.get("PW_REPORT_FROM")
+    || "CityReport.io <noreply@auth.cityreport.io>";
   if (!RESEND_API_KEY) {
     throw new Error("Missing RESEND_API_KEY");
   }
