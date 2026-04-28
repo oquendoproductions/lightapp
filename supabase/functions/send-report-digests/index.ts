@@ -433,10 +433,36 @@ async function loadDigestContent(admin: SupabaseClient, tenantKey: string, since
   }
 
   items.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+  const includedReportNumbers = dedupeStrings(
+    items
+      .map((item) => trimOrEmpty(item.reportNumber))
+      .filter((value) => value && value.toLowerCase() !== "pending number"),
+  );
+  const displayedItems = items.slice(0, 18);
+  const displayedReportNumbers = dedupeStrings(
+    displayedItems
+      .map((item) => trimOrEmpty(item.reportNumber))
+      .filter((value) => value && value.toLowerCase() !== "pending number"),
+  );
+  const pendingReportNumberCount = items.filter((item) => trimOrEmpty(item.reportNumber).toLowerCase() === "pending number").length;
+  const sourceLimits = {
+    reports: 250,
+    potholes: 250,
+    displayed_items: 18,
+  };
   return {
     domainCounts,
     itemCount: items.length,
-    items: items.slice(0, 18),
+    items: displayedItems,
+    includedReportNumbers,
+    displayedReportNumbers,
+    pendingReportNumberCount,
+    sourceLimitReached: allReports.length >= sourceLimits.reports || allPotholeReports.length >= sourceLimits.potholes,
+    sourceLimits,
+    sourceRowCounts: {
+      reports: allReports.length,
+      potholes: allPotholeReports.length,
+    },
   };
 }
 
@@ -717,6 +743,13 @@ serve(async (req) => {
             recipient_list: sent.recipientList,
             cc_list: sent.ccList,
             digest_display_name: displayName,
+            included_report_numbers: digest.includedReportNumbers,
+            displayed_report_numbers: digest.displayedReportNumbers,
+            displayed_item_count: digest.items.length,
+            pending_report_number_count: digest.pendingReportNumberCount,
+            source_limit_reached: digest.sourceLimitReached,
+            source_limits: digest.sourceLimits,
+            source_row_counts: digest.sourceRowCounts,
           },
         });
         results.push({

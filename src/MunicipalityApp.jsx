@@ -753,7 +753,7 @@ function summarizeDigestDomainCounts(domainCounts) {
     .map(([domainKey, count]) => {
       const total = Number(count);
       if (!Number.isFinite(total) || total <= 0) return null;
-      return `${domainLabel(domainKey)}: ${Math.trunc(total)}`;
+      return `${reportDomainLabel(domainKey)}: ${Math.trunc(total)}`;
     })
     .filter(Boolean);
   return entries.length ? entries.join(" • ") : "No report items included";
@@ -768,6 +768,46 @@ function summarizeDigestRecipients(run) {
   if (cc) recipients.push(`CC: ${cc}`);
   if (urgent) recipients.push(`Urgent: ${urgent}`);
   return recipients.join(" • ") || "No recipients recorded";
+}
+
+function digestMetadataReportNumbers(run, key) {
+  const raw = run?.metadata?.[key];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((value) => trimOrEmpty(value))
+    .filter(Boolean);
+}
+
+function summarizeDigestCoverage(run) {
+  const included = digestMetadataReportNumbers(run, "included_report_numbers");
+  if (included.length) {
+    const preview = included.slice(0, 12);
+    const remaining = included.length - preview.length;
+    return remaining > 0
+      ? `${preview.join(", ")} + ${remaining} more`
+      : preview.join(", ");
+  }
+  const pendingCount = Number(run?.metadata?.pending_report_number_count);
+  if (Number.isFinite(pendingCount) && pendingCount > 0) {
+    return `${pendingCount} included item${pendingCount === 1 ? "" : "s"} still waiting on report numbers`;
+  }
+  return "No report numbers recorded";
+}
+
+function summarizeDigestAuditNotes(run) {
+  const notes = [];
+  const displayedItemCount = Number(run?.metadata?.displayed_item_count);
+  if (Number.isFinite(displayedItemCount) && displayedItemCount > 0) {
+    notes.push(`Email preview included ${Math.trunc(displayedItemCount)} item${displayedItemCount === 1 ? "" : "s"}`);
+  }
+  const pendingCount = Number(run?.metadata?.pending_report_number_count);
+  if (Number.isFinite(pendingCount) && pendingCount > 0) {
+    notes.push(`${Math.trunc(pendingCount)} without assigned report numbers`);
+  }
+  if (run?.metadata?.source_limit_reached) {
+    notes.push("Digest source query hit its current safety limit");
+  }
+  return notes.join(" • ");
 }
 
 function activeAlertCount(alerts) {
@@ -8762,10 +8802,17 @@ function populateAlertForm(alert) {
                                             {trimOrEmpty(run.provider_message_id) ? ` • ${trimOrEmpty(run.provider_message_id)}` : ""}
                                           </strong>
                                         </div>
+                                        <div className="municipality-detail-item">
+                                          <span>Report numbers</span>
+                                          <strong>{summarizeDigestCoverage(run)}</strong>
+                                        </div>
                                       </div>
                                       <p className="municipality-note municipality-digest-run-domain-summary">
                                         {summarizeDigestDomainCounts(run.domain_counts)}
                                       </p>
+                                      {summarizeDigestAuditNotes(run) ? (
+                                        <p className="municipality-note">{summarizeDigestAuditNotes(run)}</p>
+                                      ) : null}
                                       {trimOrEmpty(run.error_text) ? (
                                         <p className="municipality-inline-status is-error">{trimOrEmpty(run.error_text)}</p>
                                       ) : null}
