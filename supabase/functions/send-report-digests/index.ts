@@ -108,6 +108,54 @@ function createAdminClient(): SupabaseClient {
   return createClient(url, service, { auth: { persistSession: false } });
 }
 
+async function requireManualDigestAccess(
+  req: Request,
+  admin: SupabaseClient,
+  tenantKey: string,
+) {
+  const authHeader = trimOrEmpty(req.headers.get("authorization"));
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return { ok: false, response: json({ ok: false, error: "Missing bearer token." }, 401) };
+  }
+
+  const token = trimOrEmpty(authHeader.slice(7));
+  if (!token) {
+    return { ok: false, response: json({ ok: false, error: "Missing bearer token." }, 401) };
+  }
+
+  const { data: userResult, error: userError } = await admin.auth.getUser(token);
+  if (userError || !trimOrEmpty(userResult?.user?.id)) {
+    return { ok: false, response: json({ ok: false, error: "Invalid session." }, 401) };
+  }
+
+  const url = Deno.env.get("SUPABASE_URL") || "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  if (!url || !anonKey) {
+    return { ok: false, response: json({ ok: false, error: "Missing Supabase anon configuration." }, 500) };
+  }
+
+  const userClient = createClient(url, anonKey, {
+    auth: { persistSession: false },
+    global: {
+      headers: {
+        Authorization: authHeader,
+        ...(tenantKey ? { "x-tenant-key": tenantKey } : {}),
+      },
+    },
+  });
+  const { data: canManage, error: accessError } = await userClient.rpc("can_manage_tenant_communications", {
+    p_tenant: tenantKey,
+  });
+  if (accessError) {
+    return { ok: false, response: json({ ok: false, error: accessError.message || "Unable to verify digest access." }, 403) };
+  }
+  if (!canManage) {
+    return { ok: false, response: json({ ok: false, error: "You do not have permission to send a test digest for this organization." }, 403) };
+  }
+
+  return { ok: true };
+}
+
 async function logEmailDeliveryEvent(
   admin: SupabaseClient,
   input: {
@@ -237,6 +285,10 @@ async function claimDigestRun(
   localDate: string,
   windowStartedAt: string,
   windowEndedAt: string,
+  options: {
+    force?: boolean;
+    metadata?: Record<string, unknown>;
+  } = {},
 ): Promise<{ row: DigestRunRow | null; claimed: boolean }> {
   const tenantKey = trimOrEmpty(setting.tenant_key).toLowerCase();
   const { data: existing, error: existingError } = await admin
@@ -248,7 +300,31 @@ async function claimDigestRun(
 
   if (existingError) throw new Error(existingError.message || "Could not load digest run history");
   const existingRow = (existing || null) as DigestRunRow | null;
-  if (existingRow?.status === "sent" || existingRow?.status === "processing") {
+  if (existingRow?.status === "processing") {
+    return { row: existingRow, claimed: false };
+  }
+  if (existingRow && options.force) {
+    const { data: updated, error: updateError } = await admin
+      .from("organization_digest_runs")
+      .update({
+        status: "processing",
+        error_text: null,
+        window_started_at: windowStartedAt,
+        window_ended_at: windowEndedAt,
+        recipient_email: trimOrEmpty(setting.primary_recipient_email).toLowerCase() || null,
+        cc_recipient_emails: trimOrEmpty(setting.cc_recipient_emails) || null,
+        urgent_recipient_email: trimOrEmpty(setting.urgent_recipient_email).toLowerCase() || null,
+        provider_message_id: null,
+        delivered_at: null,
+        metadata: { ...(options.metadata || {}), manual_test_retry: true },
+      })
+      .eq("id", existingRow.id)
+      .select("id,tenant_key,digest_local_date,status,updated_at")
+      .maybeSingle();
+    if (updateError) throw new Error(updateError.message || "Could not prepare test digest run");
+    return { row: updated as DigestRunRow, claimed: true };
+  }
+  if (existingRow?.status === "sent") {
     return { row: existingRow, claimed: false };
   }
   if (existingRow?.status === "failed" || existingRow?.status === "skipped") {
@@ -262,7 +338,7 @@ async function claimDigestRun(
         recipient_email: trimOrEmpty(setting.primary_recipient_email).toLowerCase() || null,
         cc_recipient_emails: trimOrEmpty(setting.cc_recipient_emails) || null,
         urgent_recipient_email: trimOrEmpty(setting.urgent_recipient_email).toLowerCase() || null,
-        metadata: { retry: true },
+        metadata: { retry: true, ...(options.metadata || {}) },
       })
       .eq("id", existingRow.id)
       .select("id,tenant_key,digest_local_date,status,updated_at")
@@ -283,7 +359,7 @@ async function claimDigestRun(
       cc_recipient_emails: trimOrEmpty(setting.cc_recipient_emails) || null,
       urgent_recipient_email: trimOrEmpty(setting.urgent_recipient_email).toLowerCase() || null,
       status: "processing",
-      metadata: {},
+      metadata: options.metadata || {},
     }])
     .select("id,tenant_key,digest_local_date,status,updated_at")
     .maybeSingle();
@@ -669,8 +745,17 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const requestedTenant = normalizeTenantKey(body?.tenant_key);
+    const manualTest = body?.manual_test === true;
     const now = new Date();
     const admin = createAdminClient();
+
+    if (manualTest) {
+      if (!requestedTenant) {
+        return json({ ok: false, error: "tenant_key is required for manual test sends." }, 400);
+      }
+      const accessResult = await requireManualDigestAccess(req, admin, requestedTenant);
+      if (!accessResult.ok) return accessResult.response;
+    }
 
     let query = admin
       .from("organization_digest_settings")
@@ -686,6 +771,12 @@ serve(async (req) => {
     }
 
     const settings = (settingsRows || []) as DigestSettingsRow[];
+    if (manualTest && requestedTenant && !settings.some((row) => trimOrEmpty(row.tenant_key).toLowerCase() === requestedTenant)) {
+      return json({
+        ok: false,
+        error: "No ready and enabled digest settings were found for this organization.",
+      }, 400);
+    }
     const tenantKeys = dedupeStrings(settings.map((row) => trimOrEmpty(row.tenant_key)));
     const { data: profileRows, error: profilesError } = tenantKeys.length
       ? await admin
@@ -709,17 +800,36 @@ serve(async (req) => {
         trimOrEmpty(profile?.display_name)
         || trimOrEmpty(profile?.tenant_key)
         || tenantKey;
+      const isManualTestRun = manualTest && requestedTenant === tenantKey;
       const dueInfo = digestDueNow({ ...setting, digest_timezone: effectiveTimeZone }, now);
-      if (!dueInfo.due) {
+      if (!isManualTestRun && !dueInfo.due) {
         results.push({ tenant_key: tenantKey, status: "not_due", local_date: dueInfo.localDate });
         continue;
       }
 
       const windowEndedAtIso = now.toISOString();
       const windowStartedAtIso = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
-      const claim = await claimDigestRun(admin, { ...setting, digest_timezone: effectiveTimeZone }, dueInfo.localDate, windowStartedAtIso, windowEndedAtIso);
+      const claim = await claimDigestRun(
+        admin,
+        { ...setting, digest_timezone: effectiveTimeZone },
+        dueInfo.localDate,
+        windowStartedAtIso,
+        windowEndedAtIso,
+        {
+          force: isManualTestRun,
+          metadata: {
+            trigger_source: isManualTestRun ? "manual_test" : trimOrEmpty(body?.source) || "scheduled",
+            manual_test: isManualTestRun,
+            manual_test_triggered_at: isManualTestRun ? now.toISOString() : null,
+          },
+        },
+      );
       if (!claim.claimed || !claim.row?.id) {
-        results.push({ tenant_key: tenantKey, status: "already_processed", local_date: dueInfo.localDate });
+        results.push({
+          tenant_key: tenantKey,
+          status: isManualTestRun ? "already_processing" : "already_processed",
+          local_date: dueInfo.localDate,
+        });
         continue;
       }
 
@@ -754,6 +864,9 @@ serve(async (req) => {
             source_limit_reached: digest.sourceLimitReached,
             source_limits: digest.sourceLimits,
             source_row_counts: digest.sourceRowCounts,
+            trigger_source: isManualTestRun ? "manual_test" : trimOrEmpty(body?.source) || "scheduled",
+            manual_test: isManualTestRun,
+            manual_test_triggered_at: isManualTestRun ? now.toISOString() : null,
           },
         });
         results.push({
@@ -783,6 +896,9 @@ serve(async (req) => {
                   source_row_counts: digest.sourceRowCounts,
                   delivery_attempted: true,
                   failure_stage: "send",
+                  trigger_source: isManualTestRun ? "manual_test" : trimOrEmpty(body?.source) || "scheduled",
+                  manual_test: isManualTestRun,
+                  manual_test_triggered_at: isManualTestRun ? now.toISOString() : null,
                 },
               }
             : {
@@ -790,6 +906,9 @@ serve(async (req) => {
                   digest_display_name: displayName,
                   delivery_attempted: false,
                   failure_stage: "prepare",
+                  trigger_source: isManualTestRun ? "manual_test" : trimOrEmpty(body?.source) || "scheduled",
+                  manual_test: isManualTestRun,
+                  manual_test_triggered_at: isManualTestRun ? now.toISOString() : null,
                 },
               }),
         });

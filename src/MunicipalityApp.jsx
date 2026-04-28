@@ -2143,6 +2143,7 @@ export default function MunicipalityApp() {
     organization: false,
     residentMenu: false,
     digest: false,
+    digestTest: false,
     map: false,
     assets: false,
   });
@@ -4527,6 +4528,99 @@ function populateAlertForm(alert) {
     setSettingsSectionStatus((prev) => ({
       ...prev,
       digest: "Report digest settings saved. Automatic digest sending is allowed when this org is marked ready and digest sending is enabled.",
+    }));
+  }
+
+  async function sendTestDigestNow() {
+    if (!manageAccess) return;
+    if (settingsSectionEdit.digest) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: "Save or cancel your digest edits before sending a test digest.",
+      }));
+      return;
+    }
+
+    const checkpointApproved = await requireTenantSecurityCheckpoint({
+      settingKey: "require_pin_for_domain_settings_changes",
+      title: "Send test report digest now",
+      description: "Enter your 4-digit PIN to send the current digest immediately for this organization.",
+      onBlocked: (message) => setSettingsSectionStatus((prev) => ({ ...prev, digest: message })),
+    });
+    if (!checkpointApproved) return;
+
+    setSettingsSectionSaving((prev) => ({ ...prev, digestTest: true }));
+    setSettingsSectionStatus((prev) => ({ ...prev, digest: "" }));
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      setSettingsSectionSaving((prev) => ({ ...prev, digestTest: false }));
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: sessionError.message || "Your session expired. Sign in again and retry.",
+      }));
+      return;
+    }
+
+    const accessToken = trimOrEmpty(sessionData?.session?.access_token);
+    if (!accessToken) {
+      setSettingsSectionSaving((prev) => ({ ...prev, digestTest: false }));
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: "Your session expired. Sign in again and retry.",
+      }));
+      return;
+    }
+
+    const { data, error } = await supabase.functions.invoke("send-report-digests", {
+      body: {
+        tenant_key: tenantKey,
+        manual_test: true,
+      },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "x-tenant-key": tenantKey,
+      },
+    });
+
+    setSettingsSectionSaving((prev) => ({ ...prev, digestTest: false }));
+    setOrganizationDigestHistoryRefreshKey((prev) => prev + 1);
+
+    if (error) {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: error.message || "Could not send the test digest right now.",
+      }));
+      return;
+    }
+
+    const result = Array.isArray(data?.results) ? data.results[0] : null;
+    const status = trimOrEmpty(result?.status).toLowerCase();
+    if (status === "sent") {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: "Test digest sent. Refreshing delivery history now.",
+      }));
+      return;
+    }
+    if (status === "failed") {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: "Test digest attempted, but delivery failed. Review the latest history card for details.",
+      }));
+      return;
+    }
+    if (status === "already_processing") {
+      setSettingsSectionStatus((prev) => ({
+        ...prev,
+        digest: "A digest for this organization is already processing. Refresh history in a moment.",
+      }));
+      return;
+    }
+
+    setSettingsSectionStatus((prev) => ({
+      ...prev,
+      digest: trimOrEmpty(data?.error) || "The test digest request finished without a send result.",
     }));
   }
 
@@ -8533,9 +8627,17 @@ function populateAlertForm(alert) {
                             <div className="municipality-actions municipality-actions--compact">
                               <button
                                 type="button"
+                                className="municipality-button municipality-button--primary"
+                                onClick={() => void sendTestDigestNow()}
+                                disabled={settingsLoading || settingsSectionSaving.digestTest || settingsSectionEdit.digest}
+                              >
+                                {settingsSectionSaving.digestTest ? "Sending Test…" : "Send Test Digest Now"}
+                              </button>
+                              <button
+                                type="button"
                                 className="municipality-button municipality-button--ghost"
                                 onClick={() => setOrganizationDigestHistoryRefreshKey((prev) => prev + 1)}
-                                disabled={settingsLoading}
+                                disabled={settingsLoading || settingsSectionSaving.digestTest}
                               >
                                 {settingsLoading ? "Refreshing…" : "Refresh History"}
                               </button>
