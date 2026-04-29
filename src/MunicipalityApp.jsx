@@ -5989,10 +5989,7 @@ function populateAlertForm(alert) {
             <div className="municipality-tabs-shell">
               <div className="municipality-tabs-bar">
                 <nav className="municipality-nav" aria-label="Municipality navigation">
-                {standardNavItems.map((item) => {
-              const showManageMenu = manageAccess && (item.key === "alerts" || item.key === "events");
-              if (!showManageMenu) {
-                return (
+                {standardNavItems.map((item) => (
                   <a
                     key={item.key}
                     href={item.href}
@@ -6004,55 +6001,7 @@ function populateAlertForm(alert) {
                   >
                     {item.label}
                   </a>
-                );
-              }
-
-              const isAlertsMenu = item.key === "alerts";
-              const isOpen = openNavMenu === item.key;
-              const createLabel = isAlertsMenu ? "Create Alert" : "Create Event";
-              const viewLabel = isAlertsMenu ? "View Alerts" : "View Events";
-              return (
-                <div
-                  key={item.key}
-                  className="municipality-nav-dropdown"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className={`municipality-nav-link municipality-nav-button${item.active ? " is-active" : ""}`}
-                    onClick={() => setOpenNavMenu((prev) => (prev === item.key ? "" : item.key))}
-                  >
-                    {item.label}
-                  </button>
-                  {isOpen ? (
-                    <div className="municipality-nav-menu">
-                      <button
-                        type="button"
-                        className="municipality-nav-menu-item"
-                        onClick={() => {
-                          setOpenNavMenu("");
-                          navigate(item.path);
-                        }}
-                      >
-                        {viewLabel}
-                      </button>
-                      <button
-                        type="button"
-                        className="municipality-nav-menu-item"
-                        onClick={() => {
-                          setOpenNavMenu("");
-                          if (isAlertsMenu) startNewAlert();
-                          else startNewEvent();
-                          navigate(isAlertsMenu ? "/alerts" : "/events");
-                        }}
-                      >
-                        {createLabel}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                ))}
 
             {session?.user?.id && switchableTenants.length ? (
               null
