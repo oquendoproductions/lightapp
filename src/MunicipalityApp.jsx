@@ -436,6 +436,49 @@ function trimOrEmpty(value) {
   return String(value || "").trim();
 }
 
+function shouldSendResidentNotificationEmail(currentStatus, nextStatus) {
+  const previous = trimOrEmpty(currentStatus).toLowerCase();
+  const next = trimOrEmpty(nextStatus).toLowerCase();
+  return next === "published" && previous !== "published";
+}
+
+async function triggerResidentNotificationEmail({ kind, item }) {
+  const safeKind = kind === "event" ? "event" : "alert";
+  const safeItem = item && typeof item === "object" ? item : null;
+  if (!safeItem || trimOrEmpty(safeItem.status).toLowerCase() !== "published") {
+    return { ok: true, skipped: true, reason: "status_not_published" };
+  }
+
+  const { data, error } = await supabase.functions.invoke("send-resident-notification", {
+    body: {
+      tenant_key: trimOrEmpty(safeItem.tenant_key),
+      kind: safeKind,
+      item: safeItem,
+    },
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      error: trimOrEmpty(error.message) || "Could not send resident email notifications.",
+    };
+  }
+  if (data?.ok === false) {
+    return {
+      ok: false,
+      error: trimOrEmpty(data?.error) || "Could not send resident email notifications.",
+    };
+  }
+  return {
+    ok: true,
+    skipped: Boolean(data?.skipped),
+    sentCount: Number(data?.sent_count || 0),
+    attemptedCount: Number(data?.attempted_count || 0),
+    failures: Array.isArray(data?.failures) ? data.failures : [],
+    reason: trimOrEmpty(data?.reason),
+  };
+}
+
 async function hashSharedSecurityPin(userId, pin) {
   const normalizedUserId = trimOrEmpty(userId).toLowerCase();
   const normalizedPin = trimOrEmpty(pin);
@@ -3922,7 +3965,7 @@ export default function MunicipalityApp() {
         next[row.topic_key] = {
           in_app_enabled: Boolean(row?.in_app_enabled),
           email_enabled: Boolean(row?.email_enabled),
-          web_push_enabled: Boolean(row?.web_push_enabled),
+          web_push_enabled: false,
         };
       }
       setPreferencesByTopic(next);
@@ -4062,7 +4105,7 @@ function populateAlertForm(alert) {
         topic_key: topicKey,
         in_app_enabled: current.in_app_enabled ?? fallbackEnabled,
         email_enabled: current.email_enabled ?? false,
-        web_push_enabled: current.web_push_enabled ?? false,
+        web_push_enabled: false,
       };
     });
     const { error: preferencesError } = await supabase
@@ -5558,6 +5601,7 @@ function populateAlertForm(alert) {
           ? currentAlert.published_at
           : new Date().toISOString())
         : null;
+    const shouldSendEmail = shouldSendResidentNotificationEmail(currentStatus, payload.status);
     const query = isEditing
       ? supabase.from("municipality_alerts").update(payload).eq("id", editingAlertId)
       : supabase.from("municipality_alerts").insert([payload]);
@@ -5567,7 +5611,22 @@ function populateAlertForm(alert) {
       return;
     }
     closeAlertComposer();
-    setAdminStatus(isEditing ? "Alert updated." : "Alert saved.");
+    let nextStatusMessage = isEditing ? "Alert updated." : "Alert saved.";
+    if (shouldSendEmail) {
+      const notificationResult = await triggerResidentNotificationEmail({
+        kind: "alert",
+        item: {
+          id: editingAlertId || null,
+          ...payload,
+        },
+      });
+      if (!notificationResult.ok) {
+        nextStatusMessage = `${nextStatusMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+      } else if (!notificationResult.skipped) {
+        nextStatusMessage = `${nextStatusMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+      }
+    }
+    setAdminStatus(nextStatusMessage);
     await reloadAlerts();
   }
 
@@ -5619,6 +5678,7 @@ function populateAlertForm(alert) {
           ? currentEvent.published_at
           : new Date().toISOString())
         : null;
+    const shouldSendEmail = shouldSendResidentNotificationEmail(currentStatus, payload.status);
     const query = isEditing
       ? supabase.from("municipality_events").update(payload).eq("id", editingEventId)
       : supabase.from("municipality_events").insert([payload]);
@@ -5628,7 +5688,22 @@ function populateAlertForm(alert) {
       return;
     }
     closeEventComposer();
-    setAdminStatus(isEditing ? "Event updated." : "Event saved.");
+    let nextStatusMessage = isEditing ? "Event updated." : "Event saved.";
+    if (shouldSendEmail) {
+      const notificationResult = await triggerResidentNotificationEmail({
+        kind: "event",
+        item: {
+          id: editingEventId || null,
+          ...payload,
+        },
+      });
+      if (!notificationResult.ok) {
+        nextStatusMessage = `${nextStatusMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+      } else if (!notificationResult.skipped) {
+        nextStatusMessage = `${nextStatusMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+      }
+    }
+    setAdminStatus(nextStatusMessage);
     await reloadEvents();
   }
 
@@ -7260,10 +7335,6 @@ function populateAlertForm(alert) {
                                   <label className="municipality-checkbox">
                                     <input type="checkbox" checked={Boolean(current.email_enabled)} disabled={!accountSectionEdit.notifications} readOnly={!accountSectionEdit.notifications} onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)} />
                                     Email
-                                  </label>
-                                  <label className="municipality-checkbox">
-                                    <input type="checkbox" checked={Boolean(current.web_push_enabled)} disabled readOnly />
-                                    Web push (next)
                                   </label>
                                 </div>
                               </article>
