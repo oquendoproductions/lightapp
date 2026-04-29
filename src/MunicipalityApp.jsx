@@ -1921,6 +1921,7 @@ function AlertComposer({
   alertForm,
   setAlertForm,
   onSubmit,
+  onCancel = null,
   onDelete = null,
   deleteBusy = false,
   canSchedule = true,
@@ -1965,13 +1966,15 @@ function AlertComposer({
           <label htmlFor="alert-body">Details</label>
           <textarea id="alert-body" value={alertForm.body} onChange={(event) => setAlertForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="What residents should expect and what action they should take." />
         </div>
-        <div className="municipality-field">
-          <label htmlFor="alert-starts">Starts</label>
-          <input id="alert-starts" type="datetime-local" value={alertForm.starts_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
-        </div>
-        <div className="municipality-field">
-          <label htmlFor="alert-ends">Ends</label>
-          <input id="alert-ends" type="datetime-local" value={alertForm.ends_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+        <div className="municipality-inline-date-range municipality-field--full">
+          <div className="municipality-field">
+            <label htmlFor="alert-starts">Starts</label>
+            <input id="alert-starts" type="datetime-local" value={alertForm.starts_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
+          </div>
+          <div className="municipality-field">
+            <label htmlFor="alert-ends">Ends</label>
+            <input id="alert-ends" type="datetime-local" value={alertForm.ends_at} onChange={(event) => setAlertForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+          </div>
         </div>
         <div className="municipality-checkbox-row">
           <label className="municipality-checkbox">
@@ -2000,6 +2003,11 @@ function AlertComposer({
         ) : null}
       </div>
       <div className="municipality-actions">
+        {typeof onCancel === "function" ? (
+          <button type="button" className="municipality-button municipality-button--ghost" onClick={onCancel} disabled={deleteBusy}>
+            Close
+          </button>
+        ) : null}
         {typeof onDelete === "function" ? (
           <HubDeleteButton label={deleteBusy ? "Deleting alert" : "Delete alert"} onClick={onDelete} disabled={deleteBusy} />
         ) : null}
@@ -2014,6 +2022,7 @@ function EventComposer({
   eventForm,
   setEventForm,
   onSubmit,
+  onCancel = null,
   onDelete = null,
   deleteBusy = false,
   canSchedule = true,
@@ -2049,13 +2058,15 @@ function EventComposer({
           <label htmlFor="event-body">Details</label>
           <textarea id="event-body" value={eventForm.body} onChange={(event) => setEventForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="Parking guidance, route info, and resident expectations." />
         </div>
-        <div className="municipality-field">
-          <label htmlFor="event-starts">Starts</label>
-          <input id="event-starts" type="datetime-local" value={eventForm.starts_at} onChange={(event) => setEventForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
-        </div>
-        <div className="municipality-field">
-          <label htmlFor="event-ends">Ends</label>
-          <input id="event-ends" type="datetime-local" value={eventForm.ends_at} onChange={(event) => setEventForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+        <div className="municipality-inline-date-range municipality-field--full">
+          <div className="municipality-field">
+            <label htmlFor="event-starts">Starts</label>
+            <input id="event-starts" type="datetime-local" value={eventForm.starts_at} onChange={(event) => setEventForm((prev) => ({ ...prev, starts_at: event.target.value }))} />
+          </div>
+          <div className="municipality-field">
+            <label htmlFor="event-ends">Ends</label>
+            <input id="event-ends" type="datetime-local" value={eventForm.ends_at} onChange={(event) => setEventForm((prev) => ({ ...prev, ends_at: event.target.value }))} />
+          </div>
         </div>
         <div className="municipality-checkbox-row">
           <label className="municipality-checkbox">
@@ -2084,6 +2095,11 @@ function EventComposer({
         ) : null}
       </div>
       <div className="municipality-actions">
+        {typeof onCancel === "function" ? (
+          <button type="button" className="municipality-button municipality-button--ghost" onClick={onCancel} disabled={deleteBusy}>
+            Close
+          </button>
+        ) : null}
         {typeof onDelete === "function" ? (
           <HubDeleteButton label={deleteBusy ? "Deleting event" : "Delete event"} onClick={onDelete} disabled={deleteBusy} />
         ) : null}
@@ -2121,8 +2137,8 @@ export default function MunicipalityApp() {
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState("");
-  const [, setShowAlertComposer] = useState(false);
-  const [, setShowEventComposer] = useState(false);
+  const [showAlertComposer, setShowAlertComposer] = useState(false);
+  const [showEventComposer, setShowEventComposer] = useState(false);
   const [editingAlertId, setEditingAlertId] = useState(null);
   const [editingEventId, setEditingEventId] = useState(null);
   const [openNavMenu, setOpenNavMenu] = useState("");
@@ -5611,6 +5627,7 @@ function populateAlertForm(alert) {
       return;
     }
     closeAlertComposer();
+    navigate("/alerts");
     let nextStatusMessage = isEditing ? "Alert updated." : "Alert saved.";
     if (shouldSendEmail) {
       const notificationResult = await triggerResidentNotificationEmail({
@@ -5688,6 +5705,7 @@ function populateAlertForm(alert) {
       return;
     }
     closeEventComposer();
+    navigate("/events");
     let nextStatusMessage = isEditing ? "Event updated." : "Event saved.";
     if (shouldSendEmail) {
       const notificationResult = await triggerResidentNotificationEmail({
@@ -6025,7 +6043,7 @@ function populateAlertForm(alert) {
                           setOpenNavMenu("");
                           if (isAlertsMenu) startNewAlert();
                           else startNewEvent();
-                          navigate(isAlertsMenu ? "/alerts/create" : "/events/create");
+                          navigate(isAlertsMenu ? "/alerts" : "/events");
                         }}
                       >
                         {createLabel}
@@ -6293,8 +6311,10 @@ function populateAlertForm(alert) {
     );
   }
 
-  const alertsCreateMode = routePath === "/alerts/create";
-  const eventsCreateMode = routePath === "/events/create";
+  const alertsRouteActive = routePath === "/alerts" || routePath === "/alerts/create";
+  const eventsRouteActive = routePath === "/events" || routePath === "/events/create";
+  const alertsComposerVisible = alertsRouteActive && (showAlertComposer || routePath === "/alerts/create");
+  const eventsComposerVisible = eventsRouteActive && (showEventComposer || routePath === "/events/create");
   const settingsRouteActive = String(routePath || "").startsWith("/settings");
   const organizationInfo = organizationProfile || {};
   const organizationGeneralFields = [
@@ -6617,36 +6637,38 @@ function populateAlertForm(alert) {
           </>
         ) : null}
 
-        {(routePath === "/alerts" || routePath === "/alerts/create") ? (
+        {alertsRouteActive ? (
           <HomeCard title="Location Alerts" subtitle="Create, schedule, and review public alerts for this location.">
             <div className="municipality-admin-panel">
               <div className="municipality-actions municipality-actions--toolbar">
-                <button
-                  type="button"
-                  className={`municipality-button${!alertsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                  onClick={() => navigate("/alerts")}
-                >
-                  View Alerts
-                </button>
                 {manageAccess ? (
                   <button
                     type="button"
-                    className={`municipality-button${alertsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                    className={`municipality-button${alertsComposerVisible ? " municipality-button--ghost" : " municipality-button--primary"}`}
                     onClick={() => {
+                      if (alertsComposerVisible) {
+                        closeAlertComposer();
+                        navigate("/alerts");
+                        return;
+                      }
                       startNewAlert();
-                      navigate("/alerts/create");
+                      navigate("/alerts");
                     }}
                   >
-                    Create / Schedule
+                    {alertsComposerVisible ? "Close Composer" : "Create / Schedule"}
                   </button>
                 ) : null}
               </div>
-              {manageAccess && alertsCreateMode ? (
+              {manageAccess && alertsComposerVisible ? (
                 <AlertComposer
                   topicLookup={topicLookup}
                   alertForm={alertForm}
                   setAlertForm={setAlertForm}
                   onSubmit={createAlert}
+                  onCancel={() => {
+                    closeAlertComposer();
+                    navigate("/alerts");
+                  }}
                   onDelete={editingAlertId && canDeleteCommunications ? () => void deleteAlert() : null}
                   deleteBusy={communicationsDeleteBusyKey === `alert:${editingAlertId || ""}`}
                   canSchedule={!editingAlertId || alertForm.status === "scheduled"}
@@ -6664,34 +6686,32 @@ function populateAlertForm(alert) {
                 onStatusChange={manageAccess ? updateAlertStatus : null}
                 onEdit={manageAccess ? (alert) => {
                   startEditAlert(alert);
-                  navigate("/alerts/create");
+                  navigate("/alerts");
                 } : null}
               />
             )}
           </HomeCard>
         ) : null}
 
-        {(routePath === "/events" || routePath === "/events/create") ? (
+        {eventsRouteActive ? (
           <HomeCard title="Location Events" subtitle="Create, schedule, and review public events for this location.">
             <div className="municipality-admin-panel">
               <div className="municipality-actions municipality-actions--toolbar">
-                <button
-                  type="button"
-                  className={`municipality-button${!eventsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                  onClick={() => navigate("/events")}
-                >
-                  View Events
-                </button>
                 {manageAccess ? (
                   <button
                     type="button"
-                    className={`municipality-button${eventsCreateMode ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                    className={`municipality-button${eventsComposerVisible ? " municipality-button--ghost" : " municipality-button--primary"}`}
                     onClick={() => {
+                      if (eventsComposerVisible) {
+                        closeEventComposer();
+                        navigate("/events");
+                        return;
+                      }
                       startNewEvent();
-                      navigate("/events/create");
+                      navigate("/events");
                     }}
                   >
-                    Create / Schedule
+                    {eventsComposerVisible ? "Close Composer" : "Create / Schedule"}
                   </button>
                 ) : null}
                 <button
@@ -6709,12 +6729,16 @@ function populateAlertForm(alert) {
                   Download Calendar (.ics)
                 </button>
               </div>
-              {manageAccess && eventsCreateMode ? (
+              {manageAccess && eventsComposerVisible ? (
                 <EventComposer
                   topicLookup={topicLookup}
                   eventForm={eventForm}
                   setEventForm={setEventForm}
                   onSubmit={createEvent}
+                  onCancel={() => {
+                    closeEventComposer();
+                    navigate("/events");
+                  }}
                   onDelete={editingEventId && canDeleteCommunications ? () => void deleteEvent() : null}
                   deleteBusy={communicationsDeleteBusyKey === `event:${editingEventId || ""}`}
                   canSchedule={!editingEventId || eventForm.status === "scheduled"}
@@ -6732,7 +6756,7 @@ function populateAlertForm(alert) {
                 onStatusChange={manageAccess ? updateEventStatus : null}
                 onEdit={manageAccess ? (eventRow) => {
                   startEditEvent(eventRow);
-                  navigate("/events/create");
+                  navigate("/events");
                 } : null}
               />
             )}

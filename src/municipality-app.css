@@ -947,6 +947,13 @@
   grid-column: 1 / -1;
 }
 
+.municipality-inline-date-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
 .municipality-settings-list-item > :first-child,
 .municipality-settings-sublist-item > :first-child,
 .municipality-settings-item-actions-row > :first-child {
@@ -1956,7 +1963,8 @@
   }
 
   .municipality-form-grid--reports,
-  .municipality-report-search-row {
+  .municipality-report-search-row,
+  .municipality-inline-date-range {
     grid-template-columns: 1fr;
   }
 
