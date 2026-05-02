@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>General location marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  <path fill="currentColor" fill-rule="evenodd" d="M256 146c-42 0-76 34-76 76 0 52 76 132 76 132s76-80 76-132c0-42-34-76-76-76zm0 40a36 36 0 1 1 0 72 36 36 0 0 1 0-72z"/>
+
+</svg>

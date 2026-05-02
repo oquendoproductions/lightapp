@@ -7,6 +7,22 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "cap:copy": "cap copy",
+    "cap:sync": "cap sync",
+    "cap:add:ios": "cap add ios",
+    "cap:add:android": "cap add android",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android",
+    "mobile:prepare:map": "node scripts/mobile/run-target.mjs map prepare",
+    "mobile:prepare:hub": "node scripts/mobile/run-target.mjs hub prepare",
+    "mobile:prepare:map:ios": "node scripts/mobile/run-target.mjs map prepare ios",
+    "mobile:prepare:map:android": "node scripts/mobile/run-target.mjs map prepare android",
+    "mobile:prepare:hub:ios": "node scripts/mobile/run-target.mjs hub prepare ios",
+    "mobile:prepare:hub:android": "node scripts/mobile/run-target.mjs hub prepare android",
+    "mobile:open:map:ios": "node scripts/mobile/run-target.mjs map open ios",
+    "mobile:open:map:android": "node scripts/mobile/run-target.mjs map open android",
+    "mobile:open:hub:ios": "node scripts/mobile/run-target.mjs hub open ios",
+    "mobile:open:hub:android": "node scripts/mobile/run-target.mjs hub open android",
     "test": "npm run test:unit && npm run test:router",
     "test:unit": "vitest run",
     "test:router": "node --test src/tenant/tenantResolver.test.mjs cloudflare/tenant-router/src/router.test.mjs cloudflare/tenant-router/src/index.test.mjs",
@@ -14,6 +30,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/core": "^8.3.1",
+    "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.3",
+    "@capawesome/capacitor-badge": "^8.0.2",
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.93.1",
     "leaflet": "^1.9.4",
@@ -22,6 +45,7 @@
     "react-leaflet": "^5.0.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.1",
     "@eslint/js": "^9.39.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
@@ -34,7 +58,8 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "jsdom": "^27.0.1",
-    "vitest": "^3.2.4",
-    "vite": "^7.2.4"
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^3.2.4"
   }
 }

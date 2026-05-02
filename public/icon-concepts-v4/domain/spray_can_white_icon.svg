@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title>Spray can icon</title>
+  <g fill="#ffffff">
+    <rect x="198" y="79" width="116" height="72" rx="14"/>
+    <rect x="176" y="130" width="160" height="42" rx="16"/>
+    <path d="M164 184h184c48 0 86 38 88 86H76c2-48 40-86 88-86z"/>
+    <rect x="58" y="284" width="396" height="28" rx="14"/>
+    <rect x="80" y="326" width="352" height="132" rx="20"/>
+    <rect x="58" y="472" width="396" height="28" rx="14"/>
+    <circle cx="256" cy="115" r="24"/>
+  </g>
+</svg>

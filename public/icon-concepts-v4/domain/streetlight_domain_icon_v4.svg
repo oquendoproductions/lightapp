@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Streetlight domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <path d="M136 430h128v-34h-38V168c0-16 13-29 29-29h92v-34h-92c-35 0-63 28-63 63v228h-56z" fill="currentColor"/>
+      <rect x="314" y="132" width="96" height="132" rx="24" fill="currentColor"/>
+      <rect x="292" y="132" width="24" height="132" rx="12" fill="currentColor"/>
+    
+  </g>
+</svg>

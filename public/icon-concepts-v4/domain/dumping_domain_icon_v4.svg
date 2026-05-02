@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Dumping domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <path d="M226 118c-18 0-34 10-42 24l-14 24-30 8c-20 6-30 28-20 46 4 8 10 14 18 18l16 8-30 68c-18 40 12 84 56 84h152c44 0 74-44 56-84l-30-68 16-8c18-8 26-30 18-46-4-8-12-14-20-18l-30-8-14-24c-8-14-24-24-42-24h-36z" fill="currentColor"/>
+      <rect x="322" y="292" width="76" height="76" rx="12" transform="rotate(-10 360 330)" fill="currentColor"/>
+      <circle cx="178" cy="356" r="16" fill="currentColor"/>
+    
+  </g>
+</svg>

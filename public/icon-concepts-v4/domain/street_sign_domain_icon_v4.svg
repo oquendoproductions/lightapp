@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Street Sign domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <path d="M152 146h170l44 55-44 55H152z" fill="currentColor"/>
+      <rect x="122" y="256" width="34" height="158" rx="17" fill="currentColor"/>
+      <rect x="152" y="382" width="92" height="28" rx="14" fill="currentColor"/>
+    
+  </g>
+</svg>

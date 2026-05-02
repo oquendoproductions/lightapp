@@ -52,3 +52,10 @@ Run a controlled municipal pilot for `potholes` + `street_signs` with stable gov
 - Weekly pilot summary note.
 - Updated risk register.
 - Decision memo at day 30 (extend/convert/adjust).
+- Approved disclaimer + audit/digest package:
+  - `docs/governance/week5/13-pilot-disclaimers-audit-and-digest-package.md`
+- CYA implementation checklist:
+  - `docs/governance/week5/14-pilot-cya-implementation-checklist.md`
+
+## Post-Launch Follow-Up Backlog
+- Enable org-admin-managed employee administration directly in the Hub so tenant admins can edit employee roles and remove employees without PCP/developer-dashboard intervention.

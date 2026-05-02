@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Encampment domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <path fill="currentColor" fill-rule="evenodd" d="M82 368 220 152c14-22 46-22 60 0l150 216H82zm174-64 64 64H194z"/>
+      <rect x="104" y="386" width="304" height="28" rx="14" fill="currentColor"/>
+    
+  </g>
+</svg>

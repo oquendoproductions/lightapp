@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Graffiti domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <rect x="188" y="144" width="136" height="230" rx="34" fill="currentColor"/>
+      <rect x="218" y="116" width="76" height="34" rx="14" fill="currentColor"/>
+      <rect x="244" y="90" width="24" height="36" rx="10" fill="currentColor"/>
+      <circle cx="360" cy="176" r="18" fill="currentColor"/>
+      <circle cx="398" cy="146" r="12" fill="currentColor"/>
+      <circle cx="396" cy="196" r="10" fill="currentColor"/>
+      <path d="M162 362c44 0 82 20 112 54" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round"/>
+    
+  </g>
+</svg>

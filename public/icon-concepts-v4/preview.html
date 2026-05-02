@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CityReport Marker Concepts v4</title>
+<style>
+  :root {
+    --ink: #17324d;
+    --paper: #f6f9fb;
+    --card: rgba(255,255,255,0.92);
+    --border: #c8d7e4;
+    --road: #d7e4ee;
+    --text: #22405f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, rgba(255,255,255,0.85), transparent 32%),
+      linear-gradient(135deg, #dbe9f2 0%, #eef4f8 42%, #d8e7ef 100%);
+  }
+  main {
+    width: min(1200px, calc(100vw - 32px));
+    margin: 0 auto;
+    padding: 32px 0 48px;
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: clamp(2rem, 3.8vw, 3.4rem);
+    line-height: 0.94;
+    letter-spacing: -0.04em;
+  }
+  p {
+    margin: 0;
+    max-width: 760px;
+    line-height: 1.5;
+  }
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 28px;
+    border: 1px solid rgba(255,255,255,0.6);
+    border-radius: 28px;
+    background:
+      linear-gradient(145deg, rgba(255,255,255,0.94), rgba(255,255,255,0.82)),
+      linear-gradient(90deg, transparent 0 47%, rgba(23,50,77,0.05) 47% 53%, transparent 53%),
+      linear-gradient(0deg, transparent 0 47%, rgba(23,50,77,0.05) 47% 53%, transparent 53%);
+    box-shadow: 0 24px 70px rgba(33, 58, 85, 0.12);
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -30px -42px auto;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(23,50,77,0.14), rgba(23,50,77,0));
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 22px;
+    align-items: end;
+  }
+  .hero-panel {
+    min-height: 200px;
+    border-radius: 22px;
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.78)),
+      repeating-linear-gradient(0deg, transparent 0 44px, rgba(23,50,77,0.05) 44px 46px),
+      repeating-linear-gradient(90deg, transparent 0 44px, rgba(23,50,77,0.05) 44px 46px);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .hero-panel img {
+    display: block;
+    width: clamp(76px, 15vw, 124px);
+    height: auto;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .legend i {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    display: inline-block;
+    background: var(--ink);
+  }
+  h2 {
+    margin: 28px 0 14px;
+    font-size: 1.05rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.75);
+    background: var(--card);
+    padding: 18px;
+    box-shadow: 0 18px 48px rgba(33, 58, 85, 0.08);
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(90deg, transparent 0 46%, rgba(23,50,77,0.03) 46% 54%, transparent 54%),
+      linear-gradient(0deg, transparent 0 46%, rgba(23,50,77,0.03) 46% 54%, transparent 54%);
+    opacity: 0.8;
+    pointer-events: none;
+  }
+  .domain {
+    width: 92px;
+    height: 92px;
+    display: block;
+    margin: 0 auto 12px;
+    object-fit: contain;
+  }
+  .marker-row {
+    position: relative;
+    display: flex;
+    align-items: end;
+    justify-content: center;
+    gap: 14px;
+    min-height: 106px;
+    padding: 10px 0 8px;
+  }
+  .marker {
+    display: block;
+    height: auto;
+    filter: drop-shadow(0 10px 14px rgba(23, 50, 77, 0.16));
+  }
+  .marker.sm { width: 22px; }
+  .marker.md { width: 30px; }
+  .marker.lg { width: 40px; }
+  .label {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  @media (max-width: 860px) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .hero-panel { min-height: 160px; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <h1>Marker Concepts v4</h1>
+          <p>A reusable location-pin shell plus one-color domain glyphs designed for fast recognition at small map sizes. All exported assets are SVG so they can scale up cleanly without losing detail.</p>
+          <div class="legend">
+            <span><i></i> Shared pin system</span>
+            <span><i style="background:#ffffff;border:1px solid #c8d7e4;"></i> White badge keeps glyphs readable on map imagery</span>
+            <span><i style="background:#17324d;opacity:0.78;"></i> Domain icons stay single-color</span>
+          </div>
+        </div>
+        <div class="hero-panel">
+          <img src="markers/general_location_marker_v4.svg" alt="General location marker" />
+        </div>
+      </div>
+    </section>
+
+    <h2>Domain Markers</h2>
+    <div class="grid">
+      
+      <article class="card">
+        <img class="domain" src="domain/streetlight_domain_icon_v4.svg" alt="Streetlight icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/streetlight_marker_v4.svg" alt="Streetlight marker small" />
+          <img class="marker md" src="markers/streetlight_marker_v4.svg" alt="Streetlight marker medium" />
+          <img class="marker lg" src="markers/streetlight_marker_v4.svg" alt="Streetlight marker large" />
+        </div>
+        <div class="label">Streetlight</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/potholes_domain_icon_v4.svg" alt="Potholes icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/potholes_marker_v4.svg" alt="Potholes marker small" />
+          <img class="marker md" src="markers/potholes_marker_v4.svg" alt="Potholes marker medium" />
+          <img class="marker lg" src="markers/potholes_marker_v4.svg" alt="Potholes marker large" />
+        </div>
+        <div class="label">Potholes</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/storm_drain_domain_icon_v4.svg" alt="Storm Drain icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/storm_drain_marker_v4.svg" alt="Storm Drain marker small" />
+          <img class="marker md" src="markers/storm_drain_marker_v4.svg" alt="Storm Drain marker medium" />
+          <img class="marker lg" src="markers/storm_drain_marker_v4.svg" alt="Storm Drain marker large" />
+        </div>
+        <div class="label">Storm Drain</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/sewer_drain_domain_icon_v4.svg" alt="Sewer Drain icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/sewer_drain_marker_v4.svg" alt="Sewer Drain marker small" />
+          <img class="marker md" src="markers/sewer_drain_marker_v4.svg" alt="Sewer Drain marker medium" />
+          <img class="marker lg" src="markers/sewer_drain_marker_v4.svg" alt="Sewer Drain marker large" />
+        </div>
+        <div class="label">Sewer Drain</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/downed_tree_domain_icon_v4.svg" alt="Downed Tree icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/downed_tree_marker_v4.svg" alt="Downed Tree marker small" />
+          <img class="marker md" src="markers/downed_tree_marker_v4.svg" alt="Downed Tree marker medium" />
+          <img class="marker lg" src="markers/downed_tree_marker_v4.svg" alt="Downed Tree marker large" />
+        </div>
+        <div class="label">Downed Tree</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/encampment_domain_icon_v4.svg" alt="Encampment icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/encampment_marker_v4.svg" alt="Encampment marker small" />
+          <img class="marker md" src="markers/encampment_marker_v4.svg" alt="Encampment marker medium" />
+          <img class="marker lg" src="markers/encampment_marker_v4.svg" alt="Encampment marker large" />
+        </div>
+        <div class="label">Encampment</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/dumping_domain_icon_v4.svg" alt="Dumping icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/dumping_marker_v4.svg" alt="Dumping marker small" />
+          <img class="marker md" src="markers/dumping_marker_v4.svg" alt="Dumping marker medium" />
+          <img class="marker lg" src="markers/dumping_marker_v4.svg" alt="Dumping marker large" />
+        </div>
+        <div class="label">Dumping</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/graffiti_domain_icon_v4.svg" alt="Graffiti icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/graffiti_marker_v4.svg" alt="Graffiti marker small" />
+          <img class="marker md" src="markers/graffiti_marker_v4.svg" alt="Graffiti marker medium" />
+          <img class="marker lg" src="markers/graffiti_marker_v4.svg" alt="Graffiti marker large" />
+        </div>
+        <div class="label">Graffiti</div>
+      </article>
+
+      <article class="card">
+        <img class="domain" src="domain/street_sign_domain_icon_v4.svg" alt="Street Sign icon" />
+        <div class="marker-row">
+          <img class="marker sm" src="markers/street_sign_marker_v4.svg" alt="Street Sign marker small" />
+          <img class="marker md" src="markers/street_sign_marker_v4.svg" alt="Street Sign marker medium" />
+          <img class="marker lg" src="markers/street_sign_marker_v4.svg" alt="Street Sign marker large" />
+        </div>
+        <div class="label">Street Sign</div>
+      </article>
+    </div>
+  </main>
+</body>
+</html>

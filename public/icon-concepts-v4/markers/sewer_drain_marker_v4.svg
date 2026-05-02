@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Sewer Drain map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <path fill="currentColor" fill-rule="evenodd" d="M256 96c88 0 160 72 160 160s-72 160-160 160S96 344 96 256 168 96 256 96zm0 48c-62 0-112 50-112 112s50 112 112 112 112-50 112-112-50-112-112-112z"/>
+      <path d="M176 226h160M166 256h180M176 286h160" fill="none" stroke="currentColor" stroke-width="22" stroke-linecap="round"/>
+      <path d="M256 166v180" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" opacity="0.9"/>
+    
+    </g>
+  
+
+</svg>

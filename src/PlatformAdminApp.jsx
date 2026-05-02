@@ -6,6 +6,8 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
+import { getAuthRedirectOptions } from "./platform/auth.js";
+import { openExternalUrl } from "./platform/external.js";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
@@ -2918,8 +2920,7 @@ export default function PlatformAdminApp() {
 
     setForgotPasswordError("");
     setAuthResetLoading(true);
-    const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
-    const { error } = await supabase.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
     setAuthResetLoading(false);
 
     if (error) {
@@ -5441,9 +5442,7 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, files: statusText(error || "Unable to create signed URL", "") }));
       return;
     }
-    if (typeof window !== "undefined") {
-      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
-    }
+    void openExternalUrl(data.signedUrl);
   }, []);
 
   const setBoundaryFromFile = useCallback(async (row) => {
@@ -9785,10 +9784,11 @@ export default function PlatformAdminApp() {
                                     },
                                   }))}
                                 />
-                                <span>
-                                  {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false
-                                    ? "Organization monitored repairs"
-                                    : "Public repair confirmations enabled"}
+                                <span style={{ display: "grid", gap: 2 }}>
+                                  <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                    {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false ? "Yes" : "No"}
+                                  </span>
                                 </span>
                               </label>
                             </div>

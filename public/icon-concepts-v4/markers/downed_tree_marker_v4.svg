@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Downed Tree map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <circle cx="344" cy="180" r="52" fill="currentColor"/>
+      <circle cx="286" cy="184" r="40" fill="currentColor"/>
+      <circle cx="376" cy="138" r="34" fill="currentColor"/>
+      <path d="M116 338c-18 0-32-14-32-32s14-32 32-32h94l114-98c14-12 35-11 47 3 12 14 11 35-3 47L250 326c-12 8-26 12-40 12H116z" fill="currentColor"/>
+      <path d="M126 272l44 18-38 34z" fill="currentColor"/>
+    
+    </g>
+  
+
+</svg>

@@ -1,3 +1,9 @@
+import {
+  readSessionStorageItem,
+  removeSessionStorageItem,
+  writeSessionStorageItem,
+} from "../platform/storage.js";
+
 const CACHE_PREFIX = "cityreport.tenant_config.v1";
 const memoryCache = new Map();
 
@@ -17,7 +23,7 @@ function isFresh(record) {
 
 function readSessionRecord(cacheKey) {
   try {
-    const raw = globalThis?.sessionStorage?.getItem(cacheKey);
+    const raw = readSessionStorageItem(cacheKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : null;
@@ -29,7 +35,7 @@ function readSessionRecord(cacheKey) {
 function writeSessionRecord(cacheKey, value, ttlMs) {
   try {
     const expiresAt = nowMs() + Math.max(1000, Number(ttlMs) || 300000);
-    globalThis?.sessionStorage?.setItem(
+    writeSessionStorageItem(
       cacheKey,
       JSON.stringify({
         value,
@@ -66,7 +72,7 @@ export async function loadTenantConfigCached(tenantKey, fetcher, opts = {}) {
   }
   if (sessionRecord && !shouldCacheValue(sessionRecord.value)) {
     try {
-      globalThis?.sessionStorage?.removeItem(cacheKey);
+      removeSessionStorageItem(cacheKey);
     } catch {
       // ignore
     }
@@ -93,7 +99,7 @@ export function clearTenantConfigCache(tenantKey) {
   const cacheKey = keyFor(tenantKey);
   memoryCache.delete(cacheKey);
   try {
-    globalThis?.sessionStorage?.removeItem(cacheKey);
+    removeSessionStorageItem(cacheKey);
   } catch {
     // ignore
   }

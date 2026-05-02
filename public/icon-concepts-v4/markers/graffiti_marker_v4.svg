@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Graffiti map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <rect x="188" y="144" width="136" height="230" rx="34" fill="currentColor"/>
+      <rect x="218" y="116" width="76" height="34" rx="14" fill="currentColor"/>
+      <rect x="244" y="90" width="24" height="36" rx="10" fill="currentColor"/>
+      <circle cx="360" cy="176" r="18" fill="currentColor"/>
+      <circle cx="398" cy="146" r="12" fill="currentColor"/>
+      <circle cx="396" cy="196" r="10" fill="currentColor"/>
+      <path d="M162 362c44 0 82 20 112 54" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round"/>
+    
+    </g>
+  
+
+</svg>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Encampment map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <path fill="currentColor" fill-rule="evenodd" d="M82 368 220 152c14-22 46-22 60 0l150 216H82zm174-64 64 64H194z"/>
+      <rect x="104" y="386" width="304" height="28" rx="14" fill="currentColor"/>
+    
+    </g>
+  
+
+</svg>

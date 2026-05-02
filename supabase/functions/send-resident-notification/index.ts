@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
+import { SignJWT, importPKCS8 } from "https://esm.sh/jose@5.9.6";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +40,18 @@ type ResidentProfileRow = {
 type TopicRow = {
   topic_key: string;
   label?: string | null;
+};
+
+type ResidentPreferenceRow = {
+  user_id: string;
+  in_app_enabled?: boolean | null;
+  email_enabled?: boolean | null;
+};
+
+type NativePushTokenRow = {
+  user_id: string;
+  token: string;
+  platform?: string | null;
 };
 
 function json(data: unknown, status = 200) {
@@ -176,6 +189,22 @@ function dedupeEmails(values: string[]): string[] {
   return next;
 }
 
+function dedupePushTargets(rows: NativePushTokenRow[]): NativePushTokenRow[] {
+  const seen = new Set<string>();
+  const next: NativePushTokenRow[] = [];
+  for (const row of rows || []) {
+    const token = trimOrEmpty(row?.token);
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    next.push({
+      user_id: trimOrEmpty(row?.user_id),
+      token,
+      platform: trimOrEmpty(row?.platform) || "ios",
+    });
+  }
+  return next;
+}
+
 function formatDateTime(raw: unknown) {
   const value = trimOrEmpty(raw);
   if (!value) return "";
@@ -185,6 +214,22 @@ function formatDateTime(raw: unknown) {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function formatPushBody(item: ResidentNotificationItem) {
+  const summary = clipText(item?.summary || "", 140);
+  if (summary) return summary;
+  const body = clipText(item?.body || "", 140);
+  if (body) return body;
+  const location = [trimOrEmpty(item?.location_name), trimOrEmpty(item?.location_address)]
+    .filter(Boolean)
+    .join(" - ");
+  if (location) return clipText(location, 140);
+  return "Open CityReport to view details.";
+}
+
+function normalizePrivateKey(raw: unknown) {
+  return trimOrEmpty(raw).replaceAll("\\n", "\n");
 }
 
 function formatSubject(input: {
@@ -208,7 +253,7 @@ function formatText(input: {
     ? `Severity: ${trimOrEmpty(input.item.severity)}`
     : "";
   const startsAtLine = trimOrEmpty(input.item.starts_at)
-    ? `Starts: ${formatDateTime(input.item.starts_at)}`
+    ? `${input.kind === "event" ? "Starts" : "Starts"}: ${formatDateTime(input.item.starts_at)}`
     : "";
   const endsAtLine = trimOrEmpty(input.item.ends_at)
     ? `Ends: ${formatDateTime(input.item.ends_at)}`
@@ -383,6 +428,77 @@ async function sendResidentEmail(
   });
 }
 
+async function sendResidentPushIos(
+  input: {
+    token: string;
+    displayName: string;
+    kind: ResidentNotificationKind;
+    topicLabel: string;
+    item: ResidentNotificationItem;
+  },
+) {
+  const teamId = trimOrEmpty(Deno.env.get("APPLE_PUSH_TEAM_ID"));
+  const keyId = trimOrEmpty(Deno.env.get("APPLE_PUSH_KEY_ID"));
+  const privateKey = normalizePrivateKey(Deno.env.get("APPLE_PUSH_PRIVATE_KEY"));
+  const topic = trimOrEmpty(Deno.env.get("APPLE_PUSH_TOPIC")) || "cityreport.io.map";
+  if (!teamId || !keyId || !privateKey) {
+    return { ok: false, skipped: true, reason: "missing_apns_config" as const };
+  }
+
+  const apnsKey = await importPKCS8(privateKey, "ES256");
+  const jwt = await new SignJWT({})
+    .setProtectedHeader({ alg: "ES256", kid: keyId })
+    .setIssuer(teamId)
+    .setIssuedAt()
+    .sign(apnsKey);
+
+  const kindLabel = input.kind === "event" ? "Event" : "Alert";
+  const title = `${input.displayName} ${kindLabel}`;
+  const body = formatPushBody(input.item);
+  const collapseId = trimOrEmpty(input.item.id) || `${input.kind}:${trimOrEmpty(input.item.topic_key)}`;
+  const payload = {
+    aps: {
+      alert: {
+        title,
+        body,
+      },
+      sound: "default",
+      badge: 1,
+    },
+    cityreport: {
+      kind: input.kind,
+      topic_key: trimOrEmpty(input.item.topic_key),
+      topic_label: input.topicLabel,
+      item_id: input.item.id ?? null,
+      tenant_key: trimOrEmpty(input.item.tenant_key),
+    },
+  };
+
+  const response = await fetch(`https://api.push.apple.com/3/device/${encodeURIComponent(input.token)}`, {
+    method: "POST",
+    headers: {
+      authorization: `bearer ${jwt}`,
+      "apns-topic": topic,
+      "apns-push-type": "alert",
+      "apns-priority": "10",
+      "apns-collapse-id": collapseId,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    return {
+      ok: false,
+      skipped: false,
+      reason: bodyText || `APNs returned ${response.status}`,
+    };
+  }
+
+  return { ok: true, skipped: false, reason: "" };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders });
@@ -435,17 +551,36 @@ serve(async (req) => {
 
     const { data: prefRows, error: prefError } = await admin
       .from("resident_notification_preferences")
-      .select("user_id")
+      .select("user_id,in_app_enabled,email_enabled")
       .eq("tenant_key", tenantKey)
       .eq("topic_key", trimOrEmpty(item.topic_key))
-      .eq("email_enabled", true);
+      .or("email_enabled.eq.true,in_app_enabled.eq.true");
     if (prefError) {
       throw new Error(prefError.message || "Could not load resident notification preferences");
     }
 
-    const userIds = Array.from(new Set((prefRows || []).map((row) => trimOrEmpty(row?.user_id)).filter(Boolean)));
+    const preferenceRows = (prefRows || []) as ResidentPreferenceRow[];
+    const emailUserIds = Array.from(new Set(
+      preferenceRows
+        .filter((row) => Boolean(row?.email_enabled))
+        .map((row) => trimOrEmpty(row?.user_id))
+        .filter(Boolean),
+    ));
+    const pushUserIds = Array.from(new Set(
+      preferenceRows
+        .filter((row) => Boolean(row?.in_app_enabled))
+        .map((row) => trimOrEmpty(row?.user_id))
+        .filter(Boolean),
+    ));
+    const userIds = Array.from(new Set([...emailUserIds, ...pushUserIds]));
     if (!userIds.length) {
-      return json({ ok: true, skipped: true, reason: "no_email_subscribers", sent_count: 0 });
+      return json({
+        ok: true,
+        skipped: true,
+        reason: "no_notification_subscribers",
+        sent_count: 0,
+        push_sent_count: 0,
+      });
     }
 
     const { data: residentRows, error: residentError } = await admin
@@ -458,18 +593,41 @@ serve(async (req) => {
 
     const recipients = dedupeEmails(
       ((residentRows || []) as ResidentProfileRow[])
+        .filter((row) => emailUserIds.includes(trimOrEmpty(row?.user_id)))
         .map((row) => normalizeEmail(row?.email))
         .filter(Boolean),
     );
 
-    if (!recipients.length) {
-      return json({ ok: true, skipped: true, reason: "no_resident_emails", sent_count: 0 });
+    const { data: pushTokenRows, error: pushTokenError } = pushUserIds.length
+      ? await admin
+          .from("native_push_tokens")
+          .select("user_id,token,platform")
+          .eq("tenant_key", tenantKey)
+          .eq("enabled", true)
+          .eq("platform", "ios")
+          .in("user_id", pushUserIds)
+      : { data: [], error: null };
+    if (pushTokenError) {
+      throw new Error(pushTokenError.message || "Could not load native push tokens");
+    }
+    const pushTargets = dedupePushTargets((pushTokenRows || []) as NativePushTokenRow[]);
+
+    if (!recipients.length && !pushTargets.length) {
+      return json({
+        ok: true,
+        skipped: true,
+        reason: "no_delivery_targets",
+        sent_count: 0,
+        push_sent_count: 0,
+      });
     }
 
     const displayName = trimOrEmpty(profileRow?.display_name) || tenantKey;
     const topicLabel = trimOrEmpty((topicRow as TopicRow | null)?.label) || trimOrEmpty(item.topic_key);
     const failures: Array<Record<string, unknown>> = [];
     let sentCount = 0;
+    const pushFailures: Array<Record<string, unknown>> = [];
+    let pushSentCount = 0;
 
     for (const recipientEmail of recipients) {
       try {
@@ -501,12 +659,44 @@ serve(async (req) => {
       }
     }
 
+    for (const pushTarget of pushTargets) {
+      try {
+        const pushResult = await sendResidentPushIos({
+          token: trimOrEmpty(pushTarget.token),
+          displayName,
+          kind,
+          topicLabel,
+          item,
+        });
+        if (pushResult.ok) {
+          pushSentCount += 1;
+          continue;
+        }
+        if (!pushResult.skipped) {
+          pushFailures.push({
+            user_id: trimOrEmpty(pushTarget.user_id),
+            token: trimOrEmpty(pushTarget.token).slice(0, 12),
+            error: pushResult.reason,
+          });
+        }
+      } catch (error) {
+        pushFailures.push({
+          user_id: trimOrEmpty(pushTarget.user_id),
+          token: trimOrEmpty(pushTarget.token).slice(0, 12),
+          error: String((error as Error)?.message || error || "Unknown push send error"),
+        });
+      }
+    }
+
     return json({
       ok: failures.length === 0,
       sent_count: sentCount,
       attempted_count: recipients.length,
+      push_sent_count: pushSentCount,
+      push_attempted_count: pushTargets.length,
       skipped: false,
       failures,
+      push_failures: pushFailures,
     }, failures.length === 0 ? 200 : 207);
   } catch (error) {
     return json({ ok: false, error: String((error as Error)?.message || error || "Unknown error") }, 500);

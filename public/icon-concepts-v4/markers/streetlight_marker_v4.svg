@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Streetlight map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <path d="M136 430h128v-34h-38V168c0-16 13-29 29-29h92v-34h-92c-35 0-63 28-63 63v228h-56z" fill="currentColor"/>
+      <rect x="314" y="132" width="96" height="132" rx="24" fill="currentColor"/>
+      <rect x="292" y="132" width="24" height="132" rx="12" fill="currentColor"/>
+    
+    </g>
+  
+
+</svg>

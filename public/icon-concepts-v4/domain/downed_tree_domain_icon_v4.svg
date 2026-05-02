@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Downed Tree domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <circle cx="344" cy="180" r="52" fill="currentColor"/>
+      <circle cx="286" cy="184" r="40" fill="currentColor"/>
+      <circle cx="376" cy="138" r="34" fill="currentColor"/>
+      <path d="M116 338c-18 0-32-14-32-32s14-32 32-32h94l114-98c14-12 35-11 47 3 12 14 11 35-3 47L250 326c-12 8-26 12-40 12H116z" fill="currentColor"/>
+      <path d="M126 272l44 18-38 34z" fill="currentColor"/>
+    
+  </g>
+</svg>

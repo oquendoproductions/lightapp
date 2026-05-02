@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { supabase } from "../supabaseClient";
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
@@ -9,6 +9,18 @@ function isMissingRelationError(error) {
 
 export function useHeaderOrganizationProfile(tenantKey) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  const scopedSupabase = useMemo(() => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseAnonKey || !normalizedTenantKey) return null;
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          "x-tenant-key": normalizedTenantKey,
+        },
+      },
+    });
+  }, [normalizedTenantKey]);
   const [headerOrganizationProfile, setHeaderOrganizationProfile] = useState(null);
   const [headerOrganizationProfileLoaded, setHeaderOrganizationProfileLoaded] = useState(false);
 
@@ -16,14 +28,15 @@ export function useHeaderOrganizationProfile(tenantKey) {
     let cancelled = false;
 
     async function loadHeaderOrganizationProfile() {
+      setHeaderOrganizationProfile(null);
       setHeaderOrganizationProfileLoaded(false);
-      if (!normalizedTenantKey) {
+      if (!normalizedTenantKey || !scopedSupabase) {
         setHeaderOrganizationProfile(null);
         setHeaderOrganizationProfileLoaded(true);
         return;
       }
 
-      const { data, error } = await supabase.rpc("tenant_header_profile_public");
+      const { data, error } = await scopedSupabase.rpc("tenant_header_profile_public");
 
       if (cancelled) return;
 
@@ -47,7 +60,7 @@ export function useHeaderOrganizationProfile(tenantKey) {
     return () => {
       cancelled = true;
     };
-  }, [normalizedTenantKey]);
+  }, [normalizedTenantKey, scopedSupabase]);
 
   return { profile: headerOrganizationProfile, loaded: headerOrganizationProfileLoaded };
 }

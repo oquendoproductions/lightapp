@@ -2,8 +2,11 @@ import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import "leaflet/dist/leaflet.css";
 import "./index.css";
+import AppLaunchScreen from "./AppLaunchScreen.jsx";
 import { supabase } from "./supabaseClient";
+import { getCurrentLocationSnapshot, getNativeAppScope, isNativeAppRuntime } from "./platform/runtime.js";
 import { TenantGate, TenantProvider } from "./tenant/TenantContext";
+import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
 
 const App = lazy(() => import("./App.jsx"));
@@ -13,11 +16,23 @@ const PlatformAdminApp = lazy(() => import("./PlatformAdminApp.jsx"));
 const TenantNotFoundApp = lazy(() => import("./TenantNotFoundApp.jsx"));
 const RedirectingApp = lazy(() => import("./RedirectingApp.jsx"));
 
-const resolution = resolveTenantRequest({
-  hostname: window.location.hostname,
-  pathname: window.location.pathname,
-  search: window.location.search,
-});
+const location = getCurrentLocationSnapshot();
+const nativeAppScope = getNativeAppScope();
+const resolution = isNativeAppRuntime()
+  ? {
+      mode: "municipality_app",
+      tenantKey: getRuntimeTenantKey(),
+      redirectTo: null,
+      env: "native",
+      reason: "native_shell_bootstrap",
+      unknownSlug: "",
+      appScope: nativeAppScope,
+    }
+  : resolveTenantRequest({
+      hostname: location.hostname,
+      pathname: location.pathname,
+      search: location.search,
+    });
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
@@ -27,8 +42,8 @@ function isMissingRelationError(error) {
 
 if (resolution.mode === "not_found") {
   const context = {
-    hostname: window.location.hostname,
-    pathname: window.location.pathname,
+    hostname: location.hostname,
+    pathname: location.pathname,
   };
   logUnknownTenantSlug(resolution, context);
   const eventPayload = buildUnknownTenantSlugEvent(resolution, context);
@@ -45,7 +60,7 @@ if (resolution.mode === "not_found") {
 }
 
 if (resolution.mode === "redirect" && resolution.redirectTo) {
-  const current = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  const current = `${location.origin}${location.pathname}${location.search}`;
   if (current !== resolution.redirectTo) {
     window.location.replace(resolution.redirectTo);
   }
@@ -70,18 +85,12 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <TenantGate>
         <Suspense
           fallback={
-            <div
-              style={{
-                minHeight: "100vh",
-                display: "grid",
-                placeItems: "center",
-                fontFamily: "Manrope, sans-serif",
-                color: "#1a3153",
-                background: "#f4f8fd",
-              }}
-            >
-              Loading CityReport...
-            </div>
+            <AppLaunchScreen
+              eyebrow={resolution.appScope === "hub" ? "CityReport Hub" : "Reporting Map"}
+              title="CityReport.io"
+              subtitle={resolution.appScope === "hub" ? "Opening your organization workspace..." : "Opening your reporting map..."}
+              status="Loading app..."
+            />
           }
         >
           <Root />

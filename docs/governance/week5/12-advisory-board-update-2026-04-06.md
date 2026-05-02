@@ -132,3 +132,4 @@ These were not pure polish changes and should be tracked as approved bug-fix / p
 1. Observe live use of the new repair-confirmation model and verify it does not create public confusion.
 2. Capture screenshots/evidence for board packet or municipal deck updates if needed.
 3. Decide whether public repair confirmations remain pilot-only or become part of the standard accountability model.
+4. Add direct Hub support for org-admin employee management so tenant admins can edit employee roles and remove employees without relying on PCP/developer-dashboard-only controls.

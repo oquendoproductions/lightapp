@@ -1,3 +1,6 @@
+import { isNativeAppRuntime } from "../platform/runtime.js";
+import { readLocalStorageItem, writeLocalStorageItem } from "../platform/storage.js";
+
 const DEFAULT_TENANT_KEY = "ashtabulacity";
 const TENANT_STORAGE_KEY = "cityreport.active_tenant_key";
 
@@ -9,11 +12,16 @@ function sanitizeTenantKey(raw) {
   return key || "";
 }
 
-export function getDefaultTenantKey() {
-  return DEFAULT_TENANT_KEY;
+export function getConfiguredNativeTenantKey() {
+  if (!isNativeAppRuntime()) return "";
+  return sanitizeTenantKey(import.meta.env.VITE_NATIVE_TENANT_KEY || import.meta.env.VITE_MOBILE_TENANT_KEY || "");
 }
 
-export function getRuntimeTenantKey() {
+export function hasConfiguredNativeTenantKey() {
+  return Boolean(getConfiguredNativeTenantKey());
+}
+
+export function getPersistedRuntimeTenantKey() {
   try {
     const fromWindow = sanitizeTenantKey(globalThis?.__CITYREPORT_TENANT_KEY);
     if (fromWindow) return fromWindow;
@@ -22,24 +30,39 @@ export function getRuntimeTenantKey() {
   }
 
   try {
-    const fromStorage = sanitizeTenantKey(globalThis?.localStorage?.getItem(TENANT_STORAGE_KEY));
+    const fromStorage = sanitizeTenantKey(readLocalStorageItem(TENANT_STORAGE_KEY));
     if (fromStorage) return fromStorage;
   } catch {
     // ignore
   }
 
-  return DEFAULT_TENANT_KEY;
+  return "";
+}
+
+export function hasPersistedRuntimeTenantKey() {
+  return Boolean(getPersistedRuntimeTenantKey());
+}
+
+export function getDefaultTenantKey() {
+  return getConfiguredNativeTenantKey() || DEFAULT_TENANT_KEY;
+}
+
+export function getRuntimeTenantKey() {
+  const persisted = getPersistedRuntimeTenantKey();
+  if (persisted) return persisted;
+
+  return getConfiguredNativeTenantKey() || DEFAULT_TENANT_KEY;
 }
 
 export function setRuntimeTenantKey(rawTenantKey) {
-  const next = sanitizeTenantKey(rawTenantKey) || DEFAULT_TENANT_KEY;
+  const next = sanitizeTenantKey(rawTenantKey) || getConfiguredNativeTenantKey() || DEFAULT_TENANT_KEY;
   try {
     globalThis.__CITYREPORT_TENANT_KEY = next;
   } catch {
     // ignore
   }
   try {
-    globalThis.localStorage?.setItem(TENANT_STORAGE_KEY, next);
+    writeLocalStorageItem(TENANT_STORAGE_KEY, next);
   } catch {
     // ignore
   }

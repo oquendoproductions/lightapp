@@ -1,0 +1,68 @@
+{
+  "version": "v4",
+  "generatedAt": "2026-04-19T19:44:37.438Z",
+  "notes": [
+    "SVG sources are sized for crisp small-scale map use and can be scaled up without quality loss.",
+    "Each domain includes a standalone one-color glyph and a composite map marker with a shared pin shell."
+  ],
+  "general": {
+    "pinShell": "markers/location_pin_base_v4.svg",
+    "marker": "markers/general_location_marker_v4.svg"
+  },
+  "domains": [
+    {
+      "slug": "streetlight",
+      "label": "Streetlight",
+      "domainIcon": "domain/streetlight_domain_icon_v4.svg",
+      "markerIcon": "markers/streetlight_marker_v4.svg"
+    },
+    {
+      "slug": "potholes",
+      "label": "Potholes",
+      "domainIcon": "domain/potholes_domain_icon_v4.svg",
+      "markerIcon": "markers/potholes_marker_v4.svg"
+    },
+    {
+      "slug": "storm_drain",
+      "label": "Storm Drain",
+      "domainIcon": "domain/storm_drain_domain_icon_v4.svg",
+      "markerIcon": "markers/storm_drain_marker_v4.svg"
+    },
+    {
+      "slug": "sewer_drain",
+      "label": "Sewer Drain",
+      "domainIcon": "domain/sewer_drain_domain_icon_v4.svg",
+      "markerIcon": "markers/sewer_drain_marker_v4.svg"
+    },
+    {
+      "slug": "downed_tree",
+      "label": "Downed Tree",
+      "domainIcon": "domain/downed_tree_domain_icon_v4.svg",
+      "markerIcon": "markers/downed_tree_marker_v4.svg"
+    },
+    {
+      "slug": "encampment",
+      "label": "Encampment",
+      "domainIcon": "domain/encampment_domain_icon_v4.svg",
+      "markerIcon": "markers/encampment_marker_v4.svg"
+    },
+    {
+      "slug": "dumping",
+      "label": "Dumping",
+      "domainIcon": "domain/dumping_domain_icon_v4.svg",
+      "markerIcon": "markers/dumping_marker_v4.svg"
+    },
+    {
+      "slug": "graffiti",
+      "label": "Graffiti",
+      "domainIcon": "domain/graffiti_domain_icon_v4.svg",
+      "markerIcon": "markers/graffiti_marker_v4.svg"
+    },
+    {
+      "slug": "street_sign",
+      "label": "Street Sign",
+      "domainIcon": "domain/street_sign_domain_icon_v4.svg",
+      "markerIcon": "markers/street_sign_marker_v4.svg"
+    }
+  ]
+}

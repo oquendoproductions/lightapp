@@ -76,15 +76,29 @@
    - Add a developer-facing menu for municipality-level settings and testing controls.
    - Allow toggling domains/features on and off per municipality in development/staging.
    - Include configurable municipality metadata/testing flags for rapid QA without production exposure.
+12. Pilot legal/ops CYA implementation:
+   - Add public-form disclaimer before submit.
+   - Add success-screen disclaimer under report number.
+   - Add domain-specific urgent warning copy for sewer/storm backup and other high-risk domains.
+   - Generate human-readable report numbers everywhere.
+   - Add daily city-owned inbox digest and digest history.
+   - Add audit events for submit, delivery, city-view, assignment, and closure.
+   - Add Hub-visible delivery/view timeline per report.
+   - Checklist: `docs/governance/week5/14-pilot-cya-implementation-checklist.md`
 
 ## Later
 1. Two-factor authentication.
 2. Branding/logo pass.
 3. Additional analytics and incident ops tooling.
-4. Open Reports search-result card sizing:
+4. CityReport entity structure decision:
+   - Review with finance advisor and board before formation.
+   - Compare Delaware C-corp operating in Ohio vs Ohio for-profit corporation.
+   - Evaluate investor readiness, tax/compliance overhead, governance, and near-term operating cost.
+   - Decide formation path before finalizing incorporation filings.
+5. Open Reports search-result card sizing:
    - Keep row/card height consistent.
    - Do not stretch cards vertically when result count is small.
-5. Go-live webhook activation for lead notifications:
+6. Go-live webhook activation for lead notifications:
    - Set `LEAD_NOTIFY_WEBHOOK_URL` in Supabase secrets to stable production endpoint.
    - Set `LEAD_NOTIFY_WEBHOOK_BEARER` in Supabase secrets (if endpoint requires bearer auth).
    - Redeploy `lead-capture` function after secrets update.

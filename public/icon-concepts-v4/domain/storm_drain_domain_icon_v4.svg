@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Storm Drain domain icon</title>
+  
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    
+      <path d="M96 174c28-26 60-38 98-38 36 0 62 12 86 30 20 16 38 28 64 28 22 0 42-6 64-20" fill="none" stroke="currentColor" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+      <path fill="currentColor" fill-rule="evenodd" d="M132 220h248c20 0 36 16 36 36v108c0 20-16 36-36 36H132c-20 0-36-16-36-36V256c0-20 16-36 36-36zm34 36v108h28V256zm60 0v108h28V256zm60 0v108h28V256zm60 0v108h28V256z"/>
+    
+  </g>
+</svg>

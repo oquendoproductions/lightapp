@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 640" role="img" aria-labelledby="title" style="color:#17324d">
+  <title>Potholes map marker</title>
+  
+  
+  <path fill="currentColor" d="M256 32c-104.897 0-190 85.103-190 190 0 73.426 33.9 129.847 80.67 188.403L256 574l109.33-163.597C412.1 351.847 446 295.426 446 222 446 117.103 360.897 32 256 32z"/>
+  <circle cx="256" cy="222" r="116" fill="#ffffff"/>
+  
+    <g transform="translate(156 122) scale(0.390625)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      
+      <path fill="currentColor" fill-rule="evenodd" d="M92 258c0-69 74-118 164-118s164 49 164 118-74 118-164 118S92 327 92 258zm112 18c0 24 24 42 54 42s54-18 54-42-24-42-54-42-54 18-54 42z"/>
+      <path d="M152 174l-34-30M232 144l-12-40M334 168l34-24M386 258l40 0M338 352l26 34M222 388l-12 36M122 340l-38 20" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round"/>
+    
+    </g>
+  
+
+</svg>

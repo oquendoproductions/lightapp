@@ -173,8 +173,11 @@ const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
 const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
-const NATIVE_PUSH_ENABLED = String(import.meta.env.VITE_NATIVE_PUSH_ENABLED || "").trim().toLowerCase() === "true";
+const NATIVE_PUSH_ENABLED = String(
+  import.meta.env.VITE_NATIVE_PUSH_ENABLED || (GMAPS_PLATFORM === "ios" || GMAPS_PLATFORM === "android" ? "true" : "false")
+).trim().toLowerCase() === "true";
 const PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY = "cityreport.public_onboarding_pending_auth_v1";
+const PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY = "cityreport.public_account_delete_pending_v1";
 
 // Location request prompt upon opening page
 const LOC_PROMPTED_APP_KEY = "streetlight_loc_prompted_app_v1";
@@ -243,13 +246,13 @@ const STREET_SIGN_TYPE_ICON_SRC = {
   other: "/street_sign_icons/street_sign_domain_icon.png",
 };
 const RESIDENT_NOTIFICATION_TOPIC_DETAILS = {
-  emergency_alerts: { label: "Emergency Alerts", description: "Urgent citywide issues that need immediate attention.", default_enabled: false },
-  water_utility: { label: "Water + Utility", description: "Water breaks, utility outages, and infrastructure service notices.", default_enabled: false },
-  road_closures: { label: "Road Closures", description: "Closures, detours, and traffic-impacting maintenance work.", default_enabled: false },
-  street_maintenance: { label: "Street Maintenance", description: "Planned street, sidewalk, sign, and streetlight work.", default_enabled: false },
-  trash_recycling: { label: "Trash + Recycling", description: "Pickup changes, holiday schedules, and sanitation reminders.", default_enabled: false },
-  community_events: { label: "Community Events", description: "Parades, public meetings, and city-run civic events.", default_enabled: false },
-  general_updates: { label: "General City Updates", description: "General municipality notices that do not fit another topic.", default_enabled: false },
+  emergency_alerts: { label: "Emergency Alerts", description: "Urgent citywide issues that need immediate attention.", default_enabled: true },
+  water_utility: { label: "Water + Utility", description: "Water breaks, utility outages, and infrastructure service notices.", default_enabled: true },
+  road_closures: { label: "Road Closures", description: "Closures, detours, and traffic-impacting maintenance work.", default_enabled: true },
+  street_maintenance: { label: "Street Maintenance", description: "Planned street, sidewalk, sign, and streetlight work.", default_enabled: true },
+  trash_recycling: { label: "Trash + Recycling", description: "Pickup changes, holiday schedules, and sanitation reminders.", default_enabled: true },
+  community_events: { label: "Community Events", description: "Parades, public meetings, and city-run civic events.", default_enabled: true },
+  general_updates: { label: "General City Updates", description: "General municipality notices that do not fit another topic.", default_enabled: true },
 };
 
 const EMPTY_COMMUNITY_ALERT_FORM = {
@@ -392,7 +395,12 @@ function makeCommunityFeedForm(kind, topics = [], item = null) {
 
 function isResidentCommunityVisible(row) {
   const status = String(row?.status || "").trim().toLowerCase();
-  return status === "published";
+  if (status === "published") return true;
+  if (status === "scheduled") {
+    const publishAt = row?.published_at ? new Date(row.published_at).getTime() : 0;
+    return Number.isFinite(publishAt) && publishAt > 0 && publishAt <= Date.now();
+  }
+  return false;
 }
 
 function residentCommunityStatusLabel(status) {
@@ -618,6 +626,11 @@ function mapCommunityFeedStorageKey(tenantKey, viewerKey) {
 }
 
 function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
+  const now = Date.now();
+  const clampLastViewedAt = (value) => {
+    const ts = Math.max(0, Number(value || 0));
+    return ts > now ? now : ts;
+  };
   if (typeof window === "undefined") {
     return {
       alertsLastViewedAt: 0,
@@ -642,8 +655,8 @@ function loadMapCommunityFeedReadState(tenantKey, viewerKey) {
     }
     const parsed = JSON.parse(raw);
     return {
-      alertsLastViewedAt: Math.max(0, Number(parsed?.alertsLastViewedAt || 0)),
-      eventsLastViewedAt: Math.max(0, Number(parsed?.eventsLastViewedAt || 0)),
+      alertsLastViewedAt: clampLastViewedAt(parsed?.alertsLastViewedAt),
+      eventsLastViewedAt: clampLastViewedAt(parsed?.eventsLastViewedAt),
       alertsReadKeys: Array.isArray(parsed?.alertsReadKeys) ? parsed.alertsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
       eventsReadKeys: Array.isArray(parsed?.eventsReadKeys) ? parsed.eventsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
       alertsReadIds: Array.isArray(parsed?.alertsReadIds) ? parsed.alertsReadIds.map((value) => String(value || "").trim()).filter(Boolean) : [],
@@ -684,8 +697,7 @@ function mapCommunityFeedItemTs(item) {
   return Math.max(
     Number(new Date(item?.updated_at || 0).getTime() || 0),
     Number(new Date(item?.published_at || 0).getTime() || 0),
-    Number(new Date(item?.created_at || 0).getTime() || 0),
-    Number(new Date(item?.starts_at || 0).getTime() || 0)
+    Number(new Date(item?.created_at || 0).getTime() || 0)
   );
 }
 
@@ -723,6 +735,27 @@ function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts"
   }).length;
 }
 
+function isUnreadMapCommunityFeedItem(item, readState = {}, kind = "alerts") {
+  const lastViewedAt = kind === "events"
+    ? Number(readState?.eventsLastViewedAt || 0)
+    : Number(readState?.alertsLastViewedAt || 0);
+  const readKeys = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsReadKeys) ? readState.eventsReadKeys : [])
+      : (Array.isArray(readState?.alertsReadKeys) ? readState.alertsReadKeys : [])
+  );
+  const readIds = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsReadIds) ? readState.eventsReadIds : [])
+      : (Array.isArray(readState?.alertsReadIds) ? readState.alertsReadIds : [])
+  );
+  const itemId = String(item?.id || "").trim();
+  const itemKey = mapCommunityFeedItemReadKey(item);
+  if (itemId && readIds.has(itemId)) return false;
+  if (itemKey && readKeys.has(itemKey)) return false;
+  return mapCommunityFeedItemTs(item) > Math.max(0, Number(lastViewedAt || 0));
+}
+
 function isResidentFeedInAppTopicEnabled(topicKey, preferencesByTopic = {}, topics = []) {
   const key = String(topicKey || "").trim();
   if (!key) return false;
@@ -745,6 +778,21 @@ function filterResidentFeedItemsForInAppPreferences(items = [], preferencesByTop
 
 function filterVisibleResidentCommunityItems(items = []) {
   return (items || []).filter((item) => isResidentCommunityVisible(item));
+}
+
+function normalizeResidentNotificationDraft(topicKey, raw = {}, topics = []) {
+  const key = String(topicKey || "").trim();
+  const topic = (Array.isArray(topics) ? topics : []).find((row) => String(row?.topic_key || "").trim() === key);
+  const fallbackEnabled = topic && Object.prototype.hasOwnProperty.call(topic, "default_enabled")
+    ? Boolean(topic.default_enabled)
+    : Boolean(RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[key]?.default_enabled);
+  const emailEnabled = Boolean(raw?.email_enabled);
+  const inAppEnabled = Boolean(raw?.in_app_enabled) || emailEnabled || fallbackEnabled;
+  return {
+    in_app_enabled: inAppEnabled,
+    email_enabled: emailEnabled,
+    web_push_enabled: false,
+  };
 }
 
 function AppIcon({ src, alt = "", size = 18, style = {} }) {
@@ -1240,6 +1288,14 @@ function readReportDeepLinkRequest(search = "") {
   };
 }
 
+function readDeleteAccountDeepLinkRequest(search = "") {
+  const params = new URLSearchParams(String(search || ""));
+  const raw = String(params.get("deleteAccount") || "").trim().toLowerCase();
+  if (!params.has("deleteAccount")) return false;
+  if (!raw) return true;
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "y";
+}
+
 function incidentStateLabel(state) {
   const v = String(state || "").trim().toLowerCase();
   if (!v) return "";
@@ -1356,6 +1412,36 @@ function extFromFileName(name, fallback = "jpg") {
   return m?.[1] ? m[1].toLowerCase() : fallback;
 }
 
+function inferImageMimeType(file) {
+  const declared = String(file?.type || "").trim().toLowerCase();
+  if (declared) return declared;
+  const ext = extFromFileName(file?.name, "").toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "heic") return "image/heic";
+  if (ext === "heif") return "image/heif";
+  return "";
+}
+
+async function buildNativeSafeImageUploadPayload(file) {
+  const f = file instanceof File ? file : null;
+  if (!f) return null;
+  const contentType = inferImageMimeType(f) || undefined;
+  try {
+    const bytes = await f.arrayBuffer();
+    return {
+      body: new Blob([bytes], { type: contentType || "application/octet-stream" }),
+      contentType,
+    };
+  } catch {
+    return {
+      body: f,
+      contentType,
+    };
+  }
+}
+
 function validateStrongPassword(password) {
   const v = String(password || "");
   if (v.length < 8) return false;
@@ -1434,6 +1520,15 @@ function stripLocationFromNote(note) {
 function readImageUrlFromNote(note) {
   const raw = String(note || "").trim();
   if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const structuredUrl = String(parsed.image_url || parsed.imageUrl || "").trim();
+      if (structuredUrl) return structuredUrl;
+    }
+  } catch {
+    // fall through to legacy note parsing
+  }
   const m = raw.match(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/i);
   if (!m) return "";
   return String(m[1] || "").trim();
@@ -1443,6 +1538,14 @@ function readAddressFromNote(note) {
   const raw = String(note || "").trim();
   if (!raw) return "";
   const m = raw.match(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/i);
+  if (!m) return "";
+  return String(m[1] || "").trim();
+}
+
+function readCrossStreetFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Cross Street:\s*([^|]+?)(?:\s*\||$)/i);
   if (!m) return "";
   return String(m[1] || "").trim();
 }
@@ -1461,9 +1564,19 @@ function readLandmarkFromNote(note) {
 function stripSystemMetadataFromNote(note) {
   const raw = String(note || "").trim();
   if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const structuredText = String(parsed.note || parsed.text || "").trim();
+      return structuredText ? stripSystemMetadataFromNote(structuredText) : "";
+    }
+  } catch {
+    // fall through to legacy note parsing
+  }
   return raw
     .replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Cross Street:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Water issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
@@ -1532,7 +1645,7 @@ function parseWorkingContactFromNote(note) {
 
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { name: null, email: null, phone: null };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { name: null, email: null, phone: null };
 
     const name = String(parsed.reporter_name || parsed.actor_name || "").trim() || null;
     const email = normalizeEmail(parsed.reporter_email || parsed.actor_email || "") || null;
@@ -1541,6 +1654,43 @@ function parseWorkingContactFromNote(note) {
   } catch {
     return { name: null, email: null, phone: null };
   }
+}
+
+function composeIncidentActionAuditNote(
+  noteText,
+  {
+    actorName = "",
+    actorEmail = "",
+    actorPhone = "",
+    imageUrl = "",
+    imagePath = "",
+    imageMimeType = "",
+    imageFileName = "",
+    capturedAt = "",
+  } = {}
+) {
+  const payload = {};
+  const noteValue = String(noteText || "").trim();
+  const actorNameValue = String(actorName || "").trim();
+  const actorEmailValue = normalizeEmail(actorEmail || "") || "";
+  const actorPhoneValue = normalizePhone(actorPhone || "") || "";
+  const imageUrlValue = String(imageUrl || "").trim();
+  const imagePathValue = String(imagePath || "").trim();
+  const imageMimeTypeValue = String(imageMimeType || "").trim();
+  const imageFileNameValue = String(imageFileName || "").trim();
+  const capturedAtValue = String(capturedAt || "").trim();
+
+  if (noteValue) payload.note = noteValue;
+  if (actorNameValue) payload.actor_name = actorNameValue;
+  if (actorEmailValue) payload.actor_email = actorEmailValue;
+  if (actorPhoneValue) payload.actor_phone = actorPhoneValue;
+  if (imageUrlValue) payload.image_url = imageUrlValue;
+  if (imagePathValue) payload.image_path = imagePathValue;
+  if (imageMimeTypeValue) payload.image_mime_type = imageMimeTypeValue;
+  if (imageFileNameValue) payload.image_file_name = imageFileNameValue;
+  if (capturedAtValue) payload.captured_at = capturedAtValue;
+
+  return Object.keys(payload).length ? JSON.stringify(payload) : (noteValue || null);
 }
 
 function normalizeUtilityReportReference(value) {
@@ -3118,6 +3268,32 @@ function ModalShell({ open, children, zIndex = 9999, panelStyle, fullScreen = fa
   );
 }
 
+function publicSubmitDisclosureText(domainKey = "") {
+  const domain = normalizeDomainKey(domainKey);
+  if (domain === "water_drain_issues") {
+    return "Submitting a report through CityReport helps notify the city, but it does not guarantee receipt, review, response, or acceptance as legal notice. Sewer, storm, or drainage issues may require immediate direct contact with the city or utility. For emergencies, call 911.";
+  }
+  return "Submitting a report through CityReport helps notify the city, but it does not guarantee receipt, review, response, or acceptance as legal notice. For emergencies or immediate hazards, contact emergency services or the responsible agency directly.";
+}
+
+function publicConsentDisclosureText(domainKey = "") {
+  const domain = normalizeDomainKey(domainKey);
+  if (domain === "water_drain_issues") {
+    return "I agree to allow CityReport.io to submit this water or drainage issue and my provided contact information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.";
+  }
+  if (domain === "potholes") {
+    return "I agree to allow CityReport.io to submit this pothole report and my provided contact information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.";
+  }
+  return "";
+}
+
+function publicSuccessDisclaimerText(reportCount = 1) {
+  if (Number(reportCount || 0) > 1) {
+    return "These reports were recorded by CityReport. Keep the report numbers for your records. Submission through CityReport does not guarantee city review or acceptance as legal notice.";
+  }
+  return "Your report has been recorded by CityReport. Keep this report number for your records. Submission through CityReport does not guarantee city review or acceptance as legal notice.";
+}
+
 function ConfirmReportModal({
   open,
   onCancel,
@@ -3419,8 +3595,8 @@ function ConfirmReportModal({
         </button>
       </div>
 
-      <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1.35 }}>
-        Reports help track infrastructure issues and do not replace emergency services.
+      <div style={{ fontSize: 11, opacity: 0.72, lineHeight: 1.4 }}>
+        {publicSubmitDisclosureText("streetlights")}
       </div>
     </ModalShell>
   );
@@ -3429,13 +3605,22 @@ function ConfirmReportModal({
 function ReportSuccessModal({
   open,
   kind = "incident",
+  domainKey = "",
   title = "Report saved",
   message = "",
+  reportNumbers = [],
+  submittedAt = 0,
   onClose,
   onViewReports,
   onReportToUtility,
 }) {
   const isStreetlight = kind === "streetlight";
+  const numbers = Array.isArray(reportNumbers)
+    ? reportNumbers.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const primaryNumber = numbers[0] || "";
+  const submittedLabel = formatTs(submittedAt);
+  const successDisclaimer = publicSuccessDisclaimerText(numbers.length || 1);
   return (
     <ModalShell open={open} zIndex={10043}>
       <div style={{ display: "grid", gap: 12 }}>
@@ -3447,6 +3632,40 @@ function ReportSuccessModal({
               {message}
             </div>
           ) : null}
+          {!!primaryNumber && (
+            <div style={{ marginTop: 4, display: "grid", gap: 2 }}>
+              <div style={{ fontSize: 12, opacity: 0.78, fontWeight: 900 }}>
+                {numbers.length > 1 ? "Report numbers" : "Report number"}
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 950, lineHeight: 1.25 }}>
+                {numbers.length > 1 ? numbers.slice(0, 3).join(", ") : primaryNumber}
+              </div>
+              {numbers.length > 3 ? (
+                <div style={{ fontSize: 11.5, opacity: 0.72 }}>
+                  +{numbers.length - 3} more in Reports
+                </div>
+              ) : null}
+            </div>
+          )}
+          {!!submittedLabel && (
+            <div style={{ fontSize: 12, lineHeight: 1.35, opacity: 0.82 }}>
+              <b>Submitted:</b> {submittedLabel}
+            </div>
+          )}
+          <div
+            style={{
+              marginTop: 4,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              fontSize: 12,
+              lineHeight: 1.4,
+              opacity: 0.92,
+            }}
+          >
+            {successDisclaimer}
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 8 }}>
@@ -3707,32 +3926,40 @@ function DomainReportModal({
           </label>
         )}
 
-        {requiresConsent && (
-          <label
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "flex-start",
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--sl-ui-modal-border)",
-              background: "var(--sl-ui-modal-input-bg)",
-              cursor: saving ? "default" : "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={Boolean(consentChecked)}
-              onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
-              disabled={saving}
-              style={{ marginTop: 2 }}
-            />
-            <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>
-              I agree to allow CityReport.io to submit this {domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and my provided contact
-              information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.
-            </span>
-          </label>
-        )}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            display: "grid",
+            gap: 10,
+            fontSize: 11.8,
+            lineHeight: 1.45,
+            opacity: 0.9,
+          }}
+        >
+          {requiresConsent ? (
+            <label
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                cursor: saving ? "default" : "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(consentChecked)}
+                onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
+                disabled={saving}
+                style={{ marginTop: 2 }}
+              />
+              <span>{publicConsentDisclosureText(domain)}</span>
+            </label>
+          ) : null}
+          <div>{publicSubmitDisclosureText(domain)}</div>
+        </div>
       </div>
 
       <div style={{ padding: 16, borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 10 }}>
@@ -3873,6 +4100,8 @@ const inputStyle = {
   border: "1px solid var(--sl-ui-modal-input-border)",
   background: "var(--sl-ui-modal-input-bg)",
   color: "var(--sl-ui-text)",
+  fontSize: 16,
+  lineHeight: 1.3,
 };
 const btnPrimary = { padding: 10, borderRadius: 10, border: "none", background: "var(--sl-ui-brand-blue)", color: "white", fontWeight: 900, cursor: "pointer", width: "100%" };
 const btnPrimaryDark = { padding: 10, borderRadius: 10, border: "none", background: "var(--sl-ui-modal-btn-dark-bg)", color: "var(--sl-ui-modal-btn-dark-text)", fontWeight: 900, cursor: "pointer", width: "100%" };
@@ -3954,7 +4183,16 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 
   return (
-    <ModalShell open={open} zIndex={10031}>
+    <ModalShell
+      open={open}
+      zIndex={10031}
+      panelStyle={{
+        width: "min(360px, 100%)",
+        fontSize: 16,
+        WebkitTextSizeAdjust: "100%",
+        textSizeAdjust: "100%",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Reset password</div>
         <button
@@ -3982,6 +4220,8 @@ function ForgotPasswordModal({ open, email, setEmail, loading, errorText, onSend
 
       <input
         placeholder="Email"
+        type="email"
+        inputMode="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
@@ -5207,14 +5447,18 @@ function AllReportsModal({
   incidentLabel = "",
   sharedLocation = "",
   sharedAddress = "",
+  sharedCrossStreet = "",
   sharedLandmark = "",
+  sharedCoordinates = "",
+  geoLoading = false,
   currentState = "",
   lastChangedAt = "",
   onCopyField = null,
   isMobile = false,
+  preferCompactBehavior = false,
 }) {
   const [actionProfileByUserId, setActionProfileByUserId] = useState({});
-  const showCompactMobileLayout = Boolean(isMobile);
+  const showCompactMobileLayout = Boolean(isMobile || preferCompactBehavior);
 
   useEffect(() => {
     let cancelled = false;
@@ -5290,15 +5534,15 @@ function AllReportsModal({
         </button>
       </div>
 
-      {!!String(sharedLocation || sharedAddress || sharedLandmark).trim() && (
+      {!!String(sharedLocation || sharedAddress || sharedCrossStreet || sharedLandmark || sharedCoordinates).trim() && (
         <div style={{ marginTop: 6, display: "grid", gap: 3, fontSize: 12, lineHeight: 1.35, opacity: 0.92 }}>
-          {!!String(sharedLocation || "").trim() && (
+          {!!String(sharedAddress || sharedLocation || "").trim() && (
             <div>
-              <b>Location:</b>{" "}
+              <b>Nearest address:</b>{" "}
               {onCopyField ? (
                 <button
                   type="button"
-                  onClick={() => onCopyField("Location", sharedLocation)}
+                  onClick={() => onCopyField("Nearest address", String(sharedAddress || sharedLocation || "").trim())}
                   style={{
                     textDecoration: "underline",
                     textUnderlineOffset: 2,
@@ -5310,20 +5554,20 @@ function AllReportsModal({
                     font: "inherit",
                   }}
                 >
-                  {sharedLocation}
+                  {String(sharedAddress || sharedLocation || "").trim()}
                 </button>
               ) : (
-                <span>{sharedLocation}</span>
+                <span>{String(sharedAddress || sharedLocation || "").trim()}</span>
               )}
             </div>
           )}
-          {!!String(sharedAddress || "").trim() && (
-            <div>
-              <b>Closest address:</b>{" "}
-              {onCopyField ? (
+          <div>
+            <b>Closest cross street:</b>{" "}
+            {String(sharedCrossStreet || "").trim() ? (
+              onCopyField ? (
                 <button
                   type="button"
-                  onClick={() => onCopyField("Closest address", sharedAddress)}
+                  onClick={() => onCopyField("Closest cross street", sharedCrossStreet)}
                   style={{
                     textDecoration: "underline",
                     textUnderlineOffset: 2,
@@ -5335,16 +5579,46 @@ function AllReportsModal({
                     font: "inherit",
                   }}
                 >
-                  {sharedAddress}
+                  {sharedCrossStreet}
                 </button>
               ) : (
-                <span>{sharedAddress}</span>
+                <span>{sharedCrossStreet}</span>
+              )
+            ) : (
+              <span>Unavailable</span>
+            )}
+          </div>
+          <div><b>Closest landmark:</b> {String(sharedLandmark || "").trim() || "Unavailable"}</div>
+          {!!String(sharedCoordinates || "").trim() && (
+            <div>
+              <b>Coordinates:</b>{" "}
+              {onCopyField ? (
+                <button
+                  type="button"
+                  onClick={() => onCopyField("Coordinates", sharedCoordinates)}
+                  style={{
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    cursor: "copy",
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    padding: 0,
+                    font: "inherit",
+                  }}
+                >
+                  {sharedCoordinates}
+                </button>
+              ) : (
+                <span>{sharedCoordinates}</span>
               )}
             </div>
           )}
-          {!!String(sharedLandmark || "").trim() && (
-            <div><b>Closest landmark:</b> {sharedLandmark}</div>
-          )}
+          {geoLoading ? (
+            <div style={{ fontSize: 11.5, opacity: 0.72 }}>
+              Loading closest location details...
+            </div>
+          ) : null}
         </div>
       )}
 
@@ -5480,7 +5754,7 @@ function AllReportsModal({
                   </>
                 )}
 
-                {!showCompactMobileLayout && (it.kind === "report" || it.kind === "working") && (
+                {(it.kind === "report" || it.kind === "working") && (
                   <div style={{ fontSize: 11.5, opacity: 0.9, lineHeight: 1.3 }}>
                     <b>Submitted by:</b>{" "}
                     <button
@@ -6124,14 +6398,16 @@ function ModerationFlagsModal({
   const canAcknowledgeRow = (row) => {
     if (typeof onAcknowledge !== "function") return false;
     if (!isStillOpen(row)) return false;
-    if (String(row?._source || "").startsWith("summary")) return false;
+    if (String(row?._source || "").startsWith("summary")) {
+      return Boolean(String(row?.domain || "").trim() && String(row?.reason || "").trim());
+    }
     return Number.isFinite(Number(row?.id));
   };
 
   const promptAcknowledge = (row) => {
     if (!canAcknowledgeRow(row)) return;
     const note = window.prompt(
-      "Optional acknowledgement note",
+      "Optional close note",
       ""
     );
     if (note === null) return;
@@ -6325,7 +6601,7 @@ function ModerationFlagsModal({
                           cursor: "pointer",
                         }}
                       >
-                        Acknowledge
+                        Close flag
                       </button>
                     </div>
                   ) : null}
@@ -6383,7 +6659,7 @@ function ModerationFlagsModal({
                           whiteSpace: "nowrap",
                         }}
                       >
-                        Acknowledge
+                          Close flag
                       </button>
                     ) : "—"}
                   </td>
@@ -6595,6 +6871,7 @@ function OpenReportsModal({
   onToggleExpand,
   reports,
   potholes = [],
+  waterDrainIncidentsById = {},
   allDomainReports = [],
   officialLights,
   slIdByUuid,
@@ -6629,8 +6906,11 @@ function OpenReportsModal({
   onReportedByModeChange = null,
   pageTopInset = "",
   pageBottomInset = "",
+  preferAppShellBehavior = false,
 }) {
+  const useCompactAppBehavior = Boolean(preferAppShellBehavior);
   const canMutateIncidents = allowIncidentMutations && typeof onMarkFixedIncident === "function";
+  const canViewReporterDetails = isAdmin && typeof onReporterDetails === "function";
   const canMarkWorkingIncidents = typeof onMarkWorkingIncident === "function";
   const normalizedReportedByMode = canToggleReportedBy && String(reportedByMode || "").trim().toLowerCase() === "all"
     ? "all"
@@ -6641,6 +6921,32 @@ function OpenReportsModal({
     && publicRepairLifecycleEnabled
     && activeDomain !== "streetlights"
     && activeDomain !== "street_signs";
+
+  const locationInfoForReportDetail = useCallback((detail, groupRow = null) => {
+    const rawNotes = String(detail?.raw_notes || detail?.notes || "");
+    const fromNote = String(readLocationFromNote(rawNotes) || "").trim();
+    if (fromNote) return fromNote;
+    const groupLocation = String(groupRow?.location_label || groupRow?.locationLabel || "").trim();
+    if (groupLocation) return groupLocation;
+    const lat = Number(detail?.lat ?? groupRow?.coords?.lat ?? groupRow?.lat);
+    const lng = Number(detail?.lng ?? groupRow?.coords?.lng ?? groupRow?.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    }
+    return "Location unavailable";
+  }, []);
+
+  const reporterSummaryForReportDetail = useCallback((detail) => {
+    const name = String(detail?.reporter_name || "").trim();
+    const email = String(detail?.reporter_email || "").trim();
+    const phone = String(detail?.reporter_phone || "").trim();
+    const primary = name || email || phone || "Unknown";
+    const secondary = [name ? "" : null, email, phone].filter(Boolean).join(" • ");
+    return {
+      primary,
+      secondary,
+    };
+  }, []);
   const [sortMode, setSortMode] = useState("count"); // count | recent
   const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
   const [searchDraft, setSearchDraft] = useState("");
@@ -6816,12 +7122,14 @@ function OpenReportsModal({
   }, [draftRangeFrom, draftRangeTo]);
   const leftMonthCells = useMemo(() => buildMonthCells(calendarLeftMonth), [buildMonthCells, calendarLeftMonth]);
   const [compactDomainPicker, setCompactDomainPicker] = useState(() => {
+    if (useCompactAppBehavior) return true;
     if (typeof window === "undefined") return false;
     return window.innerWidth <= 760;
   });
   const [compactDomainMenuOpen, setCompactDomainMenuOpen] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [metricsCollapsed, setMetricsCollapsed] = useState(() => {
+    if (useCompactAppBehavior) return true;
     if (typeof window === "undefined") return false;
     return window.innerWidth <= 760;
   });
@@ -6948,11 +7256,11 @@ function OpenReportsModal({
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const sync = () => setCompactDomainPicker(window.innerWidth <= 760);
+    const sync = () => setCompactDomainPicker(useCompactAppBehavior || window.innerWidth <= 760);
     sync();
     window.addEventListener("resize", sync, { passive: true });
     return () => window.removeEventListener("resize", sync);
-  }, []);
+  }, [useCompactAppBehavior]);
 
   useEffect(() => {
     if (!open || !compactDomainPicker) {
@@ -6983,8 +7291,12 @@ function OpenReportsModal({
     };
   }, []);
   useEffect(() => {
+    if (useCompactAppBehavior) {
+      setMetricsCollapsed(true);
+      return;
+    }
     if (!compactDomainPicker) setMetricsCollapsed(false);
-  }, [compactDomainPicker]);
+  }, [compactDomainPicker, useCompactAppBehavior]);
   useEffect(() => {
     if (!open) return;
     const targetIncidentId = String(focusIncidentId || "").trim();
@@ -8030,6 +8342,10 @@ function OpenReportsModal({
           report_count: 0,
           latest_submitted_at: "",
           coords,
+          location_label: String(g?.location_label || g?.locationLabel || "").trim(),
+          nearest_address: "",
+          nearest_cross_street: "",
+          nearest_landmark: "",
           rows: [],
         });
       }
@@ -8065,6 +8381,24 @@ function OpenReportsModal({
         const p = potholeById.get(pid);
         if (p && Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))) {
           row.coords = { lat: Number(p.lat), lng: Number(p.lng), isOfficial: false };
+        }
+      }
+      if (activeDomain === "potholes") {
+        const pid = String(row?.incident_id || "").replace(/^pothole:/i, "").trim();
+        const p = potholeById.get(pid);
+        if (p) {
+          row.location_label = String(row.location_label || p.location_label || "").trim();
+          row.nearest_address = String(p?.nearest_address || "").trim();
+          row.nearest_cross_street = String(p?.nearest_cross_street || "").trim();
+          row.nearest_landmark = String(p?.nearest_landmark || "").trim();
+        }
+      } else if (activeDomain === "water_drain_issues") {
+        const waterMeta = waterDrainIncidentsById?.[String(row?.incident_id || "").trim()] || null;
+        if (waterMeta) {
+          row.location_label = String(row.location_label || waterMeta?.nearest_address || "").trim();
+          row.nearest_address = String(waterMeta?.nearest_address || "").trim();
+          row.nearest_cross_street = String(waterMeta?.nearest_cross_street || "").trim();
+          row.nearest_landmark = String(waterMeta?.nearest_landmark || "").trim();
         }
       }
       row.rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
@@ -8225,6 +8559,7 @@ function OpenReportsModal({
     actionsByLightId,
     tableSort,
     utilityReportedByIncident,
+    waterDrainIncidentsById,
     cityBoundaryLoaded,
     isWithinCityLimits,
   ]);
@@ -8288,7 +8623,7 @@ function OpenReportsModal({
     });
   }, []);
 
-  const openSubmittedReportsForRow = useCallback((row) => {
+  const openSubmittedReportsForRow = useCallback(async (row) => {
     if (!isMyReportsModal || typeof onOpenAllReports !== "function" || !row) return;
     const history = [];
 
@@ -8334,17 +8669,94 @@ function OpenReportsModal({
     }
 
     history.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const firstRawNote = String(row?.rows?.[0]?.raw_notes || row?.rows?.[0]?.notes || "");
+    const incidentId = String(row?.incident_id || "").trim();
+    const potholeMeta = activeDomain === "potholes"
+      ? (potholes || []).find((item) => String(item?.id || "").trim() === incidentId.replace(/^pothole:/i, "").trim())
+      : null;
+    const waterDrainMeta = activeDomain === "water_drain_issues"
+      ? waterDrainIncidentsById?.[incidentId] || null
+      : null;
+    const incidentLocation =
+      String(row?.location_label || row?.locationLabel || "").trim()
+      || String(row?.nearest_address || "").trim()
+      || String(potholeMeta?.location_label || "").trim()
+      || String(waterDrainMeta?.nearest_address || "").trim()
+      || readLocationFromNote(firstRawNote);
+    const incidentAddress =
+      String(row?.nearest_address || "").trim()
+      || String(potholeMeta?.nearest_address || "").trim()
+      || String(waterDrainMeta?.nearest_address || "").trim()
+      || readAddressFromNote(firstRawNote)
+      || incidentLocation;
+    const incidentCrossStreet =
+      String(row?.nearest_cross_street || "").trim()
+      || String(potholeMeta?.nearest_cross_street || "").trim()
+      || String(waterDrainMeta?.nearest_cross_street || "").trim()
+      || readCrossStreetFromNote(firstRawNote);
+    const incidentLandmark =
+      String(row?.nearest_landmark || "").trim()
+      || String(potholeMeta?.nearest_landmark || "").trim()
+      || String(waterDrainMeta?.nearest_landmark || "").trim()
+      || readLandmarkFromNote(firstRawNote);
+    const incidentCoordinates =
+      Number.isFinite(Number(row?.coords?.lat)) && Number.isFinite(Number(row?.coords?.lng))
+        ? `${Number(row.coords.lat).toFixed(5)}, ${Number(row.coords.lng).toFixed(5)}`
+        : "";
+    const fallbackLat =
+      Number.isFinite(Number(row?.coords?.lat)) ? Number(row.coords.lat)
+        : Number.isFinite(Number(potholeMeta?.lat)) ? Number(potholeMeta.lat)
+          : Number.isFinite(Number(waterDrainMeta?.lat)) ? Number(waterDrainMeta.lat)
+            : NaN;
+    const fallbackLng =
+      Number.isFinite(Number(row?.coords?.lng)) ? Number(row.coords.lng)
+        : Number.isFinite(Number(potholeMeta?.lng)) ? Number(potholeMeta.lng)
+          : Number.isFinite(Number(waterDrainMeta?.lng)) ? Number(waterDrainMeta.lng)
+            : NaN;
+    const incidentModalKey = `${activeDomain}:${incidentId || String(row?.incident_label || row?.incident_id || "").trim()}`;
+    const shouldLookupGeo =
+      typeof getStreetlightUtilityDetails === "function" &&
+      Number.isFinite(fallbackLat) &&
+      Number.isFinite(fallbackLng) &&
+      (!incidentAddress || !incidentCrossStreet || !incidentLandmark);
     onOpenAllReports(
-      "Submitted Reports",
+      String(row.incident_label || row.incident_id || "Incident"),
       history,
       {
+        incidentKey: incidentModalKey,
         domainKey: activeDomain,
-        incidentLabel: String(row.incident_label || row.incident_id || "Incident"),
-        currentState: String(row?.current_state || ""),
-        lastChangedAt: String(row?.latest_activity_at || row?.latest_submitted_at || ""),
+        incidentLabel: "",
+        sharedLocation: "",
+        sharedAddress: incidentAddress,
+        sharedCrossStreet: incidentCrossStreet,
+        sharedLandmark: incidentLandmark,
+        sharedCoordinates: incidentCoordinates,
+        geoLoading: shouldLookupGeo,
       }
     );
-  }, [activeDomain, isMyReportsModal, onOpenAllReports]);
+    if (!shouldLookupGeo) return;
+    try {
+      const geo = await getStreetlightUtilityDetails(fallbackLat, fallbackLng, { mode: "full" });
+      const resolvedAddress = incidentAddress || String(geo?.nearestAddress || "").trim();
+      const resolvedCrossStreet = incidentCrossStreet || String(geo?.nearestCrossStreet || "").trim();
+      const resolvedLandmark = incidentLandmark || String(geo?.nearestLandmark || "").trim();
+      setAllReportsModal((prev) => {
+        if (!prev?.open || String(prev?.incidentKey || "").trim() !== incidentModalKey) return prev;
+        return {
+          ...prev,
+          sharedAddress: resolvedAddress,
+          sharedCrossStreet: resolvedCrossStreet,
+          sharedLandmark: resolvedLandmark,
+          geoLoading: false,
+        };
+      });
+    } catch {
+      setAllReportsModal((prev) => {
+        if (!prev?.open || String(prev?.incidentKey || "").trim() !== incidentModalKey) return prev;
+        return { ...prev, geoLoading: false };
+      });
+    }
+  }, [activeDomain, getStreetlightUtilityDetails, isMyReportsModal, onOpenAllReports, potholes, waterDrainIncidentsById]);
 
   const adminIncidentDotForRow = useCallback((row) => {
     const incidentId = String(row?.incident_id || "").trim();
@@ -8609,7 +9021,9 @@ function OpenReportsModal({
   if (!open) return null;
   const openReportsModalMaxHeight =
     "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)";
-  const useFullPageReportsLayout = isCompactMyReports;
+  const hasReportsPageInsets = Boolean(String(pageTopInset || "").trim() || String(pageBottomInset || "").trim());
+  const isWideReportsPage = hasReportsPageInsets && (typeof window !== "undefined" ? window.innerWidth >= 900 : false);
+  const useFullPageReportsLayout = hasReportsPageInsets;
   const reportsPageTopInset = String(pageTopInset || "").trim() || "0px";
   const reportsPageBottomInset = String(pageBottomInset || "").trim() || "0px";
   const compactAdminFiltersPanel = compactFiltersOpen ? (
@@ -8857,7 +9271,7 @@ function OpenReportsModal({
             gap: 0,
             marginTop: reportsPageTopInset,
             marginBottom: reportsPageBottomInset,
-            padding: "10px 12px 0",
+            padding: isWideReportsPage ? "18px 20px 0" : "10px 12px 0",
             borderTop: "none",
             borderBottom: "none",
           }
@@ -8877,7 +9291,7 @@ function OpenReportsModal({
       {isCompactMyReports ? (
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 950, whiteSpace: "nowrap" }}>{modalTitleText || "Reports"}</div>
+            <div style={{ fontSize: isWideReportsPage ? 26 : 16, fontWeight: 950, whiteSpace: "nowrap" }}>{modalTitleText || "Reports"}</div>
             <div style={{ position: "relative" }}>
               <button
                 type="button"
@@ -8948,17 +9362,19 @@ function OpenReportsModal({
                           fontWeight: 900,
                           cursor: "pointer",
                           padding: "7px 9px",
-                          whiteSpace: "nowrap",
                           display: "flex",
                           alignItems: "center",
                           gap: 7,
                           justifyContent: "flex-start",
+                          width: "100%",
+                          minWidth: 0,
+                          textAlign: "left",
                         }}
                         aria-label={d.label}
                         title={d.label}
                       >
                         <AppIcon src={d.iconSrc} size={26} />
-                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                        <span style={{ fontSize: 12, lineHeight: 1.2, whiteSpace: "normal", overflowWrap: "anywhere" }}>{d.label}</span>
                       </button>
                     );
                   })}
@@ -8987,8 +9403,10 @@ function OpenReportsModal({
           ) : null}
         </div>
       ) : (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 16, fontWeight: 950 }}>{modalTitleText || "Reports"}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <div style={{ fontSize: isWideReportsPage ? 26 : 16, fontWeight: 950 }}>{modalTitleText || "Reports"}</div>
+          </div>
           {!useFullPageReportsLayout ? (
             <button
               onClick={onClose}
@@ -9134,17 +9552,19 @@ function OpenReportsModal({
                           fontWeight: 900,
                           cursor: "pointer",
                           padding: "7px 9px",
-                          whiteSpace: "nowrap",
                           display: "flex",
                           alignItems: "center",
                           gap: 7,
                           justifyContent: "flex-start",
+                          width: "100%",
+                          minWidth: 0,
+                          textAlign: "left",
                         }}
                         aria-label={d.label}
                         title={d.label}
                       >
                         <AppIcon src={d.iconSrc} size={26} />
-                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                        <span style={{ fontSize: 12, lineHeight: 1.2, whiteSpace: "normal", overflowWrap: "anywhere" }}>{d.label}</span>
                       </button>
                     );
                   })}
@@ -10008,6 +10428,7 @@ function OpenReportsModal({
                 const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
                   ? canShowPublicRepairAction(r.incident_id, activeDomain)
                   : false;
+                const showOrganizationRepairAction = canMutateIncidents && !showPublicRepairAction;
                 const mobileMyReportsCard = isMyReportsModal && !isStreetlightMyReports;
                 const streetlightMobileSummaryCard = isStreetlightMyReports && isMyReportsModal;
                 const streetlightDisplayId = displayLightId(r.incident_id, slIdByUuid);
@@ -10197,7 +10618,7 @@ function OpenReportsModal({
                         >
                           Fly to
                         </button>
-                        {!canMutateIncidents && showPublicRepairAction && (
+                        {showPublicRepairAction && (
                           <button
                             type="button"
                             onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
@@ -10274,7 +10695,7 @@ function OpenReportsModal({
                         Report Outage to Utility
                       </button>
                     )}
-                    {canMutateIncidents && (
+                    {showOrganizationRepairAction && (
                       <button
                         type="button"
                         onClick={() => onMarkFixedIncident?.(r.incident_id, isOpenLifecycleState(r.current_state || "") ? "fix" : "reopen")}
@@ -10291,7 +10712,7 @@ function OpenReportsModal({
                         {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
                       </button>
                     )}
-                    {!canMutateIncidents && showPublicRepairAction && (
+                    {showPublicRepairAction && (
                       <button
                         type="button"
                         onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
@@ -10447,9 +10868,9 @@ function OpenReportsModal({
                               {String(ev.reporter_name || "").trim() || String(ev.reporter_email || "").trim() || "Unknown"}
                             </button>
                           </div>
-                          {!!String(ev.note || "").trim() && (
+                          {!!String(noteDisplayText(ev.note || "") || "").trim() && (
                             <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
-                              <b>Note:</b> {ev.note}
+                              <b>Note:</b> {noteDisplayText(ev.note || "")}
                             </div>
                           )}
                         </div>
@@ -10499,10 +10920,33 @@ function OpenReportsModal({
                               {String(r.fixed_event.reporter_name || "").trim() || String(r.fixed_event.reporter_email || "").trim() || "Unknown"}
                             </button>
                           </div>
-                          {!!String(r.fixed_event.note || "").trim() && (
+                          {!!String(noteDisplayText(r.fixed_event.note || "") || "").trim() && (
                             <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
-                              <b>Note:</b> {r.fixed_event.note}
+                              <b>Note:</b> {noteDisplayText(r.fixed_event.note || "")}
                             </div>
+                          )}
+                          {!!readImageUrlFromNote(r.fixed_event.note || "") && (
+                            <a
+                              href={readImageUrlFromNote(r.fixed_event.note || "")}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                padding: "5px 8px",
+                                borderRadius: 8,
+                                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                color: "var(--sl-ui-modal-btn-secondary-text)",
+                                fontWeight: 900,
+                                textDecoration: "none",
+                                width: "fit-content",
+                              }}
+                              title="View closure photo"
+                            >
+                              📷 View closure photo
+                            </a>
                           )}
                         </div>
                       )}
@@ -10550,8 +10994,8 @@ function OpenReportsModal({
                                 </div>
                               </>
                             )}
-                            {canMutateIncidents && (
-                              <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                            {canViewReporterDetails && (
+                              <div style={{ opacity: 0.9, lineHeight: 1.3, display: "grid", gap: 2 }}>
                                 <b>Submitted by:</b>{" "}
                                 <button
                                   type="button"
@@ -10580,6 +11024,16 @@ function OpenReportsModal({
                                 >
                                   {String(detail.reporter_name || "").trim() || String(detail.reporter_email || "").trim() || "Unknown"}
                                 </button>
+                                {reporterSummaryForReportDetail(detail).secondary ? (
+                                  <div style={{ opacity: 0.78 }}>
+                                    {reporterSummaryForReportDetail(detail).secondary}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )}
+                            {canViewReporterDetails && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                              <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                <b>Location:</b> {locationInfoForReportDetail(detail, r)}
                               </div>
                             )}
                             {!!String(noteText || "").trim() && (
@@ -10752,6 +11206,7 @@ function OpenReportsModal({
                     const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
                       ? canShowPublicRepairAction(r.incident_id, activeDomain)
                       : false;
+                    const showOrganizationRepairAction = canMutateIncidents && !showPublicRepairAction;
                     return (
                     <Fragment key={r.incident_id}>
                       <tr>
@@ -10836,7 +11291,7 @@ function OpenReportsModal({
                                 Report Outage to Utility
                               </button>
                             )}
-                            {canMutateIncidents && (
+                            {showOrganizationRepairAction && (
                               <button
                                 type="button"
                                 onClick={() => onMarkFixedIncident?.(r.incident_id, isOpenLifecycleState(r.current_state || "") ? "fix" : "reopen")}
@@ -10853,7 +11308,7 @@ function OpenReportsModal({
                                 {isOpenLifecycleState(r.current_state || "") ? "Mark fixed" : "Re-open"}
                               </button>
                             )}
-                            {!canMutateIncidents && showPublicRepairAction && (
+                            {showPublicRepairAction && (
                               <button
                                 type="button"
                                 onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
@@ -11033,9 +11488,9 @@ function OpenReportsModal({
                                       {String(ev.reporter_name || "").trim() || String(ev.reporter_email || "").trim() || "Unknown"}
                                     </button>
                                   </div>
-                                  {!!String(ev.note || "").trim() && (
+                                  {!!String(noteDisplayText(ev.note || "") || "").trim() && (
                                     <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
-                                      <b>Note:</b> {ev.note}
+                                      <b>Note:</b> {noteDisplayText(ev.note || "")}
                                     </div>
                                   )}
                                 </div>
@@ -11085,10 +11540,33 @@ function OpenReportsModal({
                                       {String(r.fixed_event.reporter_name || "").trim() || String(r.fixed_event.reporter_email || "").trim() || "Unknown"}
                                     </button>
                                   </div>
-                                  {!!String(r.fixed_event.note || "").trim() && (
+                                  {!!String(noteDisplayText(r.fixed_event.note || "") || "").trim() && (
                                     <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
-                                      <b>Note:</b> {r.fixed_event.note}
+                                      <b>Note:</b> {noteDisplayText(r.fixed_event.note || "")}
                                     </div>
+                                  )}
+                                  {!!readImageUrlFromNote(r.fixed_event.note || "") && (
+                                    <a
+                                      href={readImageUrlFromNote(r.fixed_event.note || "")}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        padding: "5px 8px",
+                                        borderRadius: 8,
+                                        border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                        background: "var(--sl-ui-modal-btn-secondary-bg)",
+                                        color: "var(--sl-ui-modal-btn-secondary-text)",
+                                        fontWeight: 900,
+                                        textDecoration: "none",
+                                        width: "fit-content",
+                                      }}
+                                      title="View closure photo"
+                                    >
+                                      📷 View closure photo
+                                    </a>
                                   )}
                                 </div>
                               )}
@@ -11138,8 +11616,8 @@ function OpenReportsModal({
                                       </div>
                                     </>
                                   )}
-                                  {canMutateIncidents && (
-                                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                  {canViewReporterDetails && (
+                                    <div style={{ opacity: 0.9, lineHeight: 1.3, display: "grid", gap: 2 }}>
                                       <b>Submitted by:</b>{" "}
                                       <button
                                         type="button"
@@ -11168,6 +11646,16 @@ function OpenReportsModal({
                                       >
                                         {String(detail.reporter_name || "").trim() || String(detail.reporter_email || "").trim() || "Unknown"}
                                       </button>
+                                      {reporterSummaryForReportDetail(detail).secondary ? (
+                                        <div style={{ opacity: 0.78 }}>
+                                          {reporterSummaryForReportDetail(detail).secondary}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                  {canViewReporterDetails && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                                      <b>Location:</b> {locationInfoForReportDetail(detail, r)}
                                     </div>
                                   )}
                                   {!!String(noteText || "").trim() && (
@@ -11401,8 +11889,8 @@ function OpenReportsModal({
                     📷 View image
                   </a>
                 )}
-                {canMutateIncidents && (
-                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                {canViewReporterDetails && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3, display: "grid", gap: 2 }}>
                     <b>Submitted by:</b>{" "}
                     <button
                       type="button"
@@ -11421,6 +11909,11 @@ function OpenReportsModal({
                     >
                       {String(item?.row?.reporter_name || "").trim() || String(item?.row?.reporter_email || "").trim() || "Unknown"}
                     </button>
+                    {reporterSummaryForReportDetail(item.row).secondary ? (
+                      <div style={{ opacity: 0.78 }}>
+                        {reporterSummaryForReportDetail(item.row).secondary}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -11637,7 +12130,7 @@ function OpenReportsModal({
                         <div style={{ opacity: 0.9, fontWeight: 900 }}>
                           Report #: {reportNumberForRow(r, activeDomain)}
                         </div>
-                        {canMutateIncidents && (
+                        {canViewReporterDetails && (
                           <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
                             <b>Submitted by:</b>{" "}
                             <button
@@ -12159,6 +12652,7 @@ function ManageAccountModal({
   setForm,
   onSave,
   onOpenChangePassword,
+  onOpenDeleteAccount,
   onRequestEdit,
   darkMode = false,
   pageMode = false,
@@ -12168,6 +12662,7 @@ function ManageAccountModal({
   if (!open) return null;
 
   const email = (profile?.email || session?.user?.email || "").trim() || "—";
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const closeManage = () => {
     setEditing(false);
     onClose();
@@ -12205,7 +12700,7 @@ function ManageAccountModal({
           minHeight: 0,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? (isWidePageMode ? "22px 22px 16px" : "14px 14px 12px") : 18 }}>
           <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
             {pageMode ? (
               <button
@@ -12225,11 +12720,11 @@ function ManageAccountModal({
                 ← Back
               </button>
             ) : null}
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: darkMode ? "#9cb6cf" : "#4f6983" }}>
+            <div style={{ fontSize: isWidePageMode ? 13 : 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: darkMode ? "#9cb6cf" : "#4f6983" }}>
               Account
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: pageMode ? 24 : 16, fontWeight: 950, lineHeight: 1.05 }}>Manage Account</div>
+              <div style={{ fontSize: pageMode ? (isWidePageMode ? 30 : 24) : 16, fontWeight: 950, lineHeight: 1.05 }}>Manage Account</div>
               {!editing ? (
                 <button
                   onClick={onRequestEdit}
@@ -12251,7 +12746,7 @@ function ManageAccountModal({
                 </button>
               ) : null}
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+            <div style={{ fontSize: isWidePageMode ? 15 : 13, lineHeight: 1.45, opacity: 0.82, maxWidth: isWidePageMode ? "62ch" : undefined }}>
               Update your profile details and account security.
             </div>
           </div>
@@ -12276,8 +12771,8 @@ function ManageAccountModal({
           ) : null}
         </div>
 
-        <div style={{ overflowY: "auto", padding: pageMode ? "12px 14px 18px" : "0 18px 18px", fontSize: 12.5, lineHeight: 1.45 }}>
-          <div style={{ marginBottom: 10, padding: "12px 14px", borderRadius: 16, border: "1px solid var(--sl-ui-modal-border)", background: "var(--sl-ui-modal-subtle-bg)" }}>
+        <div style={{ overflowY: "auto", padding: pageMode ? (isWidePageMode ? "16px 22px 24px" : "12px 14px 18px") : "0 18px 18px", fontSize: isWidePageMode ? 14 : 12.5, lineHeight: 1.45 }}>
+          <div style={{ marginBottom: 10, padding: isWidePageMode ? "14px 16px" : "12px 14px", borderRadius: 16, border: "1px solid var(--sl-ui-modal-border)", background: "var(--sl-ui-modal-subtle-bg)" }}>
             <b>Email:</b> {email}
           </div>
 
@@ -12286,7 +12781,7 @@ function ManageAccountModal({
             <input
               value={form.full_name}
               onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))}
-              style={{ ...inputStyle, width: "100%", borderRadius: 14 }}
+              style={{ ...inputStyle, width: "100%", borderRadius: 14, minHeight: isWidePageMode ? 48 : undefined, fontSize: isWidePageMode ? 15 : undefined }}
               disabled={!editing || saving}
               placeholder="Your full name"
             />
@@ -12297,7 +12792,7 @@ function ManageAccountModal({
             <input
               value={form.phone}
               onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-              style={{ ...inputStyle, width: "100%", borderRadius: 14 }}
+              style={{ ...inputStyle, width: "100%", borderRadius: 14, minHeight: isWidePageMode ? 48 : undefined, fontSize: isWidePageMode ? 15 : undefined }}
               disabled={!editing || saving}
               placeholder="555-555-5555"
             />
@@ -12305,15 +12800,35 @@ function ManageAccountModal({
 
           <button
             onClick={onOpenChangePassword}
-            style={{ ...btnPrimary, width: "100%", marginTop: 12 }}
+            style={{ ...btnPrimary, width: "100%", marginTop: 12, minHeight: isWidePageMode ? 48 : undefined, fontSize: isWidePageMode ? 15 : undefined }}
             disabled={saving}
           >
             Change Password
           </button>
+
+          <button
+            onClick={onOpenDeleteAccount}
+            style={{
+              ...btnSecondary,
+              width: "100%",
+              marginTop: 10,
+              minHeight: isWidePageMode ? 48 : undefined,
+              fontSize: isWidePageMode ? 15 : undefined,
+              borderColor: "rgba(183, 28, 28, 0.2)",
+              color: "#b71c1c",
+            }}
+            disabled={saving}
+          >
+            Delete Account
+          </button>
+          <div style={{ marginTop: 8, fontSize: isWidePageMode ? 13 : 11.5, lineHeight: 1.4, opacity: 0.78 }}>
+            Deleting your account removes your sign-in access and personal profile data. Report records may be retained with
+            identifying details removed.
+          </div>
         </div>
 
         {editing ? (
-          <div style={{ display: "flex", gap: 10, padding: pageMode ? "10px 14px calc(10px + env(safe-area-inset-bottom))" : "0 18px 18px", borderTop: "1px solid var(--sl-ui-modal-border)" }}>
+          <div style={{ display: "flex", gap: 10, padding: pageMode ? (isWidePageMode ? "14px 22px calc(14px + env(safe-area-inset-bottom))" : "10px 14px calc(10px + env(safe-area-inset-bottom))") : "0 18px 18px", borderTop: "1px solid var(--sl-ui-modal-border)" }}>
             <button
               onClick={() => {
                 setEditing(false);
@@ -12343,6 +12858,186 @@ function ManageAccountModal({
   );
 }
 
+function DeleteAccountModal({
+  open,
+  onClose,
+  onBack = null,
+  confirmText,
+  setConfirmText,
+  disclosureAccepted,
+  setDisclosureAccepted,
+  saving,
+  onSubmit,
+  darkMode = false,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
+}) {
+  if (!open) return null;
+
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
+  const typedDelete = String(confirmText || "").trim().toUpperCase() === "DELETE";
+  const canSubmit = typedDelete && Boolean(disclosureAccepted) && !saving;
+
+  return (
+    <ModalShell
+      open={open}
+      zIndex={pageMode ? 10080 : 10018}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
+      panelStyle={{
+        width: pageMode ? "100%" : "min(520px, 100%)",
+        padding: pageMode ? (isWidePageMode ? 24 : 20) : 22,
+        borderRadius: pageMode ? 0 : 20,
+        gap: 14,
+        height: pageMode ? "100%" : undefined,
+        alignContent: "start",
+      }}
+    >
+      {pageMode ? (
+        <button
+          type="button"
+          onClick={onBack || onClose}
+          style={{
+            width: "fit-content",
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontSize: 13,
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          ← Back
+        </button>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Delete Account</div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+            aria-label="Close"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ fontSize: pageMode ? (isWidePageMode ? 30 : 24) : 22, fontWeight: 950, lineHeight: 1.05 }}>
+          Delete Account
+        </div>
+        <div style={{ fontSize: isWidePageMode ? 15 : 13, lineHeight: 1.5, opacity: 0.88, maxWidth: isWidePageMode ? "62ch" : undefined }}>
+          This permanently removes your sign-in account, saved profile, and notification preferences. Existing reports may remain for
+          municipal recordkeeping, but personal details will be removed where supported.
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: isWidePageMode ? "16px 18px" : "14px 16px",
+          borderRadius: 16,
+          border: "1px solid rgba(183, 28, 28, 0.18)",
+          background: darkMode ? "rgba(109, 27, 27, 0.18)" : "rgba(255, 235, 238, 0.92)",
+          color: darkMode ? "#ffd9d9" : "#7f1d1d",
+          fontSize: isWidePageMode ? 13.5 : 12.5,
+          lineHeight: 1.45,
+        }}
+      >
+        If your account has organization or staff access, self-service deletion may be blocked and support will need to help.
+      </div>
+
+      <label style={{ display: "grid", gap: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.88 }}>
+          Type <span style={{ letterSpacing: "0.08em" }}>DELETE</span> to confirm
+        </div>
+        <input
+          value={confirmText}
+          onChange={(event) => setConfirmText(event.target.value)}
+          placeholder="DELETE"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          style={{
+            ...inputStyle,
+            width: "100%",
+            minHeight: isWidePageMode ? 48 : undefined,
+            fontSize: isWidePageMode ? 15 : undefined,
+            borderRadius: 14,
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && canSubmit) onSubmit();
+          }}
+        />
+      </label>
+
+      <label
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 10,
+          padding: isWidePageMode ? "14px 16px" : "12px 14px",
+          borderRadius: 14,
+          border: "1px solid var(--sl-ui-modal-border)",
+          background: "var(--sl-ui-modal-input-bg)",
+          cursor: saving ? "not-allowed" : "pointer",
+          opacity: saving ? 0.75 : 1,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={Boolean(disclosureAccepted)}
+          onChange={(event) => setDisclosureAccepted(event.target.checked)}
+          disabled={saving}
+          style={{ marginTop: 2 }}
+        />
+        <span style={{ fontSize: isWidePageMode ? 13.5 : 12.5, lineHeight: 1.45, opacity: 0.9 }}>
+          I have read and agree to the disclosure above.
+        </span>
+      </label>
+
+      <div style={{ display: "flex", gap: 10, marginTop: "auto" }}>
+        <button onClick={onClose} style={btnSecondary} disabled={saving}>
+          Cancel
+        </button>
+        <button
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          style={{
+            ...btnPrimary,
+            background: !canSubmit ? "rgba(183, 28, 28, 0.4)" : "#b71c1c",
+            color: "#fff",
+            boxShadow: "none",
+            cursor: !canSubmit ? "not-allowed" : "pointer",
+            opacity: saving ? 0.8 : 1,
+          }}
+        >
+          {saving ? "Deleting…" : "Delete Account"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function MobileBottomRailButton({
   label,
   iconSrc,
@@ -12352,6 +13047,7 @@ function MobileBottomRailButton({
   disabled = false,
   children = null,
   showDivider = false,
+  wide = false,
 }) {
   const showBadge = Number(badgeCount || 0) > 0;
   return (
@@ -12383,8 +13079,8 @@ function MobileBottomRailButton({
           position: "relative",
         }}
       >
-        <span style={{ position: "relative", width: 28, height: 28, display: "grid", placeItems: "center" }}>
-          <AppIcon src={iconSrc} size={24} />
+        <span style={{ position: "relative", width: wide ? 30 : 28, height: wide ? 30 : 28, display: "grid", placeItems: "center" }}>
+          <AppIcon src={iconSrc} size={wide ? 26 : 24} />
           {showBadge ? (
             <span
               style={{
@@ -12410,7 +13106,7 @@ function MobileBottomRailButton({
             </span>
           ) : null}
         </span>
-        <span style={{ fontSize: 10.5, fontWeight: 900, opacity: active ? 1 : 0.82, textAlign: "center" }}>{label}</span>
+        <span style={{ fontSize: wide ? 12 : 10.5, fontWeight: 900, opacity: active ? 1 : 0.82, textAlign: "center" }}>{label}</span>
       </button>
       {children}
     </div>
@@ -12429,7 +13125,7 @@ function ReauthModal({
   if (!open) return null;
 
   return (
-    <ModalShell open={open} zIndex={10014}>
+    <ModalShell open={open} zIndex={10074}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Confirm Password</div>
         <button
@@ -12507,6 +13203,7 @@ function ReauthModal({
 function ChangePasswordModal({
   open,
   onClose,
+  onBack = null,
   password,
   setPassword,
   password2,
@@ -12515,11 +13212,16 @@ function ChangePasswordModal({
   setCurrentPassword,
   saving,
   onSubmit,
+  pageMode = false,
+  pageTopInset = "0px",
+  pageBottomInset = "0px",
 }) {
   const [show1, setShow1] = useState(false);
   const [show2, setShow2] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   if (!open) return null;
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
+  const compactLayout = (pageMode && !isWidePageMode) || (typeof window !== "undefined" ? window.innerWidth <= 520 : true);
 
   const hasLen = String(password || "").length >= 8;
   const hasUpper = /[A-Z]/.test(String(password || ""));
@@ -12535,18 +13237,15 @@ function ChangePasswordModal({
   const fieldInputStyle = {
     ...inputStyle,
     width: "100%",
-    minHeight: 72,
-    borderRadius: 22,
-    paddingLeft: 20,
-    paddingRight: 92,
-    fontSize: 24,
-    border: "1px solid #d7d7d7",
-    background: "#ffffff",
-    color: "#111111",
+    minHeight: 48,
+    borderRadius: 14,
+    paddingLeft: 14,
+    paddingRight: 74,
+    fontSize: 16,
   };
   const fieldShowButtonStyle = {
     position: "absolute",
-    right: 18,
+    right: 12,
     top: "50%",
     transform: "translateY(-50%)",
     border: "none",
@@ -12555,44 +13254,76 @@ function ChangePasswordModal({
     fontWeight: 800,
     cursor: "pointer",
     padding: 0,
-    fontSize: 24,
+    fontSize: 12.5,
     lineHeight: 1,
   };
 
   return (
     <ModalShell
       open={open}
-      zIndex={10012}
+      zIndex={10072}
+      fullScreen={pageMode}
+      overlayStyle={pageMode ? {
+        top: pageTopInset,
+        left: 0,
+        right: 0,
+        bottom: pageBottomInset,
+        inset: "unset",
+        background: "var(--sl-ui-modal-bg)",
+        display: "block",
+      } : null}
       panelStyle={{
-        width: "min(720px, 100%)",
-        padding: 32,
-        borderRadius: 24,
-        gap: 20,
+        width: pageMode ? "100%" : compactLayout ? "min(420px, 100%)" : "min(520px, 100%)",
+        padding: pageMode ? (isWidePageMode ? 24 : 20) : compactLayout ? 20 : 24,
+        borderRadius: pageMode ? 0 : compactLayout ? 20 : 24,
+        gap: 14,
+        height: pageMode ? "100%" : undefined,
+        alignContent: "start",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-        <div style={{ fontSize: 32, lineHeight: 1.05, fontWeight: 950, color: "#111111" }}>Change Password</div>
+      {pageMode ? (
         <button
-          onClick={onClose}
+          type="button"
+          onClick={onBack || onClose}
           style={{
-            width: 68,
-            height: 68,
-            borderRadius: 20,
-            border: "1px solid #d8d8d8",
-            background: "#ffffff",
-            color: "#111111",
+            width: "fit-content",
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            color: "var(--sl-ui-modal-btn-secondary-text)",
+            fontSize: 13,
             fontWeight: 900,
-            fontSize: 30,
             cursor: "pointer",
           }}
-          aria-label="Close"
-          title="Close"
         >
-          ×
+          ← Back
         </button>
+      ) : null}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div style={{ fontSize: pageMode ? (isWidePageMode ? 28 : 18) : 22, lineHeight: 1.1, fontWeight: 950, color: "#111111" }}>Change Password</div>
+        {!pageMode ? (
+          <button
+            onClick={onClose}
+            style={{
+              width: compactLayout ? 42 : 48,
+              height: compactLayout ? 42 : 48,
+              borderRadius: compactLayout ? 14 : 16,
+              border: "1px solid #d8d8d8",
+              background: "#ffffff",
+              color: "#111111",
+              fontWeight: 900,
+              fontSize: compactLayout ? 24 : 28,
+              cursor: "pointer",
+            }}
+            aria-label="Close"
+            title="Close"
+          >
+            ×
+          </button>
+        ) : null}
       </div>
 
-      <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "grid", gap: isWidePageMode ? 12 : 10, maxWidth: isWidePageMode ? "720px" : undefined }}>
         <div style={fieldWrapStyle}>
           <input
             aria-label="New Password"
@@ -12631,10 +13362,10 @@ function ChangePasswordModal({
             {show2 ? "Hide" : "Show"}
           </button>
         </div>
-        <div style={{ fontSize: 18, fontWeight: 900, color: "#252525" }}>
+        <div style={{ fontSize: isWidePageMode ? 13.5 : 12.5, fontWeight: 900, color: "#252525", opacity: 0.9 }}>
           Password Requirements
         </div>
-        <div style={{ fontSize: 18, lineHeight: 1.35, display: "grid", gap: 4 }}>
+        <div style={{ fontSize: isWidePageMode ? 13.5 : 12.5, lineHeight: 1.35, display: "grid", gap: 2 }}>
           <div style={{ color: reqColor(hasLen), fontWeight: 800 }}>- 8 or more characters</div>
           <div style={{ color: reqColor(hasUpper), fontWeight: 800 }}>- 1 uppercase</div>
           <div style={{ color: reqColor(hasLower), fontWeight: 800 }}>- 1 lowercase</div>
@@ -12665,17 +13396,13 @@ function ChangePasswordModal({
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <button
           onClick={onClose}
           style={{
             ...btnSecondary,
-            minHeight: 74,
-            borderRadius: 22,
-            fontSize: 18,
-            border: "1px solid #d7d7d7",
-            background: "#ffffff",
-            color: "#111111",
+            minHeight: 48,
+            borderRadius: 14,
           }}
           disabled={saving}
         >
@@ -12685,9 +13412,8 @@ function ChangePasswordModal({
           onClick={onSubmit}
           style={{
             ...btnPrimary,
-            minHeight: 74,
-            borderRadius: 22,
-            fontSize: 18,
+            minHeight: 48,
+            borderRadius: 14,
             background: "#8c98ae",
             opacity: canSubmit ? 1 : 0.75,
             cursor: canSubmit ? "pointer" : "not-allowed",
@@ -12726,7 +13452,7 @@ function RecoveryPasswordModal({
   const reqColor = (ok) => (ok ? "#2ecc71" : "#ff5252");
 
   return (
-    <ModalShell open={open} zIndex={10015}>
+    <ModalShell open={open} zIndex={10075}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Set New Password</div>
         <button
@@ -12850,6 +13576,9 @@ function FollowedLocationsModal({
   loading = false,
   busyKey = "",
   onSetFollowed,
+  currentTenantKey = "",
+  currentCityLabel = "",
+  onSwitchTenant,
   darkMode = false,
   pageMode = false,
   pageTopInset = "0px",
@@ -12895,16 +13624,20 @@ function FollowedLocationsModal({
     : [];
 
   const sectionEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const tileBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.10)";
   const tileBackground = darkMode
     ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
     : "linear-gradient(180deg, rgba(251, 253, 255, 0.96) 0%, rgba(242, 247, 251, 0.96) 100%)";
+
+  const currentTenantKeyNormalized = String(currentTenantKey || "").trim().toLowerCase();
 
   const cityRow = (city, { searching = false } = {}) => {
     const key = String(city?.tenantKey || city?.tenant_key || "").trim().toLowerCase();
     if (!key) return null;
     const isFollowed = followedKeySet.has(key);
     const isBusy = String(busyKey || "").trim().toLowerCase() === key;
+    const isCurrent = key === currentTenantKeyNormalized;
     const label = String(city?.displayName || city?.name || key).trim() || key;
     const sublabel = String(city?.primarySubdomain || city?.routeSlug || `${key}.cityreport.io`).trim();
     return (
@@ -12917,22 +13650,63 @@ function FollowedLocationsModal({
           alignItems: "center",
           padding: "13px 14px",
           borderRadius: 18,
-          border: tileBorder,
+          border: isCurrent
+            ? "1px solid rgba(25,118,210,0.38)"
+            : tileBorder,
           background: tileBackground,
         }}
       >
-        <div style={{ minWidth: 0, display: "grid", gap: 3 }}>
+        <button
+          type="button"
+          disabled={searching || isBusy || !isFollowed || isCurrent || typeof onSwitchTenant !== "function"}
+          onClick={() => {
+            if (!searching && isFollowed && !isCurrent) {
+              void onSwitchTenant?.(key);
+            }
+          }}
+          style={{
+            minWidth: 0,
+            display: "grid",
+            gap: 3,
+            textAlign: "left",
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            margin: 0,
+            color: "var(--sl-ui-text)",
+            cursor: !searching && isFollowed && !isCurrent && typeof onSwitchTenant === "function"
+              ? "pointer"
+              : "default",
+          }}
+          title={!searching && isFollowed && !isCurrent ? `Switch to ${label}` : label}
+        >
           <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.15, color: "var(--sl-ui-text)" }}>
             {label}
           </div>
           <div style={{ fontSize: 12.5, lineHeight: 1.35, opacity: 0.72, overflowWrap: "anywhere" }}>
             {sublabel}
           </div>
-        </div>
+          {!searching && isCurrent ? (
+            <div style={{ fontSize: 11.5, fontWeight: 800, opacity: 0.72 }}>
+              Current location
+            </div>
+          ) : null}
+          {!searching && isFollowed && !isCurrent ? (
+            <div style={{ fontSize: 11.5, fontWeight: 800, opacity: 0.72 }}>
+              Tap to switch
+            </div>
+          ) : null}
+        </button>
         <button
           type="button"
           disabled={isBusy}
-          onClick={() => onSetFollowed?.(key, !isFollowed)}
+          onClick={() => {
+            if (isFollowed) {
+              const ok = window.confirm(`Remove ${label} from My Locations?`);
+              if (!ok) return;
+            }
+            onSetFollowed?.(key, !isFollowed);
+          }}
           style={{
             padding: "9px 12px",
             borderRadius: 999,
@@ -12984,7 +13758,7 @@ function FollowedLocationsModal({
           minHeight: 0,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : "22px 22px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? (isWidePageMode ? "22px 22px 16px" : "14px 14px 12px") : "22px 22px 18px" }}>
           <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
             {pageMode ? (
               <button
@@ -13004,15 +13778,20 @@ function FollowedLocationsModal({
                 ← Back
               </button>
             ) : null}
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
-              Followed Locations
+            <div style={{ fontSize: isWidePageMode ? 13 : 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
+              My Locations
             </div>
-            <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+            <div style={{ fontSize: isWidePageMode ? 30 : 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
               Your city list
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
-              Followed cities appear in the Switch City menu. Search to add another public map.
+            <div style={{ fontSize: isWidePageMode ? 15 : 13, lineHeight: 1.45, opacity: 0.82, maxWidth: isWidePageMode ? "62ch" : undefined }}>
+              Tap a saved city to switch locations. Search to add another public map.
             </div>
+            {!!String(currentCityLabel || "").trim() ? (
+              <div style={{ fontSize: 12.5, lineHeight: 1.35, opacity: 0.78 }}>
+                <b>Current location:</b> {String(currentCityLabel).trim()}
+              </div>
+            ) : null}
           </div>
           {!pageMode ? (
             <button
@@ -13036,13 +13815,13 @@ function FollowedLocationsModal({
           ) : null}
         </div>
 
-        <div style={{ overflowY: "auto", padding: pageMode ? "12px 14px 18px" : "0 22px 22px", display: "grid", alignContent: "start", gap: 14 }}>
+        <div style={{ overflowY: "auto", padding: pageMode ? (isWidePageMode ? "16px 22px 24px" : "12px 14px 18px") : "0 22px 22px", display: "grid", alignContent: "start", gap: 14 }}>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search city name"
-            style={{ ...inputStyle, width: "100%", borderRadius: 16 }}
+            style={{ ...inputStyle, width: "100%", borderRadius: 16, minHeight: isWidePageMode ? 50 : undefined, fontSize: isWidePageMode ? 15 : undefined }}
             autoCapitalize="words"
             autoCorrect="off"
           />
@@ -13065,13 +13844,13 @@ function FollowedLocationsModal({
               </div>
               {loading ? (
                 <div style={{ padding: "14px 16px", borderRadius: 18, border: tileBorder, background: tileBackground, fontSize: 13.5, opacity: 0.82 }}>
-                  Loading followed locations…
+                  Loading your locations…
                 </div>
               ) : followedCities.length ? (
                 followedCities.map((city) => cityRow(city))
               ) : (
                 <div style={{ padding: "14px 16px", borderRadius: 18, border: tileBorder, background: tileBackground, fontSize: 13.5, opacity: 0.82, lineHeight: 1.45 }}>
-                  You are not following any locations yet. Search above to add your first city.
+                  You do not have any saved locations yet. Search above to add your first city.
                 </div>
               )}
             </div>
@@ -13102,6 +13881,7 @@ function AccountMenuPanel({
   pageBottomInset = "0px",
 }) {
   if (!open) return null;
+  const isWidePage = variant === "mobile-page" && typeof window !== "undefined" && window.innerWidth >= 900;
 
   const sessionEmail = session?.user?.email || "";
   const meta = session?.user?.user_metadata || {};
@@ -13128,6 +13908,10 @@ function AccountMenuPanel({
   const eyebrowStyle = darkMode ? { color: "#9cb6cf" } : null;
   const titleStyle = darkMode ? { color: "#edf6ff" } : null;
   const subtitleStyle = darkMode ? { color: "#c4d6e8" } : null;
+  const wideButtonStyle = isWidePage ? { fontSize: 16, padding: "14px 16px", borderRadius: 16 } : null;
+  const wideEyebrowStyle = isWidePage ? { fontSize: 13 } : null;
+  const wideTitleStyle = isWidePage ? { fontSize: 26 } : null;
+  const wideMetaStyle = isWidePage ? { fontSize: 15 } : null;
   const buttonStyle = darkMode
     ? {
         border: "1px solid rgba(143, 170, 198, 0.24)",
@@ -13139,31 +13923,31 @@ function AccountMenuPanel({
   const menuBody = session ? (
     <>
       <div className="workspace-menu-account">
-        <div className="workspace-menu-eyebrow" style={eyebrowStyle}>
+        <div className="workspace-menu-eyebrow" style={{ ...(eyebrowStyle || {}), ...(wideEyebrowStyle || {}) }}>
           Signed In
         </div>
-        <div className="workspace-menu-title" style={titleStyle}>{displayName}</div>
-        <div className="workspace-menu-meta" style={subtitleStyle}>{displayEmail}</div>
+        <div className="workspace-menu-title" style={{ ...(titleStyle || {}), ...(wideTitleStyle || {}) }}>{displayName}</div>
+        <div className="workspace-menu-meta" style={{ ...(subtitleStyle || {}), ...(wideMetaStyle || {}) }}>{displayEmail}</div>
       </div>
 
       <div className="workspace-menu-actions">
-        <button onClick={onManage} className="workspace-menu-button" style={buttonStyle}>
+        <button onClick={onManage} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           Manage Account
         </button>
-        <button onClick={onFollowedLocations} className="workspace-menu-button" style={buttonStyle}>
-          Followed Locations
+        <button onClick={onFollowedLocations} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
+          My Locations
         </button>
         {showNotificationPreferences ? (
-          <button onClick={onNotificationPreferences} className="workspace-menu-button" style={buttonStyle}>
+          <button onClick={onNotificationPreferences} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
             Notification Preferences
           </button>
         ) : null}
         {variant === "desktop-popout" || variant === "modal" ? (
-          <button onClick={onMyReports} className="workspace-menu-button" style={buttonStyle}>
+          <button onClick={onMyReports} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
             My Reports
           </button>
         ) : null}
-        <button onClick={onLogout} className="workspace-menu-button" style={buttonStyle}>
+        <button onClick={onLogout} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           Logout
         </button>
       </div>
@@ -13171,13 +13955,13 @@ function AccountMenuPanel({
   ) : (
     <>
       <div className="workspace-menu-account">
-        <div className="workspace-menu-eyebrow" style={eyebrowStyle}>
+        <div className="workspace-menu-eyebrow" style={{ ...(eyebrowStyle || {}), ...(wideEyebrowStyle || {}) }}>
           Account
         </div>
-        <div className="workspace-menu-title" style={titleStyle}>
+        <div className="workspace-menu-title" style={{ ...(titleStyle || {}), ...(wideTitleStyle || {}) }}>
           Log in or create an account
         </div>
-        <div className="workspace-menu-subtitle" style={subtitleStyle}>
+        <div className="workspace-menu-subtitle" style={{ ...(subtitleStyle || {}), ...(wideMetaStyle || {}) }}>
           Sign in to view your report history and manage your account.
         </div>
       </div>
@@ -13189,7 +13973,7 @@ function AccountMenuPanel({
             window.__openAuthGate?.("login");
           }}
           className="workspace-menu-button"
-          style={buttonStyle}
+          style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}
         >
           Log in
         </button>
@@ -13199,12 +13983,12 @@ function AccountMenuPanel({
             window.__openAuthGate?.("signup");
           }}
           className="workspace-menu-button"
-          style={buttonStyle}
+          style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}
         >
           Create account
         </button>
         {variant === "modal" ? (
-          <button onClick={onClose} className="workspace-menu-button" style={buttonStyle}>
+          <button onClick={onClose} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
             Close
           </button>
         ) : null}
@@ -13308,15 +14092,15 @@ function AccountMenuPanel({
           style={{
             height: "100%",
             overflowY: "auto",
-            padding: "14px 14px 20px",
+            padding: isWidePage ? "24px 24px 28px" : "14px 14px 20px",
           }}
         >
-          <div style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 24, fontWeight: 950, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+          <div style={{ display: "grid", gap: isWidePage ? 18 : 14 }}>
+            <div style={{ display: "grid", gap: isWidePage ? 8 : 6 }}>
+              <div style={{ fontSize: isWidePage ? 32 : 24, fontWeight: 950, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
                 Account
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.78 }}>
+              <div style={{ fontSize: isWidePage ? 16 : 13, lineHeight: 1.45, opacity: 0.78, maxWidth: isWidePage ? "68ch" : undefined }}>
                 Manage your sign-in, profile, notifications, and account actions.
               </div>
             </div>
@@ -13324,7 +14108,10 @@ function AccountMenuPanel({
             <div
               className="workspace-menu-panel"
               style={{
-                borderRadius: 18,
+                width: isWidePage ? "min(560px, 100%)" : undefined,
+                maxWidth: isWidePage ? "100%" : undefined,
+                borderRadius: isWidePage ? 22 : 18,
+                padding: isWidePage ? "30px 34px 34px" : undefined,
                 ...(panelStyle || {}),
               }}
             >
@@ -13508,27 +14295,10 @@ function MobileHeaderMenuPanel({
           </button>
         </div>
         <div className="workspace-menu-actions" style={{ display: "grid", gap: 10 }}>
-          {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
-            <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
-              Switch Location
-            </button>
-          ) : null}
-          {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
-            <button onClick={onOpenLocationDiagnostics} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
-              Location Diagnostics
-            </button>
-          ) : null}
-          <button onClick={onContactUs} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
-            Contact Us
-          </button>
-          <button onClick={onOpenAbout} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
-            About
-          </button>
           {residentMenuLinks.length ? (
             <>
               <div
                 style={{
-                  marginTop: 4,
                   fontSize: 11,
                   fontWeight: 900,
                   letterSpacing: "0.08em",
@@ -13545,9 +14315,10 @@ function MobileHeaderMenuPanel({
                   className="workspace-menu-button"
                   style={{
                     width: "100%",
+                    display: "grid",
                     justifyItems: "start",
                     textAlign: "left",
-                    gap: 4,
+                    gap: 6,
                     ...(buttonStyle || {}),
                   }}
                   onClick={() => {
@@ -13556,9 +14327,21 @@ function MobileHeaderMenuPanel({
                     }
                   }}
                 >
-                  <span style={{ fontSize: 15.5, fontWeight: 900 }}>{String(linkRow?.label || "").trim() || "Open Link"}</span>
+                  <span style={{ display: "block", width: "100%", fontSize: 15.5, fontWeight: 900 }}>
+                    {String(linkRow?.label || "").trim() || "Open Link"}
+                  </span>
                   {String(linkRow?.description || "").trim() ? (
-                    <span style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, opacity: 0.76 }}>
+                    <span
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        lineHeight: 1.35,
+                        opacity: 0.76,
+                        whiteSpace: "normal",
+                      }}
+                    >
                       {String(linkRow.description).trim()}
                     </span>
                   ) : null}
@@ -13566,6 +14349,22 @@ function MobileHeaderMenuPanel({
               ))}
             </>
           ) : null}
+          {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
+            <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+              Switch Location
+            </button>
+          ) : null}
+          {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
+            <button onClick={onOpenLocationDiagnostics} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+              Location Diagnostics
+            </button>
+          ) : null}
+          <button onClick={onContactUs} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            Contact Us
+          </button>
+          <button onClick={onOpenAbout} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            About
+          </button>
         </div>
       </div>
     </div>
@@ -13726,6 +14525,7 @@ function NotificationPreferencesModal({
   pageBottomInset = "0px",
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const hasError = String(status || "").toLowerCase().includes("could not");
   const sectionEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
   const topicCardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
@@ -13776,7 +14576,7 @@ function NotificationPreferencesModal({
           minHeight: 0,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? "14px 14px 12px" : "22px 22px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: pageMode ? (isWidePageMode ? "22px 22px 16px" : "14px 14px 12px") : "22px 22px 18px" }}>
           <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
             {pageMode ? (
               <button
@@ -13796,13 +14596,13 @@ function NotificationPreferencesModal({
                 ← Back
               </button>
             ) : null}
-            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
+            <div style={{ fontSize: isWidePageMode ? 13 : 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: sectionEyebrowColor }}>
               Notification Preferences
             </div>
-            <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
+            <div style={{ fontSize: isWidePageMode ? 30 : 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
               Events and alerts
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+            <div style={{ fontSize: isWidePageMode ? 15 : 13, lineHeight: 1.45, opacity: 0.82, maxWidth: isWidePageMode ? "62ch" : undefined }}>
               Manage the same resident notification categories used in the hub. In-app and email are the available delivery channels.
             </div>
           </div>
@@ -13898,7 +14698,7 @@ function NotificationPreferencesModal({
         <div
           style={{
             overflowY: "auto",
-            padding: pageMode ? "0 10px 0 14px" : "0 14px 0 22px",
+            padding: pageMode ? (isWidePageMode ? "0 18px 0 22px" : "0 10px 0 14px") : "0 14px 0 22px",
             marginRight: 4,
             minHeight: 0,
             WebkitOverflowScrolling: "touch",
@@ -13909,17 +14709,17 @@ function NotificationPreferencesModal({
           ) : (
             <div style={{ display: "grid", gap: 14, paddingBottom: 12 }}>
               {topics.map((topic) => {
-                const current = preferencesByTopic?.[topic.topic_key] || {
-                  in_app_enabled: Boolean(topic.default_enabled),
-                  email_enabled: false,
-                  web_push_enabled: false,
-                };
+                const current = normalizeResidentNotificationDraft(
+                  topic.topic_key,
+                  preferencesByTopic?.[topic.topic_key] || {},
+                  topics,
+                );
                 return (
                   <article
                     key={topic.topic_key}
                     style={{
-                      padding: 18,
-                      borderRadius: 20,
+                      padding: isWidePageMode ? 22 : 18,
+                      borderRadius: isWidePageMode ? 22 : 20,
                       border: topicCardBorder,
                       background: topicCardBackground,
                       display: "grid",
@@ -13927,8 +14727,8 @@ function NotificationPreferencesModal({
                     }}
                   >
                     <div style={{ display: "grid", gap: 6 }}>
-                      <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.2 }}>{topic.label}</h4>
-                      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.45, color: topicDescriptionColor }}>{topic.description}</p>
+                      <h4 style={{ margin: 0, fontSize: isWidePageMode ? 21 : 18, lineHeight: 1.2 }}>{topic.label}</h4>
+                      <p style={{ margin: 0, fontSize: isWidePageMode ? 14.5 : 13, lineHeight: 1.45, color: topicDescriptionColor }}>{topic.description}</p>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: checkboxLabelColor }}>
@@ -14035,6 +14835,7 @@ function ResidentFeedWindow({
   createLabel = "",
   onCreate = null,
 }) {
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const headerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
   const eyebrowBadgeTone = darkMode
     ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
@@ -14083,6 +14884,7 @@ function ResidentFeedWindow({
           gridTemplateRows: "auto minmax(0, 1fr)",
           height: pageMode ? "100%" : undefined,
           maxHeight: pageMode ? undefined : "min(88vh, 900px)",
+          minHeight: 0,
         }}
       >
         <div
@@ -14091,7 +14893,7 @@ function ResidentFeedWindow({
             justifyContent: "space-between",
             alignItems: "flex-start",
             gap: 14,
-            padding: pageMode ? "14px 14px 12px" : "22px 22px 18px",
+            padding: pageMode ? (isWidePageMode ? "20px 22px 16px" : "14px 14px 12px") : "22px 22px 18px",
             borderBottom: headerBorder,
           }}
         >
@@ -14109,20 +14911,20 @@ function ResidentFeedWindow({
             <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
               <div
                 style={{
-                  width: 46,
-                  height: 46,
-                  borderRadius: 16,
+                  width: isWidePageMode ? 54 : 46,
+                  height: isWidePageMode ? 54 : 46,
+                  borderRadius: isWidePageMode ? 18 : 16,
                   ...iconShellStyle,
                   display: "grid",
                   placeItems: "center",
                   flex: "0 0 auto",
                 }}
               >
-                <AppIcon src={iconSrc} size={26} />
+                <AppIcon src={iconSrc} size={isWidePageMode ? 30 : 26} />
               </div>
               <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>{title}</div>
-                <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82, color: subtitleColor }}>{subtitle}</div>
+                <div style={{ fontSize: isWidePageMode ? 30 : 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>{title}</div>
+                <div style={{ fontSize: isWidePageMode ? 15.5 : 13, lineHeight: 1.45, opacity: 0.82, color: subtitleColor, maxWidth: isWidePageMode ? "68ch" : undefined }}>{subtitle}</div>
               </div>
             </div>
           </div>
@@ -14159,7 +14961,16 @@ function ResidentFeedWindow({
           </div>
         </div>
 
-        <div style={{ overflowY: "auto", padding: pageMode ? "14px 10px 18px 14px" : "18px 18px 20px 22px", marginRight: 4 }}>
+        <div
+          style={{
+            overflowY: "auto",
+            padding: pageMode ? (isWidePageMode ? "18px 18px 28px 22px" : "14px 10px 18px 14px") : "18px 18px 20px 22px",
+            marginRight: 4,
+            minHeight: 0,
+            WebkitOverflowScrolling: "touch",
+            overscrollBehavior: "contain",
+          }}
+        >
           {loading && !items.length ? (
             <div style={{ fontSize: 13, opacity: 0.82, color: subtitleColor }}>Loading updates…</div>
           ) : error ? (
@@ -14189,10 +15000,13 @@ function AlertsWindow({
   pageBottomInset = "0px",
   canCreate = false,
   canEdit = false,
+  newItemKeys = [],
   onCreate = null,
   onEdit = null,
 }) {
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const activeCount = useMemo(() => countActivePublishedAlerts(alerts), [alerts]);
+  const sessionNewKeySet = useMemo(() => new Set(Array.isArray(newItemKeys) ? newItemKeys : []), [newItemKeys]);
   const countLabel = activeCount === 1 ? "1 active alert" : `${activeCount} active alerts`;
   const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
   const cardBackground = darkMode
@@ -14233,6 +15047,7 @@ function AlertsWindow({
       createLabel={canCreate ? "Create" : ""}
       onCreate={canCreate ? onCreate : null}
       renderItem={(alert) => {
+        const isNew = sessionNewKeySet.has(mapCommunityFeedItemReadKey(alert));
         const severityKey = String(alert?.severity || "info").trim().toLowerCase();
         const severityTone =
           severityKey === "emergency"
@@ -14260,12 +15075,12 @@ function AlertsWindow({
           <article
             key={`map-alert-${alert.id}`}
             style={{
-              padding: 18,
-              borderRadius: 20,
+              padding: isWidePageMode ? 22 : 18,
+              borderRadius: isWidePageMode ? 22 : 20,
               border: cardBorder,
               background: cardBackground,
               display: "grid",
-              gap: 12,
+              gap: isWidePageMode ? 14 : 12,
             }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -14279,6 +15094,17 @@ function AlertsWindow({
                 {alert?.topic_label ? (
                   <div style={residentFeedBadgeStyle(topicTone)}>
                     {alert.topic_label}
+                  </div>
+                ) : null}
+                {isNew ? (
+                  <div
+                    style={residentFeedBadgeStyle(
+                      darkMode
+                        ? { bg: "rgba(95, 208, 180, 0.22)", border: "rgba(126, 231, 195, 0.24)", color: "#c6f5e8" }
+                        : { bg: "rgba(28, 169, 118, 0.12)", border: "rgba(28, 169, 118, 0.18)", color: "#13684d" }
+                    )}
+                  >
+                    New
                   </div>
                 ) : null}
                 {canEdit && alert?.status ? (
@@ -14298,11 +15124,11 @@ function AlertsWindow({
               ) : null}
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: titleColor }}>{alert.title || "Untitled alert"}</h3>
-              {alert.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: summaryColor }}>{alert.summary}</p> : null}
-              {alert.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: bodyColor }}>{alert.body}</p> : null}
+              <h3 style={{ margin: 0, fontSize: isWidePageMode ? 24 : 20, lineHeight: 1.15, color: titleColor }}>{alert.title || "Untitled alert"}</h3>
+              {alert.summary ? <p style={{ margin: 0, fontSize: isWidePageMode ? 16 : 14, lineHeight: 1.5, color: summaryColor }}>{alert.summary}</p> : null}
+              {alert.body ? <p style={{ margin: 0, fontSize: isWidePageMode ? 15 : 13.5, lineHeight: 1.55, color: bodyColor }}>{alert.body}</p> : null}
             </div>
-            <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: metaColor, lineHeight: 1.45 }}>
+            <div style={{ display: "grid", gap: 4, fontSize: isWidePageMode ? 14 : 12.5, color: metaColor, lineHeight: 1.45 }}>
               <div>{formatResidentAlertWindow(alert)}</div>
               {alert.location_name || alert.location_address ? (
                 <div>{[alert.location_name, alert.location_address].filter(Boolean).join(" • ")}</div>
@@ -14349,10 +15175,13 @@ function EventsWindow({
   pageBottomInset = "0px",
   canCreate = false,
   canEdit = false,
+  newItemKeys = [],
   onCreate = null,
   onEdit = null,
 }) {
+  const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
   const upcomingCount = useMemo(() => countUpcomingPublishedEvents(events), [events]);
+  const sessionNewKeySet = useMemo(() => new Set(Array.isArray(newItemKeys) ? newItemKeys : []), [newItemKeys]);
   const countLabel = upcomingCount === 1 ? "1 upcoming event" : `${upcomingCount} upcoming events`;
   const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
   const cardBackground = darkMode
@@ -14398,79 +15227,93 @@ function EventsWindow({
       pageBottomInset={pageBottomInset}
       createLabel={canCreate ? "Create" : ""}
       onCreate={canCreate ? onCreate : null}
-      renderItem={(event) => (
-        <article
-          key={`map-event-${event.id}`}
-          style={{
-            padding: 18,
-            borderRadius: 20,
-            border: cardBorder,
-            background: cardBackground,
-            display: "grid",
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-              <div style={residentFeedBadgeStyle(topicTone)}>
-                {event.topic_label || event.topic_key || "Event"}
+      renderItem={(event) => {
+        const isNew = sessionNewKeySet.has(mapCommunityFeedItemReadKey(event));
+        return (
+          <article
+            key={`map-event-${event.id}`}
+            style={{
+              padding: isWidePageMode ? 22 : 18,
+              borderRadius: isWidePageMode ? 22 : 20,
+              border: cardBorder,
+              background: cardBackground,
+              display: "grid",
+              gap: isWidePageMode ? 14 : 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                <div style={residentFeedBadgeStyle(topicTone)}>
+                  {event.topic_label || event.topic_key || "Event"}
+                </div>
+                {isNew ? (
+                  <div
+                    style={residentFeedBadgeStyle(
+                      darkMode
+                        ? { bg: "rgba(95, 208, 180, 0.22)", border: "rgba(126, 231, 195, 0.24)", color: "#c6f5e8" }
+                        : { bg: "rgba(28, 169, 118, 0.12)", border: "rgba(28, 169, 118, 0.18)", color: "#13684d" }
+                    )}
+                  >
+                    New
+                  </div>
+                ) : null}
+                {event.all_day ? (
+                  <div style={residentFeedBadgeStyle(allDayTone)}>
+                    All day
+                  </div>
+                ) : null}
+                {canEdit && event?.status ? (
+                  <div style={residentFeedBadgeStyle(residentCommunityStatusTone(event.status, darkMode))}>
+                    {residentCommunityStatusLabel(event.status)}
+                  </div>
+                ) : null}
               </div>
-              {event.all_day ? (
-                <div style={residentFeedBadgeStyle(allDayTone)}>
-                  All day
-                </div>
-              ) : null}
-              {canEdit && event?.status ? (
-                <div style={residentFeedBadgeStyle(residentCommunityStatusTone(event.status, darkMode))}>
-                  {residentCommunityStatusLabel(event.status)}
-                </div>
+              {canEdit && typeof onEdit === "function" ? (
+                <button
+                  type="button"
+                  onClick={() => onEdit(event)}
+                  style={residentFeedAdminButtonStyle(darkMode)}
+                >
+                  Edit
+                </button>
               ) : null}
             </div>
-            {canEdit && typeof onEdit === "function" ? (
-              <button
-                type="button"
-                onClick={() => onEdit(event)}
-                style={residentFeedAdminButtonStyle(darkMode)}
-              >
-                Edit
-              </button>
-            ) : null}
-          </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            <h3 style={{ margin: 0, fontSize: 20, lineHeight: 1.15, color: titleColor }}>{event.title || "Untitled event"}</h3>
-            {event.summary ? <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: summaryColor }}>{event.summary}</p> : null}
-            {event.body ? <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: bodyColor }}>{event.body}</p> : null}
-          </div>
-          <div style={{ display: "grid", gap: 4, fontSize: 12.5, color: metaColor, lineHeight: 1.45 }}>
-            <div>{formatResidentEventRange(event)}</div>
-            {event.location_name || event.location_address ? (
-              <div>{[event.location_name, event.location_address].filter(Boolean).join(" • ")}</div>
-            ) : null}
-          </div>
-          {event.cta_url ? (
-            <div style={{ display: "flex", justifyContent: "flex-start" }}>
-              <a
-                href={event.cta_url}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "10px 14px",
-                  borderRadius: 999,
-                  ...ctaStyle,
-                  textDecoration: "none",
-                  fontSize: 13,
-                  fontWeight: 800,
-                }}
-              >
-                {event.cta_label || "Event details"}
-              </a>
+            <div style={{ display: "grid", gap: 6 }}>
+              <h3 style={{ margin: 0, fontSize: isWidePageMode ? 24 : 20, lineHeight: 1.15, color: titleColor }}>{event.title || "Untitled event"}</h3>
+              {event.summary ? <p style={{ margin: 0, fontSize: isWidePageMode ? 16 : 14, lineHeight: 1.5, color: summaryColor }}>{event.summary}</p> : null}
+              {event.body ? <p style={{ margin: 0, fontSize: isWidePageMode ? 15 : 13.5, lineHeight: 1.55, color: bodyColor }}>{event.body}</p> : null}
             </div>
-          ) : null}
-        </article>
-      )}
+            <div style={{ display: "grid", gap: 4, fontSize: isWidePageMode ? 14 : 12.5, color: metaColor, lineHeight: 1.45 }}>
+              <div>{formatResidentEventRange(event)}</div>
+              {event.location_name || event.location_address ? (
+                <div>{[event.location_name, event.location_address].filter(Boolean).join(" • ")}</div>
+              ) : null}
+            </div>
+            {event.cta_url ? (
+              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                <a
+                  href={event.cta_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    ...ctaStyle,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  {event.cta_label || "Event details"}
+                </a>
+              </div>
+            ) : null}
+          </article>
+        );
+      }}
     />
   );
 }
@@ -15125,7 +15968,7 @@ function buildLightHistory({ reportRows, fixActionRows }) {
         kind: "fix",
         ts,
         label: "Marked fixed",
-        note: "",
+        note: a.note || "",
         actor_name: actorName || null,
         actor_email: actorEmail || null,
         actor_phone: actorPhone || null,
@@ -15249,6 +16092,8 @@ export default function App({ onBackToHub = null }) {
   );
   const preserveReportFlyTargetCameraRef = useRef(Boolean(initialReportDeepLinkRef.current?.hasFlyTarget));
   const isMobile = useIsMobile(640);
+  const useAppShellLayout = isMobile || isNativeAppRuntime();
+  const useNativeAppBehavior = useAppShellLayout;
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -15298,12 +16143,30 @@ export default function App({ onBackToHub = null }) {
     tenant?.appScope === "map" &&
     Array.isArray(tenant?.availableTenants) &&
     tenant.availableTenants.length > 1;
+  const useWideAppShellHeader = useAppShellLayout && !isMobile;
   const mobileBottomRailHeight = "calc(env(safe-area-inset-bottom) + 68px)";
   const mobileBottomRailOffset = "calc(env(safe-area-inset-bottom) + 92px)";
   const mobileReportsPageBottomInset = "calc(env(safe-area-inset-bottom) + 68px)";
-  const mobileTabPageTopInset = "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
-  const mobileHeaderContentTopInset = "calc(env(safe-area-inset-top) + 50px)";
-  const mobileHeaderBottomInset = 16;
+  const mobileTabPageTopInset = useWideAppShellHeader
+    ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 14px)"
+    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
+  const mobileHeaderContentTopInset = useWideAppShellHeader
+    ? "calc(env(safe-area-inset-top) + 14px)"
+    : "calc(env(safe-area-inset-top) + 50px)";
+  const mobileHeaderBottomInset = useWideAppShellHeader ? 10 : 16;
+  const mobileHeaderMinHeight = useWideAppShellHeader
+    ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 8px)"
+    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
+  const mobileHeaderCopyMaxWidth = useWideAppShellHeader
+    ? "min(560px, calc(100vw - 220px))"
+    : "min(420px, calc(100vw - 132px))";
+  const mobileHeaderCopyPadding = useWideAppShellHeader ? "0 12px" : "0 20px";
+  const mobileHeaderTitleSize = useWideAppShellHeader ? "clamp(18px, 2vw, 24px)" : undefined;
+  const mobileHeaderEyebrowSize = useWideAppShellHeader ? 9 : 10;
+  const mobileHeaderGuardrailMarginTop = useWideAppShellHeader ? 0 : 2;
+  const mobileHeaderGuardrailPadding = useWideAppShellHeader ? "2px 7px" : "3px 8px";
+  const mobileHeaderGuardrailFontSize = useWideAppShellHeader ? 9 : 10;
+  const mobileHeaderTitleMarginTop = useWideAppShellHeader && environmentGuardrailLabel ? -3 : 0;
   const mobileMapToolButtonStyle = {
     width: 40,
     height: 40,
@@ -15717,6 +16580,9 @@ export default function App({ onBackToHub = null }) {
   const [domainReportNote, setDomainReportNote] = useState("");
   const [domainReportImageFile, setDomainReportImageFile] = useState(null);
   const [domainReportImagePreviewUrl, setDomainReportImagePreviewUrl] = useState("");
+  const [markFixedImageFile, setMarkFixedImageFile] = useState(null);
+  const [markFixedImagePreviewUrl, setMarkFixedImagePreviewUrl] = useState("");
+  const [markFixedSubmitting, setMarkFixedSubmitting] = useState(false);
   const [domainReportIssue, setDomainReportIssue] = useState(defaultDomainIssueFor("water_drain_issues"));
   const [potholeConsentChecked, setPotholeConsentChecked] = useState(false);
   const [streetlightUtilityContext, setStreetlightUtilityContext] = useState({
@@ -15756,6 +16622,18 @@ export default function App({ onBackToHub = null }) {
     };
   }, [domainReportImageFile]);
 
+  useEffect(() => {
+    if (!markFixedImageFile) {
+      setMarkFixedImagePreviewUrl("");
+      return;
+    }
+    const url = URL.createObjectURL(markFixedImageFile);
+    setMarkFixedImagePreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [markFixedImageFile]);
+
   // Notice modal state
   const [notice, setNotice] = useState({ open: false, icon: "", title: "", message: "", compact: false });
   const [reportSuccess, setReportSuccess] = useState({
@@ -15764,6 +16642,8 @@ export default function App({ onBackToHub = null }) {
     domainKey: "",
     title: "",
     message: "",
+    reportNumbers: [],
+    submittedAt: 0,
   });
   const noticeTimerRef = useRef(null);
   const dbConnectionStartedAtRef = useRef(Date.now());
@@ -15825,6 +16705,12 @@ export default function App({ onBackToHub = null }) {
       domainKey: String(opts?.domainKey || "").trim(),
       title: String(opts?.title || "Report saved").trim() || "Report saved",
       message: String(opts?.message || "").trim(),
+      reportNumbers: Array.isArray(opts?.reportNumbers)
+        ? opts.reportNumbers.map((value) => String(value || "").trim()).filter(Boolean)
+        : String(opts?.reportNumber || "").trim()
+          ? [String(opts.reportNumber).trim()]
+          : [],
+      submittedAt: Number(opts?.submittedAt || 0),
     });
   }
 
@@ -15980,13 +16866,17 @@ export default function App({ onBackToHub = null }) {
 
   const [allReportsModal, setAllReportsModal] = useState({
     open: false,
+    incidentKey: "",
     title: "",
     items: [],
     domainKey: "streetlights",
     incidentLabel: "",
     sharedLocation: "",
     sharedAddress: "",
+    sharedCrossStreet: "",
     sharedLandmark: "",
+    sharedCoordinates: "",
+    geoLoading: false,
     currentState: "",
     lastChangedAt: "",
   });
@@ -16050,6 +16940,10 @@ export default function App({ onBackToHub = null }) {
     alertsReadIds: [],
     eventsReadIds: [],
   });
+  const [alertsSessionNewKeys, setAlertsSessionNewKeys] = useState([]);
+  const [eventsSessionNewKeys, setEventsSessionNewKeys] = useState([]);
+  const alertsFeedMarkedForOpenRef = useRef(false);
+  const eventsFeedMarkedForOpenRef = useRef(false);
 
   function preferredInitialDomainKey(options = []) {
     const list = Array.isArray(options) ? options.filter(Boolean) : [];
@@ -16160,13 +17054,17 @@ export default function App({ onBackToHub = null }) {
   function openAllReports(title, items, opts = {}) {
     setAllReportsModal({
       open: true,
+      incidentKey: String(opts?.incidentKey || "").trim(),
       title: title || "All Reports",
       items: items || [],
       domainKey: String(opts?.domainKey || "streetlights").trim() || "streetlights",
       incidentLabel: String(opts?.incidentLabel || "").trim(),
       sharedLocation: String(opts?.sharedLocation || "").trim(),
       sharedAddress: String(opts?.sharedAddress || "").trim(),
+      sharedCrossStreet: String(opts?.sharedCrossStreet || "").trim(),
       sharedLandmark: String(opts?.sharedLandmark || "").trim(),
+      sharedCoordinates: String(opts?.sharedCoordinates || "").trim(),
+      geoLoading: Boolean(opts?.geoLoading),
       currentState: String(opts?.currentState || "").trim(),
       lastChangedAt: String(opts?.lastChangedAt || "").trim(),
     });
@@ -16438,22 +17336,33 @@ export default function App({ onBackToHub = null }) {
     return await runInsert(payloadNoActorCols);
   }
 
-  async function markPotholeFixed(marker, noteText = "") {
+  async function markPotholeFixed(marker, noteText = "", options = {}) {
     const pid = String(marker?.pothole_id || "").trim();
     if (!pid || !session?.user?.id) return;
     const noteClean = String(noteText || "").trim();
     const lightActionId = `pothole:${pid}`;
+    const actor = currentIncidentActionActor();
+    const actionNote = composeIncidentActionAuditNote(noteClean, {
+      actorName: actor.name,
+      actorEmail: actor.email,
+      actorPhone: actor.phone,
+      imageUrl: options?.imageUrl || "",
+      imagePath: options?.imagePath || "",
+      imageMimeType: options?.imageMimeType || "",
+      imageFileName: options?.imageFileName || "",
+      capturedAt: options?.capturedAt || "",
+    });
     const { error } = await insertLightActionsWithFallback([{
       tenant_key: activeTenantKey(),
       light_id: lightActionId,
       action: "fix",
-      note: noteClean || null,
-      actor_user_id: session.user.id,
+      note: actionNote,
+      actor_user_id: actor.userId,
     }]);
     if (error) {
       console.error("[pothole mark fixed] insert error:", error);
       openNotice("⚠️", "Couldn’t mark fixed", error.message || "Please try again.");
-      return;
+      return false;
     }
 
     const ts = Date.now();
@@ -16462,15 +17371,11 @@ export default function App({ onBackToHub = null }) {
       list.unshift({
         action: "fix",
         ts,
-        note: noteClean || null,
-        actor_user_id: session.user.id,
-        actor_name:
-          String(profile?.full_name || "").trim() ||
-          String(session?.user?.user_metadata?.full_name || "").trim() ||
-          String(session?.user?.email || "").split("@")[0] ||
-          null,
-        actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
-        actor_phone: normalizePhone(profile?.phone || "") || null,
+        note: actionNote,
+        actor_user_id: actor.userId,
+        actor_name: actor.name || null,
+        actor_email: actor.email || null,
+        actor_phone: actor.phone || null,
       });
       return { ...(prev || {}), [lightActionId]: list };
     });
@@ -16486,6 +17391,7 @@ export default function App({ onBackToHub = null }) {
     });
     setSelectedDomainMarker(null);
     openNotice("✅", "Marked fixed", "Pothole marked fixed.");
+    return true;
   }
 
   function stopLeafletPropagation(e) {
@@ -16876,7 +17782,7 @@ export default function App({ onBackToHub = null }) {
   }, []);
 
   useEffect(() => {
-    if (!accountMenuOpen || isMobile || typeof window === "undefined") return undefined;
+    if (!accountMenuOpen || useAppShellLayout || typeof window === "undefined") return undefined;
 
     const handlePointerDown = (event) => {
       const anchor = desktopAccountMenuAnchorRef.current;
@@ -16899,7 +17805,7 @@ export default function App({ onBackToHub = null }) {
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [accountMenuOpen, isMobile]);
+  }, [accountMenuOpen, useAppShellLayout]);
 
   useEffect(() => {
     let cancelled = false;
@@ -16936,11 +17842,7 @@ export default function App({ onBackToHub = null }) {
 
       const next = {};
       for (const row of data || []) {
-        next[row.topic_key] = {
-          in_app_enabled: Boolean(row?.in_app_enabled),
-          email_enabled: Boolean(row?.email_enabled),
-          web_push_enabled: Boolean(row?.web_push_enabled),
-        };
+        next[row.topic_key] = normalizeResidentNotificationDraft(row?.topic_key, row, notificationTopics);
       }
       setNotificationPreferencesByTopic(next);
       setSavedNotificationPreferencesByTopic(next);
@@ -16955,16 +17857,24 @@ export default function App({ onBackToHub = null }) {
   }, [session?.user?.id, tenant?.tenantKey]);
 
   const updateNotificationPreferenceDraft = useCallback((topicKey, field, nextValue) => {
-    setNotificationPreferencesByTopic((prev) => ({
-      ...prev,
-      [topicKey]: {
-        in_app_enabled: prev?.[topicKey]?.in_app_enabled ?? Boolean(RESIDENT_NOTIFICATION_TOPIC_DETAILS?.[topicKey]?.default_enabled),
-        email_enabled: prev?.[topicKey]?.email_enabled ?? false,
-        web_push_enabled: prev?.[topicKey]?.web_push_enabled ?? false,
+    setNotificationPreferencesByTopic((prev) => {
+      const current = normalizeResidentNotificationDraft(topicKey, prev?.[topicKey] || {}, notificationTopics);
+      const nextDraft = {
+        ...current,
         [field]: nextValue,
-      },
-    }));
-  }, []);
+      };
+      if (field === "email_enabled" && nextValue) {
+        nextDraft.in_app_enabled = true;
+      }
+      if (field === "in_app_enabled" && !nextValue && nextDraft.email_enabled) {
+        nextDraft.email_enabled = false;
+      }
+      return {
+        ...prev,
+        [topicKey]: normalizeResidentNotificationDraft(topicKey, nextDraft, notificationTopics),
+      };
+    });
+  }, [notificationTopics]);
 
   useEffect(() => {
     if (showNotificationPreferencesEntry) return;
@@ -16980,14 +17890,18 @@ export default function App({ onBackToHub = null }) {
     setNotificationPreferencesSaving(true);
     setNotificationPreferencesStatus("");
     const rows = notificationTopics.map((topic) => {
-      const current = notificationPreferencesByTopic?.[topic.topic_key] || {};
+      const current = normalizeResidentNotificationDraft(
+        topic.topic_key,
+        notificationPreferencesByTopic?.[topic.topic_key] || {},
+        notificationTopics,
+      );
       return {
         tenant_key: activeTenantKey(),
         user_id: session.user.id,
         topic_key: topic.topic_key,
-        in_app_enabled: current.in_app_enabled ?? Boolean(topic.default_enabled),
+        in_app_enabled: current.in_app_enabled,
         email_enabled: current.email_enabled ?? false,
-        web_push_enabled: current.web_push_enabled ?? false,
+        web_push_enabled: false,
       };
     });
 
@@ -17005,24 +17919,27 @@ export default function App({ onBackToHub = null }) {
     setNotificationPreferencesStatus("Notification preferences saved.");
     setNotificationPreferencesOpen(false);
     setAccountView("menu");
-    if (isMobile) setAccountMenuOpen(true);
-  }, [isMobile, notificationPreferencesByTopic, notificationTopics, session?.user?.id]);
+    if (useAppShellLayout) setAccountMenuOpen(true);
+  }, [notificationPreferencesByTopic, notificationTopics, session?.user?.id, useAppShellLayout]);
 
   const nativePushShouldRegister = useMemo(() => {
-    if (!showNotificationPreferencesEntry) return false;
-    return notificationTopics.some((topic) => (
-      isResidentFeedInAppTopicEnabled(topic.topic_key, savedNotificationPreferencesByTopic, notificationTopics)
-    ));
-  }, [notificationTopics, savedNotificationPreferencesByTopic, showNotificationPreferencesEntry]);
+    if (!NATIVE_PUSH_ENABLED) return false;
+    if (!isNativeAppRuntime()) return false;
+    return Boolean(showNotificationPreferencesEntry);
+  }, [showNotificationPreferencesEntry]);
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageEditing, setManageEditing] = useState(false);
   const [manageSaving, setManageSaving] = useState(false);
   const [manageForm, setManageForm] = useState({ full_name: "", phone: "" });
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deleteAccountSaving, setDeleteAccountSaving] = useState(false);
+  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
+  const [deleteAccountDisclosureAccepted, setDeleteAccountDisclosureAccepted] = useState(false);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [reauthSaving, setReauthSaving] = useState(false);
   const [reauthPassword, setReauthPassword] = useState("");
-  const [reauthIntent, setReauthIntent] = useState(null); // "edit_profile" | "save_profile"
+  const [reauthIntent, setReauthIntent] = useState(null); // "edit_profile" | "save_profile" | "delete_account"
   const reauthAtRef = useRef(0);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [changePasswordSaving, setChangePasswordSaving] = useState(false);
@@ -17038,11 +17955,72 @@ export default function App({ onBackToHub = null }) {
     setAccountMenuOpen(false);
     setManageOpen(false);
     setManageEditing(false);
+    setDeleteAccountOpen(false);
+    setDeleteAccountConfirmText("");
+    setDeleteAccountDisclosureAccepted(false);
     setNotificationPreferencesOpen(false);
     setNotificationPreferencesStatus("");
     setFollowedLocationsOpen(false);
     setAccountView("menu");
   }, []);
+
+  const clearDeleteAccountQuery = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has("deleteAccount")) return;
+      url.searchParams.delete("deleteAccount");
+      const next = `${url.pathname}${url.searchParams.toString() ? `?${url.searchParams.toString()}` : ""}${url.hash || ""}`;
+      window.history.replaceState({}, document.title, next);
+    } catch {
+      // ignore URL cleanup failures
+    }
+  }, []);
+
+  const openDeleteAccountFlow = useCallback(() => {
+    setManageOpen(true);
+    setManageEditing(false);
+    setDeleteAccountConfirmText("");
+    setDeleteAccountDisclosureAccepted(false);
+    setDeleteAccountOpen(true);
+    setAccountView("manage");
+    setAccountMenuOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const requestedByQuery = readDeleteAccountDeepLinkRequest(window.location.search || "");
+    if (!session?.user?.id) {
+      if (!requestedByQuery) return;
+      try {
+        window.sessionStorage.setItem(PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY, "1");
+      } catch {
+        // ignore storage failures
+      }
+      clearDeleteAccountQuery();
+      window.setTimeout(() => {
+        setAccountView("menu");
+        setAccountMenuOpen(false);
+        setAuthGateStep("login");
+        setAuthGateOpen(true);
+      }, 0);
+      return;
+    }
+
+    let pendingDelete = false;
+    try {
+      pendingDelete = String(window.sessionStorage.getItem(PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY) || "").trim() === "1";
+      if (pendingDelete) window.sessionStorage.removeItem(PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY);
+    } catch {
+      // ignore storage failures
+    }
+    if (!pendingDelete && !requestedByQuery) return;
+    clearDeleteAccountQuery();
+    window.setTimeout(() => {
+      openDeleteAccountFlow();
+    }, 0);
+  }, [clearDeleteAccountQuery, openDeleteAccountFlow, session?.user?.id]);
 
   const showAdminTools = isAdmin || showAdminLogin;
 
@@ -18112,9 +19090,41 @@ export default function App({ onBackToHub = null }) {
   }, [authReady, loadMapCommunityFeed, resolvedCommunityFeedTenantKey, tenant?.ready]);
 
   useEffect(() => {
+    if (!authReady || tenant?.ready === false || !resolvedCommunityFeedTenantKey) return undefined;
+    if (typeof window === "undefined" || typeof document === "undefined") return undefined;
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadMapCommunityFeed();
+    };
+
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [authReady, loadMapCommunityFeed, resolvedCommunityFeedTenantKey, tenant?.ready]);
+
+  useEffect(() => {
+    if (!authReady || tenant?.ready === false || !resolvedCommunityFeedTenantKey) return undefined;
+    if (typeof window === "undefined" || typeof document === "undefined") return undefined;
+
+    const pollMs = 10000;
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadMapCommunityFeed();
+    }, pollMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [authReady, loadMapCommunityFeed, resolvedCommunityFeedTenantKey, tenant?.ready]);
+
+  useEffect(() => {
     if (!NATIVE_PUSH_ENABLED) return undefined;
     if (!isNativeAppRuntime()) return undefined;
-    if (!session?.user?.id) return undefined;
+    if (!session?.user?.id || !nativePushShouldRegister) return undefined;
 
     let cancelled = false;
     const listenerHandles = [];
@@ -18174,7 +19184,7 @@ export default function App({ onBackToHub = null }) {
         }
       }
     };
-  }, [loadMapCommunityFeed, resolvedCommunityFeedTenantKey, session?.user?.id]);
+  }, [loadMapCommunityFeed, nativePushShouldRegister, resolvedCommunityFeedTenantKey, session?.user?.id]);
 
   useEffect(() => {
     if (!NATIVE_PUSH_ENABLED) return;
@@ -18258,6 +19268,49 @@ export default function App({ onBackToHub = null }) {
     setCommunityFeedEditorError("");
   }, [communityFeedDeleting, communityFeedSaving]);
 
+  const shouldSendResidentNotificationEmail = useCallback((currentStatus, nextStatus) => {
+    const previous = trimResidentFeedValue(currentStatus).toLowerCase();
+    const next = trimResidentFeedValue(nextStatus).toLowerCase();
+    return next === "published" && previous !== "published";
+  }, []);
+
+  const triggerResidentNotificationEmail = useCallback(async ({ kind, item }) => {
+    const safeKind = kind === "event" ? "event" : "alert";
+    const safeItem = item && typeof item === "object" ? item : null;
+    if (!safeItem || trimResidentFeedValue(safeItem.status).toLowerCase() !== "published") {
+      return { ok: true, skipped: true, reason: "status_not_published" };
+    }
+
+    const { data, error } = await supabase.functions.invoke("send-resident-notification", {
+      body: {
+        tenant_key: trimResidentFeedValue(safeItem.tenant_key),
+        kind: safeKind,
+        item: safeItem,
+      },
+    });
+
+    if (error) {
+      return {
+        ok: false,
+        error: trimResidentFeedValue(error.message) || "Could not send resident email notifications.",
+      };
+    }
+    if (data?.ok === false) {
+      return {
+        ok: false,
+        error: trimResidentFeedValue(data?.error) || "Could not send resident email notifications.",
+      };
+    }
+    return {
+      ok: true,
+      skipped: Boolean(data?.skipped),
+      sentCount: Number(data?.sent_count || 0),
+      attemptedCount: Number(data?.attempted_count || 0),
+      failures: Array.isArray(data?.failures) ? data.failures : [],
+      reason: trimResidentFeedValue(data?.reason),
+    };
+  }, []);
+
   const saveCommunityFeedEditor = useCallback(async (event) => {
     event.preventDefault();
     if (!canManageCommunityFeed || communityFeedSaving || communityFeedDeleting) return;
@@ -18330,13 +19383,14 @@ export default function App({ onBackToHub = null }) {
           : new Date().toISOString())
         : null;
 
+    const shouldSendEmail = shouldSendResidentNotificationEmail(currentStatus, payload.status);
     setCommunityFeedSaving(true);
     setCommunityFeedEditorError("");
     const tableName = isEvent ? "municipality_events" : "municipality_alerts";
     const query = isEditing
-      ? supabase.from(tableName).update(payload).eq("tenant_key", tenantKey).eq("id", communityFeedEditor.item.id)
-      : supabase.from(tableName).insert([payload]);
-    const { error } = await query;
+      ? supabase.from(tableName).update(payload).eq("tenant_key", tenantKey).eq("id", communityFeedEditor.item.id).select("*").single()
+      : supabase.from(tableName).insert([payload]).select("*").single();
+    const { data: savedItem, error } = await query;
     setCommunityFeedSaving(false);
 
     if (error) {
@@ -18345,9 +19399,24 @@ export default function App({ onBackToHub = null }) {
     }
 
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
-    openNotice("✅", isEvent ? "Event saved" : "Alert saved", `${isEvent ? "Event" : "Alert"} was saved successfully.`, {
-      autoCloseMs: 1400,
-      compact: true,
+    let successMessage = `${isEvent ? "Event" : "Alert"} was saved successfully.`;
+    if (shouldSendEmail) {
+      const notificationResult = await triggerResidentNotificationEmail({
+        kind,
+        item: savedItem && typeof savedItem === "object" ? savedItem : {
+          id: communityFeedEditor.item?.id || null,
+          ...payload,
+        },
+      });
+      if (!notificationResult.ok) {
+        successMessage = `${successMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+      } else if (!notificationResult.skipped) {
+        successMessage = `${successMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+      }
+    }
+    openNotice("✅", isEvent ? "Event saved" : "Alert saved", successMessage, {
+      autoCloseMs: successMessage.includes("Resident email notifications") ? 3200 : 1400,
+      compact: !successMessage.includes("Resident email notifications"),
     });
     await loadMapCommunityFeed();
   }, [
@@ -18360,6 +19429,8 @@ export default function App({ onBackToHub = null }) {
     communityFeedSaving,
     loadMapCommunityFeed,
     resolvedCommunityFeedTenantKey,
+    shouldSendResidentNotificationEmail,
+    triggerResidentNotificationEmail,
   ]);
 
   const deleteCommunityFeedItem = useCallback(async () => {
@@ -18409,14 +19480,64 @@ export default function App({ onBackToHub = null }) {
   ]);
 
   useEffect(() => {
-    if (!alertsWindowOpen || mapCommunityFeedLoading) return;
+    if (!alertsWindowOpen) {
+      alertsFeedMarkedForOpenRef.current = false;
+      setAlertsSessionNewKeys([]);
+      return;
+    }
+    if (mapCommunityFeedLoading || alertsFeedMarkedForOpenRef.current) return;
+    const enabledAlerts = filterResidentFeedItemsForInAppPreferences(
+      filterVisibleResidentCommunityItems(mapCommunityAlerts),
+      savedNotificationPreferencesByTopic,
+      notificationTopics,
+    );
+    setAlertsSessionNewKeys(
+      enabledAlerts
+        .filter((item) => isUnreadMapCommunityFeedItem(item, mapCommunityFeedReadState, "alerts"))
+        .map((item) => mapCommunityFeedItemReadKey(item))
+        .filter(Boolean)
+    );
+    alertsFeedMarkedForOpenRef.current = true;
     markMapCommunityFeedViewed("alerts");
-  }, [alertsWindowOpen, mapCommunityFeedLoading, mapCommunityAlerts, markMapCommunityFeedViewed]);
+  }, [
+    alertsWindowOpen,
+    mapCommunityAlerts,
+    mapCommunityFeedLoading,
+    mapCommunityFeedReadState,
+    markMapCommunityFeedViewed,
+    notificationTopics,
+    savedNotificationPreferencesByTopic,
+  ]);
 
   useEffect(() => {
-    if (!eventsWindowOpen || mapCommunityFeedLoading) return;
+    if (!eventsWindowOpen) {
+      eventsFeedMarkedForOpenRef.current = false;
+      setEventsSessionNewKeys([]);
+      return;
+    }
+    if (mapCommunityFeedLoading || eventsFeedMarkedForOpenRef.current) return;
+    const enabledEvents = filterResidentFeedItemsForInAppPreferences(
+      filterVisibleResidentCommunityItems(mapCommunityEvents),
+      savedNotificationPreferencesByTopic,
+      notificationTopics,
+    );
+    setEventsSessionNewKeys(
+      enabledEvents
+        .filter((item) => isUnreadMapCommunityFeedItem(item, mapCommunityFeedReadState, "events"))
+        .map((item) => mapCommunityFeedItemReadKey(item))
+        .filter(Boolean)
+    );
+    eventsFeedMarkedForOpenRef.current = true;
     markMapCommunityFeedViewed("events");
-  }, [eventsWindowOpen, mapCommunityFeedLoading, mapCommunityEvents, markMapCommunityFeedViewed]);
+  }, [
+    eventsWindowOpen,
+    mapCommunityEvents,
+    mapCommunityFeedLoading,
+    mapCommunityFeedReadState,
+    markMapCommunityFeedViewed,
+    notificationTopics,
+    savedNotificationPreferencesByTopic,
+  ]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
@@ -18640,6 +19761,7 @@ export default function App({ onBackToHub = null }) {
         const rows = Array.isArray(data)
           ? data.map((row, idx) => ({
               id: `summary-${idx}-${String(row?.domain || "unknown")}-${String(row?.reason || "flag")}-${Number(row?.severity || 0)}`,
+              _source: "summary_metrics_open_abuse_flags_v1",
               domain: row?.domain || "unknown",
               reason: row?.reason || "flag",
               severity: Number(row?.severity || 0),
@@ -18665,9 +19787,14 @@ export default function App({ onBackToHub = null }) {
   const acknowledgeModerationFlag = useCallback(async (row, note = "") => {
     if (!isAdmin || !row) return;
     const id = Number(row?.id);
-    if (!Number.isFinite(id)) return;
     const source = String(row?._source || (row?.status ? "abuse_anomaly_flags" : "abuse_events")).trim() || "abuse_events";
     const cleanNote = String(note || "").trim();
+    const summaryMode = source.startsWith("summary");
+    const summaryDomain = String(row?.domain || "").trim();
+    const summaryReason = String(row?.reason || row?.event_type || row?.flag_type || "").trim();
+
+    if (!summaryMode && !Number.isFinite(id)) return;
+    if (summaryMode && (!summaryDomain || !summaryReason)) return;
 
     setModerationFlagsError("");
     setModerationFlagsLoading(true);
@@ -18675,61 +19802,54 @@ export default function App({ onBackToHub = null }) {
     let lastErr = null;
 
     try {
-      const { data, error } = await supabase.rpc("acknowledge_moderation_flag", {
-        p_source: source,
-        p_id: id,
-        p_note: cleanNote || null,
-      });
-      if (error) {
-        lastErr = error;
+      if (summaryMode) {
+        const { data, error } = await supabase.rpc("acknowledge_moderation_flag_summary", {
+          p_domain: summaryDomain,
+          p_reason: summaryReason,
+          p_note: cleanNote || null,
+        });
+        if (error) {
+          lastErr = error;
+        } else {
+          saved = Number(data || 0) > 0;
+          if (!saved) lastErr = new Error("No open moderation flags matched this summary");
+        }
       } else {
-        saved = data !== false;
+        const { data, error } = await supabase.rpc("acknowledge_moderation_flag", {
+          p_source: source,
+          p_id: id,
+          p_note: cleanNote || null,
+        });
+        if (error) {
+          lastErr = error;
+        } else {
+          saved = data !== false;
+        }
       }
     } catch (err) {
       lastErr = err;
     }
 
-    if (!saved) {
+    if (summaryMode && !saved && /permission denied/i.test(String(lastErr?.message || lastErr || ""))) {
       try {
-        if (source === "abuse_anomaly_flags") {
-          const { error } = await supabase
-            .from("abuse_anomaly_flags")
-            .update({
-              status: "reviewed",
-              reviewed_at: new Date().toISOString(),
-              reviewed_by: session?.user?.id || null,
-              review_note: cleanNote || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", id)
-            .eq("status", "open");
-          if (error) {
-            lastErr = error;
-          } else {
-            saved = true;
-          }
-        } else {
-          const { error } = await supabase
-            .from("abuse_events")
-            .update({
-              acknowledged_at: new Date().toISOString(),
-              acknowledged_by: session?.user?.id || null,
-              acknowledgement_note: cleanNote || null,
-            })
-            .eq("id", id);
-          if (error) {
-            lastErr = error;
-          } else {
-            saved = true;
-          }
-        }
+        await loadModerationFlagRows();
+        const stillOpen = (moderationFlagRows || []).some((item) => String(item?.domain || "").trim() === summaryDomain
+          && String(item?.reason || item?.event_type || item?.flag_type || "").trim() === summaryReason);
+        if (!stillOpen) saved = true;
       } catch (err) {
         lastErr = err;
       }
     }
 
     if (saved) {
-      setModerationFlagRows((prev) => (prev || []).filter((item) => String(item?.id) !== String(id) || String(item?._source || source) !== source));
+      setModerationFlagRows((prev) => {
+        if (summaryMode) {
+          return (prev || []).filter((item) => !(String(item?._source || "").startsWith("summary")
+            && String(item?.domain || "").trim() === summaryDomain
+            && String(item?.reason || "").trim() === summaryReason));
+        }
+        return (prev || []).filter((item) => String(item?.id) !== String(id) || String(item?._source || source) !== source);
+      });
       await loadOpenAbuseFlagSummary({ silent: true });
       await loadModerationFlagRows();
       setModerationFlagsLoading(false);
@@ -18738,7 +19858,7 @@ export default function App({ onBackToHub = null }) {
 
     setModerationFlagsError(String(lastErr?.message || lastErr || "Unable to acknowledge moderation flag"));
     setModerationFlagsLoading(false);
-  }, [isAdmin, loadModerationFlagRows, loadOpenAbuseFlagSummary, session?.user?.id]);
+  }, [isAdmin, loadModerationFlagRows, loadOpenAbuseFlagSummary, moderationFlagRows]);
 
   useEffect(() => {
     if (!moderationFlagsOpen) return;
@@ -19080,6 +20200,69 @@ export default function App({ onBackToHub = null }) {
     openNotice("✅", "Saved", "Your account details were updated.");
   }
 
+  async function performDeleteAccount() {
+    if (!session?.user?.id) return;
+
+    setDeleteAccountSaving(true);
+    const { data, error } = await supabase.functions.invoke("delete-user-self", { body: {} });
+    setDeleteAccountSaving(false);
+
+    if (error || data?.ok === false) {
+      const message = data?.error || error?.message || "Please try again.";
+      if (String(data?.code || "").trim() === "staff_account") {
+        openNotice("⚠️", "Support required", message || "Accounts with organization access must be deleted by support.");
+        return;
+      }
+      openNotice("⚠️", "Couldn’t delete account", message);
+      return;
+    }
+
+    try {
+      window.sessionStorage.removeItem(PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY);
+    } catch {
+      // ignore storage failures
+    }
+    clearDeleteAccountQuery();
+    setDeleteAccountOpen(false);
+    setDeleteAccountConfirmText("");
+    setDeleteAccountDisclosureAccepted(false);
+    setManageOpen(false);
+    setManageEditing(false);
+    setAccountMenuOpen(false);
+    setNotificationPreferencesOpen(false);
+    setFollowedLocationsOpen(false);
+    setAccountView("menu");
+    reauthAtRef.current = 0;
+
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore sign-out failures after account deletion
+    }
+    markCrossTenantLogout();
+    setSession(null);
+    setProfile(null);
+    openNotice(
+      "✅",
+      "Account deleted",
+      "Your account has been deleted. Some report records may remain with personal details removed."
+    );
+  }
+
+  function requestDeleteAccount() {
+    if (String(deleteAccountConfirmText || "").trim().toUpperCase() !== "DELETE") {
+      openNotice("⚠️", "Confirmation required", "Type DELETE to confirm account removal.");
+      return;
+    }
+    if (!deleteAccountDisclosureAccepted) {
+      openNotice("⚠️", "Agreement required", "Please confirm the account deletion disclosure before continuing.");
+      return;
+    }
+    setReauthIntent("delete_account");
+    setReauthPassword("");
+    setReauthOpen(true);
+  }
+
   async function handleChangePassword() {
     const p1 = String(changePasswordValue || "");
     const p2 = String(changePasswordValue2 || "");
@@ -19203,6 +20386,9 @@ export default function App({ onBackToHub = null }) {
     if (intent === "save_profile") {
       saveManagedProfile();
       return;
+    }
+    if (intent === "delete_account") {
+      void performDeleteAccount();
     }
   }
 
@@ -19506,7 +20692,7 @@ export default function App({ onBackToHub = null }) {
       }
 
       // Potholes (dedicated tables)
-      const potholeSelect = "id, ph_id, lat, lng, location_label, created_at";
+      const potholeSelect = "id, ph_id, lat, lng, location_label, nearest_address, nearest_cross_street, nearest_landmark, created_at";
       const potholeReportSelect =
         "id, pothole_id, lat, lng, note, report_number, created_at, reporter_user_id, reporter_name, reporter_phone, reporter_email";
       let potholeData = [];
@@ -19730,6 +20916,9 @@ export default function App({ onBackToHub = null }) {
               lat: Number(p.lat),
               lng: Number(p.lng),
               location_label: (p.location_label || "").trim() || null,
+              nearest_address: String(p?.nearest_address || "").trim() || "",
+              nearest_cross_street: String(p?.nearest_cross_street || "").trim() || "",
+              nearest_landmark: String(p?.nearest_landmark || "").trim() || "",
             }))
             .filter((p) => p.id && isValidLatLng(p.lat, p.lng))
         );
@@ -20492,7 +21681,7 @@ export default function App({ onBackToHub = null }) {
     !infoMenuOpen &&
     !citySwitcherOpen &&
     !mobileHeaderMenuOpen;
-  const accountTabActive = accountMenuOpen || manageOpen || notificationPreferencesOpen || followedLocationsOpen;
+  const accountTabActive = accountMenuOpen || manageOpen || deleteAccountOpen || notificationPreferencesOpen || followedLocationsOpen;
   const activeMobileTabKey = myReportsOpen
     ? "reports"
     : alertsWindowOpen
@@ -21298,6 +22487,7 @@ export default function App({ onBackToHub = null }) {
           }
           const isPublic = count >= 2;
           const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
           if (!isPublic && !isPrivateOwn) return null;
           return {
             ...m,
@@ -21336,6 +22526,7 @@ export default function App({ onBackToHub = null }) {
           }
           const isPublic = count >= 2;
           const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
           if (!isPublic && !isPrivateOwn) return null;
           const privateOwnYellow = officialStatusFromSinceFixCount(1).color;
           return {
@@ -23599,6 +24790,8 @@ export default function App({ onBackToHub = null }) {
   async function uploadDomainReportImageIfAny(file, domainKey, reportKeyHint = "") {
     const f = file instanceof File ? file : null;
     if (!f) return "";
+    const uploadPayload = await buildNativeSafeImageUploadPayload(f);
+    if (!uploadPayload?.body) return "";
     const tenantKey = activeTenantKey();
     const domain = normalizeDomainKey(domainKey || "general");
     const ext = extFromFileName(f.name, "jpg");
@@ -23606,14 +24799,45 @@ export default function App({ onBackToHub = null }) {
     const rand = Math.random().toString(36).slice(2, 9);
     const keyHint = String(reportKeyHint || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
     const path = `${tenantKey}/${domain}/${new Date().toISOString().slice(0, 10)}/${ts}_${keyHint || "report"}_${rand}.${ext}`;
-    const { error: upErr } = await supabase.storage.from("report-images").upload(path, f, {
+    const { error: upErr } = await supabase.storage.from("report-images").upload(path, uploadPayload.body, {
       cacheControl: "3600",
       upsert: false,
-      contentType: f.type || undefined,
+      contentType: uploadPayload.contentType,
     });
     if (upErr) throw upErr;
     const { data } = supabase.storage.from("report-images").getPublicUrl(path);
     return String(data?.publicUrl || "").trim();
+  }
+
+  async function uploadIncidentActionImageIfAny(file, incidentIdRaw, actionType = "fix") {
+    const f = file instanceof File ? file : null;
+    if (!f) return null;
+    const uploadPayload = await buildNativeSafeImageUploadPayload(f);
+    if (!uploadPayload?.body) return null;
+    const tenantKey = activeTenantKey();
+    const incidentId = String(incidentIdRaw || "").trim();
+    const domain = normalizeDomainKey(domainForIncidentId(incidentId) || "streetlights");
+    const ext = extFromFileName(f.name, "jpg");
+    const ts = Date.now();
+    const rand = Math.random().toString(36).slice(2, 9);
+    const incidentHint = incidentId.replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 48) || "incident";
+    const actionHint = String(actionType || "fix").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 16) || "fix";
+    const path = `${tenantKey}/${domain}/incident-actions/${new Date().toISOString().slice(0, 10)}/${ts}_${actionHint}_${incidentHint}_${rand}.${ext}`;
+    const contentType = uploadPayload.contentType;
+    const { error: uploadError } = await supabase.storage.from("report-images").upload(path, uploadPayload.body, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType,
+    });
+    if (uploadError) throw uploadError;
+    const { data } = supabase.storage.from("report-images").getPublicUrl(path);
+    return {
+      publicUrl: String(data?.publicUrl || "").trim(),
+      path,
+      contentType: contentType || "",
+      fileName: String(f.name || "").trim(),
+      capturedAt: new Date().toISOString(),
+    };
   }
 
   function municipalBoundaryGate(domainKey, lat, lng, { showNotice = true } = {}) {
@@ -23687,6 +24911,8 @@ export default function App({ onBackToHub = null }) {
     domainSubmitInFlightRef.current = true;
     setSaving(true);
     let persistedSubmission = false;
+    let successReportNumbers = [];
+    let successSubmittedAt = 0;
     try {
       const boundaryLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target.sourceLat) : Number(target?.lat);
       const boundaryLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target.sourceLng) : Number(target?.lng);
@@ -23902,6 +25128,8 @@ export default function App({ onBackToHub = null }) {
         reporter_phone: insReport.data?.reporter_phone || null,
         reporter_email: insReport.data?.reporter_email || null,
       };
+      successReportNumbers = [String(saved.report_number || "").trim()].filter(Boolean);
+      successSubmittedAt = saved.ts || Date.now();
       if (saved.id) {
         setPotholeReports((prev) => (prev.some((x) => x.id === saved.id) ? prev : [saved, ...prev]));
       }
@@ -24037,6 +25265,8 @@ export default function App({ onBackToHub = null }) {
         reporter_phone: data.reporter_phone || null,
         reporter_email: data.reporter_email || null,
       };
+      successReportNumbers = [String(saved.report_number || "").trim()].filter(Boolean);
+      successSubmittedAt = saved.ts || Date.now();
       setReports((prev) => [saved, ...prev]);
       await refreshIncidentRepairProgress(viewerIdentityKey);
       persistedSubmission = true;
@@ -24132,6 +25362,8 @@ export default function App({ onBackToHub = null }) {
         domainKey: target.domain,
         title: `${target.domainLabel || "Issue"} reported`,
         message: "Your report is now visible on the map and in Reports. You can track it there anytime.",
+        reportNumbers: successReportNumbers,
+        submittedAt: successSubmittedAt || Date.now(),
       });
     } finally {
       if (!persistedSubmission && submitKey) {
@@ -24379,6 +25611,7 @@ async function insertReportWithFallback(payload) {
         note: savedWorking.note || "",
         ts: new Date(savedWorking.created_at).getTime(),
         light_id: savedWorking.light_id || lid,
+        report_number: savedWorking.report_number || null,
         reporter_user_id: savedWorking.reporter_user_id || null,
         reporter_name: savedWorking.reporter_name || normName,
         reporter_phone: savedWorking.reporter_phone || normPhone,
@@ -24389,7 +25622,14 @@ async function insertReportWithFallback(payload) {
     });
 
     if (!isAuthed) clearGuestContact();
-    openNotice("✅", "Thanks", "Reported working.");
+    openReportSuccess({
+      kind: "incident",
+      domainKey: "streetlights",
+      title: "Working report saved",
+      message: "This report is now visible in Reports for your records.",
+      reportNumber: String(savedWorking.report_number || "").trim(),
+      submittedAt: Date.parse(String(savedWorking.created_at || Date.now())) || Date.now(),
+    });
   }
 
   async function submitIncidentRepairConfirmation(incidentIdRaw, domainKeyRaw) {
@@ -24701,6 +25941,8 @@ async function insertReportWithFallback(payload) {
       domainKey: "streetlights",
       title: "Light saved",
       message: "This light is now in Reports so you can follow it and report it to the utility.",
+      reportNumber: saved.report_number || "",
+      submittedAt: saved.ts || Date.now(),
     });
   }
 
@@ -24978,6 +26220,8 @@ async function insertReportWithFallback(payload) {
 
   let okCount = 0;
   let skipAlreadyReported = 0;
+  const bulkReportNumbers = [];
+  let lastBulkSubmitTs = 0;
 
   for (const lightId of ids) {
     // identity guard (one report per light since last fixed)
@@ -25041,6 +26285,10 @@ async function insertReportWithFallback(payload) {
       reporter_phone: data.reporter_phone || null,
       reporter_email: data.reporter_email || null,
     };
+    if (String(saved.report_number || "").trim()) {
+      bulkReportNumbers.push(String(saved.report_number || "").trim());
+    }
+    lastBulkSubmitTs = Math.max(lastBulkSubmitTs, Number(saved.ts || 0));
 
     setReports((prev) => [saved, ...prev]);
 
@@ -25063,7 +26311,14 @@ async function insertReportWithFallback(payload) {
   if (!isAuthed) clearGuestContact();
 
   if (okCount > 0) {
-    openNotice("✅", "Reports saved", `Saved ${okCount} report${okCount === 1 ? "" : "s"} to My Reports.`);
+    openReportSuccess({
+      kind: "incident",
+      domainKey: "streetlights",
+      title: "Reports saved",
+      message: `Saved ${okCount} report${okCount === 1 ? "" : "s"} to My Reports.`,
+      reportNumbers: bulkReportNumbers,
+      submittedAt: lastBulkSubmitTs || Date.now(),
+    });
   } else if (skipAlreadyReported > 0) {
     openNotice("⏳", "Already reported", "Some selected lights were already reported by you and are waiting to be marked fixed.");
   } else {
@@ -25263,6 +26518,31 @@ async function insertReportWithFallback(payload) {
     return markFixed(light);
   }
 
+  function resetMarkFixedDialogState() {
+    setMarkFixedConfirmOpen(false);
+    setPendingMarkFixedLightId(null);
+    setPendingMarkFixedClusterReports([]);
+    setPendingMarkFixedPotholeMarker(null);
+    setPendingIncidentActionType("fix");
+    setMarkFixedNote("");
+    setMarkFixedImageFile(null);
+    setMarkFixedSubmitting(false);
+  }
+
+  function currentIncidentActionActor() {
+    const actorName =
+      String(profile?.full_name || "").trim()
+      || String(session?.user?.user_metadata?.full_name || "").trim()
+      || String(session?.user?.email || "").split("@")[0]
+      || "";
+    return {
+      userId: session?.user?.id || null,
+      name: actorName || "",
+      email: normalizeEmail(session?.user?.email || profile?.email || "") || "",
+      phone: normalizePhone(profile?.phone || "") || "",
+    };
+  }
+
   function openMarkFixedDialogForLight(lightId, actionType = "fix", clusterReports = null) {
     const lid = String(lightId || "").trim();
     if (!lid) return;
@@ -25271,6 +26551,7 @@ async function insertReportWithFallback(payload) {
     setPendingMarkFixedClusterReports(Array.isArray(clusterReports) ? clusterReports : []);
     setPendingIncidentActionType(actionType === "reopen" ? "reopen" : "fix");
     setMarkFixedNote("");
+    setMarkFixedImageFile(null);
     setMarkFixedConfirmOpen(true);
   }
 
@@ -25281,13 +26562,25 @@ async function insertReportWithFallback(payload) {
     setPendingMarkFixedPotholeMarker(marker);
     setPendingIncidentActionType(actionType === "reopen" ? "reopen" : "fix");
     setMarkFixedNote("");
+    setMarkFixedImageFile(null);
     setMarkFixedConfirmOpen(true);
   }
 
-  async function markFixed(light, noteText = "") {
+  async function markFixed(light, noteText = "", options = {}) {
     if (!light) return;
     const noteClean = String(noteText || "").trim();
     const isOfficial = Boolean(light?.isOfficial);
+    const actor = currentIncidentActionActor();
+    const actionNote = composeIncidentActionAuditNote(noteClean, {
+      actorName: actor.name,
+      actorEmail: actor.email,
+      actorPhone: actor.phone,
+      imageUrl: options?.imageUrl || "",
+      imagePath: options?.imagePath || "",
+      imageMimeType: options?.imageMimeType || "",
+      imageFileName: options?.imageFileName || "",
+      capturedAt: options?.capturedAt || "",
+    });
 
     const ids = isOfficial
       ? [light.lightId] // official = single id (uuid)
@@ -25299,8 +26592,8 @@ async function insertReportWithFallback(payload) {
         tenant_key: activeTenantKey(),
         light_id: id,
         action: "fix",
-        note: noteClean || null,
-        actor_user_id: session?.user?.id || null,
+        note: actionNote,
+        actor_user_id: actor.userId,
       })),
       { selectCols: "light_id, created_at" }
     );
@@ -25308,7 +26601,7 @@ async function insertReportWithFallback(payload) {
     if (actErr) {
       console.error(actErr);
       openNotice("⚠️", "Action failed", "Couldn’t record fix history.");
-      return;
+      return false;
     }
 
     // Use server time from the newest insert row (they’ll be basically identical)
@@ -25331,7 +26624,7 @@ async function insertReportWithFallback(payload) {
       if (fixErr) {
         console.error(fixErr);
         openNotice("⚠️", "Action failed", "Couldn’t update fixed state.");
-        return;
+        return false;
       }
     }
 
@@ -25365,15 +26658,11 @@ async function insertReportWithFallback(payload) {
         list.unshift({
           action: "fix",
           ts: fixMs,
-          note: noteClean || null,
-          actor_user_id: session?.user?.id || null,
-          actor_name:
-            String(profile?.full_name || "").trim() ||
-            String(session?.user?.user_metadata?.full_name || "").trim() ||
-            String(session?.user?.email || "").split("@")[0] ||
-            null,
-          actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
-          actor_phone: normalizePhone(profile?.phone || "") || null,
+          note: actionNote,
+          actor_user_id: actor.userId,
+          actor_name: actor.name || null,
+          actor_email: actor.email || null,
+          actor_phone: actor.phone || null,
         });
         next[id] = list;
       }
@@ -25389,12 +26678,19 @@ async function insertReportWithFallback(payload) {
     } else if (idForMessage && !idForMessage.startsWith("pothole:")) {
       openNotice("✅", "Marked fixed", "Incident marked fixed.");
     }
+    return true;
   }
 
 
   async function reopenLight(light, noteText = "") {
     if (!light) return;
     const noteClean = String(noteText || "").trim();
+    const actor = currentIncidentActionActor();
+    const actionNote = composeIncidentActionAuditNote(noteClean, {
+      actorName: actor.name,
+      actorEmail: actor.email,
+      actorPhone: actor.phone,
+    });
 
     const isOfficial = Boolean(light?.isOfficial);
 
@@ -25408,8 +26704,8 @@ async function insertReportWithFallback(payload) {
         tenant_key: activeTenantKey(),
         light_id: id,
         action: "reopen",
-        note: noteClean || null,
-        actor_user_id: session?.user?.id || null,
+        note: actionNote,
+        actor_user_id: actor.userId,
       }))
     );
 
@@ -25425,7 +26721,7 @@ async function insertReportWithFallback(payload) {
     if (reErr) {
       console.error(reErr);
       openNotice("⚠️", "Action failed", "Couldn’t re-open this light.");
-      return;
+      return false;
     }
 
     // 3) Update local state
@@ -25448,15 +26744,11 @@ async function insertReportWithFallback(payload) {
         list.unshift({
           action: "reopen",
           ts,
-          note: noteClean || null,
-          actor_user_id: session?.user?.id || null,
-          actor_name:
-            String(profile?.full_name || "").trim() ||
-            String(session?.user?.user_metadata?.full_name || "").trim() ||
-            String(session?.user?.email || "").split("@")[0] ||
-            null,
-          actor_email: normalizeEmail(session?.user?.email || profile?.email || "") || null,
-          actor_phone: normalizePhone(profile?.phone || "") || null,
+          note: actionNote,
+          actor_user_id: actor.userId,
+          actor_name: actor.name || null,
+          actor_email: actor.email || null,
+          actor_phone: actor.phone || null,
         });
         next[id] = list;
       }
@@ -25474,6 +26766,71 @@ async function insertReportWithFallback(payload) {
       return next;
     });
     openNotice("✅", "Re-opened", "Incident re-opened.");
+    return true;
+  }
+
+  async function submitPendingIncidentAction() {
+    if (markFixedSubmitting) return false;
+    const lid = String(pendingMarkFixedLightId || "").trim();
+    const clusterReports = Array.isArray(pendingMarkFixedClusterReports) ? pendingMarkFixedClusterReports : [];
+    const potholeMarker = pendingMarkFixedPotholeMarker;
+    const noteText = String(markFixedNote || "").trim();
+    const actionType = pendingIncidentActionType === "reopen" ? "reopen" : "fix";
+    const actionImageFile = actionType === "fix" && markFixedImageFile instanceof File ? markFixedImageFile : null;
+
+    setMarkFixedSubmitting(true);
+    try {
+      let imageUpload = null;
+      if (actionImageFile) {
+        const incidentIdForUpload = potholeMarker
+          ? `pothole:${String(potholeMarker?.pothole_id || "").trim()}`
+          : lid;
+        imageUpload = await uploadIncidentActionImageIfAny(actionImageFile, incidentIdForUpload, actionType);
+      }
+
+      let saved = false;
+      if (potholeMarker) {
+        if (actionType === "reopen") {
+          const pid = String(potholeMarker?.pothole_id || "").trim();
+          if (!pid) return false;
+          saved = await reopenLight({ lightId: `pothole:${pid}`, isOfficial: true }, noteText);
+        } else {
+          saved = await markPotholeFixed(potholeMarker, noteText, {
+            imageUrl: imageUpload?.publicUrl || "",
+            imagePath: imageUpload?.path || "",
+            imageMimeType: imageUpload?.contentType || "",
+            imageFileName: imageUpload?.fileName || "",
+            capturedAt: imageUpload?.capturedAt || "",
+          });
+        }
+      } else {
+        if (!lid) return false;
+        const clusterLight = (clusterReports.length > 0)
+          ? { lightId: lid, isOfficial: false, reports: clusterReports }
+          : { lightId: lid, isOfficial: true };
+        if (actionType === "reopen") {
+          saved = await reopenLight(clusterLight, noteText);
+        } else {
+          saved = await markFixed(clusterLight, noteText, {
+            imageUrl: imageUpload?.publicUrl || "",
+            imagePath: imageUpload?.path || "",
+            imageMimeType: imageUpload?.contentType || "",
+            imageFileName: imageUpload?.fileName || "",
+            capturedAt: imageUpload?.capturedAt || "",
+          });
+        }
+      }
+
+      if (!saved) return false;
+      resetMarkFixedDialogState();
+      return true;
+    } catch (error) {
+      console.error("[mark fixed action] submit failed:", error);
+      openNotice("⚠️", "Couldn’t complete action", error?.message || "Please try again.");
+      return false;
+    } finally {
+      setMarkFixedSubmitting(false);
+    }
   }
 
   function openUtilityReportDialogForLight(lightId) {
@@ -26223,6 +27580,9 @@ async function insertReportWithFallback(payload) {
           accuracyM,
           ts
         );
+        // Keep the user marker slightly predictive, but anchor the travel-follow camera
+        // to the raw fix so we do not stack prediction + lookahead and lurch forward.
+        const followCameraAnchorPos = travelFollowMode ? nextPos : displayPos;
         const rawToDisplayM = metersBetween(nextPos, displayPos);
         recordLocationDiagnostics({
           status: "Tracking",
@@ -26269,7 +27629,7 @@ async function insertReportWithFallback(payload) {
 
           const last = lastFollowCameraRef.current;
           const movedMeters = Number.isFinite(last.lat) && Number.isFinite(last.lng)
-            ? metersBetween({ lat: last.lat, lng: last.lng }, displayPos)
+            ? metersBetween({ lat: last.lat, lng: last.lng }, followCameraAnchorPos)
             : Infinity;
 
           const headingDelta = !followHeadingEnabledRef.current
@@ -26298,8 +27658,8 @@ async function insertReportWithFallback(payload) {
               (followHeadingEnabledRef.current && speedForThresholds >= headingFreezeMps)
                 ? followHeading
                 : null;
-            queueFollowCameraTarget({ lat: displayPos.lat, lng: displayPos.lng, heading: queuedHeading });
-            lastFollowCameraRef.current = { lat: displayPos.lat, lng: displayPos.lng, heading: queuedHeading };
+            queueFollowCameraTarget({ lat: followCameraAnchorPos.lat, lng: followCameraAnchorPos.lng, heading: queuedHeading });
+            lastFollowCameraRef.current = { lat: followCameraAnchorPos.lat, lng: followCameraAnchorPos.lng, heading: queuedHeading };
           }
         }
       };
@@ -26488,8 +27848,8 @@ async function insertReportWithFallback(payload) {
     const viewportW = typeof window !== "undefined" ? Number(window.innerWidth || 0) : 0;
     const viewportH = typeof window !== "undefined" ? Number(window.innerHeight || 0) : 0;
     const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
-    const topSafe = isMobile ? 150 : 102;
-    const bottomSafe = isMobile ? 92 : 20;
+    const topSafe = useAppShellLayout ? 150 : 102;
+    const bottomSafe = useAppShellLayout ? 92 : 20;
     const gap = 14;
     const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
     const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
@@ -27188,7 +28548,7 @@ async function insertReportWithFallback(payload) {
         isAdmin={isAdmin}
         onOpenTerms={() => setTermsOpen(true)}
         onOpenPrivacy={() => setPrivacyOpen(true)}
-        showCitySwitcher={citySwitchAvailable}
+        showCitySwitcher={false}
         currentCityLabel={organizationDisplayName}
         environmentGuardrailLabel={environmentGuardrailLabel}
         signedIn={Boolean(session?.user?.id)}
@@ -27232,8 +28592,11 @@ async function insertReportWithFallback(payload) {
       <ReportSuccessModal
         open={reportSuccess.open}
         kind={reportSuccess.kind}
+        domainKey={reportSuccess.domainKey}
         title={reportSuccess.title}
         message={reportSuccess.message}
+        reportNumbers={reportSuccess.reportNumbers}
+        submittedAt={reportSuccess.submittedAt}
         onClose={() => {
           closeReportSuccess();
         }}
@@ -27761,53 +29124,72 @@ async function insertReportWithFallback(payload) {
               }}
             />
           </label>
+          {pendingIncidentActionType !== "reopen" && (
+            <label style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Closure photo (optional)</div>
+              <input
+                type="file"
+                accept="image/*"
+                disabled={markFixedSubmitting}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setMarkFixedImageFile(f);
+                }}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 10,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                }}
+              />
+              {markFixedImageFile && (
+                <div style={{ display: "grid", gap: 6 }}>
+                  {markFixedImagePreviewUrl ? (
+                    <img
+                      src={markFixedImagePreviewUrl}
+                      alt="Closure photo preview"
+                      style={{
+                        width: "100%",
+                        maxHeight: 112,
+                        objectFit: "cover",
+                        borderRadius: 10,
+                        border: "1px solid var(--sl-ui-modal-border)",
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setMarkFixedImageFile(null)}
+                    disabled={markFixedSubmitting}
+                    style={btnSecondary}
+                  >
+                    Remove photo
+                  </button>
+                </div>
+              )}
+            </label>
+          )}
           <div style={{ display: "grid", gap: 8 }}>
             <button
               onClick={async () => {
-                const lid = (pendingMarkFixedLightId || "").trim();
-                const clusterReports = Array.isArray(pendingMarkFixedClusterReports) ? pendingMarkFixedClusterReports : [];
-                const potholeMarker = pendingMarkFixedPotholeMarker;
-                const noteText = String(markFixedNote || "").trim();
-                const actionType = pendingIncidentActionType === "reopen" ? "reopen" : "fix";
-                setMarkFixedConfirmOpen(false);
-                setPendingMarkFixedLightId(null);
-                setPendingMarkFixedClusterReports([]);
-                setPendingMarkFixedPotholeMarker(null);
-                setPendingIncidentActionType("fix");
-                setMarkFixedNote("");
-                if (potholeMarker) {
-                  if (actionType === "reopen") {
-                    const pid = String(potholeMarker?.pothole_id || "").trim();
-                    if (!pid) return;
-                    await reopenLight({ lightId: `pothole:${pid}`, isOfficial: true }, noteText);
-                    return;
-                  }
-                  await markPotholeFixed(potholeMarker, noteText);
-                  return;
-                }
-                if (!lid) return;
-                const clusterLight = (clusterReports.length > 0)
-                  ? { lightId: lid, isOfficial: false, reports: clusterReports }
-                  : { lightId: lid, isOfficial: true };
-                if (actionType === "reopen") {
-                  await reopenLight(clusterLight, noteText);
-                  return;
-                }
-                await markFixed(clusterLight, noteText);
+                await submitPendingIncidentAction();
               }}
-              style={btnPopupPrimary}
+              disabled={markFixedSubmitting}
+              style={{
+                ...btnPopupPrimary,
+                opacity: markFixedSubmitting ? 0.7 : 1,
+                cursor: markFixedSubmitting ? "progress" : "pointer",
+              }}
             >
-              {pendingIncidentActionType === "reopen" ? "Confirm Re-open" : "Confirm"}
+              {markFixedSubmitting
+                ? (pendingIncidentActionType === "reopen" ? "Re-opening..." : "Saving...")
+                : (pendingIncidentActionType === "reopen" ? "Confirm Re-open" : "Confirm")}
             </button>
             <button
-              onClick={() => {
-                setMarkFixedConfirmOpen(false);
-                setPendingMarkFixedLightId(null);
-                setPendingMarkFixedClusterReports([]);
-                setPendingMarkFixedPotholeMarker(null);
-                setPendingIncidentActionType("fix");
-                setMarkFixedNote("");
-              }}
+              onClick={resetMarkFixedDialogState}
+              disabled={markFixedSubmitting}
               style={btnPopupSecondary}
             >
               Cancel
@@ -27952,13 +29334,17 @@ async function insertReportWithFallback(payload) {
         incidentLabel={allReportsModal.incidentLabel}
         sharedLocation={allReportsModal.sharedLocation}
         sharedAddress={allReportsModal.sharedAddress}
+        sharedCrossStreet={allReportsModal.sharedCrossStreet}
         sharedLandmark={allReportsModal.sharedLandmark}
+        sharedCoordinates={allReportsModal.sharedCoordinates}
+        geoLoading={allReportsModal.geoLoading}
         currentState={allReportsModal.currentState}
         lastChangedAt={allReportsModal.lastChangedAt}
         onCopyField={copyTextToClipboard}
         onClose={closeAllReports}
         onReporterDetails={openReporterDetails}
         isMobile={isMobile}
+        preferCompactBehavior={useNativeAppBehavior}
       />
 
       <ReporterDetailsModal
@@ -27987,14 +29373,15 @@ async function insertReportWithFallback(payload) {
         loading={mapCommunityFeedLoading}
         error={mapCommunityFeedError}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
-        canCreate={canManageCommunityFeed}
-        canEdit={canManageCommunityFeed}
-        onCreate={() => openCommunityFeedEditor("alert")}
-        onEdit={(alert) => openCommunityFeedEditor("alert", alert)}
-      />
+      canCreate={canManageCommunityFeed}
+      canEdit={canManageCommunityFeed}
+      newItemKeys={alertsSessionNewKeys}
+      onCreate={() => openCommunityFeedEditor("alert")}
+      onEdit={(alert) => openCommunityFeedEditor("alert", alert)}
+    />
 
       <EventsWindow
         open={eventsWindowOpen}
@@ -28003,14 +29390,15 @@ async function insertReportWithFallback(payload) {
         loading={mapCommunityFeedLoading}
         error={mapCommunityFeedError}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
-        canCreate={canManageCommunityFeed}
-        canEdit={canManageCommunityFeed}
-        onCreate={() => openCommunityFeedEditor("event")}
-        onEdit={(eventRow) => openCommunityFeedEditor("event", eventRow)}
-      />
+      canCreate={canManageCommunityFeed}
+      canEdit={canManageCommunityFeed}
+      newItemKeys={eventsSessionNewKeys}
+      onCreate={() => openCommunityFeedEditor("event")}
+      onEdit={(eventRow) => openCommunityFeedEditor("event", eventRow)}
+    />
 
       <CommunityFeedEditorModal
         open={communityFeedEditor.open}
@@ -28024,7 +29412,7 @@ async function insertReportWithFallback(payload) {
         canDelete={canDeleteCommunityFeed}
         error={communityFeedEditorError}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
         onClose={closeCommunityFeedEditor}
@@ -28051,6 +29439,7 @@ async function insertReportWithFallback(payload) {
         onToggleExpand={toggleMyReportsExpanded}
         reports={reports}
         potholes={potholes}
+        waterDrainIncidentsById={waterDrainIncidentsById}
         allDomainReports={myReportsModalRows}
         officialLights={officialLights}
         slIdByUuid={slIdByUuid}
@@ -28096,6 +29485,7 @@ async function insertReportWithFallback(payload) {
         onReportedByModeChange={setMyReportsReportedByMode}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
+        preferAppShellBehavior={useNativeAppBehavior}
       />
 
       <OpenReportsModal
@@ -28115,6 +29505,7 @@ async function insertReportWithFallback(payload) {
         onToggleExpand={toggleOpenReportsExpanded}
         reports={reports}
         potholes={potholes}
+        waterDrainIncidentsById={waterDrainIncidentsById}
         allDomainReports={selectedDomainReports}
         officialLights={officialLights}
         slIdByUuid={slIdByUuid}
@@ -28168,6 +29559,9 @@ async function insertReportWithFallback(payload) {
         incidentRepairProgressByKey={incidentRepairProgressByKey}
         canShowPublicRepairAction={canShowPublicRepairAction}
         onConfirmRepairIncident={submitIncidentRepairConfirmation}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
+        preferAppShellBehavior={useNativeAppBehavior}
       />
 
       <ModalShell
@@ -28279,7 +29673,7 @@ async function insertReportWithFallback(payload) {
         onSave={saveManagedProfile}
         onRequestEdit={requestEditManagedProfile}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
         onOpenChangePassword={() => {
@@ -28288,6 +29682,36 @@ async function insertReportWithFallback(payload) {
           setChangePasswordCurrentValue("");
           setChangePasswordOpen(true);
         }}
+        onOpenDeleteAccount={() => {
+          openDeleteAccountFlow();
+        }}
+      />
+
+      <DeleteAccountModal
+        open={deleteAccountOpen}
+        onClose={() => {
+          if (deleteAccountSaving) return;
+          setDeleteAccountOpen(false);
+          setDeleteAccountConfirmText("");
+          setDeleteAccountDisclosureAccepted(false);
+        }}
+        onBack={() => {
+          if (deleteAccountSaving) return;
+          setDeleteAccountOpen(false);
+          setDeleteAccountConfirmText("");
+          setDeleteAccountDisclosureAccepted(false);
+          setManageOpen(true);
+        }}
+        confirmText={deleteAccountConfirmText}
+        setConfirmText={setDeleteAccountConfirmText}
+        disclosureAccepted={deleteAccountDisclosureAccepted}
+        setDisclosureAccepted={setDeleteAccountDisclosureAccepted}
+        saving={deleteAccountSaving}
+        onSubmit={requestDeleteAccount}
+        darkMode={prefersDarkMode}
+        pageMode={useAppShellLayout}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
       />
 
       <ReauthModal
@@ -28313,6 +29737,10 @@ async function insertReportWithFallback(payload) {
           setChangePasswordValue2("");
           setChangePasswordCurrentValue("");
         }}
+        onBack={() => {
+          if (changePasswordSaving) return;
+          setChangePasswordOpen(false);
+        }}
         password={changePasswordValue}
         setPassword={setChangePasswordValue}
         password2={changePasswordValue2}
@@ -28321,6 +29749,9 @@ async function insertReportWithFallback(payload) {
         setCurrentPassword={setChangePasswordCurrentValue}
         saving={changePasswordSaving}
         onSubmit={handleChangePassword}
+        pageMode={useAppShellLayout}
+        pageTopInset={mobileTabPageTopInset}
+        pageBottomInset={mobileReportsPageBottomInset}
       />
 
       <RecoveryPasswordModal
@@ -28347,8 +29778,8 @@ async function insertReportWithFallback(payload) {
         style={{
           position: "absolute",
           inset: 0,
-          bottom: isMobile ? mobileBottomRailHeight : 0,
-          display: isMobile && (myReportsOpen || accountMenuOpen || alertsWindowOpen || eventsWindowOpen || notificationPreferencesOpen || followedLocationsOpen) ? "none" : "block",
+          bottom: useAppShellLayout ? mobileBottomRailHeight : 0,
+          display: useAppShellLayout && (myReportsOpen || accountMenuOpen || alertsWindowOpen || eventsWindowOpen || notificationPreferencesOpen || followedLocationsOpen) ? "none" : "block",
         }}
       >
         <GoogleMap
@@ -28661,7 +30092,7 @@ async function insertReportWithFallback(payload) {
           aria-live="polite"
           style={{
             position: "fixed",
-            top: isMobile
+            top: useAppShellLayout
               ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 14px)"
               : "calc(var(--desktop-header-height) + 14px)",
             left: "50%",
@@ -28679,7 +30110,7 @@ async function insertReportWithFallback(payload) {
             boxShadow: "0 8px 22px rgba(0,0,0,0.22)",
             backdropFilter: "blur(10px)",
             WebkitBackdropFilter: "blur(10px)",
-            fontSize: isMobile ? 12 : 13,
+            fontSize: useAppShellLayout ? 12 : 13,
             fontWeight: 850,
             letterSpacing: 0.15,
           }}
@@ -28986,6 +30417,13 @@ async function insertReportWithFallback(payload) {
             })()}
             {isReportsAdminView && (
               <>
+                {(() => {
+                  const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                  const incidentId = pid ? `pothole:${pid}` : "";
+                  const showPublicRepairAction = canShowPublicRepairAction(incidentId, "potholes");
+                  const canShowOrganizationRepairAction = canManageIncidentDomainRepairs("potholes") && !showPublicRepairAction;
+                  return (
+                    <>
                 <div style={{ height: 4 }} />
                 <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
                   <b>State:</b> {incidentStateLabel(selectedPotholeInfo?.currentState || "reported")}{" "}
@@ -29005,7 +30443,7 @@ async function insertReportWithFallback(payload) {
                 >
                   All Reports
                 </button>
-                {canManageIncidentDomainRepairs("potholes") && (
+                {canShowOrganizationRepairAction && (
                   <button
                     type="button"
                     onClick={() => {
@@ -29019,14 +30457,26 @@ async function insertReportWithFallback(payload) {
                       openMarkFixedDialogForPothole(selectedDomainMarker);
                     }}
                     style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
-                  >
-                    {(() => {
-                      const pid = String(selectedDomainMarker?.pothole_id || "").trim();
-                      const potholeLightId = pid ? `pothole:${pid}` : "";
-                      return potholeLightId && isLightFixed(potholeLightId) ? "Re-open" : "Mark fixed";
-                    })()}
+                    >
+                      {(() => {
+                        const pid = String(selectedDomainMarker?.pothole_id || "").trim();
+                        const potholeLightId = pid ? `pothole:${pid}` : "";
+                        return potholeLightId && isLightFixed(potholeLightId) ? "Re-open" : "Mark fixed";
+                      })()}
                   </button>
                 )}
+                {showPublicRepairAction && (
+                  <button
+                    type="button"
+                    onClick={() => submitIncidentRepairConfirmation(incidentId, "potholes")}
+                    style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                  >
+                    Is fixed
+                  </button>
+                )}
+                    </>
+                  );
+                })()}
               </>
             )}
             {!isReportsAdminView && (() => {
@@ -29175,6 +30625,8 @@ async function insertReportWithFallback(payload) {
               const clusterLight = { lightId: incidentId, isOfficial: false, reports: clusterRows };
               const openCount = Number(selectedWaterDrainInfo?.openCount || 0);
               const isFixedNow = Boolean(selectedWaterDrainInfo?.isFixedNow);
+              const showPublicRepairAction = canShowPublicRepairAction(incidentId, "water_drain_issues");
+              const canShowOrganizationRepairAction = canManageIncidentDomainRepairs("water_drain_issues") && !showPublicRepairAction;
               return (
                 <>
                   <div style={{ height: 4 }} />
@@ -29196,7 +30648,7 @@ async function insertReportWithFallback(payload) {
                   >
                     All Reports
                   </button>
-                  {(openCount > 0 || isFixedNow) && canManageIncidentDomainRepairs("water_drain_issues") && (
+                  {(openCount > 0 || isFixedNow) && canShowOrganizationRepairAction && (
                     <button
                       type="button"
                       onClick={() => {
@@ -29209,6 +30661,15 @@ async function insertReportWithFallback(payload) {
                       style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
                     >
                       {isFixedNow ? "Re-open" : "Mark fixed"}
+                    </button>
+                  )}
+                  {showPublicRepairAction && (
+                    <button
+                      type="button"
+                      onClick={() => submitIncidentRepairConfirmation(incidentId, "water_drain_issues")}
+                      style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                    >
+                      Is fixed
                     </button>
                   )}
                 </>
@@ -29521,7 +30982,7 @@ async function insertReportWithFallback(payload) {
           Floating tool buttons (mobile + desktop)
          ========================= */}
       <div className="sl-map-tool">
-        {!!toolHintText && !isMobile && (
+        {!!toolHintText && !useAppShellLayout && (
           <div
             style={{
               position: "absolute",
@@ -29536,7 +30997,7 @@ async function insertReportWithFallback(payload) {
           </div>
         )}
 
-        {!isMobile && (
+        {!useAppShellLayout && (
           <>
             {/* Satellite toggle */}
             <button
@@ -29649,7 +31110,7 @@ async function insertReportWithFallback(payload) {
           </>
         )}
 
-        {!isMobile && (
+        {!useAppShellLayout && (
           <div style={{ position: "relative" }}>
             <button
               type="button"
@@ -29731,7 +31192,7 @@ async function insertReportWithFallback(payload) {
           </div>
         )}
 
-        {!isMobile && canOpenDomainReports && (
+        {!useAppShellLayout && canOpenDomainReports && (
           <button
             type="button"
             className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${openReportsOpen ? "is-on" : ""}`}
@@ -29754,7 +31215,7 @@ async function insertReportWithFallback(payload) {
           </button>
         )}
 
-        {!isMobile && canUseStreetlightBulk && (
+        {!useAppShellLayout && canUseStreetlightBulk && (
           <button
             type="button"
             className={`sl-map-tool-mini sl-bulk-tool-btn ${bulkMode ? "is-on" : ""}`}
@@ -29791,7 +31252,7 @@ async function insertReportWithFallback(payload) {
             <AppIcon src={UI_ICON_SRC.bulk} size={38} />
           </button>
         )}
-        {!isMobile && (isAdmin || showAdminTools) && (
+        {!useAppShellLayout && (isAdmin || showAdminTools) && (
           <div style={{ position: "relative" }}>
             <button
               type="button"
@@ -30001,8 +31462,17 @@ async function insertReportWithFallback(payload) {
             label: String(city?.displayName || city?.name || tenantKeyValue).trim() || "City",
           });
         }}
+        currentTenantKey={tenant?.tenantKey || ""}
+        currentCityLabel={organizationDisplayName}
+        onSwitchTenant={async (nextTenantKey) => {
+          closeAnyPopup();
+          setFollowedLocationsOpen(false);
+          setAccountView("menu");
+          setAccountMenuOpen(true);
+          await tenant?.switchTenant?.(nextTenantKey);
+        }}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
       />
@@ -30033,7 +31503,7 @@ async function insertReportWithFallback(payload) {
         loading={notificationPreferencesLoading}
         status={notificationPreferencesStatus}
         darkMode={prefersDarkMode}
-        pageMode={isMobile}
+        pageMode={useAppShellLayout}
         pageTopInset={mobileTabPageTopInset}
         pageBottomInset={mobileReportsPageBottomInset}
       />
@@ -30053,7 +31523,10 @@ async function insertReportWithFallback(payload) {
       {/* =========================
           Desktop UI overlays
         ========================= */}
-      <div className="sl-desktop-only">
+      <div
+        className="sl-desktop-only"
+        style={{ display: useAppShellLayout ? "none" : undefined }}
+      >
         {/* TOP overlay */}
         <div
           className="sl-overlay-pass"
@@ -30557,7 +32030,7 @@ async function insertReportWithFallback(payload) {
         </div>
 
         <AccountMenuPanel
-          open={accountMenuOpen && !isMobile}
+          open={accountMenuOpen && !useAppShellLayout}
           session={session}
           profile={profile}
           showNotificationPreferences={showNotificationPreferencesEntry}
@@ -30772,7 +32245,10 @@ async function insertReportWithFallback(payload) {
           )}
       </div>
 
-        <div className="sl-mobile-only">
+        <div
+          className="sl-mobile-only"
+          style={{ display: useAppShellLayout ? "block" : undefined }}
+        >
         {/* TOP overlay */}
         <div
           className="sl-overlay-pass"
@@ -30803,7 +32279,7 @@ async function insertReportWithFallback(payload) {
                   justifyItems: "center",
                   alignItems: "end",
                   gap: 0,
-                  minHeight: "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)",
+                  minHeight: mobileHeaderMinHeight,
                   padding: `${mobileHeaderContentTopInset} 16px ${mobileHeaderBottomInset}px`,
                   border: "none",
                   borderBottom: mapHeaderTheme.mobileBorder,
@@ -30858,14 +32334,14 @@ async function insertReportWithFallback(payload) {
                 style={{
                   minWidth: 0,
                   width: "100%",
-                  maxWidth: "min(420px, calc(100vw - 132px))",
-                  padding: "0 20px",
+                  maxWidth: mobileHeaderCopyMaxWidth,
+                  padding: mobileHeaderCopyPadding,
                   textAlign: "center",
                   display: "grid",
                   justifyItems: "center",
                 }}
               >
-                <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor }}>Reporting Map</span>
+                <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor, fontSize: mobileHeaderEyebrowSize }}>Reporting Map</span>
                 {!!environmentGuardrailLabel && (
                   <span
                     style={{
@@ -30873,23 +32349,23 @@ async function insertReportWithFallback(payload) {
                       alignItems: "center",
                       justifyContent: "center",
                       alignSelf: "center",
-                      padding: "3px 8px",
+                      padding: mobileHeaderGuardrailPadding,
                       borderRadius: 999,
                       border: "1px solid rgba(210, 96, 25, 0.24)",
                       background: "rgba(210, 96, 25, 0.12)",
                       color: "#d26019",
-                      fontSize: 10,
+                      fontSize: mobileHeaderGuardrailFontSize,
                       fontWeight: 900,
                       letterSpacing: "0.05em",
                       textTransform: "uppercase",
                       lineHeight: 1,
-                      marginTop: 2,
+                      marginTop: mobileHeaderGuardrailMarginTop,
                     }}
                   >
                     {environmentGuardrailLabel}
                   </span>
                 )}
-                <h1 className="app-mobile-header-title" style={{ color: mapHeaderTheme.textColor }}>{organizationDisplayName}</h1>
+                <h1 className="app-mobile-header-title" style={{ color: mapHeaderTheme.textColor, fontSize: mobileHeaderTitleSize, marginTop: mobileHeaderTitleMarginTop }}>{organizationDisplayName}</h1>
               </div>
 
               <button
@@ -30987,7 +32463,7 @@ async function insertReportWithFallback(payload) {
               pageTopInset={mobileTabPageTopInset}
               pageBottomInset={mobileReportsPageBottomInset}
               onClose={() => setMobileHeaderMenuOpen(false)}
-              showCitySwitcher={citySwitchAvailable}
+              showCitySwitcher={false}
               onOpenCitySwitcher={() => {
                 setMobileHeaderMenuOpen(false);
                 setInfoMenuOpen(false);
@@ -31717,6 +33193,7 @@ async function insertReportWithFallback(payload) {
                 label="Map"
                 iconSrc={UI_ICON_SRC.mapTab}
                 active={showMobileMapTabContent}
+                wide={useWideAppShellHeader}
                 showDivider={true}
                 onClick={() => {
                   setMobileTabTransitionFor("map");
@@ -31735,6 +33212,7 @@ async function insertReportWithFallback(payload) {
                 label="Reports"
                 iconSrc={UI_ICON_SRC.openReports}
                 active={myReportsOpen}
+                wide={useWideAppShellHeader}
                 showDivider={showMapAlertIcon || showMapEventIcon || true}
                 onClick={() => {
                   setMobileTabTransitionFor((!viewerIdentityKey && !hasMapSession) ? "account" : "reports");
@@ -31760,6 +33238,7 @@ async function insertReportWithFallback(payload) {
                   label="Alerts"
                   iconSrc={UI_ICON_SRC.notification}
                   active={alertsWindowOpen}
+                  wide={useWideAppShellHeader}
                   badgeCount={mapAlertsUnreadCount}
                   showDivider={showMapEventIcon || true}
                   onClick={() => {
@@ -31781,6 +33260,7 @@ async function insertReportWithFallback(payload) {
                   label="Events"
                   iconSrc={UI_ICON_SRC.calendar}
                   active={eventsWindowOpen}
+                  wide={useWideAppShellHeader}
                   badgeCount={mapEventsUnreadCount}
                   showDivider={true}
                   onClick={() => {
@@ -31801,6 +33281,7 @@ async function insertReportWithFallback(payload) {
                 label="Account"
                 iconSrc={UI_ICON_SRC.account}
                 active={accountTabActive}
+                wide={useWideAppShellHeader}
                 onClick={() => {
                   setMobileTabTransitionFor("account");
                   setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
