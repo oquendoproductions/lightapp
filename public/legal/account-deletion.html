@@ -13,6 +13,20 @@
       a { color: #1a3153; }
       .meta { color: #3b4f68; font-size: 0.95rem; }
       .panel { border: 1px solid #cbd5e1; border-radius: 14px; padding: 1rem 1.1rem; background: #f8fbff; }
+      .field { display: grid; gap: 0.45rem; margin-top: 1rem; }
+      .field label { font-size: 0.95rem; font-weight: 700; }
+      .field input {
+        width: min(100%, 360px);
+        padding: 0.8rem 0.95rem;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        font-size: 1rem;
+      }
+      .field input[type="checkbox"] {
+        width: auto;
+        padding: 0;
+      }
+      .helper { color: #3b4f68; font-size: 0.92rem; }
       .cta-row { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1rem; }
       .cta {
         display: inline-flex;
@@ -25,6 +39,21 @@
       }
       .cta-primary { background: #17375f; color: white; }
       .cta-secondary { border: 1px solid #cbd5e1; background: white; color: #17375f; }
+      .cta-disabled { opacity: 0.55; pointer-events: none; }
+      .inline-check { display: flex; align-items: flex-start; gap: 0.65rem; margin-top: 1rem; }
+      .inline-check label { font-weight: 500; line-height: 1.45; }
+      .status {
+        margin-top: 1rem;
+        padding: 0.85rem 0.95rem;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        background: white;
+        color: #17375f;
+        display: none;
+      }
+      .status[data-state="error"] { border-color: #f0c2c2; background: #fff7f7; color: #8b1f1f; display: block; }
+      .status[data-state="success"] { border-color: #b8ddc5; background: #f4fbf6; color: #1e5b34; display: block; }
+      .status[data-state="working"] { display: block; }
       code { background: #eef3f9; padding: 0.15rem 0.3rem; border-radius: 6px; }
     </style>
   </head>
@@ -40,16 +69,31 @@
 
     <div class="panel">
       <h2>Delete Your Account</h2>
-      <ol>
-        <li>Open the CityReport.io app or web app.</li>
-        <li>Sign in to the account you want to remove.</li>
-        <li>Go to <strong>Account</strong> → <strong>Manage Account</strong> → <strong>Delete Account</strong>.</li>
-        <li>Review the deletion notice and confirm the request.</li>
-      </ol>
-      <div class="cta-row">
-        <a class="cta cta-primary" href="/?deleteAccount=1">Open deletion flow</a>
-        <a class="cta cta-secondary" href="/">Return to homepage</a>
+      <p>
+        Use the form below to sign in and permanently delete your resident account. Organization staff accounts may be
+        blocked from self-service deletion until access is reassigned.
+      </p>
+      <div class="field">
+        <label for="email">Email address</label>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" spellcheck="false" />
       </div>
+      <div class="field">
+        <label for="password">Current password</label>
+        <input id="password" type="password" placeholder="Enter your password" autocomplete="current-password" />
+      </div>
+      <div class="field">
+        <label for="confirm-delete">Type DELETE to confirm</label>
+        <input id="confirm-delete" type="text" placeholder="DELETE" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="inline-check">
+        <input id="acknowledge" type="checkbox" />
+        <label for="acknowledge">I have read and agree to the disclosure below about permanent account deletion and data retention.</label>
+      </div>
+      <div class="cta-row">
+        <button id="delete-account-button" class="cta cta-primary" type="button">Delete account</button>
+        <a class="cta cta-secondary" href="https://cityreport.io/">Return to homepage</a>
+      </div>
+      <div id="status-message" class="status" aria-live="polite"></div>
     </div>
 
     <h2>What Happens When You Delete Your Account</h2>
@@ -72,5 +116,76 @@
       <a href="mailto:cityreport.io@gmail.com">cityreport.io@gmail.com</a> from the email address associated with your
       account and include <code>Account Deletion Request</code> in the subject line.
     </p>
+    <script type="module">
+      import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
+
+      const SUPABASE_URL = "https://gjainmoiudfjsmhhvtiz.supabase.co";
+      const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqYWlubW9pdWRmanNtaGh2dGl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc2MTc0NDUsImV4cCI6MjA1MzE5MzQ0NX0.T2M2Ror2GbF9DPSn0F0SlvI6ncLxWFK2Z8z9KJk3Vvw";
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const emailInput = document.getElementById("email");
+      const passwordInput = document.getElementById("password");
+      const confirmInput = document.getElementById("confirm-delete");
+      const acknowledgeInput = document.getElementById("acknowledge");
+      const submitButton = document.getElementById("delete-account-button");
+      const statusMessage = document.getElementById("status-message");
+
+      function setStatus(state, message) {
+        statusMessage.dataset.state = state;
+        statusMessage.textContent = message;
+      }
+
+      function clearStatus() {
+        statusMessage.dataset.state = "";
+        statusMessage.textContent = "";
+      }
+
+      submitButton.addEventListener("click", async () => {
+        clearStatus();
+
+        const email = String(emailInput.value || "").trim();
+        const password = String(passwordInput.value || "");
+        const confirmation = String(confirmInput.value || "").trim();
+        const acknowledged = Boolean(acknowledgeInput.checked);
+
+        if (!email || !password) {
+          setStatus("error", "Enter the email address and password for the account you want to delete.");
+          return;
+        }
+        if (confirmation !== "DELETE") {
+          setStatus("error", "Type DELETE exactly to confirm account deletion.");
+          return;
+        }
+        if (!acknowledged) {
+          setStatus("error", "You must agree to the disclosure before deleting your account.");
+          return;
+        }
+
+        submitButton.disabled = true;
+        setStatus("working", "Signing in and deleting your account…");
+
+        try {
+          const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+          if (signInError) throw new Error(signInError.message || "Could not verify your account credentials.");
+
+          const { data, error } = await supabase.functions.invoke("delete-user-self", { body: {} });
+          if (error) throw new Error(error.message || "Could not delete your account.");
+          if (!data?.ok) throw new Error(data?.error || "Could not delete your account.");
+
+          await supabase.auth.signOut();
+          setStatus("success", "Your account deletion request completed successfully. If historical reports remain, identifying fields were scrubbed where supported.");
+          emailInput.value = "";
+          passwordInput.value = "";
+          confirmInput.value = "";
+          acknowledgeInput.checked = false;
+        } catch (error) {
+          setStatus("error", error instanceof Error ? error.message : "Unexpected account deletion failure.");
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
   </body>
 </html>
