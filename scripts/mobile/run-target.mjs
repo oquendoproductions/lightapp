@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -27,8 +27,12 @@ const ANDROID_BUILD_GRADLE_PATH = path.join(ROOT_DIR, "android", "app", "build.g
 const ANDROID_MANIFEST_PATH = path.join(ROOT_DIR, "android", "app", "src", "main", "AndroidManifest.xml");
 const ANDROID_STRINGS_PATH = path.join(ROOT_DIR, "android", "app", "src", "main", "res", "values", "strings.xml");
 const ANDROID_JAVA_ROOT = path.join(ROOT_DIR, "android", "app", "src", "main", "java");
+const DIST_DIR = path.join(ROOT_DIR, "dist");
+const IOS_PUBLIC_DIR = path.join(ROOT_DIR, "ios", "App", "App", "public");
+const ANDROID_PUBLIC_DIR = path.join(ROOT_DIR, "android", "app", "src", "main", "assets", "public");
 const DEFAULT_CALLBACK_HOST = "auth";
 const DEFAULT_CALLBACK_PATH_PREFIX = "/callback";
+const NATIVE_PUBLIC_MIRROR_DIRS = ["Icons", "Logos"];
 
 function fail(message) {
   console.error(message);
@@ -74,6 +78,36 @@ function run(command, args, env) {
   });
   if (result.status !== 0) {
     process.exit(result.status || 1);
+  }
+}
+
+function copyDirectoryRecursive(sourceDir, targetDir) {
+  const entries = readdirSync(sourceDir, { withFileTypes: true });
+  mkdirSync(targetDir, { recursive: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(sourcePath, targetPath);
+      continue;
+    }
+    copyFileSync(sourcePath, targetPath);
+  }
+}
+
+function mirrorNativePublicAssetDirs(platform) {
+  const targetPublicDir =
+    platform === "ios" ? IOS_PUBLIC_DIR
+      : platform === "android" ? ANDROID_PUBLIC_DIR
+      : "";
+  if (!targetPublicDir || !existsSync(targetPublicDir) || !existsSync(DIST_DIR)) return;
+
+  for (const dirName of NATIVE_PUBLIC_MIRROR_DIRS) {
+    const sourceDir = path.join(DIST_DIR, dirName);
+    const targetDir = path.join(targetPublicDir, dirName);
+    if (!existsSync(sourceDir)) continue;
+    rmSync(targetDir, { recursive: true, force: true });
+    copyDirectoryRecursive(sourceDir, targetDir);
   }
 }
 
@@ -310,12 +344,15 @@ function prepareTarget(target, platform, env) {
   if (platform) {
     ensurePlatform(platform, env);
     run("npx", ["cap", "sync", platform], env);
+    mirrorNativePublicAssetDirs(platform);
     syncNativeMetadata(target);
     return;
   }
   ensurePlatform("ios", env);
   ensurePlatform("android", env);
   run("npx", ["cap", "sync"], env);
+  mirrorNativePublicAssetDirs("ios");
+  mirrorNativePublicAssetDirs("android");
   syncNativeMetadata(target);
 }
 

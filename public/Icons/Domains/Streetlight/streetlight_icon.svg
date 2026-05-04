@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Created with Vectornator (http://vectornator.io/) -->
+<svg height="1024.0px" stroke-miterlimit="10" style="fill-rule:nonzero;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;" version="1.1" viewBox="0 0 1024 1024" width="1024.0px" xml:space="preserve" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<defs/>
+<clipPath id="ArtboardFrame">
+<rect height="1024" width="1024" x="0" y="0"/>
+</clipPath>
+<g clip-path="url(#ArtboardFrame)" id="Layer-1">
+<path d="M-1.7053e-13 512C-1.7053e-13 229.23 229.23 0 512 0C794.77 0 1024 229.23 1024 512C1024 794.77 794.77 1024 512 1024C229.23 1024-1.7053e-13 794.77-1.7053e-13 512Z" fill="#ffffff" fill-rule="nonzero" opacity="1" stroke="none"/>
+<path d="M544.859 259.584C544.859 320.37 607.426 369.631 684.626 369.631C761.827 369.631 824.416 320.37 824.416 259.584L786.684 259.584C786.684 303.967 740.994 339.923 684.626 339.923C628.259 339.923 582.568 303.967 582.568 259.584L544.859 259.584Z" fill="#000000" fill-rule="nonzero" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="0"/>
+<path d="M850.003 886.021L924.997 961.016" fill="none" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="0"/>
+<path d="M798.227 377.66C766.625 396.531 727.355 407.853 684.631 407.853C647.238 407.853 612.482 399.181 583.185 384.389L533.896 517.369L649.192 447.068L691.962 601.368L734.732 447.068L850.003 517.369L798.227 377.66Z" fill="#000000" fill-rule="nonzero" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="0"/>
+<path d="M309.727 168.031C252.319 168.031 205.781 214.569 205.781 271.977L205.781 902.781L278 902.781L278 284.335C278 252.515 303.796 226.719 335.617 226.719L486.969 226.719C501.281 226.719 514.332 232.838 524.437 242.938L824.406 242.938C808.552 198.915 771.435 168.031 728.156 168.031L309.727 168.031Z" fill="#000000" fill-rule="nonzero" opacity="1" stroke="#000000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="0"/>
+</g>
+</svg>

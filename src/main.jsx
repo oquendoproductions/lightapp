@@ -4,7 +4,7 @@ import "leaflet/dist/leaflet.css";
 import "./index.css";
 import AppLaunchScreen from "./AppLaunchScreen.jsx";
 import { supabase } from "./supabaseClient";
-import { getCurrentLocationSnapshot, getNativeAppScope, isNativeAppRuntime } from "./platform/runtime.js";
+import { getCurrentLocationSnapshot, getNativeAppScope, getPlatformName, isNativeAppRuntime } from "./platform/runtime.js";
 import { TenantGate, TenantProvider } from "./tenant/TenantContext";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
@@ -18,6 +18,7 @@ const RedirectingApp = lazy(() => import("./RedirectingApp.jsx"));
 
 const location = getCurrentLocationSnapshot();
 const nativeAppScope = getNativeAppScope();
+const runtimePlatform = getPlatformName();
 const resolution = isNativeAppRuntime()
   ? {
       mode: "municipality_app",
@@ -33,6 +34,10 @@ const resolution = isNativeAppRuntime()
       pathname: location.pathname,
       search: location.search,
     });
+
+if (typeof document !== "undefined") {
+  document.documentElement.dataset.platform = runtimePlatform;
+}
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();

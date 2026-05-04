@@ -3,7 +3,7 @@
   --desktop-header-height: 90px;
   --desktop-header-side-column: 220px;
   --desktop-header-horizontal-padding: 20px;
-  --desktop-header-logo-height: 56px;
+  --desktop-header-logo-height: 60px;
   --desktop-header-menu-size: 58px;
   --desktop-header-stack-gap: 2px;
   --desktop-header-title-size: 24px;
@@ -57,6 +57,36 @@
   --mobile-header-menu-line-height: 2px;
   --mobile-header-menu-line-gap: 4px;
   --mobile-header-menu-line-color: #102b46;
+  --mobile-header-overlay-top-content-inset: 50px;
+  --mobile-header-overlay-bottom-inset: 16px;
+  --mobile-header-overlay-min-height-extra: 54px;
+  --mobile-header-overlay-page-gap: 54px;
+  --mobile-header-overlay-wide-top-content-inset: 14px;
+  --mobile-header-overlay-wide-bottom-inset: 10px;
+  --mobile-header-overlay-wide-min-height-extra: 8px;
+  --mobile-header-overlay-wide-page-gap: 14px;
+}
+
+html[data-platform="android"] {
+  --mobile-header-top-offset: 0px;
+  --mobile-header-height: 68px;
+  --mobile-header-padding-y: 6px;
+  --mobile-header-radius: 24px;
+  --mobile-header-title-shift-y: -1px;
+  --mobile-header-overlay-top-content-inset: 18px;
+  --mobile-header-overlay-bottom-inset: 12px;
+  --mobile-header-overlay-min-height-extra: 20px;
+  --mobile-header-overlay-page-gap: 22px;
+  --mobile-header-overlay-wide-top-content-inset: 10px;
+  --mobile-header-overlay-wide-bottom-inset: 8px;
+  --mobile-header-overlay-wide-min-height-extra: 2px;
+  --mobile-header-overlay-wide-page-gap: 10px;
+}
+
+html[data-platform="web"] {
+  --mobile-header-overlay-top-content-inset: 34px;
+  --mobile-header-overlay-min-height-extra: 38px;
+  --mobile-header-overlay-page-gap: 38px;
 }
 
 .app-header-eyebrow {

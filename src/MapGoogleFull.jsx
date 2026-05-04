@@ -1,14 +1,14 @@
 // ==================================================
 // App.jsx — Full file
 // ==================================================
-import React, { Fragment, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import React, { Fragment, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Geolocation } from "@capacitor/geolocation";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { Badge } from "@capawesome/capacitor-badge";
 import { CircleF, GoogleMap, MarkerF, PolygonF, useGoogleMap, useJsApiLoader } from "@react-google-maps/api";
 import { createClient } from "@supabase/supabase-js";
 import "./headerStandards.css";
-import { supabase } from "./supabaseClient";
+import { getSupabaseTenantKey, supabase } from "./supabaseClient";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { TenantContext } from "./tenant/contextObject";
 import { hydrateCrossTenantSession, markCrossTenantLogout, syncCrossTenantAuthState } from "./auth/crossTenantAuth";
@@ -36,6 +36,8 @@ const GMAPS_MAP_ID = import.meta.env.VITE_GOOGLE_MAP_ID || "";
 const GMAPS_LIBRARIES = ["places"];
 
 const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
+const TENANT_BOUNDARY_DEBUG_STORAGE_KEY = "cityreport.debug.tenantBoundary";
+const TENANT_BOUNDARY_DEBUG_QUERY_PARAM = "debugTenantBoundary";
 
 function createTenantScopedReadClient(tenantKey, accessToken = "") {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
@@ -60,6 +62,57 @@ function createTenantScopedReadClient(tenantKey, accessToken = "") {
       storageKey: `sb-tenant-readonly-${normalizedTenantKey}`,
     },
   });
+}
+
+function isTenantBoundaryDebugEnabled() {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const queryValue = String(params.get(TENANT_BOUNDARY_DEBUG_QUERY_PARAM) || "").trim().toLowerCase();
+    if (queryValue === "1" || queryValue === "true" || queryValue === "yes") return true;
+  } catch {
+    // ignore query parsing issues
+  }
+  try {
+    const stored = String(window.localStorage.getItem(TENANT_BOUNDARY_DEBUG_STORAGE_KEY) || "").trim().toLowerCase();
+    return stored === "1" || stored === "true" || stored === "yes";
+  } catch {
+    return false;
+  }
+}
+
+function summarizeTenantMapFeaturesRow(row) {
+  if (!row || typeof row !== "object") return null;
+  return {
+    show_boundary_border: row.show_boundary_border !== false,
+    shade_outside_boundary: row.shade_outside_boundary !== false,
+    show_alert_icon: row.show_alert_icon !== false,
+    show_event_icon: row.show_event_icon !== false,
+    outside_shade_opacity: row.outside_shade_opacity,
+    boundary_border_color: String(row.boundary_border_color || "").trim().toLowerCase() || "",
+    boundary_border_width: row.boundary_border_width,
+  };
+}
+
+function pushTenantBoundaryDiagnostic(event, payload, { forceWarn = false } = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    event: String(event || "").trim() || "unknown",
+    payload: payload && typeof payload === "object" ? payload : { value: payload },
+  };
+  if (typeof window !== "undefined") {
+    try {
+      const prev = Array.isArray(window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__)
+        ? window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__
+        : [];
+      window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__ = [...prev.slice(-49), entry];
+    } catch {
+      // ignore window instrumentation failures
+    }
+  }
+  if (forceWarn || isTenantBoundaryDebugEnabled()) {
+    console.warn("[tenant boundary debug]", entry);
+  }
 }
 
 function defaultDomainType(domainKey) {
@@ -119,12 +172,13 @@ const LOCATION_PREDICT_MIN_SPEED_MPS = 3.2; // ~7 mph; avoids over-leading walki
 const LOCATION_PREDICT_MAX_SECONDS = 1.45;
 const LOCATION_PREDICT_MAX_METERS = 30;
 const STREETLIGHT_STALENESS_ROLLOUT_START = new Date(2026, 2, 24, 0, 0, 0, 0).getTime();
-const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
 const TITLE_LOGO_DARK_SRC =
-  import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/CityReport-logo-dark-mode.png";
-const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+  import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/Logos/cityreport_logo_dark_mode.svg";
+const MOBILE_TITLE_LOGO_SRC =
+  import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/Logos/cityreport_pin_logo.svg";
 const MOBILE_TITLE_LOGO_DARK_SRC =
-  import.meta.env.VITE_MOBILE_TITLE_LOGO_DARK_SRC || "/CityReport-pin-logo-dark-mode.png";
+  import.meta.env.VITE_MOBILE_TITLE_LOGO_DARK_SRC || "/Logos/cityreport_pin_logo_dark_mode.svg";
 const ENABLE_TENANT_VISIBILITY_CONFIG = true;
 const ENABLE_LEGACY_PLACES_SERVICE =
   String(import.meta.env.VITE_ENABLE_LEGACY_PLACES_SERVICE || "").trim().toLowerCase() === "true";
@@ -173,8 +227,18 @@ const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
 const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
+const NATIVE_PUSH_DEFAULT_ENABLED = "false";
+const DEFAULT_TENANT_MAP_FEATURES = {
+  show_boundary_border: true,
+  shade_outside_boundary: true,
+  show_alert_icon: true,
+  show_event_icon: true,
+  outside_shade_opacity: 0.42,
+  boundary_border_color: "#e53935",
+  boundary_border_width: 4,
+};
 const NATIVE_PUSH_ENABLED = String(
-  import.meta.env.VITE_NATIVE_PUSH_ENABLED || (GMAPS_PLATFORM === "ios" || GMAPS_PLATFORM === "android" ? "true" : "false")
+  import.meta.env.VITE_NATIVE_PUSH_ENABLED || NATIVE_PUSH_DEFAULT_ENABLED
 ).trim().toLowerCase() === "true";
 const PUBLIC_APP_ONBOARDING_PENDING_AUTH_KEY = "cityreport.public_onboarding_pending_auth_v1";
 const PUBLIC_ACCOUNT_DELETE_PENDING_AUTH_KEY = "cityreport.public_account_delete_pending_v1";
@@ -16144,19 +16208,23 @@ export default function App({ onBackToHub = null }) {
     Array.isArray(tenant?.availableTenants) &&
     tenant.availableTenants.length > 1;
   const useWideAppShellHeader = useAppShellLayout && !isMobile;
-  const mobileBottomRailHeight = "calc(env(safe-area-inset-bottom) + 68px)";
-  const mobileBottomRailOffset = "calc(env(safe-area-inset-bottom) + 92px)";
-  const mobileReportsPageBottomInset = "calc(env(safe-area-inset-bottom) + 68px)";
+  const useWideIosTabletShell = useWideAppShellHeader && GMAPS_PLATFORM === "ios";
+  const mobileBottomRailBaseHeight = useWideIosTabletShell ? 82 : 68;
+  const mobileBottomRailHeight = `calc(env(safe-area-inset-bottom) + ${mobileBottomRailBaseHeight}px)`;
+  const mobileBottomRailOffset = `calc(env(safe-area-inset-bottom) + ${mobileBottomRailBaseHeight + 24}px)`;
+  const mobileReportsPageBottomInset = mobileBottomRailHeight;
   const mobileTabPageTopInset = useWideAppShellHeader
-    ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 14px)"
-    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
+    ? `calc(var(--mobile-header-height) + env(safe-area-inset-top) + ${useWideIosTabletShell ? "14px" : "var(--mobile-header-overlay-wide-page-gap)"})`
+    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + var(--mobile-header-overlay-page-gap))";
   const mobileHeaderContentTopInset = useWideAppShellHeader
-    ? "calc(env(safe-area-inset-top) + 14px)"
-    : "calc(env(safe-area-inset-top) + 50px)";
-  const mobileHeaderBottomInset = useWideAppShellHeader ? 10 : 16;
+    ? "calc(env(safe-area-inset-top) + var(--mobile-header-overlay-wide-top-content-inset))"
+    : "calc(env(safe-area-inset-top) + var(--mobile-header-overlay-top-content-inset))";
+  const mobileHeaderBottomInset = useWideAppShellHeader
+    ? "var(--mobile-header-overlay-wide-bottom-inset)"
+    : "var(--mobile-header-overlay-bottom-inset)";
   const mobileHeaderMinHeight = useWideAppShellHeader
-    ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 8px)"
-    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 54px)";
+    ? `calc(var(--mobile-header-height) + env(safe-area-inset-top) + ${useWideIosTabletShell ? "14px" : "var(--mobile-header-overlay-wide-min-height-extra)"})`
+    : "calc(var(--mobile-header-height) + env(safe-area-inset-top) + var(--mobile-header-overlay-min-height-extra))";
   const mobileHeaderCopyMaxWidth = useWideAppShellHeader
     ? "min(560px, calc(100vw - 220px))"
     : "min(420px, calc(100vw - 132px))";
@@ -17513,15 +17581,10 @@ export default function App({ onBackToHub = null }) {
   }, [followedTenantKeys, tenant?.tenantKey]);
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
-  const [tenantMapFeatures, setTenantMapFeatures] = useState({
-    show_boundary_border: true,
-    shade_outside_boundary: true,
-    show_alert_icon: true,
-    show_event_icon: true,
-    outside_shade_opacity: 0.42,
-    boundary_border_color: "#e53935",
-    boundary_border_width: 4,
-  });
+  const [tenantMapFeatures, setTenantMapFeatures] = useState(DEFAULT_TENANT_MAP_FEATURES);
+  const [tenantMapFeaturesLoaded, setTenantMapFeaturesLoaded] = useState(false);
+  const tenantMapFeaturesSourceRef = useRef("initial");
+  const tenantBoundaryRenderSignatureRef = useRef("");
   const [residentMenuLinks, setResidentMenuLinks] = useState([]);
   const [openAbuseFlagSummary, setOpenAbuseFlagSummary] = useState({ total: 0, maxSeverity: 0 });
   const [moderationFlagsOpen, setModerationFlagsOpen] = useState(false);
@@ -17925,6 +17988,7 @@ export default function App({ onBackToHub = null }) {
   const nativePushShouldRegister = useMemo(() => {
     if (!NATIVE_PUSH_ENABLED) return false;
     if (!isNativeAppRuntime()) return false;
+    if (getPlatformName() === "android") return false;
     return Boolean(showNotificationPreferencesEntry);
   }, [showNotificationPreferencesEntry]);
 
@@ -18834,25 +18898,95 @@ export default function App({ onBackToHub = null }) {
     };
   }, [tenant?.tenantKey, tenantScopedReadClient]);
 
+  const resolvedTenantMapFeaturesTenantKey = String(
+    tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
+  ).trim().toLowerCase();
+
+  useLayoutEffect(() => {
+    tenantMapFeaturesSourceRef.current = "loading";
+    setTenantMapFeaturesLoaded(false);
+  }, [resolvedTenantMapFeaturesTenantKey]);
+
+  useEffect(() => {
+    pushTenantBoundaryDiagnostic("tenant-switch", {
+      tenantTenantKey: String(tenant?.tenantKey || "").trim().toLowerCase(),
+      tenantConfigKey: String(tenant?.tenantConfig?.tenant_key || "").trim().toLowerCase(),
+      resolvedTenantMapFeaturesTenantKey,
+      runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+      globalSupabaseTenantKey: getSupabaseTenantKey(),
+      hasSessionAccessToken: Boolean(String(session?.access_token || "").trim()),
+      tenantReady: tenant?.ready !== false,
+    });
+  }, [resolvedTenantMapFeaturesTenantKey, session?.access_token, tenant?.ready, tenant?.tenantConfig?.tenant_key, tenant?.tenantKey]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadTenantMapFeatures() {
-      const fallback = {
-        show_boundary_border: true,
-        shade_outside_boundary: true,
-        show_alert_icon: true,
-        show_event_icon: true,
-        outside_shade_opacity: 0.42,
-        boundary_border_color: "#e53935",
-        boundary_border_width: 4,
-      };
       if (!authReady) return;
-      const tenantKey = activeTenantKey();
-      const { data, error } = await supabase
-        .from("tenant_map_features")
-        .select("show_boundary_border,shade_outside_boundary,show_alert_icon,show_event_icon,outside_shade_opacity,boundary_border_color,boundary_border_width")
-        .eq("tenant_key", tenantKey)
-        .maybeSingle();
+      const tenantKey = resolvedTenantMapFeaturesTenantKey;
+      if (!tenantKey) {
+        tenantMapFeaturesSourceRef.current = "empty-tenant";
+        setTenantMapFeatures(DEFAULT_TENANT_MAP_FEATURES);
+        setTenantMapFeaturesLoaded(true);
+        pushTenantBoundaryDiagnostic("tenant_map_features:empty-tenant", {
+          resolvedTenantMapFeaturesTenantKey,
+          runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+          globalSupabaseTenantKey: getSupabaseTenantKey(),
+        }, { forceWarn: true });
+        return;
+      }
+      setTenantMapFeaturesLoaded(false);
+      const selectColumns =
+        "show_boundary_border,shade_outside_boundary,show_alert_icon,show_event_icon,outside_shade_opacity,boundary_border_color,boundary_border_width";
+      const fetchTenantMapFeatures = async (client) =>
+        client
+          .from("tenant_map_features")
+          .select(selectColumns)
+          .eq("tenant_key", tenantKey)
+          .maybeSingle();
+
+      const scopedReadClient =
+        tenantScopedReadClient || createTenantScopedReadClient(tenantKey, session?.access_token) || supabase;
+      pushTenantBoundaryDiagnostic("tenant_map_features:fetch-start", {
+        tenantKey,
+        resolvedTenantMapFeaturesTenantKey,
+        runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+        globalSupabaseTenantKey: getSupabaseTenantKey(),
+        usingMemoizedScopedClient: Boolean(tenantScopedReadClient),
+        usingSharedSupabaseClient: scopedReadClient === supabase,
+      });
+      let { data, error } = await fetchTenantMapFeatures(scopedReadClient);
+
+      // Tenant switches can briefly race the shared client header; retry once with a fresh scoped client
+      // before falling back to the default red config.
+      if (!error && !data) {
+        pushTenantBoundaryDiagnostic("tenant_map_features:no-row-initial", {
+          tenantKey,
+          resolvedTenantMapFeaturesTenantKey,
+          runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+          globalSupabaseTenantKey: getSupabaseTenantKey(),
+          usingMemoizedScopedClient: Boolean(tenantScopedReadClient),
+          usingSharedSupabaseClient: scopedReadClient === supabase,
+        }, { forceWarn: true });
+        const retryClient = createTenantScopedReadClient(tenantKey, session?.access_token);
+        if (retryClient) {
+          const retryResult = await fetchTenantMapFeatures(retryClient);
+          data = retryResult.data;
+          error = retryResult.error;
+          pushTenantBoundaryDiagnostic("tenant_map_features:retry-result", {
+            tenantKey,
+            hasData: Boolean(retryResult.data),
+            row: summarizeTenantMapFeaturesRow(retryResult.data),
+            errorCode: String(retryResult.error?.code || "").trim(),
+            errorMessage: String(retryResult.error?.message || "").trim(),
+          }, { forceWarn: !retryResult.data || Boolean(retryResult.error) });
+        } else {
+          pushTenantBoundaryDiagnostic("tenant_map_features:retry-skipped", {
+            tenantKey,
+            reason: "fresh scoped client unavailable",
+          }, { forceWarn: true });
+        }
+      }
 
       if (cancelled) return;
       if (error) {
@@ -18863,7 +18997,30 @@ export default function App({ onBackToHub = null }) {
         if (!isExpected && !isMissing) {
           console.warn("[tenant_map_features]", errMsg || error);
         }
-        setTenantMapFeatures(fallback);
+        tenantMapFeaturesSourceRef.current = "fallback-error";
+        setTenantMapFeatures(DEFAULT_TENANT_MAP_FEATURES);
+        setTenantMapFeaturesLoaded(true);
+        pushTenantBoundaryDiagnostic("tenant_map_features:fallback-error", {
+          tenantKey,
+          resolvedTenantMapFeaturesTenantKey,
+          runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+          globalSupabaseTenantKey: getSupabaseTenantKey(),
+          errorCode: errCode,
+          errorMessage: errMsg,
+        }, { forceWarn: true });
+        return;
+      }
+
+      if (!data) {
+        tenantMapFeaturesSourceRef.current = "fallback-no-row";
+        setTenantMapFeatures(DEFAULT_TENANT_MAP_FEATURES);
+        setTenantMapFeaturesLoaded(true);
+        pushTenantBoundaryDiagnostic("tenant_map_features:fallback-no-row", {
+          tenantKey,
+          resolvedTenantMapFeaturesTenantKey,
+          runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+          globalSupabaseTenantKey: getSupabaseTenantKey(),
+        }, { forceWarn: true });
         return;
       }
 
@@ -18888,13 +19045,27 @@ export default function App({ onBackToHub = null }) {
         boundary_border_color: nextBorderColor,
         boundary_border_width: nextBorderWidth,
       });
+      tenantMapFeaturesSourceRef.current = "db-row";
+      setTenantMapFeaturesLoaded(true);
+      pushTenantBoundaryDiagnostic("tenant_map_features:loaded", {
+        tenantKey,
+        resolvedTenantMapFeaturesTenantKey,
+        runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+        globalSupabaseTenantKey: getSupabaseTenantKey(),
+        row: summarizeTenantMapFeaturesRow({
+          ...data,
+          outside_shade_opacity: nextOpacity,
+          boundary_border_color: nextBorderColor,
+          boundary_border_width: nextBorderWidth,
+        }),
+      });
     }
 
     loadTenantMapFeatures();
     return () => {
       cancelled = true;
     };
-  }, [authReady, tenant?.tenantKey]);
+  }, [authReady, resolvedTenantMapFeaturesTenantKey, session?.access_token, tenantScopedReadClient]);
 
   const resolvedCommunityFeedTenantKey = String(
     tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
@@ -21739,11 +21910,11 @@ export default function App({ onBackToHub = null }) {
       .filter((ring) => ring.length >= 3);
     return [outerRing, ...holeRings];
   }, [cityBoundaryOuterRings]);
-  const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
-  const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
+  const showCityBoundaryBorder = tenantMapFeaturesLoaded && tenantMapFeatures?.show_boundary_border !== false;
+  const showCityOutsideShade = tenantMapFeaturesLoaded && tenantMapFeatures?.shade_outside_boundary !== false;
   const hasMapSession = Boolean(session?.user?.id);
-  const showMapAlertIcon = tenantMapFeatures?.show_alert_icon !== false;
-  const showMapEventIcon = tenantMapFeatures?.show_event_icon !== false;
+  const showMapAlertIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_alert_icon !== false : true;
+  const showMapEventIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_event_icon !== false : true;
   const showMobileAdminRailButton = false;
   const mobileBottomRailColumnCount =
     3 +
@@ -21752,18 +21923,50 @@ export default function App({ onBackToHub = null }) {
     (showMobileAdminRailButton ? 1 : 0);
   const cityOutsideShadeOpacity = Number.isFinite(Number(tenantMapFeatures?.outside_shade_opacity))
     ? Math.max(0, Math.min(1, Number(tenantMapFeatures.outside_shade_opacity)))
-    : 0.42;
+    : DEFAULT_TENANT_MAP_FEATURES.outside_shade_opacity;
   const cityBoundaryBorderColor = /^#[0-9a-fA-F]{6}$/.test(String(tenantMapFeatures?.boundary_border_color || "").trim())
     ? String(tenantMapFeatures?.boundary_border_color || "").trim().toLowerCase()
-    : "#e53935";
+    : DEFAULT_TENANT_MAP_FEATURES.boundary_border_color;
   const cityBoundaryBorderWidth = Number.isFinite(Number(tenantMapFeatures?.boundary_border_width))
     ? Math.max(0.5, Math.min(8, Number(tenantMapFeatures?.boundary_border_width)))
-    : 4;
+    : DEFAULT_TENANT_MAP_FEATURES.boundary_border_width;
   const restrictPublicMarkersToCity = !isAdmin && cityLimitPolygons.length > 0;
   const isWithinAshtabulaCityLimits = useCallback(
     (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
     [cityLimitPolygons]
   );
+
+  useEffect(() => {
+    if (!tenantMapFeaturesLoaded) return;
+    const payload = {
+      tenantKey: resolvedTenantMapFeaturesTenantKey,
+      runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+      globalSupabaseTenantKey: getSupabaseTenantKey(),
+      source: tenantMapFeaturesSourceRef.current,
+      showCityBoundaryBorder,
+      cityBoundaryBorderColor,
+      cityBoundaryBorderWidth,
+      showCityOutsideShade,
+      cityOutsideShadeOpacity,
+      hasBoundaryPolygons: cityBoundaryOuterRings.length > 0,
+    };
+    const signature = JSON.stringify(payload);
+    if (tenantBoundaryRenderSignatureRef.current === signature) return;
+    tenantBoundaryRenderSignatureRef.current = signature;
+    const isFallbackRed =
+      cityBoundaryBorderColor === DEFAULT_TENANT_MAP_FEATURES.boundary_border_color &&
+      tenantMapFeaturesSourceRef.current !== "db-row";
+    pushTenantBoundaryDiagnostic("tenant_map_features:render", payload, { forceWarn: isFallbackRed });
+  }, [
+    cityBoundaryBorderColor,
+    cityBoundaryBorderWidth,
+    cityBoundaryOuterRings.length,
+    cityOutsideShadeOpacity,
+    resolvedTenantMapFeaturesTenantKey,
+    showCityBoundaryBorder,
+    showCityOutsideShade,
+    tenantMapFeaturesLoaded,
+  ]);
 
   useEffect(() => {
     if (!showMapAlertIcon) setAlertsWindowOpen(false);
@@ -31587,7 +31790,7 @@ async function insertReportWithFallback(payload) {
                     onError={() => setTitleLogoError(true)}
                     style={{
                       width: "auto",
-                      maxWidth: "min(240px, calc(100vw - 180px))",
+                      maxWidth: "min(300px, calc(100vw - 220px))",
                       height: "var(--desktop-header-logo-height)",
                       objectFit: "contain",
                       objectPosition: "left center",
@@ -33177,7 +33380,9 @@ async function insertReportWithFallback(payload) {
               borderTop: "1px solid var(--sl-ui-surface-border)",
               boxShadow: "var(--sl-ui-surface-shadow-bottom)",
               color: "var(--sl-ui-text)",
-              padding: "6px 10px calc(18px + env(safe-area-inset-bottom))",
+              padding: useWideIosTabletShell
+                ? "14px 10px calc(18px + env(safe-area-inset-bottom))"
+                : "6px 10px calc(18px + env(safe-area-inset-bottom))",
               pointerEvents: "auto",
             }}
           >

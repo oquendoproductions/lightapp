@@ -86,7 +86,7 @@ export default function App() {
             <div className="marketing-menu-toggle" aria-hidden="true" />
           </div>
           <a className="brand marketing-header-brand" href="#hero" onClick={(event) => event.preventDefault()}>
-            <img className="brand-logo" src="/CityReport-logo.png" alt="CityReport.io" />
+            <img className="brand-logo" src="/Logos/cityreport_logo.svg" alt="CityReport.io" />
           </a>
           <button className="btn btn-secondary marketing-header-cta" onClick={onBookDemo}>
             <span className="marketing-header-cta-desktop">Book Pilot Demo</span>

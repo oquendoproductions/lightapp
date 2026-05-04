@@ -10,8 +10,9 @@ import { getAuthRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
-const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
-const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
+const MOBILE_TITLE_LOGO_SRC =
+  import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/Logos/cityreport_pin_logo.svg";
 const TITLE_LOGO_ALT = "CityReport.io";
 
 const DOMAIN_OPTIONS = [
@@ -529,7 +530,7 @@ const brandResetButton = {
 const brandLogo = {
   height: "var(--desktop-header-logo-height)",
   width: "auto",
-  maxWidth: "min(240px, calc(100vw - 180px))",
+  maxWidth: "min(300px, calc(100vw - 220px))",
   display: "block",
 };
 

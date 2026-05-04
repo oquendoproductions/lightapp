@@ -23,8 +23,9 @@ import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSuppor
 import "./headerStandards.css";
 import "./municipality-app.css";
 
-const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
-const MOBILE_BRAND_LOGO_SRC = import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/CityReport-pin-logo.png";
+const BRAND_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
+const MOBILE_BRAND_LOGO_SRC =
+  import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/Logos/cityreport_pin_logo.svg";
 const ADD_BUTTON_GREEN_ICON_SRC = "/Icons/Buttons/add_button/add_button_green_icon.png";
 const ADD_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/add_button/add_button_white_icon.png";
 const DELETE_BUTTON_RED_ICON_SRC = "/Icons/Buttons/delete_button/delete_button_red_icon.png";

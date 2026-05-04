@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 const TITLE_LOGO_ALT = "CityReport.io";
-const MOBILE_TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/CityReport-logo.png";
+const MOBILE_TITLE_LOGO_SRC =
+  import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/Logos/cityreport_logo_dark_mode.svg";
 
 export default function AppLaunchScreen({
   eyebrow = "CityReport.io",
@@ -97,9 +98,9 @@ export default function AppLaunchScreen({
           width: "min(420px, 100%)",
           display: "grid",
           justifyItems: "center",
-          gap: 16,
+          gap: 18,
           textAlign: "center",
-          padding: "26px 22px",
+          padding: "32px 24px 28px",
           maxHeight: launchCardMaxHeight,
           overflow: "hidden",
           borderRadius: 28,
@@ -112,15 +113,10 @@ export default function AppLaunchScreen({
       >
         <div
           style={{
-            width: "min(238px, 100%)",
-            minHeight: 96,
-            borderRadius: 26,
-            background: "linear-gradient(180deg, rgba(245, 250, 255, 0.98) 0%, rgba(223, 236, 246, 0.98) 100%)",
-            border: "1px solid rgba(214, 231, 248, 0.18)",
-            boxShadow: "0 14px 24px rgba(4, 10, 16, 0.24)",
+            width: "min(404px, calc(100% - 4px))",
             display: "grid",
             placeItems: "center",
-            padding: "14px 18px",
+            paddingTop: 4,
           }}
         >
           <img
@@ -128,16 +124,17 @@ export default function AppLaunchScreen({
             alt={TITLE_LOGO_ALT}
             style={{
               width: "100%",
-              maxWidth: 186,
+              maxWidth: 396,
               height: "auto",
-              maxHeight: 56,
+              maxHeight: 144,
               objectFit: "contain",
               display: "block",
+              filter: "drop-shadow(0 12px 18px rgba(4, 10, 16, 0.24))",
             }}
           />
         </div>
 
-        <div style={{ display: "grid", gap: 8, justifyItems: "center" }}>
+        <div style={{ display: "grid", gap: 10, justifyItems: "center", marginTop: -2 }}>
           <div
             style={{
               fontSize: 11,
@@ -153,7 +150,7 @@ export default function AppLaunchScreen({
             style={{
               fontSize: 30,
               fontWeight: 950,
-              lineHeight: 1.02,
+              lineHeight: 1.04,
               color: "#f4f9ff",
             }}
           >
