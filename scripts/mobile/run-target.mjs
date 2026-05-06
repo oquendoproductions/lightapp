@@ -5,7 +5,7 @@ import process from "node:process";
 
 const TARGET_PRESETS = {
   map: {
-    appId: "cityreport.io.map",
+    appId: "cityreport.io.app",
     appName: "CityReport.io",
     appScope: "map",
     authRedirectUrl: "cityreport://auth/callback",

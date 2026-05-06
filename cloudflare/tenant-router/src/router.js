@@ -1,6 +1,14 @@
 const PROD_APEX_HOSTS = new Set(["cityreport.io", "www.cityreport.io"]);
 const RESERVED_SLUGS = new Set(["www", "dev", "api", "auth", "platform"]);
 const PASSTHROUGH_HOSTS = new Set(["assets.cityreport.io"]);
+const APEX_STATIC_DIRECTORIES = new Set([
+  "assets",
+  "logos",
+  "icons",
+  "street_sign_icons",
+  "icon-concepts-v4",
+  "play store assets",
+]);
 const LOCAL_DEV_HOST_SUFFIXES = [
   ".ngrok-free.app",
   ".ngrok-free.dev",
@@ -96,7 +104,7 @@ function buildHubPath(internalPath) {
 function isApexStaticPath(pathname) {
   const raw = leadingRawPathSegment(pathname).toLowerCase();
   if (!raw) return false;
-  if (raw === "assets") return true;
+  if (APEX_STATIC_DIRECTORIES.has(raw)) return true;
   if (raw.includes(".")) return true;
   return false;
 }

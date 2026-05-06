@@ -27,12 +27,29 @@ export default function AppLaunchScreen({
     if (!fullHeight || !viewportHeight) return 0;
     return Math.max(0, fullHeight - viewportHeight);
   }, [viewportHeight]);
-  const launchCardMaxHeight = keyboardOpen
-    ? `${Math.max(300, Math.floor(viewportHeight - 52))}px`
-    : "calc(100dvh - 56px)";
-  const launchChildrenMaxHeight = keyboardOpen
-    ? `${Math.max(116, Math.floor(viewportHeight - 268))}px`
-    : "min(360px, calc(100dvh - 320px))";
+  const keyboardDownShift = useMemo(() => {
+    if (!keyboardOpen) return 0;
+    return Math.min(104, Math.floor(keyboardInset * 0.28));
+  }, [keyboardInset, keyboardOpen]);
+  const launchCardMaxHeight = "calc(100dvh - 56px)";
+  const launchChildrenMaxHeight = "min(360px, calc(100dvh - 320px))";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const viewport = window.visualViewport;
+    const updateViewportHeight = () => {
+      setViewportHeight(viewport?.height || window.innerHeight || 0);
+    };
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("scroll", updateViewportHeight);
+    return () => {
+      window.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("scroll", updateViewportHeight);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -53,24 +70,6 @@ export default function AppLaunchScreen({
     }
     return undefined;
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const viewport = window.visualViewport;
-    const updateViewportHeight = () => {
-      setViewportHeight(viewport?.height || window.innerHeight || 0);
-    };
-    updateViewportHeight();
-    window.addEventListener("resize", updateViewportHeight);
-    viewport?.addEventListener("resize", updateViewportHeight);
-    viewport?.addEventListener("scroll", updateViewportHeight);
-    return () => {
-      window.removeEventListener("resize", updateViewportHeight);
-      viewport?.removeEventListener("resize", updateViewportHeight);
-      viewport?.removeEventListener("scroll", updateViewportHeight);
-    };
-  }, []);
-
   return (
     <div
       style={{
@@ -79,11 +78,9 @@ export default function AppLaunchScreen({
         minHeight: "100dvh",
         height: "100dvh",
         display: "flex",
-        alignItems: keyboardOpen ? "flex-end" : "center",
+        alignItems: "center",
         justifyContent: "center",
-        padding: keyboardOpen
-          ? `28px 18px ${Math.max(0, keyboardInset + 16)}px`
-          : "28px 18px",
+        padding: "28px 18px",
         overflow: "hidden",
         overscrollBehavior: "none",
         touchAction: "manipulation",
@@ -103,6 +100,7 @@ export default function AppLaunchScreen({
           padding: "32px 24px 28px",
           maxHeight: launchCardMaxHeight,
           overflow: "hidden",
+          transform: keyboardOpen ? `translateY(${keyboardDownShift}px)` : "translateY(0)",
           borderRadius: 28,
           border: "1px solid rgba(214, 231, 248, 0.14)",
           background: "linear-gradient(180deg, rgba(21, 49, 80, 0.92) 0%, rgba(17, 39, 64, 0.92) 100%)",

@@ -84,10 +84,24 @@ function canonicalSlug(slug) {
   return TENANT_SLUG_ALIASES[clean] || clean;
 }
 
+function isPrivateIpv4Host(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  if (!host) return false;
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false;
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  if (octets[0] === 10) return true;
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  return false;
+}
+
 function isLocalDevHost(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
   if (!host) return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
+  if (host.endsWith(".local")) return true;
+  if (isPrivateIpv4Host(host)) return true;
   return LOCAL_DEV_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 }
 

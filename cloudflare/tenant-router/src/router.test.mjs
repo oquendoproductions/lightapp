@@ -29,6 +29,14 @@ test("apex static assets are passthrough and not tenant redirects", () => {
   const icon = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/favicon.ico", search: "" });
   assert.equal(icon.mode, "marketing_home");
   assert.equal(icon.redirectTo, null);
+
+  const logo = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/Logos/cityreport_logo.svg", search: "" });
+  assert.equal(logo.mode, "marketing_home");
+  assert.equal(logo.redirectTo, null);
+
+  const pcpIcon = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/Icons/Buttons/tab_buttons/map_button.png", search: "" });
+  assert.equal(pcpIcon.mode, "marketing_home");
+  assert.equal(pcpIcon.redirectTo, null);
 });
 
 test("apex legal path stays on apex for static legal page serving", () => {

@@ -39,6 +39,18 @@ const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io
 const TENANT_BOUNDARY_DEBUG_STORAGE_KEY = "cityreport.debug.tenantBoundary";
 const TENANT_BOUNDARY_DEBUG_QUERY_PARAM = "debugTenantBoundary";
 
+function isPrivateIpv4Host(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  if (!host) return false;
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return false;
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  if (octets[0] === 10) return true;
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  return false;
+}
+
 function createTenantScopedReadClient(tenantKey, accessToken = "") {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
   const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
@@ -125,6 +137,8 @@ function isDevMapsHost(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
   if (!host) return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
+  if (host.endsWith(".local")) return true;
+  if (isPrivateIpv4Host(host)) return true;
   return DEV_MAPS_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 }
 
@@ -5315,10 +5329,11 @@ function AuthGateModal({
 }
 
 function TermsOfUseModal({ open, onClose }) {
+  const termsUrl = "https://cityreport.io/legal/terms.html";
   return (
     <ModalShell
       open={open}
-      zIndex={10040}
+      zIndex={10080}
       panelStyle={{ width: "min(860px, calc(100vw - 24px))", maxHeight: "85vh", overflow: "hidden", padding: 0 }}
     >
       <div style={{ display: "grid", gridTemplateRows: "auto minmax(0,1fr) auto", maxHeight: "85vh" }}>
@@ -5342,14 +5357,24 @@ function TermsOfUseModal({ open, onClose }) {
           />
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>
-          <a
-            href="/legal/terms.html"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: "#1976d2", fontWeight: 800, textAlign: "center", textDecoration: "underline" }}
+          <button
+            type="button"
+            onClick={() => {
+              void openExternalUrl(termsUrl);
+            }}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              textAlign: "center",
+              textDecoration: "underline",
+              cursor: "pointer",
+              padding: 0,
+            }}
           >
             Open Terms of Service in new tab
-          </a>
+          </button>
           <button onClick={onClose} style={btnPrimary} aria-label="Close">Close</button>
         </div>
       </div>
@@ -5358,10 +5383,11 @@ function TermsOfUseModal({ open, onClose }) {
 }
 
 function PrivacyPolicyModal({ open, onClose }) {
+  const privacyUrl = "https://cityreport.io/legal/privacy.html";
   return (
     <ModalShell
       open={open}
-      zIndex={10040}
+      zIndex={10080}
       panelStyle={{ width: "min(860px, calc(100vw - 24px))", maxHeight: "85vh", overflow: "hidden", padding: 0 }}
     >
       <div style={{ display: "grid", gridTemplateRows: "auto minmax(0,1fr) auto", maxHeight: "85vh" }}>
@@ -5385,14 +5411,24 @@ function PrivacyPolicyModal({ open, onClose }) {
           />
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>
-          <a
-            href="/legal/privacy.html"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: "#1976d2", fontWeight: 800, textAlign: "center", textDecoration: "underline" }}
+          <button
+            type="button"
+            onClick={() => {
+              void openExternalUrl(privacyUrl);
+            }}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#1976d2",
+              fontWeight: 800,
+              textAlign: "center",
+              textDecoration: "underline",
+              cursor: "pointer",
+              padding: 0,
+            }}
           >
             Open Privacy Notice in new tab
-          </a>
+          </button>
           <button onClick={onClose} style={btnPrimary} aria-label="Close">Close</button>
         </div>
       </div>
@@ -28749,8 +28785,14 @@ async function insertReportWithFallback(payload) {
         open={infoMenuOpen}
         onClose={() => setInfoMenuOpen(false)}
         isAdmin={isAdmin}
-        onOpenTerms={() => setTermsOpen(true)}
-        onOpenPrivacy={() => setPrivacyOpen(true)}
+        onOpenTerms={() => {
+          setInfoMenuOpen(false);
+          setTermsOpen(true);
+        }}
+        onOpenPrivacy={() => {
+          setInfoMenuOpen(false);
+          setPrivacyOpen(true);
+        }}
         showCitySwitcher={false}
         currentCityLabel={organizationDisplayName}
         environmentGuardrailLabel={environmentGuardrailLabel}

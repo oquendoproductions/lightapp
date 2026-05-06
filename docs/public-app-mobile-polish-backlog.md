@@ -1,6 +1,6 @@
 # Public App Mobile Polish Backlog
 
-Last updated: 2026-04-18
+Last updated: 2026-05-05
 
 ## Goal
 
@@ -160,7 +160,35 @@ Targets:
 - Reduce overlap risk between controls and popups.
 - Improve spacing near safe areas / notches where needed.
 
-### 7. Native shell branding
+### 7. Mobile browser header alignment and spacing
+
+Targets:
+
+- Revisit the public map header specifically in mobile browser mode.
+- Horizontally align the left logo, centered title stack, and right menu more intentionally.
+- Reduce the excess top gap above the header content without introducing new cross-platform regressions.
+- Verify the same header treatment on iPad browser, where the misalignment appears less prominently but still exists.
+
+Likely files:
+
+- [src/MapGoogleFull.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/MapGoogleFull.jsx)
+- [src/headerStandards.css](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/headerStandards.css)
+
+### 8. Mobile browser landscape layout pass
+
+Targets:
+
+- Review the public map experience in landscape on mobile browsers.
+- Check header/footer balance, map viewport height, and control crowding when the browser chrome reduces usable height.
+- Make sure the tab rail, floating controls, and report-count pill still feel intentional in landscape.
+
+Likely files:
+
+- [src/MapGoogleFull.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/MapGoogleFull.jsx)
+- [src/headerStandards.css](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/headerStandards.css)
+- [src/MunicipalityApp.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/MunicipalityApp.jsx)
+
+### 9. Native shell branding
 
 Targets:
 
@@ -173,7 +201,7 @@ Likely files:
 - [ios/App/App/Assets.xcassets](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/ios/App/App/Assets.xcassets)
 - Android launcher assets under the generated native project
 
-### 8. Native permission messaging polish
+### 10. Native permission messaging polish
 
 Targets:
 

@@ -607,8 +607,9 @@ export function TenantGate({ children }) {
               border: "1px solid rgba(214, 231, 248, 0.18)",
               background: "rgba(17, 39, 64, 0.98)",
               color: "#eef6ff",
-              fontSize: 15,
+              fontSize: 16,
               fontWeight: 700,
+              lineHeight: 1.2,
               outline: "none",
               boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
             }}

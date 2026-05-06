@@ -3,7 +3,7 @@ import type { PresentationOption } from "@capacitor/push-notifications";
 
 const APP_TARGET_PRESETS = {
   map: {
-    appId: "cityreport.io.map",
+    appId: "cityreport.io.app",
     appName: "CityReport.io",
     appScope: "map",
     authRedirectUrl: "cityreport://auth/callback",

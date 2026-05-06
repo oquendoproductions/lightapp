@@ -111,6 +111,17 @@ test("localhost gmaps stays in municipality app for dev testing", () => {
   assert.equal(res.env, "staging");
 });
 
+test("private LAN gmaps stays in municipality app for device testing", () => {
+  const res = resolveTenantRequest({
+    hostname: "192.168.1.16",
+    pathname: "/gmaps",
+    search: "",
+  });
+  assert.equal(res.mode, "municipality_app");
+  assert.equal(res.tenantKey, "ashtabulacity");
+  assert.equal(res.env, "staging");
+});
+
 test("ngrok gmaps stays in municipality app for dev testing", () => {
   const res = resolveTenantRequest({
     hostname: "6f2f-100-10-10-10.ngrok-free.app",
