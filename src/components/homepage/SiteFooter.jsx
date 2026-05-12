@@ -3,7 +3,7 @@ export function SiteFooter() {
     <footer className="site-footer" aria-label="Footer">
       <div>
         <p className="footer-brand">CityReport.io</p>
-        <p className="footer-copy">Municipal infrastructure accountability engine.</p>
+        <p className="footer-copy">A CRAKD LLC-operated municipal infrastructure accountability platform.</p>
       </div>
       <nav aria-label="Legal and contact">
         <a href="/legal/terms.html">

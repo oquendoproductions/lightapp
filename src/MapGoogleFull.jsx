@@ -4074,15 +4074,14 @@ function WelcomeModal({ open, onLogin, onCreate, onGuest }) {
 
 function GuestInfoModal({ open, info, setInfo, onContinue, onCancel }) {
   const nameOk = info.name.trim().length > 0;
-  const phoneOk = info.phone.trim().length > 0;
-  const emailOk = info.email.trim().length > 0;
-  const ok = nameOk && phoneOk && emailOk;
+  const emailOk = Boolean(normalizeEmail(info.email));
+  const ok = nameOk && emailOk;
 
   return (
     <ModalShell open={open} zIndex={10029}>
       <div style={{ fontSize: 16, fontWeight: 950 }}>Guest info required</div>
       <div style={{ fontSize: 12.5, opacity: 0.85, lineHeight: 1.35 }}>
-        Please provide your name, phone number, and email.
+        Please provide your name and email. Phone is optional.
       </div>
 
       <label style={{ display: "grid", gap: 6 }}>
@@ -4101,7 +4100,7 @@ function GuestInfoModal({ open, info, setInfo, onContinue, onCancel }) {
           value={info.phone}
           onChange={(e) => setInfo((p) => ({ ...p, phone: e.target.value }))}
           style={inputStyle}
-          placeholder="555-555-5555"
+          placeholder="555-555-5555 (optional)"
         />
       </label>
 
@@ -4117,7 +4116,7 @@ function GuestInfoModal({ open, info, setInfo, onContinue, onCancel }) {
 
       {!ok && (
         <div style={{ fontSize: 12, color: "#b71c1c", fontWeight: 900 }}>
-          Name, phone, and email are required.
+          Name and email are required.
         </div>
       )}
 
@@ -4131,16 +4130,15 @@ function GuestInfoModal({ open, info, setInfo, onContinue, onCancel }) {
   );
 }
 
-function LocationPromptModal({ open, onEnable, onSkip }) {
+function LocationPromptModal({ open, onContinue }) {
   return (
     <ModalShell open={open} zIndex={10007}>
-      <div style={{ fontSize: 16, fontWeight: 950 }}>Enable location?</div>
+      <div style={{ fontSize: 16, fontWeight: 950 }}>Allow location access?</div>
       <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.35 }}>
-        Location helps center the map near you. You can skip this and still use the app.
+        CityReport uses your location to center the map near you and help place reports more accurately.
       </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <button onClick={onSkip} style={btnSecondary}>Not now</button>
-        <button onClick={onEnable} style={btnPrimary}>Enable location</button>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button onClick={onContinue} style={btnPrimary}>Continue</button>
       </div>
     </ModalShell>
   );
@@ -4956,7 +4954,7 @@ function AuthGateModal({
           <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.35 }}>
             Log in or create an account to view your past reports.
             <br />
-            Guests can report, but must provide name + phone or email.
+            Guests can report, but must provide name + email. Phone is optional.
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
@@ -5162,12 +5160,17 @@ function AuthGateModal({
             style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
           />
 
-          <input
-            placeholder="Phone"
-            value={signupPhone}
-            onChange={(e) => setSignupPhone(e.target.value)}
-            style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
-          />
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.78, letterSpacing: 0.2 }}>
+              Phone (optional)
+            </div>
+            <input
+              placeholder="Optional phone number"
+              value={signupPhone}
+              onChange={(e) => setSignupPhone(e.target.value)}
+              style={{ ...inputStyle, width: "100%", borderRadius: 10 }}
+            />
+          </div>
 
           <input
             placeholder="Email"
@@ -20282,10 +20285,6 @@ export default function App({ onBackToHub = null }) {
       openNotice("⚠️", "Email required", "Please enter your email.");
       return;
     }
-    if (!phone) {
-      openNotice("⚠️", "Phone required", "Please enter your phone number.");
-      return;
-    }
     if (!validateStrongPassword(password)) {
       openNotice("⚠️", "Weak password", "Use 8+ chars with uppercase, lowercase, number, and special character.");
       return;
@@ -25186,9 +25185,9 @@ export default function App({ onBackToHub = null }) {
       const email = isAuthed ? ((profile?.email || authedEmail) || "") : (guestSource.email || "");
       const identityGuestInfo = isAuthed ? null : { name, phone, email };
 
-      if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+      if (!isAuthed && (!name.trim() || !normalizeEmail(email))) {
         requestGuestChallenge("domain");
-        openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting.");
+        openNotice("⚠️", "Contact required", "Please add your name and email before submitting.");
         return;
       }
 
@@ -25739,9 +25738,9 @@ async function insertReportWithFallback(payload) {
       ? ((profile?.email || session?.user?.email) || "")
       : (guestSource?.email || "");
 
-    if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+    if (!isAuthed && (!name.trim() || !normalizeEmail(email))) {
       requestGuestChallenge("working", lid);
-      openNotice("⚠️", "Contact required", "Please add your name, email, and phone before submitting Is working.");
+      openNotice("⚠️", "Contact required", "Please add your name and email before submitting.");
       return;
     }
 
@@ -25913,9 +25912,9 @@ async function insertReportWithFallback(payload) {
       : (guestSource?.email || "");
     const identityGuestInfo = isAuthed ? null : { name, phone, email };
 
-    if (!isAuthed && (!name.trim() || !normalizeEmail(email) || !normalizePhone(phone))) {
+    if (!isAuthed && (!name.trim() || !normalizeEmail(email))) {
       requestGuestChallenge("repair", incidentId, domainKey);
-      openNotice("⚠️", "Contact required", "Please add your name, email, and phone before confirming a repair.");
+      openNotice("⚠️", "Contact required", "Please add your name and email before confirming a repair.");
       return;
     }
 
@@ -26023,7 +26022,7 @@ async function insertReportWithFallback(payload) {
 
         // ✅ Only guests get blocked and routed to login/create/guest
         if (!isAuthed) {
-          if (!name.trim() || (!phone.trim() && !email.trim())) {
+          if (!name.trim() || !normalizeEmail(email)) {
             requestGuestChallenge("report");
             setSaving(false);
             return;
@@ -26424,7 +26423,7 @@ async function insertReportWithFallback(payload) {
   const email = isAuthed ? ((profile?.email || authedEmail) || "") : (guestSource.email || "");
 
   if (!isAuthed) {
-    if (!name.trim() || (!phone.trim() && !email.trim())) {
+    if (!name.trim() || !normalizeEmail(email)) {
       requestGuestChallenge("bulk");
       return;
     }
@@ -27494,9 +27493,9 @@ async function insertReportWithFallback(payload) {
       return;
     }
 
-    // If previously denied, only proceed if forced
+    // Once denied, stop showing the pre-permission explainer and direct the user to device settings.
     if (geoDenied && !force) {
-      setShowLocationPrompt(true);
+      openNotice("⚠️", "Location denied", "Turn on Location Services for CityReport in your device settings.");
       return;
     }
 
@@ -27508,7 +27507,6 @@ async function insertReportWithFallback(payload) {
           const requested = await Geolocation.requestPermissions({ permissions: ["location"] });
           if (requested.location !== "granted") {
             setGeoDeniedPersist(true);
-            setShowLocationPrompt(true);
             openNotice("⚠️", "Location denied", "Unable to access location. You can still pan and tap the map.");
             return;
           }
@@ -27519,7 +27517,7 @@ async function insertReportWithFallback(payload) {
 
         if (status.state === "denied" && !force) {
           setGeoDeniedPersist(true);
-          setShowLocationPrompt(true);
+          openNotice("⚠️", "Location denied", "Turn on Location Services for CityReport in your browser or device settings.");
           return;
         }
 
@@ -27552,7 +27550,6 @@ async function insertReportWithFallback(payload) {
       const code = Number(err?.code);
       if (code === 1) {
         setGeoDeniedPersist(true);
-        setShowLocationPrompt(true);
         openNotice("⚠️", "Location denied", "Unable to access location. You can still pan and tap the map.");
         return;
       }
@@ -27908,7 +27905,6 @@ async function insertReportWithFallback(payload) {
         if (code === 1) {
           setAutoFollow(false);
           setGeoDeniedPersist(true);
-          setShowLocationPrompt(true);
           openNotice("⚠️", "Location denied", "Location access was blocked.");
           return;
         }
@@ -28721,12 +28717,9 @@ async function insertReportWithFallback(payload) {
 
       <LocationPromptModal
         open={showLocationPrompt}
-        onEnable={async () => {
+        onContinue={async () => {
+          setShowLocationPrompt(false);
           await findMyLocation(true);  // ✅ forced retry
-          setShowLocationPrompt(false);
-        }}
-        onSkip={() => {
-          setShowLocationPrompt(false);
         }}
       />
 
