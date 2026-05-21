@@ -3,7 +3,7 @@ import type { PresentationOption } from "@capacitor/push-notifications";
 
 const APP_TARGET_PRESETS = {
   map: {
-    appId: "cityreport.io.app",
+    appId: "cityreport.io.map",
     appName: "CityReport.io",
     appScope: "map",
     authRedirectUrl: "cityreport://auth/callback",
@@ -25,9 +25,14 @@ function normalizeTarget(rawTarget: string | undefined) {
 
 const appTarget = normalizeTarget(process.env.CITYREPORT_APP_TARGET);
 const preset = APP_TARGET_PRESETS[appTarget];
+const platform = String(process.env.CITYREPORT_PLATFORM || "").trim().toLowerCase();
+const resolvedAppId =
+  appTarget === "map" && platform === "ios" ? "cityreport.io.app"
+    : appTarget === "map" && platform === "android" ? "cityreport.io.map"
+    : String(process.env.CITYREPORT_APP_ID || preset.appId).trim();
 
 const config: CapacitorConfig = {
-  appId: String(process.env.CITYREPORT_APP_ID || preset.appId).trim(),
+  appId: resolvedAppId,
   appName: String(process.env.CITYREPORT_APP_NAME || preset.appName).trim(),
   webDir: "dist",
   bundledWebRuntime: false,

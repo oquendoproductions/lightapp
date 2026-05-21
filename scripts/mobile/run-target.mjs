@@ -5,13 +5,15 @@ import process from "node:process";
 
 const TARGET_PRESETS = {
   map: {
-    appId: "cityreport.io.app",
+    androidAppId: "cityreport.io.map",
+    iosAppId: "cityreport.io.app",
     appName: "CityReport.io",
     appScope: "map",
     authRedirectUrl: "cityreport://auth/callback",
   },
   hub: {
-    appId: "cityreport.io.hub",
+    androidAppId: "cityreport.io.hub",
+    iosAppId: "cityreport.io.hub",
     appName: "CityReport Hub",
     appScope: "hub",
     authRedirectUrl: "cityreporthub://auth/callback",
@@ -148,14 +150,27 @@ function getAuthCallbackParts(authRedirectUrl) {
   }
 }
 
-function buildEnv(preset, target) {
+function buildEnv(preset, target, platform) {
   return {
     ...process.env,
     CITYREPORT_APP_TARGET: target,
-    CITYREPORT_APP_ID: preset.appId,
+    CITYREPORT_PLATFORM: platform || "",
     CITYREPORT_APP_NAME: preset.appName,
     VITE_NATIVE_APP_SCOPE: preset.appScope,
     VITE_NATIVE_AUTH_REDIRECT_URL: preset.authRedirectUrl,
+  };
+}
+
+function getPresetForPlatform(target, platform) {
+  const preset = TARGET_PRESETS[target];
+  if (!preset) fail(`Unable to resolve preset for unknown target: ${target}`);
+  const appId =
+    platform === "ios" ? preset.iosAppId
+      : platform === "android" ? preset.androidAppId
+      : preset.androidAppId;
+  return {
+    ...preset,
+    appId,
   };
 }
 
@@ -328,14 +343,24 @@ function updateIosProject(preset) {
   writeText(IOS_INFO_PLIST_PATH, infoPlist);
 }
 
-function syncNativeMetadata(target) {
-  const preset = TARGET_PRESETS[target];
-  if (!preset) fail(`Unable to sync metadata for unknown target: ${target}`);
+function syncNativeMetadata(target, platform = "") {
+  if (platform === "android") {
+    if (existsSync(path.join(ROOT_DIR, "android"))) {
+      updateAndroidProject(getPresetForPlatform(target, "android"));
+    }
+    return;
+  }
+  if (platform === "ios") {
+    if (existsSync(path.join(ROOT_DIR, "ios"))) {
+      updateIosProject(getPresetForPlatform(target, "ios"));
+    }
+    return;
+  }
   if (existsSync(path.join(ROOT_DIR, "android"))) {
-    updateAndroidProject(preset);
+    updateAndroidProject(getPresetForPlatform(target, "android"));
   }
   if (existsSync(path.join(ROOT_DIR, "ios"))) {
-    updateIosProject(preset);
+    updateIosProject(getPresetForPlatform(target, "ios"));
   }
 }
 
@@ -345,7 +370,7 @@ function prepareTarget(target, platform, env) {
     ensurePlatform(platform, env);
     run("npx", ["cap", "sync", platform], env);
     mirrorNativePublicAssetDirs(platform);
-    syncNativeMetadata(target);
+    syncNativeMetadata(target, platform);
     return;
   }
   ensurePlatform("ios", env);
@@ -359,7 +384,7 @@ function prepareTarget(target, platform, env) {
 function openTarget(target, platform, env) {
   if (!platform) fail("Open requires a platform: ios or android.");
   ensurePlatform(platform, env);
-  syncNativeMetadata(target);
+  syncNativeMetadata(target, platform);
   run("npx", ["cap", "open", platform], env);
 }
 
@@ -367,7 +392,7 @@ const target = normalizeTarget(process.argv[2]);
 const action = normalizeAction(process.argv[3]);
 const platform = normalizePlatform(process.argv[4]);
 const preset = TARGET_PRESETS[target];
-const env = buildEnv(preset, target);
+const env = buildEnv(preset, target, platform);
 
 if (action === "prepare") {
   prepareTarget(target, platform, env);
