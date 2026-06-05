@@ -29,6 +29,24 @@ const DOMAIN_TYPE_OPTIONS = [
   { key: "incident_driven", label: "Incident-Driven Domain" },
 ];
 
+const DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS = [
+  { key: "enabled", label: "Enabled" },
+  { key: "disabled", label: "Disabled" },
+];
+
+const DOMAIN_BILLING_STATUS_OPTIONS = [
+  { key: "not_applicable", label: "Not Applicable" },
+  { key: "pending_review", label: "Pending Review" },
+  { key: "approved", label: "Approved" },
+  { key: "waived", label: "Waived" },
+];
+
+const DOMAIN_BILLING_MODEL_OPTIONS = [
+  { key: "included", label: "Included" },
+  { key: "add_on", label: "Add-On" },
+  { key: "custom", label: "Custom" },
+];
+
 const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
   { key: "contacts", label: "Points of Contact" },
@@ -935,6 +953,105 @@ function initialDomainConfigForm() {
   return out;
 }
 
+function slugifyDomainKeyInput(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_{2,}/g, "_");
+}
+
+function parseDomainIssueTypeInput(value) {
+  const seen = new Set();
+  const rows = [];
+  const chunks = String(value || "")
+    .split(/\r?\n|,/)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+  for (const chunk of chunks) {
+    const issueLabel = chunk.replace(/\s+/g, " ").trim();
+    if (!issueLabel) continue;
+    const issueKey = slugifyDomainKeyInput(issueLabel);
+    if (!issueKey || seen.has(issueKey)) continue;
+    seen.add(issueKey);
+    rows.push({
+      issue_key: issueKey,
+      issue_label: issueLabel,
+    });
+  }
+  return rows;
+}
+
+function serializeDomainIssueTypeInput(issueTypes) {
+  return (Array.isArray(issueTypes) ? issueTypes : [])
+    .map((row) => String(row?.issue_label || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function initialDomainRegistryForm() {
+  return {
+    label: "",
+    key: "",
+    description: "",
+    domain_class: "incident_driven",
+    status: "draft",
+    icon_key: "",
+    ownership_model: "org_managed",
+    report_prefix: "",
+    default_notification_email: "",
+    default_organization_monitored_repairs: true,
+    issue_types_input: "",
+  };
+}
+
+function buildDomainRegistryForm(row) {
+  if (!row) return initialDomainRegistryForm();
+  return {
+    label: String(row?.label || ""),
+    key: String(row?.key || ""),
+    description: String(row?.description || ""),
+    domain_class: String(row?.domain_class || "incident_driven"),
+    status: String(row?.status || "draft"),
+    icon_key: String(row?.icon_key || ""),
+    ownership_model: String(row?.ownership_model || "org_managed"),
+    report_prefix: String(row?.report_prefix || ""),
+    default_notification_email: String(row?.default_notification_email || ""),
+    default_organization_monitored_repairs: row?.default_organization_monitored_repairs !== false,
+    issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
+  };
+}
+
+function initialTenantDomainAssignmentForm() {
+  return {
+    domain_key: "",
+    active: true,
+    visibility: "enabled",
+    notification_email: "",
+    organization_monitored_repairs: true,
+    billing_status: "not_applicable",
+    billing_model: "included",
+    billing_amount: "0",
+    billing_notes: "",
+  };
+}
+
+function buildTenantDomainAssignmentForm(row) {
+  if (!row) return initialTenantDomainAssignmentForm();
+  return {
+    domain_key: String(row?.domain_key || ""),
+    active: row?.active !== false,
+    visibility: String(row?.visibility || "enabled"),
+    notification_email: String(row?.notification_email || ""),
+    organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+    billing_status: String(row?.billing_status || "not_applicable"),
+    billing_model: String(row?.billing_model || "included"),
+    billing_amount: String(row?.billing_amount ?? "0"),
+    billing_notes: String(row?.billing_notes || ""),
+  };
+}
+
 function initialMapFeaturesForm() {
   return {
     show_boundary_border: true,
@@ -1435,7 +1552,19 @@ export default function PlatformAdminApp() {
   const [tenantProfilesByTenant, setTenantProfilesByTenant] = useState({});
   const [tenantVisibilityByTenant, setTenantVisibilityByTenant] = useState({});
   const [tenantDomainConfigsByTenant, setTenantDomainConfigsByTenant] = useState({});
+  const [tenantDomainAssignmentsByTenant, setTenantDomainAssignmentsByTenant] = useState({});
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
+  const [domainRegistryRows, setDomainRegistryRows] = useState([]);
+  const [domainRegistrySchemaReady, setDomainRegistrySchemaReady] = useState(true);
+  const [domainRegistryEditorOpen, setDomainRegistryEditorOpen] = useState(false);
+  const [editingDomainDefinitionKey, setEditingDomainDefinitionKey] = useState("");
+  const [domainRegistryForm, setDomainRegistryForm] = useState(initialDomainRegistryForm);
+  const [domainRegistrySaving, setDomainRegistrySaving] = useState(false);
+  const [tenantDomainAssignmentSchemaReady, setTenantDomainAssignmentSchemaReady] = useState(true);
+  const [tenantDomainAssignmentEditorOpen, setTenantDomainAssignmentEditorOpen] = useState(false);
+  const [editingTenantDomainAssignmentKey, setEditingTenantDomainAssignmentKey] = useState("");
+  const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
+  const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
 
   const [selectedTenantKey, setSelectedTenantKey] = useState(initialControlPlaneRouteState.selectedTenantKey);
   const [entryStep, setEntryStep] = useState(initialControlPlaneRouteState.entryStep); // start | add | tenant
@@ -1495,6 +1624,8 @@ export default function PlatformAdminApp() {
     users: "",
     roles: "",
     domains: "",
+    domainRegistry: "",
+    domainAssignments: "",
     files: "",
     audit: "",
     hydrate: "",
@@ -1911,6 +2042,8 @@ export default function PlatformAdminApp() {
   const canManageTenantRoles = hasPlatformPermission("roles.edit");
   const canDeleteTenantRoles = hasPlatformPermission("roles.delete");
   const canEditTenantDomains = hasPlatformPermission("domains.edit");
+  const canViewDomainRegistry = isPlatformAdmin && (hasPlatformPermission("domains.access") || hasPlatformPermission("domains.edit"));
+  const canManageDomainRegistry = isPlatformAdmin && hasPlatformPermission("domains.edit");
   const canEditTenantFiles = hasPlatformPermission("files.edit");
   const canViewTenantAudit = hasPlatformPermission("audit.access");
   const canEditLead = hasPlatformPermission("leads.edit");
@@ -2586,6 +2719,94 @@ export default function PlatformAdminApp() {
     setTenantDomainConfigsByTenant(next);
   }, [hasPlatformPermission]);
 
+  const loadDomainRegistryData = useCallback(async () => {
+    if (!canViewDomainRegistry) {
+      setDomainRegistryRows([]);
+      setDomainRegistrySchemaReady(true);
+      return;
+    }
+    const [definitionsResult, issueTypesResult] = await Promise.all([
+      supabase
+        .from("domain_definitions")
+        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+        .order("sort_order", { ascending: true })
+        .order("label", { ascending: true }),
+      supabase
+        .from("domain_issue_types")
+        .select("id,domain_key,issue_key,issue_label,sort_order,active")
+        .order("sort_order", { ascending: true })
+        .order("issue_label", { ascending: true }),
+    ]);
+    const firstError = definitionsResult.error || issueTypesResult.error;
+    if (firstError) {
+      if (isMissingRelationError(firstError)) {
+        setDomainRegistryRows([]);
+        setDomainRegistrySchemaReady(false);
+        return;
+      }
+      throw firstError;
+    }
+
+    const issueTypesByDomain = {};
+    for (const row of issueTypesResult.data || []) {
+      const domainKey = String(row?.domain_key || "").trim().toLowerCase();
+      if (!domainKey) continue;
+      if (!issueTypesByDomain[domainKey]) issueTypesByDomain[domainKey] = [];
+      issueTypesByDomain[domainKey].push({
+        id: row?.id || null,
+        issue_key: String(row?.issue_key || "").trim(),
+        issue_label: String(row?.issue_label || "").trim(),
+        sort_order: Number(row?.sort_order || 100),
+        active: row?.active !== false,
+      });
+    }
+
+    const rows = (definitionsResult.data || []).map((row) => {
+      const key = String(row?.key || "").trim().toLowerCase();
+      return {
+        ...row,
+        key,
+        issue_types: issueTypesByDomain[key] || [],
+      };
+    });
+    setDomainRegistryRows(rows);
+    setDomainRegistrySchemaReady(true);
+  }, [canViewDomainRegistry]);
+
+  const loadTenantDomainAssignments = useCallback(async () => {
+    if (!canViewDomainRegistry) {
+      setTenantDomainAssignmentsByTenant({});
+      setTenantDomainAssignmentSchemaReady(true);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("tenant_domain_assignments")
+      .select("id,tenant_key,domain_key,active,visibility,notification_email,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .order("tenant_key", { ascending: true })
+      .order("domain_key", { ascending: true });
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantDomainAssignmentsByTenant({});
+        setTenantDomainAssignmentSchemaReady(false);
+        return;
+      }
+      throw error;
+    }
+    const next = {};
+    for (const row of data || []) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      const domainKey = String(row?.domain_key || "").trim().toLowerCase();
+      if (!tenantKey || !domainKey) continue;
+      if (!next[tenantKey]) next[tenantKey] = {};
+      next[tenantKey][domainKey] = {
+        ...row,
+        domain_key: domainKey,
+      };
+    }
+    setTenantDomainAssignmentsByTenant(next);
+    setTenantDomainAssignmentSchemaReady(true);
+  }, [canViewDomainRegistry]);
+
   const loadTenantMapFeatures = useCallback(async () => {
     if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
       setTenantMapFeaturesByTenant({});
@@ -2720,6 +2941,8 @@ export default function PlatformAdminApp() {
         loadTenantProfiles(),
         loadTenantVisibility(),
         loadTenantDomainConfigs(),
+        loadDomainRegistryData(),
+        loadTenantDomainAssignments(),
         loadTenantMapFeatures(),
         loadAudit(),
       ]);
@@ -2727,7 +2950,7 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadDomainRegistryData, loadTenantDomainAssignments, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canViewTenantUsers) {
@@ -4717,6 +4940,245 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [canDeleteTenant, logAudit, refreshControlPlaneData, selectedTenant, selectedTenantKey, selectedTenantPendingDeletion, sessionUserId]);
 
+  const beginCreateDomainDefinition = useCallback(() => {
+    if (!canManageDomainRegistry) return;
+    setEditingDomainDefinitionKey("");
+    setDomainRegistryForm(initialDomainRegistryForm());
+    setDomainRegistryEditorOpen(true);
+    setStatus((prev) => ({ ...prev, domainRegistry: "" }));
+  }, [canManageDomainRegistry]);
+
+  const beginEditDomainDefinition = useCallback((domainKey) => {
+    if (!canManageDomainRegistry) return;
+    const key = String(domainKey || "").trim().toLowerCase();
+    const row = domainRegistryRows.find((entry) => entry.key === key);
+    if (!row) return;
+    setEditingDomainDefinitionKey(key);
+    setDomainRegistryForm(buildDomainRegistryForm(row));
+    setDomainRegistryEditorOpen(true);
+    setStatus((prev) => ({ ...prev, domainRegistry: "" }));
+  }, [canManageDomainRegistry, domainRegistryRows]);
+
+  const cancelDomainDefinitionEditor = useCallback(() => {
+    setEditingDomainDefinitionKey("");
+    setDomainRegistryForm(initialDomainRegistryForm());
+    setDomainRegistryEditorOpen(false);
+    setStatus((prev) => ({ ...prev, domainRegistry: "" }));
+  }, []);
+
+  const saveDomainDefinition = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "You need the Domains edit permission to manage the global domain registry." }));
+      return;
+    }
+
+    const label = String(domainRegistryForm?.label || "").trim();
+    const key = editingDomainDefinitionKey || slugifyDomainKeyInput(domainRegistryForm?.key || "");
+    if (!label) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "Enter a domain label before saving." }));
+      return;
+    }
+    if (!key) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "Enter a valid domain key before saving." }));
+      return;
+    }
+
+    const issueTypes = parseDomainIssueTypeInput(domainRegistryForm?.issue_types_input || "");
+    const payload = {
+      key,
+      label,
+      description: String(domainRegistryForm?.description || "").trim() || null,
+      domain_class: String(domainRegistryForm?.domain_class || "incident_driven").trim().toLowerCase(),
+      status: String(domainRegistryForm?.status || "draft").trim().toLowerCase(),
+      icon_key: String(domainRegistryForm?.icon_key || "").trim() || null,
+      ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
+      report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
+      default_notification_email: String(domainRegistryForm?.default_notification_email || "").trim() || null,
+      default_organization_monitored_repairs: domainRegistryForm?.default_organization_monitored_repairs !== false,
+      updated_by: sessionUserId || null,
+    };
+
+    if (!editingDomainDefinitionKey) {
+      payload.created_by = sessionUserId || null;
+    }
+
+    setDomainRegistrySaving(true);
+    setStatus((prev) => ({ ...prev, domainRegistry: "" }));
+
+    const saveResult = editingDomainDefinitionKey
+      ? await supabase.from("domain_definitions").update(payload).eq("key", key)
+      : await supabase.from("domain_definitions").insert(payload);
+
+    if (saveResult.error) {
+      setDomainRegistrySaving(false);
+      setStatus((prev) => ({ ...prev, domainRegistry: statusText(saveResult.error, "") }));
+      return;
+    }
+
+    const { error: deleteIssueTypesError } = await supabase
+      .from("domain_issue_types")
+      .delete()
+      .eq("domain_key", key);
+
+    if (deleteIssueTypesError) {
+      setDomainRegistrySaving(false);
+      setStatus((prev) => ({ ...prev, domainRegistry: statusText(deleteIssueTypesError, "") }));
+      return;
+    }
+
+    if (issueTypes.length) {
+      const { error: issueTypesError } = await supabase
+        .from("domain_issue_types")
+        .insert(issueTypes.map((row, index) => ({
+          domain_key: key,
+          issue_key: row.issue_key,
+          issue_label: row.issue_label,
+          sort_order: (index + 1) * 10,
+        })));
+      if (issueTypesError) {
+        setDomainRegistrySaving(false);
+        setStatus((prev) => ({ ...prev, domainRegistry: statusText(issueTypesError, "") }));
+        return;
+      }
+    }
+
+    setDomainRegistrySaving(false);
+    cancelDomainDefinitionEditor();
+    setStatus((prev) => ({
+      ...prev,
+      domainRegistry: `${editingDomainDefinitionKey ? "Updated" : "Created"} ${label}.`,
+    }));
+    await refreshControlPlaneData();
+  }, [canManageDomainRegistry, domainRegistryForm, editingDomainDefinitionKey, refreshControlPlaneData, sessionUserId, cancelDomainDefinitionEditor]);
+
+  const archiveDomainDefinition = useCallback(async (domainKey) => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "You need the Domains edit permission to archive a domain." }));
+      return;
+    }
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key) return;
+    const row = domainRegistryRows.find((entry) => entry.key === key);
+    if (!row) return;
+    setDomainRegistrySaving(true);
+    const { error } = await supabase
+      .from("domain_definitions")
+      .update({
+        status: "archived",
+        updated_by: sessionUserId || null,
+      })
+      .eq("key", key);
+    setDomainRegistrySaving(false);
+    if (error) {
+      setStatus((prev) => ({ ...prev, domainRegistry: statusText(error, "") }));
+      return;
+    }
+    if (editingDomainDefinitionKey === key) {
+      cancelDomainDefinitionEditor();
+    }
+    setStatus((prev) => ({ ...prev, domainRegistry: `Archived ${row.label}.` }));
+    await refreshControlPlaneData();
+  }, [canManageDomainRegistry, cancelDomainDefinitionEditor, domainRegistryRows, editingDomainDefinitionKey, refreshControlPlaneData, sessionUserId]);
+
+  const beginCreateTenantDomainAssignment = useCallback(() => {
+    if (!canManageDomainRegistry) return;
+    if (!assignableDomainRegistryRows.length) {
+      setStatus((prev) => ({ ...prev, domainAssignments: "All active global domains are already assigned to this organization." }));
+      return;
+    }
+    setEditingTenantDomainAssignmentKey("");
+    setTenantDomainAssignmentForm({
+      ...initialTenantDomainAssignmentForm(),
+      domain_key: assignableDomainRegistryRows[0].key,
+    });
+    setTenantDomainAssignmentEditorOpen(true);
+    setStatus((prev) => ({ ...prev, domainAssignments: "" }));
+  }, [assignableDomainRegistryRows, canManageDomainRegistry]);
+
+  const beginEditTenantDomainAssignment = useCallback((domainKey) => {
+    if (!canManageDomainRegistry) return;
+    const key = String(domainKey || "").trim().toLowerCase();
+    const row = selectedTenantDomainAssignments?.[key];
+    if (!row) return;
+    setEditingTenantDomainAssignmentKey(key);
+    setTenantDomainAssignmentForm(buildTenantDomainAssignmentForm(row));
+    setTenantDomainAssignmentEditorOpen(true);
+    setStatus((prev) => ({ ...prev, domainAssignments: "" }));
+  }, [canManageDomainRegistry, selectedTenantDomainAssignments]);
+
+  const cancelTenantDomainAssignmentEditor = useCallback(() => {
+    setEditingTenantDomainAssignmentKey("");
+    setTenantDomainAssignmentForm(initialTenantDomainAssignmentForm());
+    setTenantDomainAssignmentEditorOpen(false);
+    setStatus((prev) => ({ ...prev, domainAssignments: "" }));
+  }, []);
+
+  const saveTenantDomainAssignment = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, domainAssignments: "You need the Domains edit permission to manage registry-backed tenant assignments." }));
+      return;
+    }
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    if (!tenantKey) {
+      setStatus((prev) => ({ ...prev, domainAssignments: "Select an organization first." }));
+      return;
+    }
+    const domainKey = String(editingTenantDomainAssignmentKey || tenantDomainAssignmentForm?.domain_key || "").trim().toLowerCase();
+    if (!domainKey) {
+      setStatus((prev) => ({ ...prev, domainAssignments: "Choose a global domain before saving this assignment." }));
+      return;
+    }
+    const payload = {
+      tenant_key: tenantKey,
+      domain_key: domainKey,
+      active: tenantDomainAssignmentForm?.active !== false,
+      visibility: String(tenantDomainAssignmentForm?.visibility || "enabled").trim().toLowerCase(),
+      notification_email: String(tenantDomainAssignmentForm?.notification_email || "").trim() || null,
+      organization_monitored_repairs: tenantDomainAssignmentForm?.organization_monitored_repairs !== false,
+      billing_status: String(tenantDomainAssignmentForm?.billing_status || "not_applicable").trim().toLowerCase(),
+      billing_model: String(tenantDomainAssignmentForm?.billing_model || "included").trim().toLowerCase(),
+      billing_amount: Number.isFinite(Number(tenantDomainAssignmentForm?.billing_amount))
+        ? Number(tenantDomainAssignmentForm.billing_amount)
+        : 0,
+      billing_notes: String(tenantDomainAssignmentForm?.billing_notes || "").trim() || null,
+      updated_by: sessionUserId || null,
+    };
+    if (payload.active) {
+      payload.activated_at = new Date().toISOString();
+      payload.activated_by = sessionUserId || null;
+    }
+    if (!editingTenantDomainAssignmentKey) {
+      payload.created_by = sessionUserId || null;
+    }
+
+    setTenantDomainAssignmentSaving(true);
+    setStatus((prev) => ({ ...prev, domainAssignments: "" }));
+    const result = editingTenantDomainAssignmentKey
+      ? await supabase
+          .from("tenant_domain_assignments")
+          .update(payload)
+          .eq("tenant_key", tenantKey)
+          .eq("domain_key", domainKey)
+      : await supabase
+          .from("tenant_domain_assignments")
+          .insert(payload);
+    setTenantDomainAssignmentSaving(false);
+    if (result.error) {
+      setStatus((prev) => ({ ...prev, domainAssignments: statusText(result.error, "") }));
+      return;
+    }
+
+    const domainLabel = activeDomainRegistryRows.find((row) => row.key === domainKey)?.label || domainKey;
+    cancelTenantDomainAssignmentEditor();
+    setStatus((prev) => ({
+      ...prev,
+      domainAssignments: `${editingTenantDomainAssignmentKey ? "Updated" : "Assigned"} ${domainLabel} for ${selectedTenantPublicDisplayName || selectedTenantOrganizationName || tenantKey}.`,
+    }));
+    await refreshControlPlaneData();
+  }, [activeDomainRegistryRows, canManageDomainRegistry, cancelTenantDomainAssignmentEditor, editingTenantDomainAssignmentKey, refreshControlPlaneData, selectedTenantKey, selectedTenantOrganizationName, selectedTenantPublicDisplayName, sessionUserId, tenantDomainAssignmentForm]);
+
   const saveDomainAndFeatureSettings = useCallback(async (event, options = {}) => {
     event?.preventDefault?.();
     if (!canEditTenantDomains) {
@@ -5554,6 +6016,40 @@ export default function PlatformAdminApp() {
       return visibility !== "disabled" || editingDomainKey === d.key;
     }),
     [domainVisibilityForm, editingDomainKey]
+  );
+  const activeDomainRegistryRows = useMemo(
+    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() !== "archived"),
+    [domainRegistryRows]
+  );
+  const archivedDomainRegistryRows = useMemo(
+    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() === "archived"),
+    [domainRegistryRows]
+  );
+  const selectedTenantDomainAssignments = useMemo(
+    () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
+    [selectedTenantKey, tenantDomainAssignmentsByTenant]
+  );
+  const selectedTenantAssignedDomainRows = useMemo(() => {
+    const rows = [];
+    for (const domain of activeDomainRegistryRows) {
+      const assignment = selectedTenantDomainAssignments?.[domain.key];
+      if (!assignment) continue;
+      rows.push({
+        ...assignment,
+        domain,
+      });
+    }
+    rows.sort((a, b) => {
+      const aSort = Number(a?.domain?.sort_order || 100);
+      const bSort = Number(b?.domain?.sort_order || 100);
+      if (aSort !== bSort) return aSort - bSort;
+      return String(a?.domain?.label || "").localeCompare(String(b?.domain?.label || ""));
+    });
+    return rows;
+  }, [activeDomainRegistryRows, selectedTenantDomainAssignments]);
+  const assignableDomainRegistryRows = useMemo(
+    () => activeDomainRegistryRows.filter((domain) => !selectedTenantDomainAssignments?.[domain.key]),
+    [activeDomainRegistryRows, selectedTenantDomainAssignments]
   );
   const compactVisibleDomainCards = useMemo(() => {
     if (!isCompactViewport) return domainEnablementCards;
@@ -9588,6 +10084,514 @@ export default function PlatformAdminApp() {
                 </p>
               </div>
               <div style={{ display: "grid", gap: 12 }}>
+                {canViewDomainRegistry ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Global Domain Registry</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Define reportable domains once at the platform level, then assign them to organizations in a later step without changing the live public app behavior yet.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || domainRegistrySaving}
+                        onClick={beginCreateDomainDefinition}
+                      >
+                        New Global Domain
+                      </button>
+                    </div>
+                    {status.domainRegistry ? (
+                      <div style={{ fontSize: 12.5, color: status.domainRegistry.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                        {status.domainRegistry}
+                      </div>
+                    ) : null}
+                    {!domainRegistrySchemaReady ? (
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Domain registry tables are not available yet in this environment. Run the latest Supabase migration locally before using this panel.
+                      </div>
+                    ) : null}
+                    {domainRegistryEditorOpen ? (
+                      <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                            {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            {editingDomainDefinitionKey ? "Domain key remains stable after creation." : "Keys become the stable identifier across PCP, reports, and the public app."}
+                          </div>
+                        </div>
+                        <div style={responsiveActionGrid}>
+                          <label style={modalField}>
+                            <span>Domain Label</span>
+                            <input
+                              value={domainRegistryForm.label}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, label: e.target.value }))}
+                              placeholder="Catch Basins"
+                              style={modalInput}
+                            />
+                          </label>
+                          <label style={modalField}>
+                            <span>Domain Key</span>
+                            <input
+                              value={domainRegistryForm.key}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, key: slugifyDomainKeyInput(e.target.value) }))}
+                              placeholder="catch_basins"
+                              readOnly={Boolean(editingDomainDefinitionKey)}
+                              style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
+                            />
+                          </label>
+                          <label style={modalField}>
+                            <span>Domain Class</span>
+                            <select
+                              value={domainRegistryForm.domain_class}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
+                              style={modalInput}
+                            >
+                              {DOMAIN_TYPE_OPTIONS.map((option) => (
+                                <option key={option.key} value={option.key}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Status</span>
+                            <select
+                              value={domainRegistryForm.status}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
+                              style={modalInput}
+                            >
+                              <option value="draft">Draft</option>
+                              <option value="active">Active</option>
+                              <option value="archived">Archived</option>
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Icon Key</span>
+                            <input
+                              value={domainRegistryForm.icon_key}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, icon_key: e.target.value }))}
+                              placeholder="catch_basins"
+                              style={modalInput}
+                            />
+                          </label>
+                          <label style={modalField}>
+                            <span>Ownership Model</span>
+                            <select
+                              value={domainRegistryForm.ownership_model}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
+                              style={modalInput}
+                            >
+                              <option value="org_managed">Organization Managed</option>
+                              <option value="utility_managed">Utility Managed</option>
+                              <option value="third_party">Third Party</option>
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Report Prefix</span>
+                            <input
+                              value={domainRegistryForm.report_prefix}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, report_prefix: String(e.target.value || "").toUpperCase() }))}
+                              placeholder="CB"
+                              style={modalInput}
+                            />
+                          </label>
+                          <label style={modalField}>
+                            <span>Default Notification Email</span>
+                            <input
+                              value={domainRegistryForm.default_notification_email}
+                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, default_notification_email: e.target.value }))}
+                              placeholder="catchbasins@examplecity.gov"
+                              style={modalInput}
+                            />
+                          </label>
+                          <div style={{ ...modalField, justifyContent: "center" }}>
+                            <span>Repair Monitoring Default</span>
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                minHeight: 48,
+                                padding: "0 14px",
+                                borderRadius: 14,
+                                border: "1px solid rgba(17, 36, 69, 0.14)",
+                                background: "rgba(255,255,255,0.92)",
+                                color: palette.navy900,
+                                fontWeight: 700,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={domainRegistryForm.default_organization_monitored_repairs !== false}
+                                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, default_organization_monitored_repairs: e.target.checked }))}
+                              />
+                              <span style={{ display: "grid", gap: 2 }}>
+                                <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                  {domainRegistryForm.default_organization_monitored_repairs !== false ? "Yes" : "No"}
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                          <span>Description</span>
+                          <textarea
+                            value={domainRegistryForm.description}
+                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, description: e.target.value }))}
+                            rows={3}
+                            placeholder="Describe when residents or staff should use this domain."
+                            style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
+                          />
+                        </label>
+                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                          <span>Issue Types (optional)</span>
+                          <textarea
+                            value={domainRegistryForm.issue_types_input}
+                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, issue_types_input: e.target.value }))}
+                            rows={4}
+                            placeholder={"Clogged\nDamaged\nMissing Grate"}
+                            style={{ ...modalInput, minHeight: 110, resize: "vertical" }}
+                          />
+                        </label>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="submit"
+                            style={{ ...buttonBase, opacity: domainRegistrySaving ? 0.65 : 1 }}
+                            disabled={domainRegistrySaving}
+                          >
+                            {domainRegistrySaving ? "Saving..." : editingDomainDefinitionKey ? "Save Domain" : "Create Domain"}
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            disabled={domainRegistrySaving}
+                            onClick={cancelDomainDefinitionEditor}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {activeDomainRegistryRows.length ? activeDomainRegistryRows.map((domain) => (
+                        <div
+                          key={domain.key}
+                          style={{
+                            ...subPanel,
+                            display: "grid",
+                            gap: 8,
+                            background: "rgba(255,255,255,0.7)",
+                            borderColor: "rgba(17,36,69,0.12)",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                  {domain.status}
+                                </span>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                  {domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                <code>{domain.key}</code>
+                                {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
+                                {domain.icon_key ? ` • Icon ${domain.icon_key}` : ""}
+                              </div>
+                              {domain.description ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
+                              ) : null}
+                              {domain.issue_types?.length ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                  Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                  No issue types configured yet.
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+                                disabled={!canManageDomainRegistry || domainRegistrySaving}
+                                onClick={() => beginEditDomainDefinition(domain.key)}
+                              >
+                                Edit
+                              </button>
+                              {domain.status !== "archived" ? (
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+                                  disabled={!canManageDomainRegistry || domainRegistrySaving}
+                                  onClick={() => void archiveDomainDefinition(domain.key)}
+                                >
+                                  Archive
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      )) : (
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          No global domains have been defined yet in the new registry.
+                        </div>
+                      )}
+                      {archivedDomainRegistryRows.length ? (
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Archived domains: {archivedDomainRegistryRows.map((domain) => domain.label).join(", ")}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {canViewDomainRegistry && inTenantWorkspace ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Registry-Based Tenant Assignments</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey} using the new registry model. This is additive groundwork and does not replace the live public-app domain behavior yet.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                        onClick={beginCreateTenantDomainAssignment}
+                      >
+                        Assign Global Domain
+                      </button>
+                    </div>
+                    {status.domainAssignments ? (
+                      <div style={{ fontSize: 12.5, color: status.domainAssignments.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                        {status.domainAssignments}
+                      </div>
+                    ) : null}
+                    {!tenantDomainAssignmentSchemaReady ? (
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Tenant domain assignment tables are not available yet in this environment. Run the latest migration locally to enable assignment management.
+                      </div>
+                    ) : null}
+                    {tenantDomainAssignmentEditorOpen ? (
+                      <form onSubmit={(event) => void saveTenantDomainAssignment(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(46,98,143,0.08)", borderColor: "rgba(46,98,143,0.22)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                            {editingTenantDomainAssignmentKey ? `Edit ${tenantDomainAssignmentForm.domain_key} assignment` : "Assign Active Global Domain"}
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            Billing metadata is informational only in v1 and does not gate activation.
+                          </div>
+                        </div>
+                        <div style={responsiveActionGrid}>
+                          <label style={modalField}>
+                            <span>Global Domain</span>
+                            <select
+                              value={tenantDomainAssignmentForm.domain_key}
+                              disabled={Boolean(editingTenantDomainAssignmentKey)}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, domain_key: e.target.value }))}
+                              style={{ ...modalInput, background: editingTenantDomainAssignmentKey ? "#eef4fb" : modalInput.background }}
+                            >
+                              {editingTenantDomainAssignmentKey ? (
+                                <option value={tenantDomainAssignmentForm.domain_key}>{activeDomainRegistryRows.find((row) => row.key === tenantDomainAssignmentForm.domain_key)?.label || tenantDomainAssignmentForm.domain_key}</option>
+                              ) : assignableDomainRegistryRows.length ? (
+                                assignableDomainRegistryRows.map((domain) => (
+                                  <option key={domain.key} value={domain.key}>{domain.label}</option>
+                                ))
+                              ) : (
+                                <option value="">No active domains available</option>
+                              )}
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Assignment Active</span>
+                            <select
+                              value={tenantDomainAssignmentForm.active ? "active" : "inactive"}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, active: e.target.value === "active" }))}
+                              style={modalInput}
+                            >
+                              <option value="active">Active</option>
+                              <option value="inactive">Inactive</option>
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Visibility</span>
+                            <select
+                              value={tenantDomainAssignmentForm.visibility}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, visibility: e.target.value }))}
+                              style={modalInput}
+                            >
+                              {DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS.map((option) => (
+                                <option key={option.key} value={option.key}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Notification Email</span>
+                            <input
+                              value={tenantDomainAssignmentForm.notification_email}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
+                              placeholder="notifications@examplecity.gov"
+                              style={modalInput}
+                            />
+                          </label>
+                          <label style={modalField}>
+                            <span>Billing Status</span>
+                            <select
+                              value={tenantDomainAssignmentForm.billing_status}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_status: e.target.value }))}
+                              style={modalInput}
+                            >
+                              {DOMAIN_BILLING_STATUS_OPTIONS.map((option) => (
+                                <option key={option.key} value={option.key}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Billing Model</span>
+                            <select
+                              value={tenantDomainAssignmentForm.billing_model}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_model: e.target.value }))}
+                              style={modalInput}
+                            >
+                              {DOMAIN_BILLING_MODEL_OPTIONS.map((option) => (
+                                <option key={option.key} value={option.key}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label style={modalField}>
+                            <span>Billing Amount</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={tenantDomainAssignmentForm.billing_amount}
+                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_amount: e.target.value }))}
+                              placeholder="0.00"
+                              style={modalInput}
+                            />
+                          </label>
+                          <div style={{ ...modalField, justifyContent: "center" }}>
+                            <span>Repair Monitoring</span>
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                minHeight: 48,
+                                padding: "0 14px",
+                                borderRadius: 14,
+                                border: "1px solid rgba(17, 36, 69, 0.14)",
+                                background: "rgba(255,255,255,0.92)",
+                                color: palette.navy900,
+                                fontWeight: 700,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
+                                onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
+                              />
+                              <span style={{ display: "grid", gap: 2 }}>
+                                <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                  {tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "Yes" : "No"}
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                          <span>Billing Notes</span>
+                          <textarea
+                            value={tenantDomainAssignmentForm.billing_notes}
+                            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_notes: e.target.value }))}
+                            rows={3}
+                            placeholder="Optional notes about pricing, review status, or future billing triggers."
+                            style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
+                          />
+                        </label>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="submit"
+                            style={{ ...buttonBase, opacity: tenantDomainAssignmentSaving ? 0.65 : 1 }}
+                            disabled={tenantDomainAssignmentSaving || (!editingTenantDomainAssignmentKey && !tenantDomainAssignmentForm.domain_key)}
+                          >
+                            {tenantDomainAssignmentSaving ? "Saving..." : editingTenantDomainAssignmentKey ? "Save Assignment" : "Create Assignment"}
+                          </button>
+                          <button
+                            type="button"
+                            style={buttonAlt}
+                            disabled={tenantDomainAssignmentSaving}
+                            onClick={cancelTenantDomainAssignmentEditor}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {selectedTenantAssignedDomainRows.length ? selectedTenantAssignedDomainRows.map((assignment) => (
+                        <div
+                          key={`${assignment.tenant_key}:${assignment.domain_key}`}
+                          style={{
+                            ...subPanel,
+                            display: "grid",
+                            gap: 8,
+                            background: "rgba(255,255,255,0.7)",
+                            borderColor: "rgba(17,36,69,0.12)",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <strong style={{ color: palette.navy900 }}>{assignment.domain.label}</strong>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: assignment.active ? palette.mint700 : palette.red600, background: assignment.active ? "rgba(18,128,106,0.12)" : "rgba(209,67,67,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                  {assignment.active ? "Assignment Active" : "Assignment Inactive"}
+                                </span>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                  {assignment.domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                <code>{assignment.domain_key}</code>
+                                {assignment.visibility ? ` • Visibility ${assignment.visibility}` : ""}
+                                {assignment.billing_model ? ` • Billing ${assignment.billing_model}` : ""}
+                              </div>
+                              {assignment.notification_email ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Notification email: {assignment.notification_email}</div>
+                              ) : null}
+                              {assignment.billing_notes ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
+                              ) : null}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                                disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving}
+                                onClick={() => beginEditTenantDomainAssignment(assignment.domain_key)}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )) : (
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          No registry-based assignments are configured yet for this organization.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: 3 }}>
