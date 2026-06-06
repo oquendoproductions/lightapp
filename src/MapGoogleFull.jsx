@@ -13973,6 +13973,8 @@ function AccountMenuPanel({
   session,
   profile,
   onClose,
+  showCitySwitcher = false,
+  onOpenCitySwitcher,
   onManage,
   onMyReports,
   onFollowedLocations,
@@ -14041,6 +14043,11 @@ function AccountMenuPanel({
         <button onClick={onManage} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           Manage Account
         </button>
+        {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
+          <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
+            Switch Location
+          </button>
+        ) : null}
         <button onClick={onFollowedLocations} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           My Locations
         </button>
@@ -16172,6 +16179,8 @@ export default function App({ onBackToHub = null }) {
   const mapRef = useRef(null);
   const desktopAccountMenuAnchorRef = useRef(null);
   const desktopAccountMenuPanelRef = useRef(null);
+  const domainMenuAnchorRef = useRef(null);
+  const domainMenuPanelRef = useRef(null);
   const flyAnimRef = useRef(null);
   const flyInfoTimerRef = useRef(null);
   const officialCanvasOverlayRef = useRef(null);
@@ -17943,6 +17952,30 @@ export default function App({ onBackToHub = null }) {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [accountMenuOpen, useAppShellLayout]);
+
+  useEffect(() => {
+    if (!adminDomainMenuOpen || useAppShellLayout || typeof window === "undefined") return undefined;
+
+    const handlePointerDown = (event) => {
+      const anchor = domainMenuAnchorRef.current;
+      const panel = domainMenuPanelRef.current;
+      if (anchor && anchor.contains(event.target)) return;
+      if (panel && panel.contains(event.target)) return;
+      setAdminDomainMenuOpen(false);
+    };
+
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setAdminDomainMenuOpen(false);
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [adminDomainMenuOpen, useAppShellLayout]);
 
   useEffect(() => {
     let cancelled = false;
@@ -31433,7 +31466,7 @@ async function insertReportWithFallback(payload) {
         )}
 
         {!useAppShellLayout && (
-          <div style={{ position: "relative" }}>
+          <div ref={domainMenuAnchorRef} style={{ position: "relative" }}>
             <button
               type="button"
               className={`sl-map-tool-mini sl-has-submenu sl-mobile-hide-bottom-rail ${adminDomainMenuOpen ? "is-on" : ""}`}
@@ -31454,6 +31487,7 @@ async function insertReportWithFallback(payload) {
             </button>
             {adminDomainMenuOpen && (
               <div
+                ref={domainMenuPanelRef}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 style={{
@@ -31481,6 +31515,7 @@ async function insertReportWithFallback(payload) {
                         type="button"
                         onClick={() => {
                           if (!d.enabled) return;
+                          setAdminDomainMenuOpen(false);
                           requestMapLayerSwitch(d.key, d.label);
                         }}
                         disabled={!d.enabled}
@@ -31525,6 +31560,7 @@ async function insertReportWithFallback(payload) {
                                 key={`${d.key}-${option.key}`}
                                 type="button"
                                 onClick={() => {
+                                  setAdminDomainMenuOpen(false);
                                   requestAdminDomainSwitch(option.key, option.label, {
                                     layerKey: INCIDENT_REPORTING_LAYER_KEY,
                                   });
@@ -32405,6 +32441,7 @@ async function insertReportWithFallback(payload) {
           open={accountMenuOpen && !useAppShellLayout}
           session={session}
           profile={profile}
+          showCitySwitcher={true}
           showNotificationPreferences={showNotificationPreferencesEntry}
           variant="desktop-popout"
           containerRef={desktopAccountMenuPanelRef}
@@ -32437,6 +32474,11 @@ async function insertReportWithFallback(payload) {
           onMyReports={() => {
             setAccountMenuOpen(false);
             openMyReports();
+          }}
+          onOpenCitySwitcher={() => {
+            setAccountMenuOpen(false);
+            setInfoMenuOpen(false);
+            setCitySwitcherOpen(true);
           }}
           darkMode={prefersDarkMode}
           onContactUs={() => {
@@ -32779,6 +32821,7 @@ async function insertReportWithFallback(payload) {
               open={accountMenuOpen}
               session={session}
               profile={profile}
+              showCitySwitcher={true}
               showNotificationPreferences={showNotificationPreferencesEntry}
               variant="mobile-page"
               pageTopInset={mobileTabPageTopInset}
@@ -32812,6 +32855,11 @@ async function insertReportWithFallback(payload) {
               onMyReports={() => {
                 setAccountMenuOpen(false);
                 openMyReports();
+              }}
+              onOpenCitySwitcher={() => {
+                setAccountMenuOpen(false);
+                setInfoMenuOpen(false);
+                setCitySwitcherOpen(true);
               }}
               darkMode={prefersDarkMode}
               onContactUs={() => {
