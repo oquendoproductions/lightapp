@@ -1759,8 +1759,12 @@ export default function PlatformAdminApp() {
     () => (selectedTenant ? makeHubUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
     [selectedTenant]
   );
-  const activeDomainRegistryRows = useMemo(
+  const visibleDomainRegistryRows = useMemo(
     () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() !== "archived"),
+    [domainRegistryRows]
+  );
+  const activeDomainRegistryRows = useMemo(
+    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() === "active"),
     [domainRegistryRows]
   );
   const archivedDomainRegistryRows = useMemo(
@@ -1773,7 +1777,7 @@ export default function PlatformAdminApp() {
   );
   const selectedTenantAssignedDomainRows = useMemo(() => {
     const rows = [];
-    for (const domain of activeDomainRegistryRows) {
+    for (const domain of visibleDomainRegistryRows) {
       const assignment = selectedTenantDomainAssignments?.[domain.key];
       if (!assignment) continue;
       rows.push({
@@ -1788,7 +1792,7 @@ export default function PlatformAdminApp() {
       return String(a?.domain?.label || "").localeCompare(String(b?.domain?.label || ""));
     });
     return rows;
-  }, [activeDomainRegistryRows, selectedTenantDomainAssignments]);
+  }, [selectedTenantDomainAssignments, visibleDomainRegistryRows]);
   const assignableDomainRegistryRows = useMemo(
     () => activeDomainRegistryRows.filter((domain) => !selectedTenantDomainAssignments?.[domain.key]),
     [activeDomainRegistryRows, selectedTenantDomainAssignments]
@@ -5239,6 +5243,15 @@ export default function PlatformAdminApp() {
       setStatus((prev) => ({ ...prev, domainAssignments: "Choose a global domain before saving this assignment." }));
       return;
     }
+    const domainDefinition = domainRegistryRows.find((row) => row.key === domainKey) || null;
+    if (!domainDefinition) {
+      setStatus((prev) => ({ ...prev, domainAssignments: "That global domain could not be found." }));
+      return;
+    }
+    if (String(domainDefinition.status || "").trim().toLowerCase() !== "active") {
+      setStatus((prev) => ({ ...prev, domainAssignments: "Only active global domains can be assigned to organizations." }));
+      return;
+    }
     const payload = {
       tenant_key: tenantKey,
       domain_key: domainKey,
@@ -5279,14 +5292,14 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const domainLabel = activeDomainRegistryRows.find((row) => row.key === domainKey)?.label || domainKey;
+    const domainLabel = domainDefinition?.label || domainKey;
     cancelTenantDomainAssignmentEditor();
     setStatus((prev) => ({
       ...prev,
       domainAssignments: `${editingTenantDomainAssignmentKey ? "Updated" : "Assigned"} ${domainLabel} for ${selectedTenantPublicDisplayName || selectedTenantOrganizationName || tenantKey}.`,
     }));
     await refreshControlPlaneData();
-  }, [activeDomainRegistryRows, canManageDomainRegistry, cancelTenantDomainAssignmentEditor, editingTenantDomainAssignmentKey, refreshControlPlaneData, selectedTenantKey, selectedTenantOrganizationName, selectedTenantPublicDisplayName, sessionUserId, tenantDomainAssignmentForm]);
+  }, [canManageDomainRegistry, cancelTenantDomainAssignmentEditor, domainRegistryRows, editingTenantDomainAssignmentKey, refreshControlPlaneData, selectedTenantKey, selectedTenantOrganizationName, selectedTenantPublicDisplayName, sessionUserId, tenantDomainAssignmentForm]);
 
   const saveDomainAndFeatureSettings = useCallback(async (event, options = {}) => {
     event?.preventDefault?.();
@@ -8577,7 +8590,7 @@ export default function PlatformAdminApp() {
                   </form>
                 ) : null}
                 <div style={{ display: "grid", gap: 10 }}>
-                  {activeDomainRegistryRows.length ? activeDomainRegistryRows.map((domain) => (
+                  {visibleDomainRegistryRows.length ? visibleDomainRegistryRows.map((domain) => (
                     <div
                       key={domain.key}
                       style={{
@@ -8602,7 +8615,7 @@ export default function PlatformAdminApp() {
                           <div style={{ display: "grid", gap: 4 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
-                              <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                              <span style={{ fontSize: 11.5, fontWeight: 800, color: domain.status === "draft" ? palette.navy700 : palette.mint700, background: domain.status === "draft" ? "rgba(17,36,69,0.1)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
                                 {domain.status}
                               </span>
                               <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
@@ -10553,7 +10566,7 @@ export default function PlatformAdminApp() {
                               style={{ ...modalInput, background: editingTenantDomainAssignmentKey ? "#eef4fb" : modalInput.background }}
                             >
                               {editingTenantDomainAssignmentKey ? (
-                                <option value={tenantDomainAssignmentForm.domain_key}>{activeDomainRegistryRows.find((row) => row.key === tenantDomainAssignmentForm.domain_key)?.label || tenantDomainAssignmentForm.domain_key}</option>
+                                <option value={tenantDomainAssignmentForm.domain_key}>{domainRegistryRows.find((row) => row.key === tenantDomainAssignmentForm.domain_key)?.label || tenantDomainAssignmentForm.domain_key}</option>
                               ) : assignableDomainRegistryRows.length ? (
                                 assignableDomainRegistryRows.map((domain) => (
                                   <option key={domain.key} value={domain.key}>{domain.label}</option>
