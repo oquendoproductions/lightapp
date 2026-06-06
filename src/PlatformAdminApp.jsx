@@ -29,6 +29,19 @@ const DOMAIN_TYPE_OPTIONS = [
   { key: "incident_driven", label: "Incident-Driven Domain" },
 ];
 
+const CUSTOM_DOMAIN_ICON_SELECTION = "__custom__";
+const DOMAIN_ICON_LIBRARY = [
+  { key: "streetlight_domain_icon_v4", label: "Streetlight", src: "/icon-concepts-v4/domain/streetlight_domain_icon_v4.svg" },
+  { key: "street_sign_domain_icon_v4", label: "Street Sign", src: "/icon-concepts-v4/domain/street_sign_domain_icon_v4.svg" },
+  { key: "potholes_domain_icon_v4", label: "Potholes", src: "/icon-concepts-v4/domain/potholes_domain_icon_v4.svg" },
+  { key: "storm_drain_domain_icon_v4", label: "Storm Drain", src: "/icon-concepts-v4/domain/storm_drain_domain_icon_v4.svg" },
+  { key: "sewer_drain_domain_icon_v4", label: "Sewer Drain", src: "/icon-concepts-v4/domain/sewer_drain_domain_icon_v4.svg" },
+  { key: "downed_tree_domain_icon_v4", label: "Downed Tree", src: "/icon-concepts-v4/domain/downed_tree_domain_icon_v4.svg" },
+  { key: "graffiti_domain_icon_v4", label: "Graffiti", src: "/icon-concepts-v4/domain/graffiti_domain_icon_v4.svg" },
+  { key: "dumping_domain_icon_v4", label: "Dumping", src: "/icon-concepts-v4/domain/dumping_domain_icon_v4.svg" },
+  { key: "encampment_domain_icon_v4", label: "Encampment", src: "/icon-concepts-v4/domain/encampment_domain_icon_v4.svg" },
+];
+
 const DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS = [
   { key: "enabled", label: "Enabled" },
   { key: "disabled", label: "Disabled" },
@@ -999,6 +1012,12 @@ function serializeDomainIssueTypeInput(issueTypes) {
     .join("\n");
 }
 
+function resolveDomainIconOption(iconKey, iconSrc) {
+  const normalizedKey = String(iconKey || "").trim();
+  const normalizedSrc = String(iconSrc || "").trim();
+  return DOMAIN_ICON_LIBRARY.find((option) => option.key === normalizedKey || option.src === normalizedSrc) || null;
+}
+
 function initialDomainRegistryForm() {
   return {
     label: "",
@@ -1007,6 +1026,9 @@ function initialDomainRegistryForm() {
     domain_class: "incident_driven",
     status: "draft",
     icon_key: "",
+    icon_src: "",
+    icon_selection: "",
+    custom_icon_src: "",
     ownership_model: "org_managed",
     report_prefix: "",
     issue_types_input: "",
@@ -1015,6 +1037,8 @@ function initialDomainRegistryForm() {
 
 function buildDomainRegistryForm(row) {
   if (!row) return initialDomainRegistryForm();
+  const iconOption = resolveDomainIconOption(row?.icon_key, row?.icon_src);
+  const fallbackIconSrc = String(row?.icon_src || "").trim();
   return {
     label: String(row?.label || ""),
     key: String(row?.key || ""),
@@ -1022,6 +1046,9 @@ function buildDomainRegistryForm(row) {
     domain_class: String(row?.domain_class || "incident_driven"),
     status: String(row?.status || "draft"),
     icon_key: String(row?.icon_key || ""),
+    icon_src: String(row?.icon_src || ""),
+    icon_selection: iconOption ? iconOption.key : (fallbackIconSrc ? CUSTOM_DOMAIN_ICON_SELECTION : ""),
+    custom_icon_src: iconOption ? "" : fallbackIconSrc,
     ownership_model: String(row?.ownership_model || "org_managed"),
     report_prefix: String(row?.report_prefix || ""),
     issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
@@ -5024,13 +5051,16 @@ export default function PlatformAdminApp() {
     }
 
     const issueTypes = parseDomainIssueTypeInput(domainRegistryForm?.issue_types_input || "");
+    const selectedIconOption = DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm?.icon_selection) || null;
+    const customIconSrc = String(domainRegistryForm?.custom_icon_src || "").trim();
     const payload = {
       key,
       label,
       description: String(domainRegistryForm?.description || "").trim() || null,
       domain_class: String(domainRegistryForm?.domain_class || "incident_driven").trim().toLowerCase(),
       status: String(domainRegistryForm?.status || "draft").trim().toLowerCase(),
-      icon_key: String(domainRegistryForm?.icon_key || "").trim() || null,
+      icon_key: selectedIconOption?.key || null,
+      icon_src: selectedIconOption?.src || customIconSrc || null,
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
       updated_by: sessionUserId || null,
@@ -8336,15 +8366,6 @@ export default function PlatformAdminApp() {
                         </select>
                       </label>
                       <label style={modalField}>
-                        <span>Icon Key</span>
-                        <input
-                          value={domainRegistryForm.icon_key}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, icon_key: e.target.value }))}
-                          placeholder="catch_basins"
-                          style={modalInput}
-                        />
-                      </label>
-                      <label style={modalField}>
                         <span>Ownership Model</span>
                         <select
                           value={domainRegistryForm.ownership_model}
@@ -8365,6 +8386,77 @@ export default function PlatformAdminApp() {
                           style={modalInput}
                         />
                       </label>
+                    </div>
+                    <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
+                      <div style={{ display: "grid", gap: 4 }}>
+                        <div style={{ fontWeight: 800, color: palette.navy900 }}>Domain Icon</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source placed in <code>/public/icon-concepts-v4/domain/</code>.
+                        </div>
+                      </div>
+                      <div style={responsiveActionGrid}>
+                        <label style={modalField}>
+                          <span>Bundled Icon Library</span>
+                          <select
+                            value={domainRegistryForm.icon_selection}
+                            onChange={(e) => {
+                              const nextSelection = e.target.value;
+                              const nextOption = DOMAIN_ICON_LIBRARY.find((option) => option.key === nextSelection) || null;
+                              setDomainRegistryForm((prev) => ({
+                                ...prev,
+                                icon_selection: nextSelection,
+                                icon_key: nextOption?.key || "",
+                                icon_src: nextOption?.src || prev.icon_src,
+                                custom_icon_src: nextSelection === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
+                              }));
+                            }}
+                            style={modalInput}
+                          >
+                            <option value="">No icon yet</option>
+                            {DOMAIN_ICON_LIBRARY.map((option) => (
+                              <option key={option.key} value={option.key}>{option.label}</option>
+                            ))}
+                            <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Custom public path</option>
+                          </select>
+                        </label>
+                        <label style={modalField}>
+                          <span>Current Icon Source</span>
+                          <input
+                            value={domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : (DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm.icon_selection)?.src || "")}
+                            readOnly
+                            placeholder="/icon-concepts-v4/domain/catch_basins_domain_icon_v4.svg"
+                            style={{ ...modalInput, background: "#eef4fb" }}
+                          />
+                        </label>
+                      </div>
+                      {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
+                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                          <span>Custom Icon Public Path</span>
+                          <input
+                            value={domainRegistryForm.custom_icon_src}
+                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
+                            placeholder="/icon-concepts-v4/domain/catch_basins_domain_icon_v4.svg"
+                            style={modalInput}
+                          />
+                        </label>
+                      ) : null}
+                      {(domainRegistryForm.icon_selection || domainRegistryForm.custom_icon_src) ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
+                            <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                              <img
+                                src={domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : (DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm.icon_selection)?.src || "")}
+                                alt={`${domainRegistryForm.label || "Domain"} icon preview`}
+                                style={{ width: 44, height: 44, objectFit: "contain" }}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
+                            If you need a new icon, add the SVG asset to the public domain icon library first, then either select it here or paste its public path. PNG/JPG files are not recommended for new domains because the registry is being standardized on SVG.
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                       <span>Description</span>
@@ -8418,33 +8510,44 @@ export default function PlatformAdminApp() {
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                        <div style={{ display: "grid", gap: 4 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
-                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                              {domain.status}
-                            </span>
-                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                              {domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            <code>{domain.key}</code>
-                            {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
-                            {domain.icon_key ? ` • Icon ${domain.icon_key}` : ""}
-                          </div>
-                          {domain.description ? (
-                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
+                        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                          {domain.icon_src ? (
+                            <div style={{ width: 56, height: 56, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", flexShrink: 0 }}>
+                              <img
+                                src={domain.icon_src}
+                                alt={`${domain.label} icon`}
+                                style={{ width: 40, height: 40, objectFit: "contain" }}
+                              />
+                            </div>
                           ) : null}
-                          {domain.issue_types?.length ? (
-                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                              Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
+                              <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                {domain.status}
+                              </span>
+                              <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                {domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
+                              </span>
                             </div>
-                          ) : (
                             <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                              No issue types configured yet.
+                              <code>{domain.key}</code>
+                              {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
+                              {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
-                          )}
+                            {domain.description ? (
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
+                            ) : null}
+                            {domain.issue_types?.length ? (
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                No issue types configured yet.
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
