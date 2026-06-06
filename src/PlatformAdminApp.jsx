@@ -1012,6 +1012,7 @@ function initialDomainRegistryForm() {
   return {
     label: "",
     key: "",
+    key_autofill: true,
     description: "",
     domain_class: "incident_driven",
     status: "draft",
@@ -1032,6 +1033,7 @@ function buildDomainRegistryForm(row) {
   return {
     label: String(row?.label || ""),
     key: String(row?.key || ""),
+    key_autofill: false,
     description: String(row?.description || ""),
     domain_class: String(row?.domain_class || "incident_driven"),
     status: String(row?.status || "draft"),
@@ -8366,7 +8368,14 @@ export default function PlatformAdminApp() {
                         <span>Domain Label</span>
                         <input
                           value={domainRegistryForm.label}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, label: e.target.value }))}
+                          onChange={(e) => {
+                            const nextLabel = e.target.value;
+                            setDomainRegistryForm((prev) => ({
+                              ...prev,
+                              label: nextLabel,
+                              key: !editingDomainDefinitionKey && prev.key_autofill ? slugifyDomainKeyInput(nextLabel) : prev.key,
+                            }));
+                          }}
                           placeholder="Catch Basins"
                           style={modalInput}
                         />
@@ -8375,11 +8384,20 @@ export default function PlatformAdminApp() {
                         <span>Domain Key</span>
                         <input
                           value={domainRegistryForm.key}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, key: slugifyDomainKeyInput(e.target.value) }))}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({
+                            ...prev,
+                            key: slugifyDomainKeyInput(e.target.value),
+                            key_autofill: false,
+                          }))}
                           placeholder="catch_basins"
                           readOnly={Boolean(editingDomainDefinitionKey)}
                           style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
                         />
+                        {!editingDomainDefinitionKey ? (
+                          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                            Auto-generated from the label until you manually edit it.
+                          </div>
+                        ) : null}
                       </label>
                       <label style={modalField}>
                         <span>Domain Class</span>
@@ -8416,6 +8434,9 @@ export default function PlatformAdminApp() {
                           <option value="utility_managed">Utility Managed</option>
                           <option value="third_party">Third Party</option>
                         </select>
+                        <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                          Utility managed means the work is typically owned by a public or regulated utility. Third party means the work is owned by an outside contractor, vendor, or private operator rather than the organization or utility.
+                        </div>
                       </label>
                       <label style={modalField}>
                         <span>Report Prefix</span>
