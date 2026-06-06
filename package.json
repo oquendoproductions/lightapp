@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "deploy:pages": "bash scripts/deploy-pages.sh",
     "lint": "eslint .",
     "cap:copy": "cap copy",
     "cap:sync": "cap sync",
