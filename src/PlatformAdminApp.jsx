@@ -29,18 +29,10 @@ const DOMAIN_TYPE_OPTIONS = [
   { key: "incident_driven", label: "Incident-Driven Domain" },
 ];
 
+const UPLOAD_DOMAIN_ICON_SELECTION = "__upload__";
 const CUSTOM_DOMAIN_ICON_SELECTION = "__custom__";
-const DOMAIN_ICON_LIBRARY = [
-  { key: "streetlight_domain_icon_v4", label: "Streetlight", src: "/icon-concepts-v4/domain/streetlight_domain_icon_v4.svg" },
-  { key: "street_sign_domain_icon_v4", label: "Street Sign", src: "/icon-concepts-v4/domain/street_sign_domain_icon_v4.svg" },
-  { key: "potholes_domain_icon_v4", label: "Potholes", src: "/icon-concepts-v4/domain/potholes_domain_icon_v4.svg" },
-  { key: "storm_drain_domain_icon_v4", label: "Storm Drain", src: "/icon-concepts-v4/domain/storm_drain_domain_icon_v4.svg" },
-  { key: "sewer_drain_domain_icon_v4", label: "Sewer Drain", src: "/icon-concepts-v4/domain/sewer_drain_domain_icon_v4.svg" },
-  { key: "downed_tree_domain_icon_v4", label: "Downed Tree", src: "/icon-concepts-v4/domain/downed_tree_domain_icon_v4.svg" },
-  { key: "graffiti_domain_icon_v4", label: "Graffiti", src: "/icon-concepts-v4/domain/graffiti_domain_icon_v4.svg" },
-  { key: "dumping_domain_icon_v4", label: "Dumping", src: "/icon-concepts-v4/domain/dumping_domain_icon_v4.svg" },
-  { key: "encampment_domain_icon_v4", label: "Encampment", src: "/icon-concepts-v4/domain/encampment_domain_icon_v4.svg" },
-];
+const DOMAIN_ICON_MAX_BYTES = 2 * 1024 * 1024;
+const DOMAIN_ICON_ACCEPT = ".svg,.png,.webp,image/svg+xml,image/png,image/webp";
 
 const DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS = [
   { key: "enabled", label: "Enabled" },
@@ -1012,10 +1004,8 @@ function serializeDomainIssueTypeInput(issueTypes) {
     .join("\n");
 }
 
-function resolveDomainIconOption(iconKey, iconSrc) {
-  const normalizedKey = String(iconKey || "").trim();
-  const normalizedSrc = String(iconSrc || "").trim();
-  return DOMAIN_ICON_LIBRARY.find((option) => option.key === normalizedKey || option.src === normalizedSrc) || null;
+function isUploadedDomainIcon(value) {
+  return /\/storage\/v1\/object\/public\/domain-icons\//i.test(String(value || "").trim());
 }
 
 function initialDomainRegistryForm() {
@@ -1027,8 +1017,9 @@ function initialDomainRegistryForm() {
     status: "draft",
     icon_key: "",
     icon_src: "",
-    icon_selection: "",
+    icon_selection: UPLOAD_DOMAIN_ICON_SELECTION,
     custom_icon_src: "",
+    icon_file: null,
     ownership_model: "org_managed",
     report_prefix: "",
     issue_types_input: "",
@@ -1037,7 +1028,6 @@ function initialDomainRegistryForm() {
 
 function buildDomainRegistryForm(row) {
   if (!row) return initialDomainRegistryForm();
-  const iconOption = resolveDomainIconOption(row?.icon_key, row?.icon_src);
   const fallbackIconSrc = String(row?.icon_src || "").trim();
   return {
     label: String(row?.label || ""),
@@ -1047,8 +1037,9 @@ function buildDomainRegistryForm(row) {
     status: String(row?.status || "draft"),
     icon_key: String(row?.icon_key || ""),
     icon_src: String(row?.icon_src || ""),
-    icon_selection: iconOption ? iconOption.key : (fallbackIconSrc ? CUSTOM_DOMAIN_ICON_SELECTION : ""),
-    custom_icon_src: iconOption ? "" : fallbackIconSrc,
+    icon_selection: fallbackIconSrc ? (isUploadedDomainIcon(fallbackIconSrc) ? UPLOAD_DOMAIN_ICON_SELECTION : CUSTOM_DOMAIN_ICON_SELECTION) : UPLOAD_DOMAIN_ICON_SELECTION,
+    custom_icon_src: isUploadedDomainIcon(fallbackIconSrc) ? "" : fallbackIconSrc,
+    icon_file: null,
     ownership_model: String(row?.ownership_model || "org_managed"),
     report_prefix: String(row?.report_prefix || ""),
     issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
@@ -1592,6 +1583,10 @@ export default function PlatformAdminApp() {
   const [editingDomainDefinitionKey, setEditingDomainDefinitionKey] = useState("");
   const [domainRegistryForm, setDomainRegistryForm] = useState(initialDomainRegistryForm);
   const [domainRegistrySaving, setDomainRegistrySaving] = useState(false);
+  const domainRegistryUploadPreviewUrl = useMemo(() => {
+    if (!domainRegistryForm?.icon_file) return "";
+    return URL.createObjectURL(domainRegistryForm.icon_file);
+  }, [domainRegistryForm?.icon_file]);
   const [tenantDomainAssignmentSchemaReady, setTenantDomainAssignmentSchemaReady] = useState(true);
   const [tenantDomainAssignmentEditorOpen, setTenantDomainAssignmentEditorOpen] = useState(false);
   const [editingTenantDomainAssignmentKey, setEditingTenantDomainAssignmentKey] = useState("");
@@ -1668,6 +1663,13 @@ export default function PlatformAdminApp() {
     team: true,
   });
   const [mobileSettingsGroupKey, setMobileSettingsGroupKey] = useState("account");
+
+  useEffect(() => {
+    if (!domainRegistryUploadPreviewUrl) return undefined;
+    return () => {
+      URL.revokeObjectURL(domainRegistryUploadPreviewUrl);
+    };
+  }, [domainRegistryUploadPreviewUrl]);
 
   const invokePlatformUserAdmin = useCallback(async (body) => {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -5051,16 +5053,54 @@ export default function PlatformAdminApp() {
     }
 
     const issueTypes = parseDomainIssueTypeInput(domainRegistryForm?.issue_types_input || "");
-    const selectedIconOption = DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm?.icon_selection) || null;
+    const selectedIconMode = String(domainRegistryForm?.icon_selection || "").trim();
     const customIconSrc = String(domainRegistryForm?.custom_icon_src || "").trim();
+    const existingIconSrc = String(domainRegistryForm?.icon_src || "").trim();
+    let resolvedIconSrc = null;
+
+    if (selectedIconMode === CUSTOM_DOMAIN_ICON_SELECTION) {
+      resolvedIconSrc = customIconSrc || null;
+    } else if (selectedIconMode === UPLOAD_DOMAIN_ICON_SELECTION) {
+      const uploadFile = domainRegistryForm?.icon_file || null;
+      if (uploadFile) {
+        if (!/^image\/(svg\+xml|png|webp)$/i.test(String(uploadFile.type || ""))) {
+          setStatus((prev) => ({ ...prev, domainRegistry: "Use an SVG, PNG, or WebP file for the domain icon." }));
+          return;
+        }
+        if (Number(uploadFile.size || 0) > DOMAIN_ICON_MAX_BYTES) {
+          setStatus((prev) => ({ ...prev, domainRegistry: "Domain icons must be 2 MB or smaller." }));
+          return;
+        }
+
+        const now = Date.now();
+        const fileName = sanitizeFileNameSegment(uploadFile.name || `${key}-icon`);
+        const path = ["global", "domains", key, toDatePath(new Date()), `${now}_${fileName}`].join("/");
+        const contentType = String(uploadFile.type || "application/octet-stream");
+        const { error: uploadError } = await supabase
+          .storage
+          .from("domain-icons")
+          .upload(path, uploadFile, { upsert: false, contentType });
+
+        if (uploadError) {
+          setStatus((prev) => ({ ...prev, domainRegistry: statusText(uploadError, "") }));
+          return;
+        }
+
+        const { data: publicUrlData } = supabase.storage.from("domain-icons").getPublicUrl(path);
+        resolvedIconSrc = String(publicUrlData?.publicUrl || "").trim() || null;
+      } else {
+        resolvedIconSrc = existingIconSrc || null;
+      }
+    }
+
     const payload = {
       key,
       label,
       description: String(domainRegistryForm?.description || "").trim() || null,
       domain_class: String(domainRegistryForm?.domain_class || "incident_driven").trim().toLowerCase(),
       status: String(domainRegistryForm?.status || "draft").trim().toLowerCase(),
-      icon_key: selectedIconOption?.key || null,
-      icon_src: selectedIconOption?.src || customIconSrc || null,
+      icon_key: null,
+      icon_src: resolvedIconSrc,
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
       updated_by: sessionUserId || null,
@@ -8391,69 +8431,87 @@ export default function PlatformAdminApp() {
                       <div style={{ display: "grid", gap: 4 }}>
                         <div style={{ fontWeight: 800, color: palette.navy900 }}>Domain Icon</div>
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source placed in <code>/public/icon-concepts-v4/domain/</code>.
+                          Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
                         </div>
                       </div>
                       <div style={responsiveActionGrid}>
                         <label style={modalField}>
-                          <span>Bundled Icon Library</span>
+                          <span>Icon Source</span>
                           <select
                             value={domainRegistryForm.icon_selection}
-                            onChange={(e) => {
-                              const nextSelection = e.target.value;
-                              const nextOption = DOMAIN_ICON_LIBRARY.find((option) => option.key === nextSelection) || null;
-                              setDomainRegistryForm((prev) => ({
-                                ...prev,
-                                icon_selection: nextSelection,
-                                icon_key: nextOption?.key || "",
-                                icon_src: nextOption?.src || prev.icon_src,
-                                custom_icon_src: nextSelection === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
-                              }));
-                            }}
+                            onChange={(e) => setDomainRegistryForm((prev) => ({
+                              ...prev,
+                              icon_selection: e.target.value,
+                              custom_icon_src: e.target.value === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
+                              icon_file: e.target.value === UPLOAD_DOMAIN_ICON_SELECTION ? prev.icon_file : null,
+                            }))}
                             style={modalInput}
                           >
-                            <option value="">No icon yet</option>
-                            {DOMAIN_ICON_LIBRARY.map((option) => (
-                              <option key={option.key} value={option.key}>{option.label}</option>
-                            ))}
-                            <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Custom public path</option>
+                            <option value={UPLOAD_DOMAIN_ICON_SELECTION}>Upload icon file (recommended)</option>
+                            <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
+                            <option value="">No icon</option>
                           </select>
                         </label>
                         <label style={modalField}>
                           <span>Current Icon Source</span>
                           <input
-                            value={domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : (DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm.icon_selection)?.src || "")}
+                            value={
+                              domainRegistryForm.icon_file?.name
+                                || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION
+                                  ? domainRegistryForm.custom_icon_src
+                                  : domainRegistryForm.icon_src)
+                            }
                             readOnly
-                            placeholder="/icon-concepts-v4/domain/catch_basins_domain_icon_v4.svg"
+                            placeholder="No icon selected yet"
                             style={{ ...modalInput, background: "#eef4fb" }}
                           />
                         </label>
                       </div>
+                      {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
+                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                          <span>Choose Icon File</span>
+                          <input
+                            type="file"
+                            accept={DOMAIN_ICON_ACCEPT}
+                            onChange={(e) => {
+                              const nextFile = e.target.files?.[0] || null;
+                              setDomainRegistryForm((prev) => ({
+                                ...prev,
+                                icon_file: nextFile,
+                              }));
+                            }}
+                            style={modalInput}
+                          />
+                          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                            Preferred: SVG. Also accepted: PNG or WebP. Max size: 2 MB.
+                          </div>
+                        </label>
+                      ) : null}
                       {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
                         <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Custom Icon Public Path</span>
+                          <span>Custom Icon Public Path (advanced)</span>
                           <input
                             value={domainRegistryForm.custom_icon_src}
                             onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
-                            placeholder="/icon-concepts-v4/domain/catch_basins_domain_icon_v4.svg"
+                            placeholder="https://... or /public/path/icon.svg"
                             style={modalInput}
                           />
                         </label>
                       ) : null}
-                      {(domainRegistryForm.icon_selection || domainRegistryForm.custom_icon_src) ? (
+                      {(domainRegistryUploadPreviewUrl || domainRegistryForm.icon_src || domainRegistryForm.custom_icon_src) ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                           <div style={{ display: "grid", gap: 6 }}>
                             <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
                             <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
                               <img
-                                src={domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : (DOMAIN_ICON_LIBRARY.find((option) => option.key === domainRegistryForm.icon_selection)?.src || "")}
+                                src={domainRegistryUploadPreviewUrl || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : domainRegistryForm.icon_src)}
                                 alt={`${domainRegistryForm.label || "Domain"} icon preview`}
                                 style={{ width: 44, height: 44, objectFit: "contain" }}
                               />
                             </div>
                           </div>
                           <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
-                            If you need a new icon, add the SVG asset to the public domain icon library first, then either select it here or paste its public path. PNG/JPG files are not recommended for new domains because the registry is being standardized on SVG.
+                            Upload-first is now the standard flow. The advanced public-path option is only here for legacy or externally hosted icons when you intentionally need it.
                           </div>
                         </div>
                       ) : null}
