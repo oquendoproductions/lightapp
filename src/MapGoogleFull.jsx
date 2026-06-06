@@ -17719,6 +17719,11 @@ export default function App({ onBackToHub = null }) {
     if (incidentLayerDomainOptions.some((d) => d.key === adminReportDomain)) return adminReportDomain;
     return String(incidentLayerDomainOptions?.[0]?.key || "").trim();
   }, [incidentLayerDomainOptions, lastIncidentMapDomain, adminReportDomain]);
+  const resolvedIncidentLayerOption = useMemo(() => {
+    const resolvedKey = String(resolvedIncidentMapDomain || "").trim();
+    if (!resolvedKey) return incidentLayerDomainOptions[0] || null;
+    return incidentLayerDomainOptions.find((d) => d.key === resolvedKey) || incidentLayerDomainOptions[0] || null;
+  }, [incidentLayerDomainOptions, resolvedIncidentMapDomain]);
   const openReportsDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
@@ -21888,7 +21893,15 @@ export default function App({ onBackToHub = null }) {
     enabled: true,
   }), []);
   const activeLayerMeta =
-    (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY ? incidentLayerMeta : null)
+    (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+      ? {
+          ...incidentLayerMeta,
+          label: resolvedIncidentLayerOption?.label
+            ? `Incident Reporting · ${resolvedIncidentLayerOption.label}`
+            : incidentLayerMeta.label,
+          iconSrc: resolvedIncidentLayerOption?.iconSrc || incidentLayerMeta.iconSrc,
+        }
+      : null)
     || layerOptions.find((d) => d.key === activeMapLayerKey)
     || layerOptions[0]
     || (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY ? incidentLayerMeta : null)
@@ -30241,7 +30254,7 @@ async function insertReportWithFallback(payload) {
                 return;
               }
               const targetIncidentDomain = activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
-                ? String(incidentLayerDomainOptions?.[0]?.key || "potholes")
+                ? String(resolvedIncidentMapDomain || incidentLayerDomainOptions?.[0]?.key || "potholes")
                 : adminReportDomain;
               if (!municipalBoundaryGate(targetIncidentDomain, lat, lng, { showNotice: true })) {
                 return;
@@ -31461,39 +31474,89 @@ async function insertReportWithFallback(payload) {
               >
                 {layerOptions.map((d) => {
                   const isOn = d.key === activeMapLayerKey;
+                  const isIncidentLayer = d.key === INCIDENT_REPORTING_LAYER_KEY;
                   return (
-                    <button
-                      key={d.key}
-                      type="button"
-                      onClick={() => {
-                        if (!d.enabled) return;
-                        requestMapLayerSwitch(d.key, d.label);
-                      }}
-                      disabled={!d.enabled}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "7px 9px",
-                        borderRadius: 9,
-                        border: isOn
-                          ? "1px solid var(--sl-ui-tool-active-border)"
-                          : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                        background: isOn
-                          ? "var(--sl-ui-tool-active-bg)"
-                          : "var(--sl-ui-modal-btn-secondary-bg)",
-                        color: isOn
-                          ? "var(--sl-ui-tool-active-text)"
-                          : "var(--sl-ui-modal-btn-secondary-text)",
-                        fontWeight: 900,
-                        cursor: d.enabled ? "pointer" : "not-allowed",
-                        opacity: d.enabled ? 1 : 0.6,
-                        justifyContent: "flex-start",
-                      }}
-                    >
-                      <AppIcon src={d.iconSrc} size={30} />
-                      <span style={{ fontSize: 12.5 }}>{d.label}</span>
-                    </button>
+                    <div key={d.key} style={{ display: "grid", gap: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!d.enabled) return;
+                          requestMapLayerSwitch(d.key, d.label);
+                        }}
+                        disabled={!d.enabled}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "7px 9px",
+                          borderRadius: 9,
+                          border: isOn
+                            ? "1px solid var(--sl-ui-tool-active-border)"
+                            : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                          background: isOn
+                            ? "var(--sl-ui-tool-active-bg)"
+                            : "var(--sl-ui-modal-btn-secondary-bg)",
+                          color: isOn
+                            ? "var(--sl-ui-tool-active-text)"
+                            : "var(--sl-ui-modal-btn-secondary-text)",
+                          fontWeight: 900,
+                          cursor: d.enabled ? "pointer" : "not-allowed",
+                          opacity: d.enabled ? 1 : 0.6,
+                          justifyContent: "flex-start",
+                        }}
+                      >
+                        <AppIcon src={d.iconSrc} size={30} />
+                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
+                      </button>
+                      {isIncidentLayer && incidentLayerDomainOptions.length > 0 ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 4,
+                            paddingLeft: 14,
+                          }}
+                        >
+                          {incidentLayerDomainOptions.map((option) => {
+                            const isSelected =
+                              activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY &&
+                              resolvedIncidentLayerOption?.key === option.key;
+                            return (
+                              <button
+                                key={`${d.key}-${option.key}`}
+                                type="button"
+                                onClick={() => {
+                                  requestAdminDomainSwitch(option.key, option.label, {
+                                    layerKey: INCIDENT_REPORTING_LAYER_KEY,
+                                  });
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "6px 9px",
+                                  borderRadius: 8,
+                                  border: isSelected
+                                    ? "1px solid var(--sl-ui-tool-active-border)"
+                                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                  background: isSelected
+                                    ? "var(--sl-ui-tool-active-bg)"
+                                    : "var(--sl-ui-surface-bg)",
+                                  color: isSelected
+                                    ? "var(--sl-ui-tool-active-text)"
+                                    : "var(--sl-ui-text)",
+                                  fontWeight: isSelected ? 900 : 700,
+                                  cursor: "pointer",
+                                  justifyContent: "flex-start",
+                                }}
+                              >
+                                <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={18} />
+                                <span style={{ fontSize: 11.5 }}>{option.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -32946,12 +33009,17 @@ async function insertReportWithFallback(payload) {
                     />
                     {mobilePrimaryLayerOptions.map((layer, index) => {
                       const isStreetlightsButton = layer.key === "streetlights";
+                      const isIncidentButton = layer.key === INCIDENT_REPORTING_LAYER_KEY;
                       const isActive = layer.key === activeMapLayerKey;
                       const showStreetlightSubcontrols =
                         isStreetlightsButton &&
                         isStreetlightsLayerActive &&
                         showMobileMapTabContent &&
                         (canUseStreetlightBulk || showAdminTools);
+                      const showIncidentSubcontrols =
+                        isIncidentButton &&
+                        isActive &&
+                        incidentLayerDomainOptions.length > 1;
                       return (
                         <div
                           key={`mobile-map-layer-${layer.key}`}
@@ -32965,7 +33033,11 @@ async function insertReportWithFallback(payload) {
                           <div
                             role="button"
                             aria-label={layer.label}
-                            title={layer.label}
+                            title={
+                              isIncidentButton && resolvedIncidentLayerOption?.label
+                                ? `${layer.label} · ${resolvedIncidentLayerOption.label}`
+                                : layer.label
+                            }
                             onClick={() => {
                               if (!layer.enabled) return;
                               requestMapLayerSwitch(layer.key, layer.label);
@@ -32986,6 +33058,67 @@ async function insertReportWithFallback(payload) {
                           >
                             <AppIcon src={layer.iconSrc} size={index === 0 ? 30 : 32} />
                           </div>
+                          {showIncidentSubcontrols ? (
+                            <div
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                position: "absolute",
+                                left: "calc(100% + 8px)",
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                display: "grid",
+                                gap: 6,
+                                minWidth: 164,
+                                padding: 8,
+                                borderRadius: 16,
+                                border: "1px solid var(--sl-ui-modal-border)",
+                                background: "color-mix(in srgb, var(--sl-ui-surface-bg) 92%, rgba(255,255,255,0.06))",
+                                boxShadow: "var(--sl-ui-modal-shadow)",
+                                zIndex: 4,
+                              }}
+                            >
+                              {incidentLayerDomainOptions.map((option) => {
+                                const isSelected = resolvedIncidentLayerOption?.key === option.key;
+                                return (
+                                  <button
+                                    key={`mobile-incident-domain-${option.key}`}
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      requestAdminDomainSwitch(option.key, option.label, {
+                                        layerKey: INCIDENT_REPORTING_LAYER_KEY,
+                                      });
+                                    }}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      padding: "7px 9px",
+                                      borderRadius: 10,
+                                      border: isSelected
+                                        ? "1px solid var(--sl-ui-tool-active-border)"
+                                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                      background: isSelected
+                                        ? "var(--sl-ui-tool-active-bg)"
+                                        : "var(--sl-ui-modal-btn-secondary-bg)",
+                                      color: isSelected
+                                        ? "var(--sl-ui-tool-active-text)"
+                                        : "var(--sl-ui-modal-btn-secondary-text)",
+                                      fontWeight: isSelected ? 900 : 700,
+                                      cursor: "pointer",
+                                      justifyContent: "flex-start",
+                                      textAlign: "left",
+                                    }}
+                                  >
+                                    <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={18} />
+                                    <span style={{ fontSize: 12 }}>{option.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           {showStreetlightSubcontrols ? (
                             <div
                               onMouseDown={(e) => e.stopPropagation()}
