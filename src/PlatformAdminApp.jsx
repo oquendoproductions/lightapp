@@ -69,6 +69,7 @@ const CONTROL_PLANE_PAGES = [
   { key: "manage-leads", section: "organizations", label: "Manage Leads" },
   { key: "lead-detail", section: "organizations", label: "Lead Detail", hidden: true },
   { key: "account-info", section: "settings", label: "Account Info" },
+  { key: "domain-registry", section: "settings", label: "Domain Registry" },
   { key: "manage-team", section: "settings", label: "Manage Team" },
   { key: "roles-permissions", section: "settings", label: "Roles & Permissions" },
   { key: "security-checks", section: "settings", label: "Security Checks" },
@@ -102,6 +103,13 @@ const CONTROL_PLANE_SETTINGS_NAV = [
     label: "Account",
     items: [
       { key: "account-info", label: "Account Info" },
+    ],
+  },
+  {
+    key: "platform",
+    label: "Platform",
+    items: [
+      { key: "domain-registry", label: "Domain Registry" },
     ],
   },
   {
@@ -244,6 +252,7 @@ const CONTROL_PLANE_PAGE_PERMISSIONS = {
   "manage-leads": "leads.access",
   "lead-detail": "leads.access",
   "account-info": "account.access",
+  "domain-registry": "domains.access",
   "manage-team": "users.access",
   "roles-permissions": "roles.access",
   "security-checks": "security.access",
@@ -1000,8 +1009,6 @@ function initialDomainRegistryForm() {
     icon_key: "",
     ownership_model: "org_managed",
     report_prefix: "",
-    default_notification_email: "",
-    default_organization_monitored_repairs: true,
     issue_types_input: "",
   };
 }
@@ -1017,8 +1024,6 @@ function buildDomainRegistryForm(row) {
     icon_key: String(row?.icon_key || ""),
     ownership_model: String(row?.ownership_model || "org_managed"),
     report_prefix: String(row?.report_prefix || ""),
-    default_notification_email: String(row?.default_notification_email || ""),
-    default_organization_monitored_repairs: row?.default_organization_monitored_repairs !== false,
     issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
   };
 }
@@ -5028,8 +5033,6 @@ export default function PlatformAdminApp() {
       icon_key: String(domainRegistryForm?.icon_key || "").trim() || null,
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
-      default_notification_email: String(domainRegistryForm?.default_notification_email || "").trim() || null,
-      default_organization_monitored_repairs: domainRegistryForm?.default_organization_monitored_repairs !== false,
       updated_by: sessionUserId || null,
     };
 
@@ -6338,6 +6341,16 @@ export default function PlatformAdminApp() {
         Add Organization
       </button>
     </div>
+  ) : controlPlanePage === "domain-registry" ? (
+    <button
+      type="button"
+      style={{ ...headerActionButton, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+      onClick={beginCreateDomainDefinition}
+      disabled={!canManageDomainRegistry || domainRegistrySaving}
+      title={canManageDomainRegistry ? "Create a global domain" : "You need the Domains edit permission"}
+    >
+      New Global Domain
+    </button>
   ) : null;
   const controlPlaneSettingsActions = settingsPageActive && currentPageActions ? (
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
@@ -8245,6 +8258,232 @@ export default function PlatformAdminApp() {
           </div>
         </section>
       ) : null}
+      {controlPlanePage === "domain-registry" ? (
+        <section style={controlPlaneSettingsSectionStyle}>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
+              <div style={{ ...card, display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Global Domain Registry</h2>
+                  <p style={{ margin: 0, color: palette.textMuted }}>
+                    Create reusable reportable domains once at the platform level, then assign them to organizations later with tenant-specific routing, billing, and operational settings.
+                  </p>
+                </div>
+                {status.domainRegistry ? (
+                  <div style={{ fontSize: 12.5, color: status.domainRegistry.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                    {status.domainRegistry}
+                  </div>
+                ) : null}
+                {!domainRegistrySchemaReady ? (
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Domain registry tables are not available yet in this environment. Run the latest Supabase migration locally before using this page.
+                  </div>
+                ) : null}
+                {domainRegistryEditorOpen ? (
+                  <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                        {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        {editingDomainDefinitionKey ? "Domain key remains stable after creation." : "Keys become the stable identifier across PCP, reports, and the public app."}
+                      </div>
+                    </div>
+                    <div style={responsiveActionGrid}>
+                      <label style={modalField}>
+                        <span>Domain Label</span>
+                        <input
+                          value={domainRegistryForm.label}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, label: e.target.value }))}
+                          placeholder="Catch Basins"
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Domain Key</span>
+                        <input
+                          value={domainRegistryForm.key}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, key: slugifyDomainKeyInput(e.target.value) }))}
+                          placeholder="catch_basins"
+                          readOnly={Boolean(editingDomainDefinitionKey)}
+                          style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Domain Class</span>
+                        <select
+                          value={domainRegistryForm.domain_class}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
+                          style={modalInput}
+                        >
+                          {DOMAIN_TYPE_OPTIONS.map((option) => (
+                            <option key={option.key} value={option.key}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={modalField}>
+                        <span>Status</span>
+                        <select
+                          value={domainRegistryForm.status}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
+                          style={modalInput}
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="active">Active</option>
+                          <option value="archived">Archived</option>
+                        </select>
+                      </label>
+                      <label style={modalField}>
+                        <span>Icon Key</span>
+                        <input
+                          value={domainRegistryForm.icon_key}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, icon_key: e.target.value }))}
+                          placeholder="catch_basins"
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Ownership Model</span>
+                        <select
+                          value={domainRegistryForm.ownership_model}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
+                          style={modalInput}
+                        >
+                          <option value="org_managed">Organization Managed</option>
+                          <option value="utility_managed">Utility Managed</option>
+                          <option value="third_party">Third Party</option>
+                        </select>
+                      </label>
+                      <label style={modalField}>
+                        <span>Report Prefix</span>
+                        <input
+                          value={domainRegistryForm.report_prefix}
+                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, report_prefix: String(e.target.value || "").toUpperCase() }))}
+                          placeholder="CB"
+                          style={modalInput}
+                        />
+                      </label>
+                    </div>
+                    <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                      <span>Description</span>
+                      <textarea
+                        value={domainRegistryForm.description}
+                        onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, description: e.target.value }))}
+                        rows={3}
+                        placeholder="Describe when residents or staff should use this domain."
+                        style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
+                      />
+                    </label>
+                    <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                      <span>Issue Types (optional)</span>
+                      <textarea
+                        value={domainRegistryForm.issue_types_input}
+                        onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, issue_types_input: e.target.value }))}
+                        rows={4}
+                        placeholder={"Clogged\nDamaged\nMissing Grate"}
+                        style={{ ...modalInput, minHeight: 110, resize: "vertical" }}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="submit"
+                        style={{ ...buttonBase, opacity: domainRegistrySaving ? 0.65 : 1 }}
+                        disabled={domainRegistrySaving}
+                      >
+                        {domainRegistrySaving ? "Saving..." : editingDomainDefinitionKey ? "Save Domain" : "Create Domain"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={domainRegistrySaving}
+                        onClick={cancelDomainDefinitionEditor}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+                <div style={{ display: "grid", gap: 10 }}>
+                  {activeDomainRegistryRows.length ? activeDomainRegistryRows.map((domain) => (
+                    <div
+                      key={domain.key}
+                      style={{
+                        ...subPanel,
+                        display: "grid",
+                        gap: 8,
+                        background: "rgba(255,255,255,0.7)",
+                        borderColor: "rgba(17,36,69,0.12)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                        <div style={{ display: "grid", gap: 4 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
+                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                              {domain.status}
+                            </span>
+                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                              {domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            <code>{domain.key}</code>
+                            {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
+                            {domain.icon_key ? ` • Icon ${domain.icon_key}` : ""}
+                          </div>
+                          {domain.description ? (
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
+                          ) : null}
+                          {domain.issue_types?.length ? (
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              No issue types configured yet.
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            style={{ ...buttonAlt, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+                            disabled={!canManageDomainRegistry || domainRegistrySaving}
+                            onClick={() => beginEditDomainDefinition(domain.key)}
+                          >
+                            Edit
+                          </button>
+                          {domain.status !== "archived" ? (
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
+                              disabled={!canManageDomainRegistry || domainRegistrySaving}
+                              onClick={() => void archiveDomainDefinition(domain.key)}
+                            >
+                              Archive
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  )) : (
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      No global domains have been defined yet in the new registry.
+                    </div>
+                  )}
+                  {archivedDomainRegistryRows.length ? (
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      Archived domains: {archivedDomainRegistryRows.map((domain) => domain.label).join(", ")}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
       {controlPlanePage === "manage-team" ? (
         <section style={controlPlaneSettingsSectionStyle}>
           <div style={controlPlaneSettingsLayoutStyle}>
@@ -10080,284 +10319,17 @@ export default function PlatformAdminApp() {
               <div style={{ display: "grid", gap: 3 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Assets</h2>
                 <p style={{ margin: 0, color: palette.textMuted }}>
-                  Manage domain visibility, notification routing, map behavior, and supporting organization assets in one place.
+                  Assign platform-defined domains to this organization, then capture tenant-specific notification routing, billing metadata, and supporting assets here.
                 </p>
               </div>
               <div style={{ display: "grid", gap: 12 }}>
-                {canViewDomainRegistry ? (
-                  <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-                      <div style={{ display: "grid", gap: 3 }}>
-                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Global Domain Registry</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Define reportable domains once at the platform level, then assign them to organizations in a later step without changing the live public app behavior yet.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || domainRegistrySaving}
-                        onClick={beginCreateDomainDefinition}
-                      >
-                        New Global Domain
-                      </button>
-                    </div>
-                    {status.domainRegistry ? (
-                      <div style={{ fontSize: 12.5, color: status.domainRegistry.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
-                        {status.domainRegistry}
-                      </div>
-                    ) : null}
-                    {!domainRegistrySchemaReady ? (
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Domain registry tables are not available yet in this environment. Run the latest Supabase migration locally before using this panel.
-                      </div>
-                    ) : null}
-                    {domainRegistryEditorOpen ? (
-                      <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <div style={{ fontWeight: 900, color: palette.navy900 }}>
-                            {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
-                          </div>
-                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            {editingDomainDefinitionKey ? "Domain key remains stable after creation." : "Keys become the stable identifier across PCP, reports, and the public app."}
-                          </div>
-                        </div>
-                        <div style={responsiveActionGrid}>
-                          <label style={modalField}>
-                            <span>Domain Label</span>
-                            <input
-                              value={domainRegistryForm.label}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, label: e.target.value }))}
-                              placeholder="Catch Basins"
-                              style={modalInput}
-                            />
-                          </label>
-                          <label style={modalField}>
-                            <span>Domain Key</span>
-                            <input
-                              value={domainRegistryForm.key}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, key: slugifyDomainKeyInput(e.target.value) }))}
-                              placeholder="catch_basins"
-                              readOnly={Boolean(editingDomainDefinitionKey)}
-                              style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
-                            />
-                          </label>
-                          <label style={modalField}>
-                            <span>Domain Class</span>
-                            <select
-                              value={domainRegistryForm.domain_class}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
-                              style={modalInput}
-                            >
-                              {DOMAIN_TYPE_OPTIONS.map((option) => (
-                                <option key={option.key} value={option.key}>{option.label}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Status</span>
-                            <select
-                              value={domainRegistryForm.status}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
-                              style={modalInput}
-                            >
-                              <option value="draft">Draft</option>
-                              <option value="active">Active</option>
-                              <option value="archived">Archived</option>
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Icon Key</span>
-                            <input
-                              value={domainRegistryForm.icon_key}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, icon_key: e.target.value }))}
-                              placeholder="catch_basins"
-                              style={modalInput}
-                            />
-                          </label>
-                          <label style={modalField}>
-                            <span>Ownership Model</span>
-                            <select
-                              value={domainRegistryForm.ownership_model}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
-                              style={modalInput}
-                            >
-                              <option value="org_managed">Organization Managed</option>
-                              <option value="utility_managed">Utility Managed</option>
-                              <option value="third_party">Third Party</option>
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Report Prefix</span>
-                            <input
-                              value={domainRegistryForm.report_prefix}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, report_prefix: String(e.target.value || "").toUpperCase() }))}
-                              placeholder="CB"
-                              style={modalInput}
-                            />
-                          </label>
-                          <label style={modalField}>
-                            <span>Default Notification Email</span>
-                            <input
-                              value={domainRegistryForm.default_notification_email}
-                              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, default_notification_email: e.target.value }))}
-                              placeholder="catchbasins@examplecity.gov"
-                              style={modalInput}
-                            />
-                          </label>
-                          <div style={{ ...modalField, justifyContent: "center" }}>
-                            <span>Repair Monitoring Default</span>
-                            <label
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                minHeight: 48,
-                                padding: "0 14px",
-                                borderRadius: 14,
-                                border: "1px solid rgba(17, 36, 69, 0.14)",
-                                background: "rgba(255,255,255,0.92)",
-                                color: palette.navy900,
-                                fontWeight: 700,
-                              }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={domainRegistryForm.default_organization_monitored_repairs !== false}
-                                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, default_organization_monitored_repairs: e.target.checked }))}
-                              />
-                              <span style={{ display: "grid", gap: 2 }}>
-                                <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
-                                <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                  {domainRegistryForm.default_organization_monitored_repairs !== false ? "Yes" : "No"}
-                                </span>
-                              </span>
-                            </label>
-                          </div>
-                        </div>
-                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Description</span>
-                          <textarea
-                            value={domainRegistryForm.description}
-                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, description: e.target.value }))}
-                            rows={3}
-                            placeholder="Describe when residents or staff should use this domain."
-                            style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
-                          />
-                        </label>
-                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Issue Types (optional)</span>
-                          <textarea
-                            value={domainRegistryForm.issue_types_input}
-                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, issue_types_input: e.target.value }))}
-                            rows={4}
-                            placeholder={"Clogged\nDamaged\nMissing Grate"}
-                            style={{ ...modalInput, minHeight: 110, resize: "vertical" }}
-                          />
-                        </label>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button
-                            type="submit"
-                            style={{ ...buttonBase, opacity: domainRegistrySaving ? 0.65 : 1 }}
-                            disabled={domainRegistrySaving}
-                          >
-                            {domainRegistrySaving ? "Saving..." : editingDomainDefinitionKey ? "Save Domain" : "Create Domain"}
-                          </button>
-                          <button
-                            type="button"
-                            style={buttonAlt}
-                            disabled={domainRegistrySaving}
-                            onClick={cancelDomainDefinitionEditor}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {activeDomainRegistryRows.length ? activeDomainRegistryRows.map((domain) => (
-                        <div
-                          key={domain.key}
-                          style={{
-                            ...subPanel,
-                            display: "grid",
-                            gap: 8,
-                            background: "rgba(255,255,255,0.7)",
-                            borderColor: "rgba(17,36,69,0.12)",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                            <div style={{ display: "grid", gap: 4 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                <strong style={{ color: palette.navy900 }}>{domain.label}</strong>
-                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                  {domain.status}
-                                </span>
-                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                  {domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
-                                </span>
-                              </div>
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                <code>{domain.key}</code>
-                                {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
-                                {domain.icon_key ? ` • Icon ${domain.icon_key}` : ""}
-                              </div>
-                              {domain.description ? (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
-                              ) : null}
-                              {domain.issue_types?.length ? (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                  Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                  No issue types configured yet.
-                                </div>
-                              )}
-                            </div>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
-                                disabled={!canManageDomainRegistry || domainRegistrySaving}
-                                onClick={() => beginEditDomainDefinition(domain.key)}
-                              >
-                                Edit
-                              </button>
-                              {domain.status !== "archived" ? (
-                                <button
-                                  type="button"
-                                  style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
-                                  disabled={!canManageDomainRegistry || domainRegistrySaving}
-                                  onClick={() => void archiveDomainDefinition(domain.key)}
-                                >
-                                  Archive
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      )) : (
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          No global domains have been defined yet in the new registry.
-                        </div>
-                      )}
-                      {archivedDomainRegistryRows.length ? (
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Archived domains: {archivedDomainRegistryRows.map((domain) => domain.label).join(", ")}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-
                 {canViewDomainRegistry && inTenantWorkspace ? (
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
                       <div style={{ display: "grid", gap: 3 }}>
                         <div style={{ fontWeight: 900, color: palette.navy900 }}>Registry-Based Tenant Assignments</div>
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey} using the new registry model. This is additive groundwork and does not replace the live public-app domain behavior yet.
+                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}, then capture tenant-specific routing, billing, and operational settings here. This is additive groundwork and does not replace the live public-app domain behavior yet.
                         </div>
                       </div>
                       <button
