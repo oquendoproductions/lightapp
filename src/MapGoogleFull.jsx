@@ -224,6 +224,11 @@ const UI_ICON_SRC = {
   satellite: "/satellite_icon.png",
   streetMap: "/street_map_icon.png",
 };
+const RUNTIME_DOMAIN_META = {
+  reportPrefixByDomain: new Map(),
+  iconSrcByDomain: new Map(),
+  labelByDomain: new Map(),
+};
 // Per-light cooldown (client-side guardrail; reversible)
 const REPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -1411,6 +1416,7 @@ function canonicalOfficialLightId(rawLightId, lat, lng, officialIdByAlias, offic
 function reportNumberForRow(row, domainHint = "") {
   const domain = (domainHint || row?.domain || (row?.pothole_id ? "potholes" : reportDomainFromLightId(row?.light_id))).toLowerCase();
   const persisted = String(row?.report_number || "").trim();
+  const runtimePrefix = String(RUNTIME_DOMAIN_META.reportPrefixByDomain.get(domain) || "").trim().toUpperCase();
   if (persisted) {
     if (domain === "street_signs") {
       const m = persisted.match(/^slr(\d+)$/i);
@@ -1419,6 +1425,10 @@ function reportNumberForRow(row, domainHint = "") {
     if (domain === "water_drain_issues") {
       const m = persisted.match(/^slr(\d+)$/i);
       if (m) return `WDR${m[1]}`;
+    }
+    if (runtimePrefix) {
+      const m = persisted.match(/^slr(\d+)$/i);
+      if (m) return `${runtimePrefix}${m[1]}`;
     }
     return persisted;
   }
@@ -1434,7 +1444,7 @@ function reportNumberForRow(row, domainHint = "") {
         ? "POR"
         : domain === "water_main"
           ? "WMR"
-          : "SLR";
+          : runtimePrefix || "SLR";
 
   const idRaw = row?.id;
   const asNum = Number(idRaw);
@@ -14043,11 +14053,6 @@ function AccountMenuPanel({
         <button onClick={onManage} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           Manage Account
         </button>
-        {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
-          <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
-            Switch Location
-          </button>
-        ) : null}
         <button onClick={onFollowedLocations} className="workspace-menu-button" style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}>
           My Locations
         </button>
@@ -16632,6 +16637,7 @@ export default function App({ onBackToHub = null }) {
   const [incidentStateByKey, setIncidentStateByKey] = useState({});
   const [tenantDomainPublicConfigByDomain, setTenantDomainPublicConfigByDomain] = useState({});
   const [tenantRegistryIncidentDomains, setTenantRegistryIncidentDomains] = useState([]);
+  const [, setDomainIconRenderTick] = useState(0);
   const [incidentRepairProgressByKey, setIncidentRepairProgressByKey] = useState({});
   const [waterDrainIncidentsById, setWaterDrainIncidentsById] = useState({});
   // Google Maps InfoWindow selection
@@ -17687,6 +17693,25 @@ export default function App({ onBackToHub = null }) {
     }
     return Array.from(merged.values());
   }, [isDomainPublic, registryVisibleDomainOptions]);
+  useEffect(() => {
+    const urls = (visibleDomainOptions || [])
+      .map((option) => String(option?.iconSrc || "").trim())
+      .filter((url) => /^(https?:|\/)/i.test(url));
+    if (!urls.length || typeof window === "undefined") return;
+    let cancelled = false;
+    urls.forEach((url) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = img.onerror = () => {
+        if (cancelled) return;
+        setDomainIconRenderTick((tick) => tick + 1);
+      };
+      img.src = url;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visibleDomainOptions]);
   const assetLayerOptions = useMemo(() => {
     const includeInternalAssetLayers = Boolean(isAdmin);
     const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isAssetBackedDomainKey(d.key));
@@ -22448,6 +22473,10 @@ export default function App({ onBackToHub = null }) {
   }, [reports, officialIdSet, officialSignIdSet, isValidLatLng, lastFixByLightId]);
 
   const genericDomainMarkers = useMemo(() => {
+    const activeDomainOption =
+      visibleDomainOptions.find((d) => d.key === adminReportDomain)
+      || registryVisibleDomainOptions.find((d) => d.key === adminReportDomain)
+      || null;
     const byLight = new Map();
     for (const r of selectedDomainReports || []) {
       const lat = Number(r?.lat);
@@ -22456,14 +22485,24 @@ export default function App({ onBackToHub = null }) {
       const lid = String(r?.light_id || `${lat.toFixed(5)}:${lng.toFixed(5)}`).trim();
       const prev = byLight.get(lid);
       if (!prev) {
-        byLight.set(lid, { id: lid, domain: adminReportDomain, lat, lng, count: 1, lastTs: Number(r?.ts || 0) || 0 });
+        byLight.set(lid, {
+          id: lid,
+          domain: adminReportDomain,
+          domainLabel: String(activeDomainOption?.label || adminReportDomain).trim() || adminReportDomain,
+          glyph: String(activeDomainOption?.icon || "📍"),
+          glyphSrc: String(activeDomainOption?.iconSrc || "").trim(),
+          lat,
+          lng,
+          count: 1,
+          lastTs: Number(r?.ts || 0) || 0,
+        });
       } else {
         prev.count += 1;
         if (Number(r?.ts || 0) > prev.lastTs) prev.lastTs = Number(r?.ts || 0);
       }
     }
     return Array.from(byLight.values());
-  }, [selectedDomainReports, adminReportDomain]);
+  }, [selectedDomainReports, adminReportDomain, visibleDomainOptions, registryVisibleDomainOptions]);
 
   const nonStreetlightDomainMarkers = useMemo(() => {
     if (isStreetlightsLayerActive) return [];
@@ -22603,18 +22642,27 @@ export default function App({ onBackToHub = null }) {
           };
         }
         const registryVisibleRows = [];
+        RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
+        RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
+        RUNTIME_DOMAIN_META.labelByDomain.clear();
         for (const row of registryRows || []) {
           const domainKey = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
           if (!domainKey) continue;
+          const reportPrefix = String(row?.report_prefix || "").trim().toUpperCase();
+          const iconSrc = String(row?.icon_src || "").trim();
+          const label = String(row?.label || domainKey).trim() || domainKey;
           next[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           };
+          if (reportPrefix) RUNTIME_DOMAIN_META.reportPrefixByDomain.set(domainKey, reportPrefix);
+          if (iconSrc) RUNTIME_DOMAIN_META.iconSrcByDomain.set(domainKey, iconSrc);
+          RUNTIME_DOMAIN_META.labelByDomain.set(domainKey, label);
           registryVisibleRows.push({
             domain_key: domainKey,
-            label: String(row?.label || domainKey).trim() || domainKey,
-            icon_src: String(row?.icon_src || "").trim(),
-            report_prefix: String(row?.report_prefix || "").trim().toUpperCase(),
+            label,
+            icon_src: iconSrc,
+            report_prefix: reportPrefix,
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           });
@@ -23555,7 +23603,7 @@ export default function App({ onBackToHub = null }) {
     if (adminReportDomain === "water_drain_issues") return "water_proximity";
     if (adminReportDomain === "power_outage") return "area_based";
     if (adminReportDomain === "water_main") return "severity_based";
-    return "asset_based";
+    return "generic_incident";
   }, [adminReportDomain]);
 
   const aggregationStrategies = useMemo(() => {
@@ -23692,6 +23740,22 @@ export default function App({ onBackToHub = null }) {
             .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
           display_id: String(m?.id || "").trim(),
           location_label: "",
+        }));
+      },
+      generic_incident: () => {
+        return (nonStreetlightDomainMarkers || []).map((m) => ({
+          incident_id: String(m?.id || "").trim(),
+          domain: String(m?.domain || adminReportDomain).trim() || adminReportDomain,
+          count: Number(m?.count || 0),
+          last_ts: Number(m?.lastTs || 0),
+          center: isValidLatLng(Number(m?.lat), Number(m?.lng))
+            ? { lat: Number(m.lat), lng: Number(m.lng) }
+            : null,
+          rows: selectedDomainReports
+            .filter((r) => String(r?.light_id || `${Number(r?.lat || 0).toFixed(5)}:${Number(r?.lng || 0).toFixed(5)}`).trim() === String(m?.id || "").trim())
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
+          display_id: String(m?.id || "").trim(),
+          location_label: String(m?.location_label || "").trim(),
         }));
       },
     };
@@ -30405,8 +30469,8 @@ async function insertReportWithFallback(payload) {
                 return;
               }
               openNotice(
-                adminDomainMeta.icon,
-                adminDomainMeta.label,
+                String(m?.glyph || adminDomainMeta.icon || "📍"),
+                String(m?.domainLabel || adminDomainMeta.label || "Incident"),
                 `${m.count} report${m.count === 1 ? "" : "s"} at this location.`,
                 { autoCloseMs: 1800, compact: true }
               );
