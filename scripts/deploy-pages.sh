@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-/tmp/npm-cache}"
+export npm_config_cache="${NPM_CONFIG_CACHE}"
 
 if [[ -f "${ROOT_DIR}/.env.cloudflare.local" ]]; then
   set -a
@@ -30,4 +32,4 @@ DIST_DIR="${1:-dist}"
 
 cd "${ROOT_DIR}"
 npm run build
-NPM_CONFIG_CACHE=/tmp/npm-cache npx wrangler pages deploy "${DIST_DIR}" --project-name "${PROJECT_NAME}"
+npx wrangler pages deploy "${DIST_DIR}" --project-name "${PROJECT_NAME}"
