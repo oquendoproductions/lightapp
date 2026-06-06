@@ -10572,9 +10572,14 @@ export default function PlatformAdminApp() {
                                   <option key={domain.key} value={domain.key}>{domain.label}</option>
                                 ))
                               ) : (
-                                <option value="">No active domains available</option>
+                                <option value="">No active unassigned domains available</option>
                               )}
                             </select>
+                            {!editingTenantDomainAssignmentKey && !assignableDomainRegistryRows.length ? (
+                              <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                                Draft domains stay in the registry until you promote them to Active.
+                              </div>
+                            ) : null}
                           </label>
                           <label style={modalField}>
                             <span>Assignment Active</span>
