@@ -2396,6 +2396,7 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
     let img = gmapsDotIcon._imgCache.get(gsrcResolved);
     if (!img) {
       img = new Image();
+      img.crossOrigin = "anonymous";
       img.decoding = "async";
       img.src = gsrcResolved;
       gmapsDotIcon._imgCache.set(gsrcResolved, img);
@@ -2415,22 +2416,29 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
     canvas.height = MARKER_SIZE;
     const ctx = canvas.getContext("2d");
     if (ctx) {
-      ctx.beginPath();
-      ctx.arc(MARKER_CENTER, MARKER_CENTER, MARKER_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = c;
-      ctx.fill();
-      ctx.lineWidth = MAP_MARKER_STROKE;
-      ctx.strokeStyle = r;
-      ctx.stroke();
-      const imgSize = MAP_MARKER_GLYPH_SIZE;
-      const imgX = (MARKER_SIZE - imgSize) / 2;
-      const imgY = (MARKER_SIZE - imgSize) / 2;
-      ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
-      url = canvas.toDataURL("image/png");
+      try {
+        ctx.beginPath();
+        ctx.arc(MARKER_CENTER, MARKER_CENTER, MARKER_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = c;
+        ctx.fill();
+        ctx.lineWidth = MAP_MARKER_STROKE;
+        ctx.strokeStyle = r;
+        ctx.stroke();
+        const imgSize = MAP_MARKER_GLYPH_SIZE;
+        const imgX = (MARKER_SIZE - imgSize) / 2;
+        const imgY = (MARKER_SIZE - imgSize) / 2;
+        ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
+        url = canvas.toDataURL("image/png");
+      } catch {
+        url = "";
+      }
     }
   }
 
   const fallbackGlyph = isPotholeImage ? "" : gph;
+  if (!url && gsrcResolved && gph === "📍") {
+    return gmapsImageIcon(gsrcResolved, MARKER_SIZE);
+  }
   if (!url) {
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
@@ -17036,6 +17044,7 @@ export default function App({ onBackToHub = null }) {
   const [activeMapLayerKey, setActiveMapLayerKey] = useState(INCIDENT_REPORTING_LAYER_KEY);
   const [lastIncidentMapDomain, setLastIncidentMapDomain] = useState("potholes");
   const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
+  const [mobileIncidentDomainMenuOpen, setMobileIncidentDomainMenuOpen] = useState(false);
   const [adminToolboxOpen, setAdminToolboxOpen] = useState(false);
   const [selectedDomainMarker, setSelectedDomainMarker] = useState(null);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
@@ -17701,6 +17710,7 @@ export default function App({ onBackToHub = null }) {
     let cancelled = false;
     urls.forEach((url) => {
       const img = new Image();
+      img.crossOrigin = "anonymous";
       img.decoding = "async";
       img.onload = img.onerror = () => {
         if (cancelled) return;
@@ -18001,6 +18011,12 @@ export default function App({ onBackToHub = null }) {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [adminDomainMenuOpen, useAppShellLayout]);
+
+  useEffect(() => {
+    if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY || incidentLayerDomainOptions.length <= 1) {
+      setMobileIncidentDomainMenuOpen(false);
+    }
+  }, [activeMapLayerKey, incidentLayerDomainOptions.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -18443,20 +18459,34 @@ export default function App({ onBackToHub = null }) {
     setActiveMapLayerKey(nextLayerKey);
     setAdminReportDomain(nextKey);
     setAdminDomainMenuOpen(false);
+    setMobileIncidentDomainMenuOpen(false);
     showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 3);
   }
 
   function requestMapLayerSwitch(layerKey, layerLabel) {
     const nextLayerKey = String(layerKey || "").trim();
     if (!nextLayerKey) return;
+    if (
+      useAppShellLayout
+      && nextLayerKey === INCIDENT_REPORTING_LAYER_KEY
+      && incidentLayerDomainOptions.length > 1
+      && activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+    ) {
+      setMobileIncidentDomainMenuOpen((prev) => !prev);
+      return;
+    }
     if (nextLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
       const fallbackIncidentDomain = resolvedIncidentMapDomain;
       if (!fallbackIncidentDomain) return;
+      if (useAppShellLayout && incidentLayerDomainOptions.length > 1) {
+        setMobileIncidentDomainMenuOpen(true);
+      }
       requestAdminDomainSwitch(fallbackIncidentDomain, layerLabel || "Incident Reporting", {
         layerKey: INCIDENT_REPORTING_LAYER_KEY,
       });
       return;
     }
+    setMobileIncidentDomainMenuOpen(false);
     requestAdminDomainSwitch(nextLayerKey, layerLabel, { layerKey: nextLayerKey });
   }
 
@@ -30285,6 +30315,7 @@ async function insertReportWithFallback(payload) {
           }}
           onClick={(e) => {
             setAdminDomainMenuOpen(false);
+            setMobileIncidentDomainMenuOpen(false);
             setAdminToolboxOpen(false);
             if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
             const lat = Number(e?.latLng?.lat?.());
@@ -31940,7 +31971,7 @@ async function insertReportWithFallback(payload) {
           closeAnyPopup();
           setFollowedLocationsOpen(false);
           setAccountView("menu");
-          setAccountMenuOpen(true);
+          setAccountMenuOpen(false);
           await tenant?.switchTenant?.(nextTenantKey);
         }}
         darkMode={prefersDarkMode}
@@ -33131,7 +33162,8 @@ async function insertReportWithFallback(payload) {
                       const showIncidentSubcontrols =
                         isIncidentButton &&
                         isActive &&
-                        incidentLayerDomainOptions.length > 1;
+                        incidentLayerDomainOptions.length > 1 &&
+                        mobileIncidentDomainMenuOpen;
                       return (
                         <div
                           key={`mobile-map-layer-${layer.key}`}
