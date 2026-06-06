@@ -1723,6 +1723,40 @@ export default function PlatformAdminApp() {
     () => (selectedTenant ? makeHubUrl(selectedTenant.primary_subdomain, selectedTenant.tenant_key) : ""),
     [selectedTenant]
   );
+  const activeDomainRegistryRows = useMemo(
+    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() !== "archived"),
+    [domainRegistryRows]
+  );
+  const archivedDomainRegistryRows = useMemo(
+    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() === "archived"),
+    [domainRegistryRows]
+  );
+  const selectedTenantDomainAssignments = useMemo(
+    () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
+    [selectedTenantKey, tenantDomainAssignmentsByTenant]
+  );
+  const selectedTenantAssignedDomainRows = useMemo(() => {
+    const rows = [];
+    for (const domain of activeDomainRegistryRows) {
+      const assignment = selectedTenantDomainAssignments?.[domain.key];
+      if (!assignment) continue;
+      rows.push({
+        ...assignment,
+        domain,
+      });
+    }
+    rows.sort((a, b) => {
+      const aSort = Number(a?.domain?.sort_order || 100);
+      const bSort = Number(b?.domain?.sort_order || 100);
+      if (aSort !== bSort) return aSort - bSort;
+      return String(a?.domain?.label || "").localeCompare(String(b?.domain?.label || ""));
+    });
+    return rows;
+  }, [activeDomainRegistryRows, selectedTenantDomainAssignments]);
+  const assignableDomainRegistryRows = useMemo(
+    () => activeDomainRegistryRows.filter((domain) => !selectedTenantDomainAssignments?.[domain.key]),
+    [activeDomainRegistryRows, selectedTenantDomainAssignments]
+  );
 
   const sortedTenantRoleDefinitions = useMemo(() => {
     const rows = Array.isArray(tenantRoleDefinitions) ? [...tenantRoleDefinitions] : [];
@@ -6016,40 +6050,6 @@ export default function PlatformAdminApp() {
       return visibility !== "disabled" || editingDomainKey === d.key;
     }),
     [domainVisibilityForm, editingDomainKey]
-  );
-  const activeDomainRegistryRows = useMemo(
-    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() !== "archived"),
-    [domainRegistryRows]
-  );
-  const archivedDomainRegistryRows = useMemo(
-    () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() === "archived"),
-    [domainRegistryRows]
-  );
-  const selectedTenantDomainAssignments = useMemo(
-    () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
-    [selectedTenantKey, tenantDomainAssignmentsByTenant]
-  );
-  const selectedTenantAssignedDomainRows = useMemo(() => {
-    const rows = [];
-    for (const domain of activeDomainRegistryRows) {
-      const assignment = selectedTenantDomainAssignments?.[domain.key];
-      if (!assignment) continue;
-      rows.push({
-        ...assignment,
-        domain,
-      });
-    }
-    rows.sort((a, b) => {
-      const aSort = Number(a?.domain?.sort_order || 100);
-      const bSort = Number(b?.domain?.sort_order || 100);
-      if (aSort !== bSort) return aSort - bSort;
-      return String(a?.domain?.label || "").localeCompare(String(b?.domain?.label || ""));
-    });
-    return rows;
-  }, [activeDomainRegistryRows, selectedTenantDomainAssignments]);
-  const assignableDomainRegistryRows = useMemo(
-    () => activeDomainRegistryRows.filter((domain) => !selectedTenantDomainAssignments?.[domain.key]),
-    [activeDomainRegistryRows, selectedTenantDomainAssignments]
   );
   const compactVisibleDomainCards = useMemo(() => {
     if (!isCompactViewport) return domainEnablementCards;
