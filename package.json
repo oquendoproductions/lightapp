@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "deploy:pages": "bash scripts/deploy-pages.sh",
+    "supabase:db:push": "bash scripts/supabase-db-push.sh",
+    "supabase:migration:list": "bash scripts/run-supabase.sh migration list --workdir . --linked",
     "lint": "eslint .",
     "cap:copy": "cap copy",
     "cap:sync": "cap sync",
