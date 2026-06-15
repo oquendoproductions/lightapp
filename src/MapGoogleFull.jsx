@@ -321,10 +321,13 @@ const REPORT_DOMAIN_OPTIONS = [
   { key: "street_signs", label: "Street Signs", icon: "🪧", iconSrc: UI_ICON_SRC.streetSign, enabled: true },
   { key: "power_outage", label: "Power Outage", icon: "⚡", iconSrc: UI_ICON_SRC.powerOutage, enabled: true },
   { key: "water_main", label: "Water Main", icon: "🚰", iconSrc: UI_ICON_SRC.waterMain, enabled: true },
+  { key: "downed_tree", label: "Downed Tree", icon: "🌳", iconSrc: "/icon-concepts-v4/domain/downed_tree_domain_icon_v4.svg", enabled: true },
+  { key: "encampment", label: "Encampment", icon: "⛺", iconSrc: "/icon-concepts-v4/domain/encampment_domain_icon_v4.svg", enabled: true },
+  { key: "illegal_dumping", label: "Illegal Dumping", icon: "🗑️", iconSrc: "/icon-concepts-v4/domain/dumping_domain_icon_v4.svg", enabled: true },
+  { key: "graffiti", label: "Graffiti", icon: "🎨", iconSrc: "/icon-concepts-v4/domain/graffiti_domain_icon_v4.svg", enabled: true },
 ];
 const INCIDENT_REPORTING_LAYER_KEY = "incident_reporting";
 const DEFAULT_PUBLIC_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
-const LEGACY_REPORT_DOMAIN_KEYS = new Set(REPORT_DOMAIN_OPTIONS.map((option) => String(option?.key || "").trim().toLowerCase()).filter(Boolean));
 const STREET_SIGN_TYPE_OPTIONS = [
   { value: "stop", label: "Stop" },
   { value: "yield", label: "Yield" },
@@ -1572,6 +1575,10 @@ function normalizeDomainKey(v) {
   if (raw === "water_drain_issues" || raw === "water drain issues" || raw === "drain_issues" || raw === "drain issues" || raw === "sewer" || raw === "storm_drain" || raw === "storm drain") return "water_drain_issues";
   if (raw === "power_outage" || raw === "power outage" || raw === "outage" || raw === "power") return "power_outage";
   if (raw === "water_main" || raw === "water main" || raw === "water_main_break" || raw === "water main break" || raw === "water_main_breaks" || raw === "water main breaks") return "water_main";
+  if (raw === "downed_tree" || raw === "downed tree" || raw === "fallen tree" || raw === "tree down") return "downed_tree";
+  if (raw === "encampment" || raw === "encampments") return "encampment";
+  if (raw === "illegal_dumping" || raw === "illegal dumping" || raw === "dumping") return "illegal_dumping";
+  if (raw === "graffiti") return "graffiti";
   return "";
 }
 
@@ -1609,6 +1616,10 @@ function reportDomainForRow(row, officialIdSet, officialSignIdSet) {
   if (!type) return "streetlights";
   if (type.includes("sign")) return "street_signs";
   if (type.includes("pothole")) return "potholes";
+  if (type.includes("graffiti")) return "graffiti";
+  if (type.includes("illegal dumping") || type.includes("illegal_dumping") || type.includes("dumping")) return "illegal_dumping";
+  if (type.includes("encamp")) return "encampment";
+  if (type.includes("downed tree") || type.includes("downed_tree") || type.includes("fallen tree") || type.includes("tree limb")) return "downed_tree";
   if (type.includes("sewer") || type.includes("storm_drain") || type.includes("drain")) return "water_drain_issues";
   if (type.includes("water")) return "water_main";
   if (type.includes("power")) return "power_outage";
@@ -2457,14 +2468,11 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   }
 
   const fallbackGlyph = isPotholeImage ? "" : gph;
-  if (!url && gsrcResolved && gph === "📍") {
-    return gmapsImageIcon(gsrcResolved, MARKER_SIZE);
-  }
   if (!url) {
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
         <circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MARKER_RADIUS}" fill="${c}" stroke="${r}" stroke-width="${MAP_MARKER_STROKE}" />
-        ${fallbackGlyph ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}">${fallbackGlyph}</text>` : ""}
+        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}">${fallbackGlyph}</text>` : ""}
       </svg>
     `.trim();
     url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
@@ -2557,6 +2565,20 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
     scaledSize: new g.Size(finalSize, finalSize),
     anchor: new g.Point(anchor, anchor),
   };
+}
+
+function defaultMarkerColorForDomain(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (key === "potholes") return "#8e24aa";
+  if (key === "street_signs") return "#1e88e5";
+  if (key === "water_drain_issues") return "#0288d1";
+  if (key === "power_outage") return "#d32f2f";
+  if (key === "water_main") return "#1e88e5";
+  if (key === "downed_tree") return "#2e7d32";
+  if (key === "encampment") return "#00897b";
+  if (key === "illegal_dumping") return "#ef6c00";
+  if (key === "graffiti") return "#8e24aa";
+  return "#234a72";
 }
 
 const OFFICIAL_MARKER_SHAPE = {
@@ -25295,29 +25317,30 @@ async function selectTenantScopedPublicRows(
     }, 0);
   }
 
-  async function sendPotholeEmailNotice({
-    potholeCode,
-    reportNumber,
-    notes,
+async function sendPotholeEmailNotice({
+  potholeCode,
+  reportNumber,
+  notes,
     lat,
     lng,
     closestAddress,
     closestLandmark,
     closestCrossStreet,
     closestIntersection,
-    submittedAtIso,
-    reporter,
-  }) {
-    try {
-      const tenantKey = activeTenantKey();
-      const { data, error } = await supabase.functions.invoke("email-pothole-report", {
-        body: {
-          tenant_key: tenantKey,
-          title: "Attention Public Works, Pothole report",
-          potholeCode: String(potholeCode || "").trim(),
-          reportNumber: String(reportNumber || "").trim(),
-          notes: String(notes || "").trim(),
-          location: {
+  submittedAtIso,
+  reporter,
+}) {
+  try {
+    const tenantKey = activeTenantKey();
+    const { data, error } = await supabase.functions.invoke("email-domain-report", {
+      body: {
+        tenant_key: tenantKey,
+        domain_key: "potholes",
+        domainLabel: "Potholes",
+        issueType: String(potholeCode || "").trim() || "",
+        reportNumber: String(reportNumber || "").trim(),
+        notes: String(notes || "").trim(),
+        location: {
             lat: Number(lat),
             lng: Number(lng),
             text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
@@ -25358,9 +25381,9 @@ async function selectTenantScopedPublicRows(
     }
   }
 
-  async function sendWaterDrainEmailNotice({
-    issueTypeLabel,
-    reportNumber,
+async function sendWaterDrainEmailNotice({
+  issueTypeLabel,
+  reportNumber,
     notes,
     lat,
     lng,
@@ -25368,19 +25391,20 @@ async function selectTenantScopedPublicRows(
     closestLandmark,
     closestCrossStreet,
     closestIntersection,
-    submittedAtIso,
-    reporter,
-  }) {
-    try {
-      const tenantKey = activeTenantKey();
-      const { data, error } = await supabase.functions.invoke("email-water-drain-report", {
-        body: {
-          tenant_key: tenantKey,
-          title: "Attention Public Works, Water/Drain issue report",
-          issueType: String(issueTypeLabel || "").trim() || "Water / Drain Issue",
-          reportNumber: String(reportNumber || "").trim(),
-          notes: String(notes || "").trim(),
-          location: {
+  submittedAtIso,
+  reporter,
+}) {
+  try {
+    const tenantKey = activeTenantKey();
+    const { data, error } = await supabase.functions.invoke("email-domain-report", {
+      body: {
+        tenant_key: tenantKey,
+        domain_key: "water_drain_issues",
+        domainLabel: "Water / Drain",
+        issueType: String(issueTypeLabel || "").trim() || "Water / Drain Issue",
+        reportNumber: String(reportNumber || "").trim(),
+        notes: String(notes || "").trim(),
+        location: {
             lat: Number(lat),
             lng: Number(lng),
             text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
@@ -25418,6 +25442,93 @@ async function selectTenantScopedPublicRows(
       };
     } catch (e) {
       console.warn("[water/drain email notice] invoke failed:", e?.message || e);
+      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
+    }
+  }
+
+  function formatGenericDomainIssueLabel(issueKey) {
+    const key = String(issueKey || "").trim().toLowerCase();
+    if (!key || key === "other") return "";
+    return key
+      .replace(/[_-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function resolveReportDomainLabel(domainKey, fallback = "Incident") {
+    const key = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true });
+    if (!key) return fallback;
+    return String(
+      RUNTIME_DOMAIN_META.labelByDomain.get(key)
+      || visibleDomainOptions.find((option) => option.key === key)?.label
+      || REPORT_DOMAIN_OPTIONS.find((option) => option.key === key)?.label
+      || humanizeLabel(key)
+    ).trim() || fallback;
+  }
+
+  async function sendIncidentDomainEmailNotice({
+    domainKey,
+    domainLabel,
+    issueTypeLabel,
+    reportNumber,
+    notes,
+    lat,
+    lng,
+    closestAddress,
+    closestLandmark,
+    closestCrossStreet,
+    closestIntersection,
+    submittedAtIso,
+    reporter,
+  }) {
+    try {
+      const tenantKey = activeTenantKey();
+      const { data, error } = await supabase.functions.invoke("email-domain-report", {
+        body: {
+          tenant_key: tenantKey,
+          domain_key: String(domainKey || "").trim(),
+          domainLabel: String(domainLabel || "").trim() || resolveReportDomainLabel(domainKey, "Incident"),
+          issueType: String(issueTypeLabel || "").trim() || "",
+          reportNumber: String(reportNumber || "").trim(),
+          notes: String(notes || "").trim(),
+          location: {
+            lat: Number(lat),
+            lng: Number(lng),
+            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+          },
+          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
+          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+          reporter: {
+            type: reporter?.type === "guest" ? "guest" : "user",
+            userId: reporter?.userId || null,
+            name: String(reporter?.name || "").trim() || "Unknown",
+            email: String(reporter?.email || "").trim() || "Not provided",
+            phone: String(reporter?.phone || "").trim() || "Not provided",
+          },
+        },
+      });
+      if (error) {
+        console.warn("[incident domain email notice] invoke error:", error?.message || error);
+        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
+      }
+      const skipped = Boolean(data?.skipped);
+      const ok = data?.ok !== false && !skipped;
+      const reason = String(data?.reason || "").trim();
+      if (!ok) {
+        console.warn("[incident domain email notice] not sent:", data);
+      }
+      return {
+        ok,
+        skipped,
+        reason: reason || (skipped ? "skipped" : ""),
+      };
+    } catch (e) {
+      console.warn("[incident domain email notice] invoke failed:", e?.message || e);
       return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
     }
   }
@@ -25961,18 +26072,24 @@ async function selectTenantScopedPublicRows(
         }
       }
 
-      if (isWaterDrainTarget) {
-        const issueLabel =
-          WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === normalizedReportType)?.label ||
-          waterDrainIssue ||
-          "Water / Drain Issue";
-        const submittedAtIso = data?.created_at || new Date().toISOString();
-        const nearestAddress = String(waterNearestAddress || "").trim() || "Address unavailable";
-        const nearestLandmark = String(waterNearestLandmark || "").trim() || "No nearby landmark";
-        const nearestCrossStreet = String(waterNearestCrossStreet || "").trim() || "No nearby cross street";
-        const nearestIntersection = String(waterNearestIntersection || "").trim() || "No nearby intersection";
-        const userNotesOnly = [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ");
-        void sendWaterDrainEmailNotice({
+      const issueLabel = isStreetSignsTarget
+        ? signIssue
+        : isWaterDrainTarget
+          ? (
+            WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === normalizedReportType)?.label
+            || waterDrainIssue
+            || "Water / Drain Issue"
+          )
+          : formatGenericDomainIssueLabel(domainReportIssue);
+      const submittedAtIso = data?.created_at || new Date().toISOString();
+      const nearestAddress = String(waterNearestAddress || target.locationLabel || "").trim() || "Address unavailable";
+      const nearestLandmark = String(waterNearestLandmark || target.nearestLandmark || "").trim() || "No nearby landmark";
+      const nearestCrossStreet = String(waterNearestCrossStreet || target.nearestCrossStreet || "").trim() || "No nearby cross street";
+      const nearestIntersection = String(waterNearestIntersection || target.nearestIntersection || "").trim() || "No nearby intersection";
+      const userNotesOnly = [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ");
+      const emailDomainLabel = String(target.domainLabel || resolveReportDomainLabel(target.domain, "Incident")).trim() || "Incident";
+      const emailNoticePromise = isWaterDrainTarget
+        ? sendWaterDrainEmailNotice({
           issueTypeLabel: issueLabel,
           reportNumber: data?.report_number || saved.report_number || "",
           notes: userNotesOnly,
@@ -25990,10 +26107,31 @@ async function selectTenantScopedPublicRows(
             email: email.trim(),
             phone: phone.trim(),
           },
-        }).then((noticeRes) => {
-          notifyAsyncEmailDelivery("Water / Drain", noticeRes);
+        })
+        : sendIncidentDomainEmailNotice({
+          domainKey: target.domain,
+          domainLabel: emailDomainLabel,
+          issueTypeLabel: issueLabel,
+          reportNumber: data?.report_number || saved.report_number || "",
+          notes: userNotesOnly,
+          lat: Number(data?.lat ?? target.lat),
+          lng: Number(data?.lng ?? target.lng),
+          closestAddress: nearestAddress,
+          closestLandmark: nearestLandmark,
+          closestCrossStreet: nearestCrossStreet,
+          closestIntersection: nearestIntersection,
+          submittedAtIso,
+          reporter: {
+            type: isAuthed ? "user" : "guest",
+            userId: isAuthed ? (session?.user?.id || null) : null,
+            name: name.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+          },
         });
-      }
+      void emailNoticePromise.then((noticeRes) => {
+        notifyAsyncEmailDelivery(emailDomainLabel, noticeRes);
+      });
     }
 
       if (!isAuthed) clearGuestContact();
@@ -28591,17 +28729,7 @@ async function insertReportWithFallback(payload) {
   const showOfficialLights = canShowOfficialLightsByZoom;
   const adminDomainMeta =
     visibleDomainOptions.find((d) => d.key === adminReportDomain) || visibleDomainOptions[0] || REPORT_DOMAIN_OPTIONS[0];
-  const domainMarkerColor = adminReportDomain === "potholes"
-    ? "#8e24aa"
-    : adminReportDomain === "street_signs"
-      ? "#1e88e5"
-    : adminReportDomain === "water_drain_issues"
-      ? "#0288d1"
-    : adminReportDomain === "power_outage"
-      ? "#d32f2f"
-      : adminReportDomain === "water_main"
-        ? "#1e88e5"
-        : "#111";
+  const domainMarkerColor = defaultMarkerColorForDomain(adminReportDomain);
   const isSavedStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "saved";
   const isUtilityStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "utility";
   const inViewCounterColor = "var(--sl-ui-text)";
@@ -30673,13 +30801,8 @@ async function insertReportWithFallback(payload) {
             icon={
               String(m?.domain || adminReportDomain) === "street_signs"
                 ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
-                : (
-                  !LEGACY_REPORT_DOMAIN_KEYS.has(String(m?.domain || adminReportDomain).trim().toLowerCase())
-                  && String(m?.glyphSrc || "").trim()
-                )
-                  ? gmapsImageIcon(String(m?.glyphSrc || "").trim(), MAP_MARKER_SIZE)
                 : gmapsDotIcon(
-                    m.color || domainMarkerColor,
+                    m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor,
                     m.ringColor || "#fff",
                     m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
                     m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight))

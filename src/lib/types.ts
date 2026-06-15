@@ -3,6 +3,10 @@ export const PRIORITY_DOMAIN_OPTIONS = [
   "street_signs",
   "water_drain_issues",
   "streetlights",
+  "downed_tree",
+  "encampment",
+  "illegal_dumping",
+  "graffiti",
   "other",
 ] as const;
 

@@ -7,6 +7,9 @@ verify_jwt = false
 [functions.email-water-drain-report]
 verify_jwt = false
 
+[functions.email-domain-report]
+verify_jwt = false
+
 [functions.cache-official-light-geo]
 verify_jwt = false
 

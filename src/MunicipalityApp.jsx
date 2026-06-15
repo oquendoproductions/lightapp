@@ -231,6 +231,10 @@ const REPORT_DOMAIN_ICON_SRC = {
   street_signs: "/street_sign_icons/street_sign_domain_icon.png",
   power_outage: "/power_outage_icon.png",
   water_main: "/water_main_icon.png",
+  downed_tree: "/icon-concepts-v4/domain/downed_tree_domain_icon_v4.svg",
+  encampment: "/icon-concepts-v4/domain/encampment_domain_icon_v4.svg",
+  illegal_dumping: "/icon-concepts-v4/domain/dumping_domain_icon_v4.svg",
+  graffiti: "/icon-concepts-v4/domain/graffiti_domain_icon_v4.svg",
 };
 
 const REPORT_DOMAIN_OPTIONS = [
@@ -240,6 +244,10 @@ const REPORT_DOMAIN_OPTIONS = [
   { key: "street_signs", label: "Street Signs", iconSrc: REPORT_DOMAIN_ICON_SRC.street_signs },
   { key: "power_outage", label: "Power Outage", iconSrc: REPORT_DOMAIN_ICON_SRC.power_outage },
   { key: "water_main", label: "Water Main", iconSrc: REPORT_DOMAIN_ICON_SRC.water_main },
+  { key: "downed_tree", label: "Downed Tree", iconSrc: REPORT_DOMAIN_ICON_SRC.downed_tree },
+  { key: "encampment", label: "Encampment", iconSrc: REPORT_DOMAIN_ICON_SRC.encampment },
+  { key: "illegal_dumping", label: "Illegal Dumping", iconSrc: REPORT_DOMAIN_ICON_SRC.illegal_dumping },
+  { key: "graffiti", label: "Graffiti", iconSrc: REPORT_DOMAIN_ICON_SRC.graffiti },
 ];
 
 const DEFAULT_PUBLIC_REPORT_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
@@ -534,6 +542,10 @@ function normalizeReportDomainKey(value) {
   }
   if (raw === "power_outage" || raw === "power outage" || raw === "outage" || raw === "power") return "power_outage";
   if (raw === "water_main" || raw === "water main" || raw === "water_main_break" || raw === "water main break") return "water_main";
+  if (raw === "downed_tree" || raw === "downed tree" || raw === "fallen tree" || raw === "tree down") return "downed_tree";
+  if (raw === "encampment" || raw === "encampments") return "encampment";
+  if (raw === "illegal_dumping" || raw === "illegal dumping" || raw === "dumping") return "illegal_dumping";
+  if (raw === "graffiti") return "graffiti";
   return "";
 }
 

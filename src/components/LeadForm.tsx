@@ -15,6 +15,10 @@ const DOMAIN_LABELS: Record<PriorityDomain, string> = {
   street_signs: "Street signs",
   water_drain_issues: "Water/drain issues",
   streetlights: "Streetlights",
+  downed_tree: "Downed tree",
+  encampment: "Encampment",
+  illegal_dumping: "Illegal dumping",
+  graffiti: "Graffiti",
   other: "Other",
 };
 

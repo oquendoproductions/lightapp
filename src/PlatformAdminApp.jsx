@@ -22,6 +22,10 @@ const DOMAIN_OPTIONS = [
   { key: "water_drain_issues", label: "Water / Drain" },
   { key: "power_outage", label: "Power Outage" },
   { key: "water_main", label: "Water Main" },
+  { key: "downed_tree", label: "Downed Tree" },
+  { key: "encampment", label: "Encampment" },
+  { key: "illegal_dumping", label: "Illegal Dumping" },
+  { key: "graffiti", label: "Graffiti" },
 ];
 
 const DOMAIN_TYPE_OPTIONS = [
@@ -50,6 +54,102 @@ const DOMAIN_BILLING_MODEL_OPTIONS = [
   { key: "included", label: "Included" },
   { key: "add_on", label: "Add-On" },
   { key: "custom", label: "Custom" },
+];
+
+const DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS = [
+  {
+    key: "standard_ops",
+    label: "Standard Operations",
+    description: "Balanced triage format with location, notes, and reporter contact details.",
+    subject: "{{domain_label}} report ({{report_number}})",
+    body: `A new {{domain_label}} report was submitted through CityReport.io.
+
+Tenant: {{tenant_key}}
+Domain: {{domain_label}}
+Issue Type: {{issue_type}}
+Report Number: {{report_number}}
+Closest Address: {{closest_address}}
+Cross Street: {{closest_cross_street}}
+Closest Intersection: {{closest_intersection}}
+Closest Landmark: {{closest_landmark}}
+Location: {{location_text}}
+Image URL: {{image_url}}
+Submitted (Local): {{submitted_at_local}}
+
+Notes:
+{{notes}}
+
+Reported by:
+Type: {{reporter_type}}
+Name: {{reporter_name}}
+Email: {{reporter_email}}
+Phone: {{reporter_phone}}
+
+This report was submitted through CityReport.io and forwarded by our system as an intermediary.`,
+  },
+  {
+    key: "compact_triage",
+    label: "Compact Triage",
+    description: "Shorter dispatch-style template for fast operational routing.",
+    subject: "New {{domain_label}} report: {{report_number}}",
+    body: `{{domain_label}} report for {{tenant_key}}.
+
+Issue Type: {{issue_type}}
+Address: {{closest_address}}
+Cross Street: {{closest_cross_street}}
+Location: {{location_text}}
+Submitted: {{submitted_at_local}}
+
+Notes:
+{{notes}}
+
+Reporter:
+{{reporter_name}} | {{reporter_email}} | {{reporter_phone}}`,
+  },
+  {
+    key: "resident_follow_up",
+    label: "Resident Follow-Up",
+    description: "Emphasizes resident contact information for direct follow-up.",
+    subject: "{{domain_label}} resident report ({{report_number}})",
+    body: `CityReport.io forwarded a {{domain_label}} report for {{tenant_key}}.
+
+Report Number: {{report_number}}
+Issue Type: {{issue_type}}
+Closest Address: {{closest_address}}
+Closest Intersection: {{closest_intersection}}
+Closest Landmark: {{closest_landmark}}
+Location: {{location_text}}
+Submitted (Local): {{submitted_at_local}}
+Image URL: {{image_url}}
+
+Resident Notes:
+{{notes}}
+
+Please follow up with:
+Name: {{reporter_name}}
+Email: {{reporter_email}}
+Phone: {{reporter_phone}}
+Reporter Type: {{reporter_type}}`,
+  },
+];
+
+const DOMAIN_NOTIFICATION_TEMPLATE_TOKENS = [
+  "{{tenant_key}}",
+  "{{domain_label}}",
+  "{{issue_type}}",
+  "{{report_number}}",
+  "{{closest_address}}",
+  "{{closest_cross_street}}",
+  "{{closest_intersection}}",
+  "{{closest_landmark}}",
+  "{{location_text}}",
+  "{{image_url}}",
+  "{{submitted_at_local}}",
+  "{{notes}}",
+  "{{reporter_type}}",
+  "{{reporter_name}}",
+  "{{reporter_email}}",
+  "{{reporter_phone}}",
 ];
 
 const TAB_OPTIONS = [
@@ -958,9 +1058,13 @@ function defaultDomainType(domainKey) {
 function initialDomainConfigForm() {
   const out = {};
   for (const d of DOMAIN_OPTIONS) {
+    const preset = domainNotificationTemplateOption("");
     out[d.key] = {
       domain_type: defaultDomainType(d.key),
       notification_email: "",
+      notification_template_key: preset.key,
+      notification_subject_template: preset.subject,
+      notification_body_template: preset.body,
       organization_monitored_repairs: true,
     };
   }
@@ -1051,11 +1155,15 @@ function buildDomainRegistryForm(row) {
 }
 
 function initialTenantDomainAssignmentForm() {
+  const preset = DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0];
   return {
     domain_key: "",
     active: true,
     visibility: "enabled",
     notification_email: "",
+    notification_template_key: preset.key,
+    notification_subject_template: preset.subject,
+    notification_body_template: preset.body,
     organization_monitored_repairs: true,
     billing_status: "not_applicable",
     billing_model: "included",
@@ -1065,12 +1173,17 @@ function initialTenantDomainAssignmentForm() {
 }
 
 function buildTenantDomainAssignmentForm(row) {
+  const selectedTemplateKey = String(row?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase();
+  const preset = DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.find((option) => option.key === selectedTemplateKey) || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0];
   if (!row) return initialTenantDomainAssignmentForm();
   return {
     domain_key: String(row?.domain_key || ""),
     active: row?.active !== false,
     visibility: String(row?.visibility || "enabled"),
     notification_email: String(row?.notification_email || ""),
+    notification_template_key: preset.key,
+    notification_subject_template: String(row?.notification_subject_template || preset.subject || ""),
+    notification_body_template: String(row?.notification_body_template || preset.body || ""),
     organization_monitored_repairs: row?.organization_monitored_repairs !== false,
     billing_status: String(row?.billing_status || "not_applicable"),
     billing_model: String(row?.billing_model || "included"),
@@ -1165,6 +1278,11 @@ function formatLeadNumber(value) {
 
 function domainKeyToLabel(domainKey) {
   return DOMAIN_OPTIONS.find((entry) => entry.key === domainKey)?.label || roleKeyToLabel(domainKey);
+}
+
+function domainNotificationTemplateOption(templateKey) {
+  return DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.find((option) => option.key === String(templateKey || "").trim().toLowerCase())
+    || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0];
 }
 
 function buildAssignmentRowKey(row) {
@@ -2855,11 +2973,20 @@ export default function PlatformAdminApp() {
       setTenantDomainAssignmentSchemaReady(true);
       return;
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,notification_email,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
+    if (error && isMissingColumnError(error)) {
+      const fallbackResult = await supabase
+        .from("tenant_domain_assignments")
+        .select("id,tenant_key,domain_key,active,visibility,notification_email,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+        .order("tenant_key", { ascending: true })
+        .order("domain_key", { ascending: true });
+      data = fallbackResult.data;
+      error = fallbackResult.error;
+    }
     if (error) {
       if (isMissingRelationError(error)) {
         setTenantDomainAssignmentsByTenant({});
@@ -4458,15 +4585,22 @@ export default function PlatformAdminApp() {
     const nextDomainConfig = initialDomainConfigForm();
     for (const d of DOMAIN_OPTIONS) {
       const configured = configuredDomainSettings?.[d.key] || null;
+      const assignment = selectedTenantDomainAssignments?.[d.key] || null;
       const fallbackNotification = d.key === "potholes"
         ? String(selectedTenant?.notification_email_potholes || "")
         : d.key === "water_drain_issues"
           ? String(selectedTenant?.notification_email_water_drain || "")
           : "";
+      const templatePreset = domainNotificationTemplateOption(assignment?.notification_template_key);
       nextDomainConfig[d.key] = {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
-        notification_email: String(configured?.notification_email || fallbackNotification).trim(),
-        organization_monitored_repairs: configured?.organization_monitored_repairs !== false,
+        notification_email: String(assignment?.notification_email || configured?.notification_email || fallbackNotification).trim(),
+        notification_template_key: templatePreset.key,
+        notification_subject_template: String(assignment?.notification_subject_template || templatePreset.subject || ""),
+        notification_body_template: String(assignment?.notification_body_template || templatePreset.body || ""),
+        organization_monitored_repairs: typeof assignment?.organization_monitored_repairs === "boolean"
+          ? assignment.organization_monitored_repairs
+          : configured?.organization_monitored_repairs !== false,
       };
     }
     setDomainConfigForm(nextDomainConfig);
@@ -4485,7 +4619,7 @@ export default function PlatformAdminApp() {
     void loadAudit(key).catch((error) => {
       setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
     });
-  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
+  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, selectedTenantDomainAssignments, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
 
   useEffect(() => {
     if (!sortedTenantRoleDefinitions.length) {
@@ -5261,6 +5395,9 @@ export default function PlatformAdminApp() {
       active: tenantDomainAssignmentForm?.active !== false,
       visibility: String(tenantDomainAssignmentForm?.visibility || "enabled").trim().toLowerCase(),
       notification_email: String(tenantDomainAssignmentForm?.notification_email || "").trim() || null,
+      notification_template_key: String(tenantDomainAssignmentForm?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
+      notification_subject_template: String(tenantDomainAssignmentForm?.notification_subject_template || "").trim() || null,
+      notification_body_template: String(tenantDomainAssignmentForm?.notification_body_template || "").trim() || null,
       organization_monitored_repairs: tenantDomainAssignmentForm?.organization_monitored_repairs !== false,
       billing_status: String(tenantDomainAssignmentForm?.billing_status || "not_applicable").trim().toLowerCase(),
       billing_model: String(tenantDomainAssignmentForm?.billing_model || "included").trim().toLowerCase(),
@@ -5357,20 +5494,49 @@ export default function PlatformAdminApp() {
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
       updated_by: cleanOptional(sessionUserId),
     }));
+    const assignmentRows = DOMAIN_OPTIONS.map((d) => ({
+      tenant_key: key,
+      domain_key: d.key,
+      active: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() !== "disabled",
+      visibility: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled" ? "disabled" : "enabled",
+      notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
+      notification_template_key: String(domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
+      notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
+      notification_body_template: cleanOptional(domainConfigForm?.[d.key]?.notification_body_template),
+      organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      updated_by: cleanOptional(sessionUserId),
+    }));
 
     const tenantPayload = {
       notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
       notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
     };
 
-    const [{ error: visError }, { error: domainConfigError }, { error: tenantError }] = await Promise.all([
+    const [{ error: visError }, { error: domainConfigError }, { error: tenantError }, assignmentResult] = await Promise.all([
       supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
       supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" }),
       supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
+      supabase.from("tenant_domain_assignments").upsert(assignmentRows, { onConflict: "tenant_key,domain_key" }),
     ]);
+    let assignmentError = assignmentResult.error;
+    if (assignmentError && isMissingColumnError(assignmentError)) {
+      const fallbackAssignmentRows = assignmentRows.map((row) => ({
+        tenant_key: row.tenant_key,
+        domain_key: row.domain_key,
+        active: row.active,
+        visibility: row.visibility,
+        notification_email: row.notification_email,
+        organization_monitored_repairs: row.organization_monitored_repairs,
+        updated_by: row.updated_by,
+      }));
+      const fallbackAssignmentResult = await supabase
+        .from("tenant_domain_assignments")
+        .upsert(fallbackAssignmentRows, { onConflict: "tenant_key,domain_key" });
+      assignmentError = fallbackAssignmentResult.error;
+    }
 
-    if (visError || domainConfigError || tenantError) {
-      setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || tenantError, "") }));
+    if (visError || domainConfigError || tenantError || assignmentError) {
+      setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || tenantError || assignmentError, "") }));
       return;
     }
 
@@ -5382,11 +5548,12 @@ export default function PlatformAdminApp() {
       details: {
         visibility: visibilityRows,
         domain_configurations: domainConfigRows,
+        domain_assignments: assignmentRows,
         notification_emails: tenantPayload,
       },
     });
 
-    setStatus((prev) => ({ ...prev, domains: `Saved domain types and notification routing for ${key}.` }));
+    setStatus((prev) => ({ ...prev, domains: `Saved domain settings, notification routing, and email templates for ${key}.` }));
     if (closingDomainKey) {
       setEditingDomainKey("");
       setEditingDomainSnapshot(null);
@@ -10697,6 +10864,9 @@ export default function PlatformAdminApp() {
                             </label>
                           </div>
                         </div>
+                        <div style={{ fontSize: 12, color: palette.textMuted }}>
+                          Report email templates are configured from <b>Manage Organizations → Domains</b> after the domain is enabled.
+                        </div>
                         <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                           <span>Billing Notes</span>
                           <textarea
@@ -10756,6 +10926,14 @@ export default function PlatformAdminApp() {
                               </div>
                               {assignment.notification_email ? (
                                 <div style={{ fontSize: 12.5, color: palette.textMuted }}>Notification email: {assignment.notification_email}</div>
+                              ) : null}
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                Template preset: {domainNotificationTemplateOption(assignment.notification_template_key).label}
+                              </div>
+                              {assignment.notification_subject_template ? (
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                  Subject template: {assignment.notification_subject_template}
+                                </div>
                               ) : null}
                               {assignment.billing_notes ? (
                                 <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
@@ -10951,6 +11129,30 @@ export default function PlatformAdminApp() {
                                 style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               />
                             </label>
+                            <label style={modalField}>
+                              <span>Email Template Preset</span>
+                              <select
+                                value={domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key}
+                                disabled={domainFieldsReadOnly}
+                                onChange={(e) => {
+                                  const nextTemplate = domainNotificationTemplateOption(e.target.value);
+                                  setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      notification_template_key: nextTemplate.key,
+                                      notification_subject_template: nextTemplate.subject,
+                                      notification_body_template: nextTemplate.body,
+                                    },
+                                  }));
+                                }}
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                              >
+                                {DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.map((option) => (
+                                  <option key={option.key} value={option.key}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
                             <div style={{ ...modalField, justifyContent: "center" }}>
                               <span>Repair Verification</span>
                               <label
@@ -10986,6 +11188,70 @@ export default function PlatformAdminApp() {
                                   </span>
                                 </span>
                               </label>
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              ...subPanel,
+                              display: "grid",
+                              gap: 10,
+                              background: "rgba(255,255,255,0.78)",
+                              borderColor: "rgba(17,36,69,0.12)",
+                            }}
+                          >
+                            <div style={{ display: "grid", gap: 3 }}>
+                              <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
+                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
+                              </div>
+                              <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
+                                {" • "}
+                                {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
+                              </div>
+                            </div>
+                            <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                              <span>Email Subject Template</span>
+                              <input
+                                readOnly={domainFieldsReadOnly}
+                                value={domainConfigForm?.[d.key]?.notification_subject_template || ""}
+                                onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ...prev,
+                                  [d.key]: {
+                                    ...(prev?.[d.key] || {}),
+                                    notification_subject_template: e.target.value,
+                                  },
+                                }))}
+                                placeholder="{{domain_label}} report ({{report_number}})"
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                              />
+                            </label>
+                            <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                              <span>Email Body Template</span>
+                              <textarea
+                                readOnly={domainFieldsReadOnly}
+                                value={domainConfigForm?.[d.key]?.notification_body_template || ""}
+                                onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ...prev,
+                                  [d.key]: {
+                                    ...(prev?.[d.key] || {}),
+                                    notification_body_template: e.target.value,
+                                  },
+                                }))}
+                                rows={11}
+                                placeholder="Use the preset template or write your own body with macros."
+                                style={{
+                                  ...modalInput,
+                                  minHeight: 220,
+                                  resize: "vertical",
+                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                  lineHeight: 1.45,
+                                  background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background,
+                                }}
+                              />
+                            </label>
+                            <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              Available macros: {DOMAIN_NOTIFICATION_TEMPLATE_TOKENS.join(", ")}
                             </div>
                           </div>
                           {isAssetBacked ? (
