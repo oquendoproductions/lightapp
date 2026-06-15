@@ -20955,14 +20955,22 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
   return Array.isArray(data) ? data : [];
 }
 
-async function selectTenantScopedPublicRows(client, tableName, selectClause, tenantKey, orderColumn = "created_at") {
+async function selectTenantScopedPublicRows(
+  client,
+  tableName,
+  selectClause,
+  tenantKey,
+  orderColumn = "created_at",
+  options = {}
+) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  const preferScopedClient = Boolean(options?.preferScopedClient);
   selectTenantScopedPublicRows._missingTenantKeyTables ||= new Set();
   const knownMissingTenantKey = selectTenantScopedPublicRows._missingTenantKeyTables.has(tableName);
   const baseQuery = () =>
     client.from(tableName).select(selectClause).order(orderColumn, { ascending: false });
 
-  if (!normalizedTenantKey || knownMissingTenantKey) {
+  if (!normalizedTenantKey || knownMissingTenantKey || preferScopedClient) {
     return baseQuery();
   }
 
@@ -20979,6 +20987,7 @@ async function selectTenantScopedPublicRows(client, tableName, selectClause, ten
     async function loadAll() {
       const loadTenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
       const readClient = tenantScopedReadClient || supabase;
+      const preferScopedPublicReads = Boolean(tenantScopedReadClient);
       setLoading(true);
       setError("");
 
@@ -20997,7 +21006,9 @@ async function selectTenantScopedPublicRows(client, tableName, selectClause, ten
               readClient,
               "reports_public",
               reportSelectPublic,
-              loadTenantKey
+              loadTenantKey,
+              "created_at",
+              { preferScopedClient: preferScopedPublicReads }
             );
             const msg = String(first?.error?.message || "").toLowerCase();
             const missingReportNumber =
@@ -21009,7 +21020,9 @@ async function selectTenantScopedPublicRows(client, tableName, selectClause, ten
               readClient,
               "reports_public",
               reportSelectPublicLegacy,
-              loadTenantKey
+              loadTenantKey,
+              "created_at",
+              { preferScopedClient: preferScopedPublicReads }
             );
           })();
 
@@ -21044,7 +21057,9 @@ async function selectTenantScopedPublicRows(client, tableName, selectClause, ten
             readClient,
             "light_actions_public",
             actionsSelectPublic,
-            loadTenantKey
+            loadTenantKey,
+            "created_at",
+            { preferScopedClient: preferScopedPublicReads }
           );
 
       const [
