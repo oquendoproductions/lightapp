@@ -9168,8 +9168,8 @@ function OpenReportsModal({
   const openReportsModalMaxHeight =
     "calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px)";
   const hasReportsPageInsets = Boolean(String(pageTopInset || "").trim() || String(pageBottomInset || "").trim());
-  const isWideReportsPage = hasReportsPageInsets && (typeof window !== "undefined" ? window.innerWidth >= 900 : false);
-  const useFullPageReportsLayout = hasReportsPageInsets;
+  const useFullPageReportsLayout = useCompactAppBehavior && hasReportsPageInsets;
+  const isWideReportsPage = useFullPageReportsLayout && (typeof window !== "undefined" ? window.innerWidth >= 900 : false);
   const reportsPageTopInset = String(pageTopInset || "").trim() || "0px";
   const reportsPageBottomInset = String(pageBottomInset || "").trim() || "0px";
   const compactAdminFiltersPanel = compactFiltersOpen ? (
