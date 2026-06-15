@@ -17058,6 +17058,7 @@ export default function App({ onBackToHub = null }) {
   const [streetlightInViewFilterMode, setStreetlightInViewFilterMode] = useState("");
   const [adminReportDomain, setAdminReportDomain] = useState("potholes");
   const [activeMapLayerKey, setActiveMapLayerKey] = useState(INCIDENT_REPORTING_LAYER_KEY);
+  const [incidentMapFilterKeys, setIncidentMapFilterKeys] = useState([]);
   const [lastIncidentMapDomain, setLastIncidentMapDomain] = useState("potholes");
   const [adminDomainMenuOpen, setAdminDomainMenuOpen] = useState(false);
   const [mobileIncidentDomainMenuOpen, setMobileIncidentDomainMenuOpen] = useState(false);
@@ -17776,6 +17777,25 @@ export default function App({ onBackToHub = null }) {
     () => (visibleDomainOptions || []).filter((d) => isTenantIncidentDrivenDomain(d.key)),
     [visibleDomainOptions, isTenantIncidentDrivenDomain]
   );
+  const incidentLayerDomainKeySet = useMemo(
+    () => new Set((incidentLayerDomainOptions || []).map((option) => String(option?.key || "").trim()).filter(Boolean)),
+    [incidentLayerDomainOptions]
+  );
+  const activeIncidentMapFilterKeys = useMemo(() => {
+    const explicitKeys = Array.isArray(incidentMapFilterKeys)
+      ? incidentMapFilterKeys
+          .map((key) => String(key || "").trim())
+          .filter((key) => incidentLayerDomainKeySet.has(key))
+      : [];
+    return Array.from(new Set(explicitKeys));
+  }, [incidentMapFilterKeys, incidentLayerDomainKeySet]);
+  const incidentMapVisibleDomainKeys = useMemo(() => {
+    if (activeIncidentMapFilterKeys.length) return activeIncidentMapFilterKeys;
+    return (incidentLayerDomainOptions || [])
+      .map((option) => String(option?.key || "").trim())
+      .filter(Boolean);
+  }, [activeIncidentMapFilterKeys, incidentLayerDomainOptions]);
+  const hasExplicitIncidentMapFilter = activeIncidentMapFilterKeys.length > 0;
   const layerOptions = useMemo(() => {
     const opts = [...assetLayerOptions];
     if (incidentLayerDomainOptions.length) {
@@ -17799,6 +17819,17 @@ export default function App({ onBackToHub = null }) {
     if (!resolvedKey) return incidentLayerDomainOptions[0] || null;
     return incidentLayerDomainOptions.find((d) => d.key === resolvedKey) || incidentLayerDomainOptions[0] || null;
   }, [incidentLayerDomainOptions, resolvedIncidentMapDomain]);
+  useEffect(() => {
+    setIncidentMapFilterKeys((prev) => {
+      const next = Array.isArray(prev)
+        ? prev
+            .map((key) => String(key || "").trim())
+            .filter((key) => incidentLayerDomainKeySet.has(key))
+        : [];
+      if (next.length === (Array.isArray(prev) ? prev.length : 0)) return prev;
+      return next;
+    });
+  }, [incidentLayerDomainKeySet]);
   const openReportsDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => d.key !== "streetlights"),
     [visibleDomainOptions]
@@ -18497,6 +18528,45 @@ export default function App({ onBackToHub = null }) {
     setAdminDomainMenuOpen(false);
     setMobileIncidentDomainMenuOpen(false);
     showToolHint(`Domain: ${String(domainLabel || nextKey)}`, 1000, 3);
+  }
+
+  function resetIncidentMapFilter() {
+    if (mappingMode && mappingQueue.length > 0) {
+      return;
+    }
+    setIncidentMapFilterKeys([]);
+    setActiveMapLayerKey(INCIDENT_REPORTING_LAYER_KEY);
+    setAdminDomainMenuOpen(false);
+    setMobileIncidentDomainMenuOpen(false);
+    showToolHint("Filter: All incident reports", 1000, 3);
+  }
+
+  function toggleIncidentMapDomainFilter(domainKey, domainLabel) {
+    const nextKey = String(domainKey || "").trim();
+    if (!nextKey) return;
+    if (mappingMode && mappingQueue.length > 0) {
+      return;
+    }
+    setIncidentMapFilterKeys((prev) => {
+      const current = Array.isArray(prev)
+        ? prev
+            .map((key) => String(key || "").trim())
+            .filter((key) => incidentLayerDomainKeySet.has(key))
+        : [];
+      let next = [];
+      if (!current.length) {
+        next = [nextKey];
+      } else if (current.includes(nextKey)) {
+        next = current.length === 1 ? [] : current.filter((key) => key !== nextKey);
+      } else {
+        next = [...current, nextKey];
+      }
+      return Array.from(new Set(next));
+    });
+    if (isTenantIncidentDrivenDomain(nextKey)) setLastIncidentMapDomain(nextKey);
+    setAdminReportDomain(nextKey);
+    setActiveMapLayerKey(INCIDENT_REPORTING_LAYER_KEY);
+    showToolHint(`Filter: ${String(domainLabel || nextKey)}`, 1000, 3);
   }
 
   function requestMapLayerSwitch(layerKey, layerLabel) {
@@ -22065,10 +22135,15 @@ async function selectTenantScopedPublicRows(
     (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
       ? {
           ...incidentLayerMeta,
-          label: resolvedIncidentLayerOption?.label
-            ? `Incident Reporting · ${resolvedIncidentLayerOption.label}`
+          label: hasExplicitIncidentMapFilter
+            ? activeIncidentMapFilterKeys.length === 1
+              ? `Incident Reporting · ${resolvedIncidentLayerOption?.label || activeIncidentMapFilterKeys[0]}`
+              : `Incident Reporting · ${activeIncidentMapFilterKeys.length} filters`
             : incidentLayerMeta.label,
-          iconSrc: resolvedIncidentLayerOption?.iconSrc || incidentLayerMeta.iconSrc,
+          iconSrc:
+            hasExplicitIncidentMapFilter && activeIncidentMapFilterKeys.length === 1
+              ? (resolvedIncidentLayerOption?.iconSrc || incidentLayerMeta.iconSrc)
+              : incidentLayerMeta.iconSrc,
         }
       : null)
     || layerOptions.find((d) => d.key === activeMapLayerKey)
@@ -22093,7 +22168,7 @@ async function selectTenantScopedPublicRows(
       });
     }
     return opts;
-  }, [incidentLayerDomainOptions.length, incidentLayerMeta, layerOptions, visibleDomainOptions]);
+  }, [incidentLayerDomainOptions.length, incidentLayerMeta, layerOptions, visibleDomainOptions, hasExplicitIncidentMapFilter, activeIncidentMapFilterKeys.length, resolvedIncidentLayerOption]);
   const canUseStreetlightBulk = isStreetlightsLayerActive;
   const showMobileMapTabContent =
     !myReportsOpen &&
@@ -22584,24 +22659,30 @@ async function selectTenantScopedPublicRows(
   }, [reports, officialIdSet, officialSignIdSet, isValidLatLng, lastFixByLightId]);
 
   const genericDomainMarkers = useMemo(() => {
-    const activeDomainOption =
-      visibleDomainOptions.find((d) => d.key === adminReportDomain)
-      || registryVisibleDomainOptions.find((d) => d.key === adminReportDomain)
-      || null;
-    const byLight = new Map();
-    for (const r of selectedDomainReports || []) {
+    const domainMetaByKey = new Map(
+      [...(visibleDomainOptions || []), ...(registryVisibleDomainOptions || [])]
+        .map((option) => [String(option?.key || "").trim(), option])
+        .filter(([key]) => key)
+    );
+    const byDomainLight = new Map();
+    for (const r of reports || []) {
+      const domainKey = reportDomainForRow(r, officialIdSet, officialSignIdSet);
+      if (!incidentLayerDomainKeySet.has(domainKey)) continue;
+      if (domainKey === "potholes" || domainKey === "water_drain_issues") continue;
       const lat = Number(r?.lat);
       const lng = Number(r?.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
       const lid = String(r?.light_id || `${lat.toFixed(5)}:${lng.toFixed(5)}`).trim();
-      const prev = byLight.get(lid);
+      const mapKey = `${domainKey}::${lid}`;
+      const domainOption = domainMetaByKey.get(domainKey) || null;
+      const prev = byDomainLight.get(mapKey);
       if (!prev) {
-        byLight.set(lid, {
+        byDomainLight.set(mapKey, {
           id: lid,
-          domain: adminReportDomain,
-          domainLabel: String(activeDomainOption?.label || adminReportDomain).trim() || adminReportDomain,
-          glyph: String(activeDomainOption?.icon || "📍"),
-          glyphSrc: String(activeDomainOption?.iconSrc || "").trim(),
+          domain: domainKey,
+          domainLabel: String(domainOption?.label || domainKey).trim() || domainKey,
+          glyph: String(domainOption?.icon || "📍"),
+          glyphSrc: String(domainOption?.iconSrc || "").trim(),
           lat,
           lng,
           count: 1,
@@ -22612,8 +22693,8 @@ async function selectTenantScopedPublicRows(
         if (Number(r?.ts || 0) > prev.lastTs) prev.lastTs = Number(r?.ts || 0);
       }
     }
-    return Array.from(byLight.values());
-  }, [selectedDomainReports, adminReportDomain, visibleDomainOptions, registryVisibleDomainOptions]);
+    return Array.from(byDomainLight.values());
+  }, [reports, officialIdSet, officialSignIdSet, incidentLayerDomainKeySet, visibleDomainOptions, registryVisibleDomainOptions]);
 
   const nonStreetlightDomainMarkers = useMemo(() => {
     if (isStreetlightsLayerActive) return [];
@@ -23083,15 +23164,21 @@ async function selectTenantScopedPublicRows(
     };
 
     if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
-      if (resolvedIncidentMapDomain === "potholes") {
-        return shapePotholeMarkers();
+      const visibleIncidentKeySet = new Set(incidentMapVisibleDomainKeys);
+      const next = [];
+      if (visibleIncidentKeySet.has("potholes")) {
+        next.push(...shapePotholeMarkers());
       }
-      if (resolvedIncidentMapDomain === "water_drain_issues") {
-        return shapeWaterDrainMarkers();
+      if (visibleIncidentKeySet.has("water_drain_issues")) {
+        next.push(...shapeWaterDrainMarkers());
       }
-      const genericIncidentMarkers = Array.isArray(genericDomainMarkers) ? genericDomainMarkers : [];
-      if (!restrictPublicMarkersToCity) return genericIncidentMarkers;
-      return genericIncidentMarkers.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+      next.push(
+        ...(Array.isArray(genericDomainMarkers)
+          ? genericDomainMarkers.filter((marker) => visibleIncidentKeySet.has(String(marker?.domain || "").trim()))
+          : [])
+      );
+      if (!restrictPublicMarkersToCity) return next;
+      return next.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
     }
 
     if (isStreetSignsLayerActive) {
@@ -23144,6 +23231,7 @@ async function selectTenantScopedPublicRows(
     isWithinAshtabulaCityLimits,
     resolvedIncidentMapDomain,
     genericDomainMarkers,
+    incidentMapVisibleDomainKeys,
   ]);
 
   const selectedOfficialLightForPopup = useMemo(() => {
@@ -31760,19 +31848,42 @@ async function insertReportWithFallback(payload) {
                             paddingLeft: 14,
                           }}
                         >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetIncidentMapFilter();
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "6px 9px",
+                              borderRadius: 8,
+                              border: !hasExplicitIncidentMapFilter
+                                ? "1px solid var(--sl-ui-tool-active-border)"
+                                : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                              background: !hasExplicitIncidentMapFilter
+                                ? "var(--sl-ui-tool-active-bg)"
+                                : "var(--sl-ui-surface-bg)",
+                              color: !hasExplicitIncidentMapFilter
+                                ? "var(--sl-ui-tool-active-text)"
+                                : "var(--sl-ui-text)",
+                              fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
+                              cursor: "pointer",
+                              justifyContent: "flex-start",
+                            }}
+                          >
+                            <AppIcon src={UI_ICON_SRC.incidentReportingLayer} size={18} />
+                            <span style={{ fontSize: 11.5 }}>All incident reports</span>
+                          </button>
                           {incidentLayerDomainOptions.map((option) => {
-                            const isSelected =
-                              activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY &&
-                              resolvedIncidentLayerOption?.key === option.key;
+                            const isSelected = activeIncidentMapFilterKeys.includes(option.key);
                             return (
                               <button
                                 key={`${d.key}-${option.key}`}
                                 type="button"
                                 onClick={() => {
-                                  setAdminDomainMenuOpen(false);
-                                  requestAdminDomainSwitch(option.key, option.label, {
-                                    layerKey: INCIDENT_REPORTING_LAYER_KEY,
-                                  });
+                                  toggleIncidentMapDomainFilter(option.key, option.label);
                                 }}
                                 style={{
                                   display: "flex",
@@ -33336,8 +33447,38 @@ async function insertReportWithFallback(payload) {
                                 zIndex: 4,
                               }}
                             >
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  resetIncidentMapFilter();
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  padding: "6px 9px",
+                                  borderRadius: 8,
+                                  border: !hasExplicitIncidentMapFilter
+                                    ? "1px solid var(--sl-ui-tool-active-border)"
+                                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                  background: !hasExplicitIncidentMapFilter
+                                    ? "var(--sl-ui-tool-active-bg)"
+                                    : "var(--sl-ui-surface-bg)",
+                                  color: !hasExplicitIncidentMapFilter
+                                    ? "var(--sl-ui-tool-active-text)"
+                                    : "var(--sl-ui-text)",
+                                  fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
+                                  cursor: "pointer",
+                                  justifyContent: "flex-start",
+                                }}
+                              >
+                                <AppIcon src={UI_ICON_SRC.incidentReportingLayer} size={18} />
+                                <span style={{ fontSize: 11.5 }}>All incident reports</span>
+                              </button>
                               {incidentLayerDomainOptions.map((option) => {
-                                const isSelected = resolvedIncidentLayerOption?.key === option.key;
+                                const isSelected = activeIncidentMapFilterKeys.includes(option.key);
                                 return (
                                   <button
                                     key={`mobile-incident-domain-${option.key}`}
@@ -33345,9 +33486,7 @@ async function insertReportWithFallback(payload) {
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
-                                      requestAdminDomainSwitch(option.key, option.label, {
-                                        layerKey: INCIDENT_REPORTING_LAYER_KEY,
-                                      });
+                                      toggleIncidentMapDomainFilter(option.key, option.label);
                                     }}
                                     style={{
                                       display: "flex",
