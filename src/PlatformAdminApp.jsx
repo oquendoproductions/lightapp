@@ -1023,6 +1023,7 @@ function initialDomainRegistryForm() {
     icon_file: null,
     ownership_model: "org_managed",
     report_prefix: "",
+    allow_report_images: false,
     issue_types_input: "",
   };
 }
@@ -1044,6 +1045,7 @@ function buildDomainRegistryForm(row) {
     icon_file: null,
     ownership_model: String(row?.ownership_model || "org_managed"),
     report_prefix: String(row?.report_prefix || ""),
+    allow_report_images: row?.allow_report_images === true,
     issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
   };
 }
@@ -2802,7 +2804,7 @@ export default function PlatformAdminApp() {
     const [definitionsResult, issueTypesResult] = await Promise.all([
       supabase
         .from("domain_definitions")
-        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
         .order("sort_order", { ascending: true })
         .order("label", { ascending: true }),
       supabase
@@ -5109,6 +5111,7 @@ export default function PlatformAdminApp() {
       icon_src: resolvedIconSrc,
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
+      allow_report_images: domainRegistryForm?.allow_report_images === true,
       updated_by: sessionUserId || null,
     };
 
@@ -8460,6 +8463,20 @@ export default function PlatformAdminApp() {
                           style={modalInput}
                         />
                       </label>
+                      <label style={{ ...modalField, justifyContent: "start" }}>
+                        <span>Report Photos</span>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
+                          <input
+                            type="checkbox"
+                            checked={domainRegistryForm.allow_report_images === true}
+                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
+                          />
+                          <span>Allow residents to capture or upload a photo with this domain’s reports</span>
+                        </label>
+                        <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                          This controls whether the public reporting modal shows the photo picker for this domain.
+                        </div>
+                      </label>
                     </div>
                     <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
                       <div style={{ display: "grid", gap: 4 }}>
@@ -8625,6 +8642,7 @@ export default function PlatformAdminApp() {
                             <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                               <code>{domain.key}</code>
                               {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
+                              {domain.allow_report_images ? " • Photos enabled" : ""}
                               {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
                             {domain.description ? (

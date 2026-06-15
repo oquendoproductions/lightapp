@@ -3877,6 +3877,7 @@ function DomainReportModal({
   imageFile,
   imagePreviewUrl,
   setImageFile,
+  imageUploadEnabled = false,
   saving,
   onCancel,
   onSubmit,
@@ -3885,6 +3886,7 @@ function DomainReportModal({
   const requiresConsent = domain === "potholes" || domain === "water_drain_issues";
   const requiresStreetSignIssue = domain === "street_signs";
   const requiresWaterDrainIssue = domain === "water_drain_issues";
+  const supportsImageAttachment = Boolean(imageUploadEnabled);
   const issueValid = !requiresStreetSignIssue && !requiresWaterDrainIssue
     ? true
     : Boolean(String(streetSignIssue || "").trim());
@@ -3999,12 +4001,13 @@ function DomainReportModal({
           />
         </label>
 
-        {(domain === "potholes" || domain === "water_drain_issues") && (
+        {supportsImageAttachment && (
           <label style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Image (optional)</div>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Photo (optional)</div>
             <input
               type="file"
               accept="image/*"
+              capture="environment"
               disabled={saving}
               onChange={(e) => {
                 const f = e.target.files?.[0] || null;
@@ -17704,6 +17707,7 @@ export default function App({ onBackToHub = null }) {
           label: String(row?.label || key).trim() || key,
           icon: "📍",
           iconSrc,
+          allowReportImages: row?.allow_report_images === true,
           enabled: true,
           source: "registry",
         };
@@ -17713,6 +17717,7 @@ export default function App({ onBackToHub = null }) {
   const visibleDomainOptions = useMemo(() => {
     const legacyOptions = REPORT_DOMAIN_OPTIONS.filter((d) => isDomainPublic(d.key)).map((d) => ({
       ...d,
+      allowReportImages: d.key === "potholes" || d.key === "water_drain_issues",
       enabled: true,
     }));
     if (!registryVisibleDomainOptions.length) return legacyOptions;
@@ -17722,6 +17727,12 @@ export default function App({ onBackToHub = null }) {
     }
     return Array.from(merged.values());
   }, [isDomainPublic, registryVisibleDomainOptions]);
+  const canAttachImageForDomain = useCallback((domainKeyRaw) => {
+    const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!domainKey) return false;
+    if (domainKey === "potholes" || domainKey === "water_drain_issues") return true;
+    return (visibleDomainOptions || []).some((option) => option.key === domainKey && option.allowReportImages === true);
+  }, [visibleDomainOptions]);
   useEffect(() => {
     const urls = (visibleDomainOptions || [])
       .map((option) => String(option?.iconSrc || "").trim())
@@ -22859,6 +22870,7 @@ async function selectTenantScopedPublicRows(
             icon_key: String(row?.icon_key || "").trim(),
             icon_src: iconSrc,
             report_prefix: reportPrefix,
+            allow_report_images: row?.allow_report_images === true,
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           });
@@ -25819,15 +25831,15 @@ async function selectTenantScopedPublicRows(
       const waterGeoPromise = isWaterDrainTarget
         ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" })
         : Promise.resolve(null);
-      const waterImageUploadPromise = (isWaterDrainTarget && domainReportImageFile)
-        ? uploadDomainReportImageIfAny(domainReportImageFile, "water_drain_issues", target.lightId || "")
+      const domainImageUploadPromise = (canAttachImageForDomain(target.domain) && domainReportImageFile)
+        ? uploadDomainReportImageIfAny(domainReportImageFile, target.domain, target.lightId || "")
             .catch((e) => {
-              console.warn("[water/drain image upload] failed:", e?.message || e);
+              console.warn("[domain image upload] failed:", e?.message || e);
               openNotice("⚠️", "Image upload failed", "Your report will still submit, but the image could not be uploaded.");
               return "";
             })
         : Promise.resolve("");
-      const [waterSubmitGeo, imageUrl] = await Promise.all([waterGeoPromise, waterImageUploadPromise]);
+      const [waterSubmitGeo, imageUrl] = await Promise.all([waterGeoPromise, domainImageUploadPromise]);
       const waterNearestAddress = String(waterSubmitGeo?.nearestAddress || target.nearestAddress || "").trim();
       const waterNearestLandmark = String(waterSubmitGeo?.nearestLandmark || target.nearestLandmark || "").trim();
       const waterNearestCrossStreet = String(waterSubmitGeo?.nearestCrossStreet || target.nearestCrossStreet || "").trim();
@@ -29618,6 +29630,7 @@ async function insertReportWithFallback(payload) {
         imageFile={domainReportImageFile}
         imagePreviewUrl={domainReportImagePreviewUrl}
         setImageFile={setDomainReportImageFile}
+        imageUploadEnabled={canAttachImageForDomain(domainReportTarget?.domain || "")}
         saving={saving}
         onCancel={() => {
           setDomainReportTarget(null);
