@@ -93,6 +93,15 @@ function isTenantBoundaryDebugEnabled() {
   }
 }
 
+function isAppleTouchBrowser() {
+  if (typeof navigator === "undefined") return false;
+  const ua = String(navigator.userAgent || "");
+  const platform = String(navigator.platform || "");
+  const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+  if (/iPad|iPhone|iPod/i.test(ua)) return true;
+  return platform === "MacIntel" && maxTouchPoints > 1;
+}
+
 function summarizeTenantMapFeaturesRow(row) {
   if (!row || typeof row !== "object") return null;
   return {
@@ -17718,6 +17727,9 @@ export default function App({ onBackToHub = null }) {
     if (typeof window === "undefined" || typeof navigator === "undefined") return false;
     return ("ontouchstart" in window) || Number(navigator.maxTouchPoints || 0) > 0;
   }, []);
+  const isAppleTouchWeb = useMemo(() => !isNativeAppRuntime() && isAppleTouchBrowser(), []);
+  const [mapTilesReady, setMapTilesReady] = useState(false);
+  const [forceRasterMapCompat, setForceRasterMapCompat] = useState(false);
 
 
   // Auth
@@ -28703,6 +28715,40 @@ async function insertReportWithFallback(payload) {
     libraries: GMAPS_LIBRARIES,
   });
 
+  useEffect(() => {
+    if (!isLoaded) {
+      setMapTilesReady(false);
+      return;
+    }
+    if (!isAppleTouchWeb || forceRasterMapCompat || mapTilesReady) return;
+    const timer = window.setTimeout(() => {
+      setForceRasterMapCompat((prev) => {
+        if (prev) return prev;
+        console.warn("[google maps] enabling raster compatibility fallback for Apple touch browser");
+        return true;
+      });
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [forceRasterMapCompat, isAppleTouchWeb, isLoaded, mapTilesReady]);
+
+  const mapOptions = useMemo(() => {
+    const useRasterCompatMode = forceRasterMapCompat || isAppleTouchWeb;
+    return {
+      mapTypeId: mapType,
+      mapId: useRasterCompatMode ? undefined : (GMAPS_MAP_ID || undefined),
+      gestureHandling: "greedy",
+      disableDoubleClickZoom: isTouchDevice,
+      isFractionalZoomEnabled: false,
+      fullscreenControl: false,
+      streetViewControl: false,
+      mapTypeControl: false,
+      clickableIcons: false,
+      rotateControl: !useRasterCompatMode,
+      headingInteractionEnabled: !useRasterCompatMode,
+      tiltInteractionEnabled: false,
+    };
+  }, [forceRasterMapCompat, isAppleTouchWeb, isTouchDevice, mapType]);
+
   // -------------------------
   // Popup button styles (Google InfoWindow)
   // -------------------------
@@ -30727,13 +30773,17 @@ async function insertReportWithFallback(payload) {
         }}
       >
         <GoogleMap
-          key={`tenant-map:${String(tenant?.tenantKey || "unknown").trim().toLowerCase()}`}
+          key={`tenant-map:${String(tenant?.tenantKey || "unknown").trim().toLowerCase()}:${forceRasterMapCompat || isAppleTouchWeb ? "raster" : "vector"}`}
           mapContainerStyle={containerStyle}
           center={mapCenter}
           zoom={mapZoom}
           onLoad={(map) => {
             setGmapsRef(map);
             mapRef.current = map; // keep your existing ref name working
+            setMapTilesReady(false);
+          }}
+          onTilesLoaded={() => {
+            setMapTilesReady(true);
           }}
           onDragStart={() => {
             beginMapInteraction();
@@ -30798,20 +30848,7 @@ async function insertReportWithFallback(payload) {
               });
             }
           }}
-          options={{
-            mapTypeId: mapType,
-            mapId: GMAPS_MAP_ID || undefined,
-            gestureHandling: "greedy",
-            disableDoubleClickZoom: isTouchDevice,
-            isFractionalZoomEnabled: false,
-            fullscreenControl: false,
-            streetViewControl: false,
-            mapTypeControl: false,
-            clickableIcons: false,
-            rotateControl: true,
-            headingInteractionEnabled: true,
-            tiltInteractionEnabled: false,
-          }}
+          options={mapOptions}
           onClick={(e) => {
             setAdminDomainMenuOpen(false);
             setMobileIncidentDomainMenuOpen(false);
