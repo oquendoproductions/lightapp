@@ -1,0 +1,88 @@
+begin;
+
+alter table public.tenant_domain_assignments
+  add column if not exists display_label text,
+  add column if not exists marker_color text;
+
+drop function if exists public.tenant_registry_incident_domains_public();
+
+create function public.tenant_registry_incident_domains_public()
+returns table (
+  domain_key text,
+  label text,
+  icon_src text,
+  report_prefix text,
+  allow_report_images boolean,
+  domain_type text,
+  organization_monitored_repairs boolean,
+  marker_color text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    dd.key as domain_key,
+    coalesce(nullif(trim(tda.display_label), ''), dd.label) as label,
+    coalesce(nullif(dd.icon_src, ''), nullif(dd.icon_key, ''), '') as icon_src,
+    dd.report_prefix,
+    dd.allow_report_images,
+    dd.domain_class as domain_type,
+    coalesce(tda.organization_monitored_repairs, dd.default_organization_monitored_repairs, false)
+      as organization_monitored_repairs,
+    nullif(trim(tda.marker_color), '') as marker_color
+  from public.tenant_domain_assignments tda
+  join public.domain_definitions dd
+    on dd.key = tda.domain_key
+  where tda.tenant_key = public.request_tenant_key()
+    and tda.active = true
+    and tda.visibility = 'enabled'
+    and dd.status = 'active'
+    and dd.domain_class = 'incident_driven'
+  order by dd.sort_order, dd.label, dd.key;
+$$;
+
+grant execute on function public.tenant_registry_incident_domains_public() to anon, authenticated;
+
+drop function if exists public.tenant_assigned_domains_public();
+
+create function public.tenant_assigned_domains_public()
+returns table (
+  domain_key text,
+  label text,
+  icon_src text,
+  icon_key text,
+  report_prefix text,
+  allow_report_images boolean,
+  domain_type text,
+  organization_monitored_repairs boolean,
+  marker_color text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    dd.key as domain_key,
+    coalesce(nullif(trim(tda.display_label), ''), dd.label) as label,
+    coalesce(nullif(dd.icon_src, ''), '') as icon_src,
+    coalesce(nullif(dd.icon_key, ''), '') as icon_key,
+    dd.report_prefix,
+    dd.allow_report_images,
+    dd.domain_class as domain_type,
+    coalesce(tda.organization_monitored_repairs, dd.default_organization_monitored_repairs, false)
+      as organization_monitored_repairs,
+    nullif(trim(tda.marker_color), '') as marker_color
+  from public.tenant_domain_assignments tda
+  join public.domain_definitions dd
+    on dd.key = tda.domain_key
+  where tda.tenant_key = public.request_tenant_key()
+    and tda.active = true
+    and tda.visibility = 'enabled'
+    and dd.status = 'active'
+  order by dd.sort_order, dd.label, dd.key;
+$$;
+
+grant execute on function public.tenant_assigned_domains_public() to anon, authenticated;
+
+commit;

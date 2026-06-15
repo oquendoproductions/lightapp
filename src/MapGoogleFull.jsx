@@ -249,6 +249,7 @@ const RUNTIME_DOMAIN_META = {
   reportPrefixByDomain: new Map(),
   iconSrcByDomain: new Map(),
   labelByDomain: new Map(),
+  markerColorByDomain: new Map(),
 };
 // Per-light cooldown (client-side guardrail; reversible)
 const REPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -2569,6 +2570,8 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
 
 function defaultMarkerColorForDomain(domainKey) {
   const key = String(domainKey || "").trim().toLowerCase();
+  const runtimeColor = String(RUNTIME_DOMAIN_META.markerColorByDomain.get(key) || "").trim();
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(runtimeColor)) return runtimeColor;
   if (key === "potholes") return "#8e24aa";
   if (key === "street_signs") return "#1e88e5";
   if (key === "water_drain_issues") return "#0288d1";
@@ -17463,6 +17466,57 @@ export default function App({ onBackToHub = null }) {
     });
   }
 
+  function openGenericIncidentAllReportsFromMarker(marker) {
+    const m = marker || selectedDomainMarker;
+    if (!m) return;
+    const domainKey = normalizeDomainKeyOrSlug(m?.domain || adminReportDomain, { allowUnknown: true });
+    if (!domainKey || domainKey === "streetlights" || domainKey === "potholes" || domainKey === "water_drain_issues" || domainKey === "street_signs") {
+      return;
+    }
+
+    const popupInfo =
+      selectedGenericDomainInfo
+      && String(selectedGenericDomainInfo?.incidentId || "").trim() === String(m?.incident_id || m?.id || "").trim()
+        ? selectedGenericDomainInfo
+        : null;
+    const incidentId = String(popupInfo?.incidentId || m?.incident_id || m?.id || "").trim();
+    if (!incidentId) return;
+
+    const reportRows = Array.isArray(popupInfo?.rows)
+      ? popupInfo.rows
+      : (Array.isArray(m?.rows) ? [...m.rows].sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0)) : []);
+    const fixActionRows = uniqueLightIdsForCluster({ lightId: incidentId, reports: reportRows })
+      .flatMap((id) => (actionsByLightId?.[String(id || "").trim()] || []))
+      .filter((action) => {
+        const kind = String(action?.action || "").trim().toLowerCase();
+        return kind === "fix" || kind === "reopen";
+      })
+      .map((action) => ({
+        action: action.action,
+        ts: Number(action.ts || 0),
+        note: action.note || null,
+        actor_user_id: action.actor_user_id || null,
+        actor_name: action.actor_name || null,
+        actor_email: action.actor_email || null,
+        actor_phone: action.actor_phone || null,
+      }))
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const history = buildLightHistory({ reportRows, fixActionRows });
+    const snapshot = getIncidentSnapshot(domainKey, incidentId);
+    const displayId = String(popupInfo?.displayId || m?.display_id || incidentId).trim() || incidentId;
+    openAllReports(`All Reports (${displayId})`, history, {
+      incidentKey: `${domainKey}:${incidentId}`,
+      domainKey,
+      sharedLocation: String(popupInfo?.locationLabel || "").trim(),
+      sharedAddress: String(popupInfo?.nearestAddress || "").trim(),
+      sharedCrossStreet: String(popupInfo?.nearestCrossStreet || "").trim(),
+      sharedLandmark: String(popupInfo?.nearestLandmark || "").trim(),
+      sharedCoordinates: String(popupInfo?.coordsText || "").trim(),
+      currentState: String(popupInfo?.currentState || snapshot?.state || "").trim(),
+      lastChangedAt: String(popupInfo?.lastChangedAt || snapshot?.last_changed_at || "").trim(),
+    });
+  }
+
   async function insertLightActionsWithFallback(rows, { selectCols = "" } = {}) {
     const tenantKey = activeTenantKey();
     const payload = (Array.isArray(rows) ? rows : []).map((row) => {
@@ -17728,6 +17782,7 @@ export default function App({ onBackToHub = null }) {
           label: String(row?.label || key).trim() || key,
           icon: "📍",
           iconSrc,
+          markerColor: String(row?.marker_color || "").trim() || defaultMarkerColorForDomain(key),
           allowReportImages: row?.allow_report_images === true,
           enabled: true,
           source: "registry",
@@ -22872,12 +22927,14 @@ async function selectTenantScopedPublicRows(
         RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
         RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
         RUNTIME_DOMAIN_META.labelByDomain.clear();
+        RUNTIME_DOMAIN_META.markerColorByDomain.clear();
         for (const row of assignedRows || []) {
           const domainKey = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
           if (!domainKey) continue;
           const reportPrefix = String(row?.report_prefix || "").trim().toUpperCase();
           const label = String(row?.label || domainKey).trim() || domainKey;
           const iconSrc = resolveRuntimeDomainIconSrc(domainKey, row?.icon_src, row?.icon_key);
+          const markerColor = String(row?.marker_color || "").trim();
           assignedNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
@@ -22885,12 +22942,16 @@ async function selectTenantScopedPublicRows(
           if (reportPrefix) RUNTIME_DOMAIN_META.reportPrefixByDomain.set(domainKey, reportPrefix);
           if (iconSrc) RUNTIME_DOMAIN_META.iconSrcByDomain.set(domainKey, iconSrc);
           RUNTIME_DOMAIN_META.labelByDomain.set(domainKey, label);
+          if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(markerColor)) {
+            RUNTIME_DOMAIN_META.markerColorByDomain.set(domainKey, markerColor);
+          }
           registryVisibleRows.push({
             domain_key: domainKey,
             label,
             icon_key: String(row?.icon_key || "").trim(),
             icon_src: iconSrc,
             report_prefix: reportPrefix,
+            marker_color: markerColor,
             allow_report_images: row?.allow_report_images === true,
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
@@ -22904,6 +22965,7 @@ async function selectTenantScopedPublicRows(
         RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
         RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
         RUNTIME_DOMAIN_META.labelByDomain.clear();
+        RUNTIME_DOMAIN_META.markerColorByDomain.clear();
         setTenantDomainPublicConfigByDomain(legacyNext);
         setTenantRegistryIncidentDomains([]);
       } catch (e) {
@@ -23560,6 +23622,118 @@ async function selectTenantScopedPublicRows(
       incidentIds,
     };
   }, [selectedDomainMarkerDomain, selectedDomainMarker, lastFixByLightId, getIncidentSnapshot, waterDrainIncidentsById]);
+
+  const selectedGenericDomainInfo = useMemo(() => {
+    if (!selectedDomainMarker) return null;
+    if (
+      selectedDomainMarkerDomain === "potholes"
+      || selectedDomainMarkerDomain === "water_drain_issues"
+      || selectedDomainMarkerDomain === "street_signs"
+    ) {
+      return null;
+    }
+
+    const domainKey = normalizeDomainKeyOrSlug(selectedDomainMarker?.domain || adminReportDomain, { allowUnknown: true });
+    if (!domainKey || domainKey === "streetlights") return null;
+
+    const markerId = String(selectedDomainMarker?.id || "").trim();
+    const incidentId = String(selectedDomainMarker?.incident_id || markerId).trim();
+    const markerRows = Array.isArray(selectedDomainMarker?.rows) ? [...selectedDomainMarker.rows] : [];
+    const incidentIds = Array.from(new Set([
+      incidentId,
+      markerId,
+      ...markerRows.map((row) => String(row?.light_id || "").trim()),
+    ].filter(Boolean)));
+    const rows = (markerRows.length ? markerRows : (selectedDomainReports || []).filter((row) => {
+      const lat = Number(row?.lat);
+      const lng = Number(row?.lng);
+      const rowLightId = String(
+        row?.light_id
+        || (Number.isFinite(lat) && Number.isFinite(lng) ? `${lat.toFixed(5)}:${lng.toFixed(5)}` : "")
+      ).trim();
+      return incidentIds.includes(rowLightId);
+    }))
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const latest = rows[0] || null;
+    const lat = Number(selectedDomainMarker?.lat ?? latest?.lat);
+    const lng = Number(selectedDomainMarker?.lng ?? latest?.lng);
+    const coordsText =
+      Number.isFinite(lat) && Number.isFinite(lng)
+        ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+        : "Unavailable";
+    const rawLocationLabel =
+      String(selectedDomainMarker?.location_label || "").trim()
+      || readLocationFromNote(latest?.note)
+      || (Number.isFinite(lat) && Number.isFinite(lng) ? coordsText : "Location unavailable");
+    const nearMatch = rawLocationLabel.match(/\s*\(Near:\s*(.*?)\)\s*$/i);
+    const locationBase = nearMatch
+      ? rawLocationLabel.replace(/\s*\(Near:\s*.*?\)\s*$/i, "").trim()
+      : rawLocationLabel;
+    const nearestAddress =
+      String(selectedDomainMarker?._geoNearestAddress || "").trim()
+      || readAddressFromNote(latest?.note)
+      || locationBase
+      || "Location unavailable";
+    const nearestCrossStreet = readCrossStreetFromNote(latest?.note) || "";
+    const nearestLandmark =
+      String(selectedDomainMarker?._geoNearestLandmark || "").trim()
+      || String(nearMatch?.[1] || "").trim()
+      || readLandmarkFromNote(latest?.note)
+      || "";
+    const locationLabel = nearestLandmark
+      ? `${nearestAddress} (Near: ${nearestLandmark})`
+      : nearestAddress;
+    const snapshot = incidentId ? getIncidentSnapshot(domainKey, incidentId) : null;
+    const lastReportedTs = Number(latest?.ts || selectedDomainMarker?.lastTs || 0);
+    const currentState =
+      String(snapshot?.state || "").trim()
+      || (rows.length > 0 ? "reported" : "");
+    const lastChangedAt =
+      String(snapshot?.last_changed_at || "").trim()
+      || (lastReportedTs ? new Date(lastReportedTs).toISOString() : "");
+    const issueLabel = formatGenericDomainIssueLabel(latest?.type || latest?.report_type);
+    const displayId =
+      String(selectedDomainMarker?.display_id || "").trim()
+      || incidentId
+      || markerId
+      || "Incident";
+    const viewerHasReport = Boolean(
+      viewerIdentityKey
+      && rows.some((row) => reportIdentityKey(row) === viewerIdentityKey)
+    );
+    return {
+      domainKey,
+      domainLabel: String(
+        selectedDomainMarker?.domainLabel
+        || resolveReportDomainLabel(domainKey, "Incident")
+      ).trim() || "Incident",
+      incidentId: incidentId || markerId,
+      displayId,
+      rows,
+      latest,
+      issueLabel,
+      openCount: rows.length || Number(selectedDomainMarker?.count || 0),
+      locationLabel,
+      nearestAddress,
+      nearestCrossStreet,
+      nearestLandmark,
+      coordsText,
+      currentState,
+      lastChangedAt,
+      viewerHasReport,
+      isFixedNow: !isOpenLifecycleState(currentState),
+    };
+  }, [
+    selectedDomainMarker,
+    selectedDomainMarkerDomain,
+    adminReportDomain,
+    selectedDomainReports,
+    getIncidentSnapshot,
+    viewerIdentityKey,
+    isOpenLifecycleState,
+    resolveReportDomainLabel,
+    formatGenericDomainIssueLabel,
+  ]);
 
   useEffect(() => {
     if (!isStreetlightsLayerActive) {
@@ -30824,12 +30998,7 @@ async function insertReportWithFallback(payload) {
                 selectDomainMarkerWithGeo(m);
                 return;
               }
-              openNotice(
-                String(m?.glyph || adminDomainMeta.icon || "📍"),
-                String(m?.domainLabel || adminDomainMeta.label || "Incident"),
-                `${m.count} report${m.count === 1 ? "" : "s"} at this location.`,
-                { autoCloseMs: 1800, compact: true }
-              );
+              setSelectedDomainMarker(m);
             }}
           />
         ))}
@@ -31641,6 +31810,218 @@ async function insertReportWithFallback(payload) {
             >
               Report issue
             </button>
+          </div>
+          <div
+            style={selectedDomainPopupPlacement.arrowStyle}
+          />
+        </div>
+      )}
+
+      {!bulkMode && selectedGenericDomainInfo && selectedDomainMarker && selectedDomainPopupPixel && (
+        <div
+          style={selectedDomainPopupPlacement.frameStyle}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div style={{ ...markerPopupCardStyle, gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedDomainMarker(null)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                marginLeft: "auto",
+                right: 8,
+                top: 8,
+                width: 26,
+                height: 26,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                cursor: "pointer",
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>
+              {selectedGenericDomainInfo.domainLabel}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+              <b>ID:</b> {selectedGenericDomainInfo.displayId || "Incident"}
+            </div>
+            {!!String(selectedGenericDomainInfo.issueLabel || "").trim() && (
+              <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                <b>Issue type:</b> {selectedGenericDomainInfo.issueLabel}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => copyTextToClipboard("Closest address", selectedGenericDomainInfo.nearestAddress || "Unavailable")}
+              title="Click to copy location"
+              style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+            >
+              <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
+              <span style={markerPopupCopyValueStyle}>{selectedGenericDomainInfo.nearestAddress || "Unavailable"}</span>
+            </button>
+            {isPlatformAdmin && (
+              <button
+                type="button"
+                onClick={() => copyTextToClipboard("Coordinates", selectedGenericDomainInfo.coordsText || "Unavailable")}
+                title="Click to copy coordinates"
+                style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+              >
+                <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Coordinates:</span>{" "}
+                <span style={markerPopupCopyValueStyle}>{selectedGenericDomainInfo.coordsText || "Unavailable"}</span>
+              </button>
+            )}
+            {isReportsAdminView && (
+              <>
+                <div style={markerPopupCopyRowStyle}>
+                  <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                  <span>{selectedGenericDomainInfo.nearestLandmark || "No nearby landmark"}</span>
+                </div>
+                <div style={{ height: 4 }} />
+                <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
+                  <b>State:</b> {incidentStateLabel(selectedGenericDomainInfo.currentState || "reported")}{" "}
+                  <span style={{ opacity: 0.75 }}>•</span>{" "}
+                  <b>Reports:</b> {Number(selectedGenericDomainInfo.openCount || 0)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+                  <b>Last updated:</b>{" "}
+                  {String(selectedGenericDomainInfo.lastChangedAt || "").trim()
+                    ? formatTs(selectedGenericDomainInfo.lastChangedAt)
+                    : "Unknown"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openGenericIncidentAllReportsFromMarker(selectedDomainMarker)}
+                  style={markerPopupActionSecondary}
+                >
+                  All Reports
+                </button>
+                {(() => {
+                  const incidentId = String(selectedGenericDomainInfo.incidentId || "").trim();
+                  const clusterRows = Array.isArray(selectedGenericDomainInfo.rows) ? selectedGenericDomainInfo.rows : [];
+                  const clusterLight = { lightId: incidentId, isOfficial: false, reports: clusterRows };
+                  const showPublicRepairAction = canShowPublicRepairAction(incidentId, selectedGenericDomainInfo.domainKey);
+                  const canShowOrganizationRepairAction = canManageIncidentDomainRepairs(selectedGenericDomainInfo.domainKey) && !showPublicRepairAction;
+                  if (!canShowOrganizationRepairAction && !showPublicRepairAction) return null;
+                  return (
+                    <>
+                      {canShowOrganizationRepairAction && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedGenericDomainInfo.isFixedNow) {
+                              reopenLight(clusterLight);
+                              return;
+                            }
+                            openMarkFixedDialogForLight(incidentId, "fix", clusterRows);
+                          }}
+                          style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                        >
+                          {selectedGenericDomainInfo.isFixedNow ? "Re-open" : "Mark fixed"}
+                        </button>
+                      )}
+                      {showPublicRepairAction && (
+                        <button
+                          type="button"
+                          onClick={() => submitIncidentRepairConfirmation(incidentId, selectedGenericDomainInfo.domainKey)}
+                          style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                        >
+                          Is fixed
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
+            )}
+            {!isReportsAdminView && (
+              <>
+                <div style={{ height: 4 }} />
+                <button
+                  type="button"
+                  disabled={Number(mapZoom) < REPORTING_MIN_ZOOM}
+                  onClick={() => {
+                    const lat = Number(selectedDomainMarker?.lat);
+                    const lng = Number(selectedDomainMarker?.lng);
+                    setDomainReportTarget({
+                      domain: selectedGenericDomainInfo.domainKey,
+                      domainLabel: selectedGenericDomainInfo.domainLabel,
+                      lat,
+                      lng,
+                      sourceLat: lat,
+                      sourceLng: lng,
+                      lightId: String(selectedGenericDomainInfo.incidentId || "").trim(),
+                      pothole_id: null,
+                      locationLabel: selectedGenericDomainInfo.locationLabel || selectedGenericDomainInfo.nearestAddress || selectedGenericDomainInfo.coordsText,
+                      nearestAddress: selectedGenericDomainInfo.nearestAddress || "",
+                      nearestLandmark: selectedGenericDomainInfo.nearestLandmark || "",
+                      nearestCrossStreet: selectedGenericDomainInfo.nearestCrossStreet || "",
+                      nearestIntersection: "",
+                    });
+                    setDomainReportIssue(defaultDomainIssueFor(selectedGenericDomainInfo.domainKey));
+                    setDomainReportNote("");
+                  }}
+                  style={{
+                    ...markerPopupActionPrimary,
+                    background: "var(--sl-ui-brand-blue)",
+                    cursor: Number(mapZoom) < REPORTING_MIN_ZOOM ? "not-allowed" : "pointer",
+                    opacity: Number(mapZoom) < REPORTING_MIN_ZOOM ? 0.6 : 1,
+                  }}
+                  title={Number(mapZoom) >= REPORTING_MIN_ZOOM ? "Report issue" : "Zoom in closer to report"}
+                >
+                  Report issue
+                </button>
+                {selectedGenericDomainInfo.viewerHasReport && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openMyReports({
+                        domainKey: selectedGenericDomainInfo.domainKey,
+                        focusIncidentId: String(selectedGenericDomainInfo.incidentId || "").trim(),
+                        focusQuery: String(selectedGenericDomainInfo.displayId || "").trim() || String(selectedGenericDomainInfo.incidentId || "").trim(),
+                      });
+                    }}
+                    style={markerPopupActionSecondary}
+                  >
+                    View Report
+                  </button>
+                )}
+                {(() => {
+                  const incidentId = String(selectedGenericDomainInfo.incidentId || "").trim();
+                  const publicRepairLifecycleEnabled = isPublicRepairEnabledForDomain(selectedGenericDomainInfo.domainKey);
+                  const repairSnapshot = publicRepairLifecycleEnabled && incidentId
+                    ? getIncidentRepairSnapshot(selectedGenericDomainInfo.domainKey, incidentId)
+                    : null;
+                  const showPublicRepairAction = canShowPublicRepairAction(incidentId, selectedGenericDomainInfo.domainKey);
+                  if (!showPublicRepairAction && !repairSnapshot?.viewerHasRepairSignal) return null;
+                  return (
+                    <>
+                      {showPublicRepairAction && (
+                        <button
+                          type="button"
+                          onClick={() => submitIncidentRepairConfirmation(incidentId, selectedGenericDomainInfo.domainKey)}
+                          style={{ ...markerPopupActionPrimary, background: "var(--sl-ui-brand-green)" }}
+                        >
+                          Is fixed
+                        </button>
+                      )}
+                      {repairSnapshot?.viewerHasRepairSignal && (
+                        <div style={{ fontSize: 12, opacity: 0.82, lineHeight: 1.3 }}>
+                          You already confirmed this repair.
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
+            )}
           </div>
           <div
             style={selectedDomainPopupPlacement.arrowStyle}

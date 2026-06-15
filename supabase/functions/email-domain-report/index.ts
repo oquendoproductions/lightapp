@@ -302,7 +302,7 @@ async function loadDomainRuntimeConfig(
 
   let assignmentResult = await admin
     .from("tenant_domain_assignments")
-    .select("active,visibility,notification_email,notification_template_key,notification_subject_template,notification_body_template")
+    .select("active,visibility,display_label,notification_email,notification_template_key,notification_subject_template,notification_body_template")
     .eq("tenant_key", tenantKey)
     .eq("domain_key", domainKey)
     .maybeSingle();
@@ -359,7 +359,7 @@ async function loadDomainRuntimeConfig(
       tenantKey: String(tenant.tenant_key || tenantKey).trim().toLowerCase() || tenantKey,
       boundaryConfigKey: String(tenant.boundary_config_key || `${tenantKey}_city_geojson`).trim() || `${tenantKey}_city_geojson`,
       domainKey,
-      domainLabel: String(definition?.label || humanizeKey(domainKey, domainKey)).trim() || humanizeKey(domainKey, domainKey),
+      domainLabel: String(assignment?.display_label || definition?.label || humanizeKey(domainKey, domainKey)).trim() || humanizeKey(domainKey, domainKey),
       domainClass: String(definition?.domain_class || "incident_driven").trim().toLowerCase() || "incident_driven",
       recipientEmail:
         String(assignment?.notification_email || "").trim()

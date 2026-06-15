@@ -28,6 +28,17 @@ const DOMAIN_OPTIONS = [
   { key: "graffiti", label: "Graffiti" },
 ];
 
+function fallbackRegistryDomainRows() {
+  return DOMAIN_OPTIONS.map((domain, index) => ({
+    key: domain.key,
+    label: domain.label,
+    status: "active",
+    domain_class: defaultDomainType(domain.key),
+    default_visibility: "enabled",
+    sort_order: (index + 1) * 10,
+  }));
+}
+
 const DOMAIN_TYPE_OPTIONS = [
   { key: "asset_backed", label: "Asset-Backed Domain" },
   { key: "incident_driven", label: "Incident-Driven Domain" },
@@ -151,6 +162,19 @@ const DOMAIN_NOTIFICATION_TEMPLATE_TOKENS = [
   "{{reporter_email}}",
   "{{reporter_phone}}",
 ];
+
+const DOMAIN_MARKER_COLOR_DEFAULTS = {
+  streetlights: "#234a72",
+  street_signs: "#1e88e5",
+  potholes: "#8e24aa",
+  water_drain_issues: "#0288d1",
+  power_outage: "#d32f2f",
+  water_main: "#1e88e5",
+  downed_tree: "#2e7d32",
+  encampment: "#00897b",
+  illegal_dumping: "#ef6c00",
+  graffiti: "#8e24aa",
+};
 
 const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
@@ -1045,7 +1069,7 @@ function profileRowToForm(profile) {
 
 function initialDomainVisibilityForm() {
   const out = {};
-  for (const d of DOMAIN_OPTIONS) out[d.key] = "enabled";
+  for (const d of DOMAIN_OPTIONS) out[d.key] = "disabled";
   return out;
 }
 
@@ -1055,12 +1079,24 @@ function defaultDomainType(domainKey) {
   return "incident_driven";
 }
 
+function defaultDomainLabel(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  return DOMAIN_OPTIONS.find((entry) => entry.key === key)?.label || roleKeyToLabel(key || "domain");
+}
+
+function defaultDomainMarkerColor(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  return sanitizeHexColor(DOMAIN_MARKER_COLOR_DEFAULTS[key], "#234a72");
+}
+
 function initialDomainConfigForm() {
   const out = {};
   for (const d of DOMAIN_OPTIONS) {
     const preset = domainNotificationTemplateOption("");
     out[d.key] = {
       domain_type: defaultDomainType(d.key),
+      display_label: defaultDomainLabel(d.key),
+      marker_color: defaultDomainMarkerColor(d.key),
       notification_email: "",
       notification_template_key: preset.key,
       notification_subject_template: preset.subject,
@@ -1160,6 +1196,8 @@ function initialTenantDomainAssignmentForm() {
     domain_key: "",
     active: true,
     visibility: "enabled",
+    display_label: "",
+    marker_color: "#234a72",
     notification_email: "",
     notification_template_key: preset.key,
     notification_subject_template: preset.subject,
@@ -1180,6 +1218,8 @@ function buildTenantDomainAssignmentForm(row) {
     domain_key: String(row?.domain_key || ""),
     active: row?.active !== false,
     visibility: String(row?.visibility || "enabled"),
+    display_label: String(row?.display_label || ""),
+    marker_color: sanitizeHexColor(row?.marker_color, defaultDomainMarkerColor(row?.domain_key)),
     notification_email: String(row?.notification_email || ""),
     notification_template_key: preset.key,
     notification_subject_template: String(row?.notification_subject_template || preset.subject || ""),
@@ -1913,6 +1953,23 @@ export default function PlatformAdminApp() {
     });
     return rows;
   }, [selectedTenantDomainAssignments, visibleDomainRegistryRows]);
+  const manageableTenantDomainRows = useMemo(
+    () => (visibleDomainRegistryRows.length ? visibleDomainRegistryRows : fallbackRegistryDomainRows()),
+    [visibleDomainRegistryRows]
+  );
+  const activeManageableTenantDomainRows = useMemo(() => {
+    if (activeDomainRegistryRows.length) return activeDomainRegistryRows;
+    return manageableTenantDomainRows.filter((row) => String(row?.status || "active").trim().toLowerCase() === "active");
+  }, [activeDomainRegistryRows, manageableTenantDomainRows]);
+  const manageableTenantDomainRowByKey = useMemo(() => {
+    const next = {};
+    for (const row of manageableTenantDomainRows) {
+      const key = String(row?.key || "").trim().toLowerCase();
+      if (!key) continue;
+      next[key] = row;
+    }
+    return next;
+  }, [manageableTenantDomainRows]);
   const assignableDomainRegistryRows = useMemo(
     () => activeDomainRegistryRows.filter((domain) => !selectedTenantDomainAssignments?.[domain.key]),
     [activeDomainRegistryRows, selectedTenantDomainAssignments]
@@ -2975,7 +3032,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -4575,15 +4632,26 @@ export default function PlatformAdminApp() {
 
     const visibility = tenantVisibilityByTenant?.[key] || {};
     const nextVisibility = initialDomainVisibilityForm();
-    for (const d of DOMAIN_OPTIONS) {
+    for (const d of manageableTenantDomainRows) {
+      const assignment = selectedTenantDomainAssignments?.[d.key] || null;
       const configured = String(visibility?.[d.key] || "").trim().toLowerCase();
-      nextVisibility[d.key] = configured === "internal_only" ? "disabled" : "enabled";
+      if (assignment) {
+        nextVisibility[d.key] = assignment.active !== false && String(assignment.visibility || "enabled").trim().toLowerCase() !== "disabled"
+          ? "enabled"
+          : "disabled";
+        continue;
+      }
+      if (configured === "public") {
+        nextVisibility[d.key] = "enabled";
+        continue;
+      }
+      nextVisibility[d.key] = "disabled";
     }
     setDomainVisibilityForm(nextVisibility);
 
     const configuredDomainSettings = tenantDomainConfigsByTenant?.[key] || {};
     const nextDomainConfig = initialDomainConfigForm();
-    for (const d of DOMAIN_OPTIONS) {
+    for (const d of manageableTenantDomainRows) {
       const configured = configuredDomainSettings?.[d.key] || null;
       const assignment = selectedTenantDomainAssignments?.[d.key] || null;
       const fallbackNotification = d.key === "potholes"
@@ -4594,6 +4662,8 @@ export default function PlatformAdminApp() {
       const templatePreset = domainNotificationTemplateOption(assignment?.notification_template_key);
       nextDomainConfig[d.key] = {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
+        display_label: String(assignment?.display_label || defaultDomainLabel(d.key)).trim() || defaultDomainLabel(d.key),
+        marker_color: sanitizeHexColor(assignment?.marker_color, defaultDomainMarkerColor(d.key)),
         notification_email: String(assignment?.notification_email || configured?.notification_email || fallbackNotification).trim(),
         notification_template_key: templatePreset.key,
         notification_subject_template: String(assignment?.notification_subject_template || templatePreset.subject || ""),
@@ -4619,7 +4689,7 @@ export default function PlatformAdminApp() {
     void loadAudit(key).catch((error) => {
       setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
     });
-  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, selectedTenantDomainAssignments, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
+  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, selectedTenantDomainAssignments, manageableTenantDomainRows, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
 
   useEffect(() => {
     if (!sortedTenantRoleDefinitions.length) {
@@ -5465,7 +5535,7 @@ export default function PlatformAdminApp() {
       && snapshotVisibility !== "disabled"
     );
     if (isDisablingEditedDomain && typeof window !== "undefined") {
-      const domainLabel = DOMAIN_OPTIONS.find((domain) => domain.key === closingDomainKey)?.label || "this domain";
+      const domainLabel = manageableTenantDomainRowByKey?.[closingDomainKey]?.label || defaultDomainLabel(closingDomainKey) || "this domain";
       const confirmed = window.confirm(
         `Disable ${domainLabel}? It will no longer appear under Enabled Domains until it is added again.`
       );
@@ -5479,14 +5549,19 @@ export default function PlatformAdminApp() {
     });
     if (!checkpointApproved) return;
 
-    const visibilityRows = DOMAIN_OPTIONS.map((d) => ({
+    const persistedDomainRows = activeManageableTenantDomainRows.filter((d) => (
+      Boolean(selectedTenantDomainAssignments?.[d.key])
+      || String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled"
+      || editingDomainKey === d.key
+    ));
+    const visibilityRows = persistedDomainRows.map((d) => ({
       tenant_key: key,
       domain: d.key,
-      visibility: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled"
+      visibility: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled"
         ? "internal_only"
         : "public",
     }));
-    const domainConfigRows = DOMAIN_OPTIONS.map((d) => ({
+    const domainConfigRows = persistedDomainRows.map((d) => ({
       tenant_key: key,
       domain: d.key,
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
@@ -5494,11 +5569,13 @@ export default function PlatformAdminApp() {
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
       updated_by: cleanOptional(sessionUserId),
     }));
-    const assignmentRows = DOMAIN_OPTIONS.map((d) => ({
+    const assignmentRows = persistedDomainRows.map((d) => ({
       tenant_key: key,
       domain_key: d.key,
-      active: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() !== "disabled",
-      visibility: String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled" ? "disabled" : "enabled",
+      active: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled",
+      visibility: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled" ? "disabled" : "enabled",
+      display_label: cleanOptional(domainConfigForm?.[d.key]?.display_label),
+      marker_color: sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key)),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
       notification_template_key: String(domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
       notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
@@ -5558,15 +5635,15 @@ export default function PlatformAdminApp() {
       setEditingDomainKey("");
       setEditingDomainSnapshot(null);
       if (currentVisibility === "disabled") {
-        const nextEnabledDomainKey = DOMAIN_OPTIONS.find((domain) => (
+        const nextEnabledDomainKey = activeManageableTenantDomainRows.find((domain) => (
           domain.key !== closingDomainKey
-          && String(domainVisibilityForm?.[domain.key] || "enabled").trim().toLowerCase() !== "disabled"
+          && String(domainVisibilityForm?.[domain.key] || "disabled").trim().toLowerCase() !== "disabled"
         ))?.key || "";
         setCompactDomainSettingsKey(nextEnabledDomainKey);
       }
     }
     await refreshControlPlaneData();
-  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot]);
+  }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot, activeManageableTenantDomainRows, selectedTenantDomainAssignments, editingDomainKey, manageableTenantDomainRowByKey]);
 
   const saveMapFeaturesSettings = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -6140,6 +6217,8 @@ export default function PlatformAdminApp() {
       config: {
         ...(domainConfigForm?.[key] || {
           domain_type: defaultDomainType(key),
+          display_label: defaultDomainLabel(key),
+          marker_color: defaultDomainMarkerColor(key),
           notification_email: "",
         }),
       },
@@ -6295,19 +6374,19 @@ export default function PlatformAdminApp() {
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const isCompactViewport = viewportWidth <= 760;
   const activeCompactDomainOptions = useMemo(
-    () => DOMAIN_OPTIONS.filter((d) => String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() !== "disabled"),
-    [domainVisibilityForm]
+    () => activeManageableTenantDomainRows.filter((d) => String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled"),
+    [activeManageableTenantDomainRows, domainVisibilityForm]
   );
   const inactiveCompactDomainOptions = useMemo(
-    () => DOMAIN_OPTIONS.filter((d) => String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase() === "disabled"),
-    [domainVisibilityForm]
+    () => activeManageableTenantDomainRows.filter((d) => String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled"),
+    [activeManageableTenantDomainRows, domainVisibilityForm]
   );
   const domainEnablementCards = useMemo(
-    () => DOMAIN_OPTIONS.filter((d) => {
-      const visibility = String(domainVisibilityForm?.[d.key] || "enabled").trim().toLowerCase();
+    () => activeManageableTenantDomainRows.filter((d) => {
+      const visibility = String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase();
       return visibility !== "disabled" || editingDomainKey === d.key;
     }),
-    [domainVisibilityForm, editingDomainKey]
+    [activeManageableTenantDomainRows, domainVisibilityForm, editingDomainKey]
   );
   const compactVisibleDomainCards = useMemo(() => {
     if (!isCompactViewport) return domainEnablementCards;
@@ -11112,6 +11191,60 @@ export default function PlatformAdminApp() {
                                   <option key={option.key} value={option.key}>{option.label}</option>
                                 ))}
                               </select>
+                            </label>
+                            <label style={modalField}>
+                              <span>Display Label</span>
+                              <input
+                                readOnly={domainFieldsReadOnly}
+                                value={domainConfigForm?.[d.key]?.display_label || ""}
+                                onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ...prev,
+                                  [d.key]: {
+                                    ...(prev?.[d.key] || {}),
+                                    display_label: e.target.value,
+                                  },
+                                }))}
+                                placeholder={defaultDomainLabel(d.key)}
+                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                              />
+                            </label>
+                            <label style={modalField}>
+                              <span>Marker Color</span>
+                              <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                                <input
+                                  type="color"
+                                  value={sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key))}
+                                  disabled={domainFieldsReadOnly}
+                                  onChange={(e) => setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      marker_color: e.target.value,
+                                    },
+                                  }))}
+                                  style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                />
+                                <input
+                                  readOnly={domainFieldsReadOnly}
+                                  value={domainConfigForm?.[d.key]?.marker_color || ""}
+                                  onChange={(e) => setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      marker_color: e.target.value,
+                                    },
+                                  }))}
+                                  onBlur={(e) => setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      marker_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev?.[d.key]?.marker_color), defaultDomainMarkerColor(d.key)),
+                                    },
+                                  }))}
+                                  placeholder={defaultDomainMarkerColor(d.key)}
+                                  style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                />
+                              </div>
                             </label>
                             <label style={modalField}>
                               <span>Notification Email</span>
