@@ -133,6 +133,27 @@ function defaultDomainType(domainKey) {
   return "incident_driven";
 }
 
+function defaultIconSrcForDomain(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  return (
+    REPORT_DOMAIN_OPTIONS.find((option) => String(option?.key || "").trim().toLowerCase() === key)?.iconSrc
+    || UI_ICON_SRC.incidentReportingLayer
+  );
+}
+
+function resolveRuntimeDomainIconSrc(domainKey, iconSrc, iconKey) {
+  const src = String(iconSrc || "").trim();
+  if (/^(https?:|\/|data:)/i.test(src)) return src;
+  const token = String(iconKey || src || "").trim().toLowerCase();
+  if (token) {
+    const builtIn = REPORT_DOMAIN_OPTIONS.find(
+      (option) => String(option?.key || "").trim().toLowerCase() === token
+    );
+    if (builtIn?.iconSrc) return builtIn.iconSrc;
+  }
+  return defaultIconSrcForDomain(domainKey);
+}
+
 function isDevMapsHost(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
   if (!host) return false;
@@ -17081,10 +17102,29 @@ export default function App({ onBackToHub = null }) {
   const alertsFeedMarkedForOpenRef = useRef(false);
   const eventsFeedMarkedForOpenRef = useRef(false);
 
+  const resolveTenantDomainType = useCallback((domainKeyRaw) => {
+    const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
+    if (!domainKey) return "";
+    const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
+    return String(cfg?.domain_type || defaultDomainType(domainKey)).trim().toLowerCase();
+  }, [tenantDomainPublicConfigByDomain]);
+
+  const isTenantIncidentDrivenDomain = useCallback((domainKeyRaw) => {
+    const domainType = resolveTenantDomainType(domainKeyRaw);
+    if (!domainType) return false;
+    return domainType !== "asset_backed";
+  }, [resolveTenantDomainType]);
+
+  const isTenantAssetBackedDomain = useCallback((domainKeyRaw) => {
+    const domainType = resolveTenantDomainType(domainKeyRaw);
+    if (!domainType) return false;
+    return domainType === "asset_backed";
+  }, [resolveTenantDomainType]);
+
   function preferredInitialDomainKey(options = []) {
     const list = Array.isArray(options) ? options.filter(Boolean) : [];
     const firstIncidentKey = String(
-      list.find((d) => isIncidentDrivenDomainKey(d?.key))?.key || ""
+      list.find((d) => isTenantIncidentDrivenDomain(d?.key))?.key || ""
     ).trim();
     if (firstIncidentKey) return firstIncidentKey;
     const firstStreetlightKey = String(
@@ -17673,12 +17713,13 @@ export default function App({ onBackToHub = null }) {
     return (tenantRegistryIncidentDomains || [])
       .map((row) => {
         const key = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
-        if (!key || LEGACY_REPORT_DOMAIN_KEYS.has(key)) return null;
+        if (!key) return null;
+        const iconSrc = resolveRuntimeDomainIconSrc(key, row?.icon_src, row?.icon_key);
         return {
           key,
           label: String(row?.label || key).trim() || key,
           icon: "📍",
-          iconSrc: String(row?.icon_src || "").trim() || UI_ICON_SRC.incidentReportingLayer,
+          iconSrc,
           enabled: true,
           source: "registry",
         };
@@ -17692,13 +17733,8 @@ export default function App({ onBackToHub = null }) {
     }));
     if (!registryVisibleDomainOptions.length) return legacyOptions;
     const merged = new Map();
-    for (const option of legacyOptions) {
-      merged.set(String(option?.key || "").trim().toLowerCase(), option);
-    }
     for (const option of registryVisibleDomainOptions) {
-      const key = String(option?.key || "").trim().toLowerCase();
-      if (!key || merged.has(key)) continue;
-      merged.set(key, option);
+      merged.set(String(option?.key || "").trim().toLowerCase(), option);
     }
     return Array.from(merged.values());
   }, [isDomainPublic, registryVisibleDomainOptions]);
@@ -17724,7 +17760,7 @@ export default function App({ onBackToHub = null }) {
   }, [visibleDomainOptions]);
   const assetLayerOptions = useMemo(() => {
     const includeInternalAssetLayers = Boolean(isAdmin);
-    const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isAssetBackedDomainKey(d.key));
+    const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isTenantAssetBackedDomain(d.key));
     const next = [...visibleAssetOptions];
     const hasStreetlightLayer = next.some((d) => d.key === "streetlights");
     if (!hasStreetlightLayer) {
@@ -17740,10 +17776,10 @@ export default function App({ onBackToHub = null }) {
       }
     }
     return next;
-  }, [visibleDomainOptions, isAdmin]);
+  }, [visibleDomainOptions, isAdmin, isTenantAssetBackedDomain]);
   const incidentLayerDomainOptions = useMemo(
-    () => (visibleDomainOptions || []).filter((d) => isIncidentDrivenDomainKey(d.key)),
-    [visibleDomainOptions]
+    () => (visibleDomainOptions || []).filter((d) => isTenantIncidentDrivenDomain(d.key)),
+    [visibleDomainOptions, isTenantIncidentDrivenDomain]
   );
   const layerOptions = useMemo(() => {
     const opts = [...assetLayerOptions];
@@ -17795,11 +17831,11 @@ export default function App({ onBackToHub = null }) {
   }, [openReportsOpen, openReportsDomainOptions, adminReportDomain]);
 
   useEffect(() => {
-    if (!isIncidentDrivenDomainKey(adminReportDomain)) return;
+    if (!isTenantIncidentDrivenDomain(adminReportDomain)) return;
     const nextIncidentDomain = String(adminReportDomain || "").trim();
     if (!nextIncidentDomain || nextIncidentDomain === lastIncidentMapDomain) return;
     setLastIncidentMapDomain(nextIncidentDomain);
-  }, [adminReportDomain, lastIncidentMapDomain]);
+  }, [adminReportDomain, lastIncidentMapDomain, isTenantIncidentDrivenDomain]);
 
   useEffect(() => {
     if (!layerOptions.length) return;
@@ -18377,7 +18413,7 @@ export default function App({ onBackToHub = null }) {
 
   function startIncidentReportAtPoint(domainKey, lat, lng) {
     const normalizedDomain = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true });
-    if (!normalizedDomain || normalizedDomain === "streetlights" || normalizedDomain === "street_signs") return;
+    if (!normalizedDomain || isTenantAssetBackedDomain(normalizedDomain)) return;
 
     const targetLat = Number(lat);
     const targetLng = Number(lng);
@@ -18440,7 +18476,7 @@ export default function App({ onBackToHub = null }) {
     const nextKey = String(domainKey || "").trim();
     if (!nextKey) return;
     const nextLayerKey = String(
-      opts?.layerKey || (isIncidentDrivenDomainKey(nextKey) ? INCIDENT_REPORTING_LAYER_KEY : nextKey)
+      opts?.layerKey || (isTenantIncidentDrivenDomain(nextKey) ? INCIDENT_REPORTING_LAYER_KEY : nextKey)
     ).trim() || nextKey;
     if (nextKey === adminReportDomain && nextLayerKey === activeMapLayerKey) {
       setAdminDomainMenuOpen(false);
@@ -18455,7 +18491,7 @@ export default function App({ onBackToHub = null }) {
       setDomainSwitchConfirmOpen(true);
       return;
     }
-    if (isIncidentDrivenDomainKey(nextKey)) setLastIncidentMapDomain(nextKey);
+    if (isTenantIncidentDrivenDomain(nextKey)) setLastIncidentMapDomain(nextKey);
     setActiveMapLayerKey(nextLayerKey);
     setAdminReportDomain(nextKey);
     setAdminDomainMenuOpen(false);
@@ -18502,7 +18538,7 @@ export default function App({ onBackToHub = null }) {
     }
     const ok = await confirmMappingQueue();
     if (!ok) return;
-    if (isIncidentDrivenDomainKey(pendingDomainSwitchTarget.key)) {
+    if (isTenantIncidentDrivenDomain(pendingDomainSwitchTarget.key)) {
       setLastIncidentMapDomain(pendingDomainSwitchTarget.key);
     }
     setActiveMapLayerKey(
@@ -18522,7 +18558,7 @@ export default function App({ onBackToHub = null }) {
     }
     setMappingQueue([]);
     setSelectedQueuedTempId(null);
-    if (isIncidentDrivenDomainKey(pendingDomainSwitchTarget.key)) {
+    if (isTenantIncidentDrivenDomain(pendingDomainSwitchTarget.key)) {
       setLastIncidentMapDomain(pendingDomainSwitchTarget.key);
     }
     setActiveMapLayerKey(
@@ -19880,11 +19916,11 @@ export default function App({ onBackToHub = null }) {
     const hasAdminDomain = visibleDomainOptions.some((d) => d.key === adminReportDomain);
     if (!hasAdminDomain) setAdminReportDomain(preferredDomainKey);
     if (!hasAdminDomain) {
-      setActiveMapLayerKey(isIncidentDrivenDomainKey(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
+      setActiveMapLayerKey(isTenantIncidentDrivenDomain(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
     }
     const hasMyDomain = visibleDomainOptions.some((d) => d.key === myReportsDomain);
     if (!hasMyDomain) setMyReportsDomain(preferredDomainKey);
-  }, [visibleDomainOptions, adminReportDomain, myReportsDomain]);
+  }, [visibleDomainOptions, adminReportDomain, myReportsDomain, isTenantIncidentDrivenDomain]);
 
   const previousTenantKeyRef = useRef("");
   useEffect(() => {
@@ -19899,7 +19935,7 @@ export default function App({ onBackToHub = null }) {
 
     const preferredDomainKey = preferredInitialDomainKey(visibleDomainOptions);
 
-    setActiveMapLayerKey(isIncidentDrivenDomainKey(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
+    setActiveMapLayerKey(isTenantIncidentDrivenDomain(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
     setAdminReportDomain(preferredDomainKey);
     setMyReportsDomain(preferredDomainKey);
     setMyReportsReportedByMode("me");
@@ -19941,7 +19977,7 @@ export default function App({ onBackToHub = null }) {
     boundaryCameraSignatureRef.current = "";
     preserveReportFlyTargetCameraRef.current = false;
     pendingTenantHomeRecenterRef.current = nextTenantKey;
-  }, [tenant?.tenantKey, visibleDomainOptions]);
+  }, [tenant?.tenantKey, visibleDomainOptions, isTenantIncidentDrivenDomain]);
 
   useEffect(() => {
     if (reportDeepLinkHandledRef.current) return;
@@ -19959,7 +19995,7 @@ export default function App({ onBackToHub = null }) {
     reportDeepLinkHandledRef.current = true;
 
     if (nextDomain) {
-      setActiveMapLayerKey(isIncidentDrivenDomainKey(nextDomain) ? INCIDENT_REPORTING_LAYER_KEY : nextDomain);
+      setActiveMapLayerKey(isTenantIncidentDrivenDomain(nextDomain) ? INCIDENT_REPORTING_LAYER_KEY : nextDomain);
       setAdminReportDomain(nextDomain);
       setMyReportsDomain(nextDomain);
     }
@@ -19973,7 +20009,7 @@ export default function App({ onBackToHub = null }) {
       preserveReportFlyTargetCameraRef.current = true;
       flyToTarget([flyLat, flyLng], flyZoom);
     }
-  }, [visibleDomainOptions, canOpenDomainReports]);
+  }, [visibleDomainOptions, canOpenDomainReports, isTenantIncidentDrivenDomain]);
 
   const loadOpenAbuseFlagSummary = useCallback(async ({ silent = true } = {}) => {
     if (!isAdmin) {
@@ -20901,17 +20937,23 @@ export default function App({ onBackToHub = null }) {
     return all;
   }
 
-  async function fetchTenantDomainPublicConfig(client = supabase) {
-    const { data, error } = await client.rpc("tenant_domain_public_config");
-    if (error) throw error;
-    return Array.isArray(data) ? data : [];
-  }
+async function fetchTenantDomainPublicConfig(client = supabase) {
+  const { data, error } = await client.rpc("tenant_domain_public_config");
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
 
-  async function fetchTenantRegistryIncidentDomains(client = supabase) {
-    const { data, error } = await client.rpc("tenant_registry_incident_domains_public");
-    if (error) throw error;
-    return Array.isArray(data) ? data : [];
-  }
+async function fetchTenantAssignedDomains(client = supabase) {
+  const { data, error } = await client.rpc("tenant_assigned_domains_public");
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchTenantRegistryIncidentDomains(client = supabase) {
+  const { data, error } = await client.rpc("tenant_registry_incident_domains_public");
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
 
   useEffect(() => {
     if (!authReady) return; // ✅ wait until auth restored
@@ -22651,37 +22693,52 @@ export default function App({ onBackToHub = null }) {
     async function loadDomainPublicConfig() {
       try {
         const readClient = tenantScopedReadClient || supabase;
-        const [legacyRows, registryRows] = await Promise.all([
+        const [legacyRows, assignedRows] = await Promise.all([
           fetchTenantDomainPublicConfig(readClient),
-          fetchTenantRegistryIncidentDomains(readClient).catch((e) => {
+          fetchTenantAssignedDomains(readClient).catch(async (e) => {
             const msg = String(e?.message || "").toLowerCase();
+            const missingAssignedFunction =
+              msg.includes("tenant_assigned_domains_public")
+              && (msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"));
+            if (missingAssignedFunction) {
+              try {
+                return await fetchTenantRegistryIncidentDomains(readClient);
+              } catch (registryError) {
+                const registryMsg = String(registryError?.message || "").toLowerCase();
+                if (!(registryMsg.includes("does not exist") || registryMsg.includes("function") || registryMsg.includes("schema cache"))) {
+                  console.warn("[tenant_registry_incident_domains_public] load warning:", registryError?.message || registryError);
+                }
+                return [];
+              }
+            }
             if (!(msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"))) {
-              console.warn("[tenant_registry_incident_domains_public] load warning:", e?.message || e);
+              console.warn("[tenant_assigned_domains_public] load warning:", e?.message || e);
             }
             return [];
           }),
         ]);
         if (cancelled) return;
-        const next = {};
+        const legacyNext = {};
         for (const row of legacyRows || []) {
           const domainKey = String(row?.domain || "").trim().toLowerCase();
           if (!domainKey) continue;
-          next[domainKey] = {
+          legacyNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           };
         }
+        const assignedNext = {};
         const registryVisibleRows = [];
         RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
         RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
         RUNTIME_DOMAIN_META.labelByDomain.clear();
-        for (const row of registryRows || []) {
+        for (const row of assignedRows || []) {
           const domainKey = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
           if (!domainKey) continue;
           const reportPrefix = String(row?.report_prefix || "").trim().toUpperCase();
-          const iconSrc = String(row?.icon_src || "").trim();
           const label = String(row?.label || domainKey).trim() || domainKey;
-          next[domainKey] = {
+          const iconSrc = resolveRuntimeDomainIconSrc(domainKey, row?.icon_src, row?.icon_key);
+          assignedNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           };
@@ -22691,14 +22748,23 @@ export default function App({ onBackToHub = null }) {
           registryVisibleRows.push({
             domain_key: domainKey,
             label,
+            icon_key: String(row?.icon_key || "").trim(),
             icon_src: iconSrc,
             report_prefix: reportPrefix,
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           });
         }
-        setTenantDomainPublicConfigByDomain(next);
-        setTenantRegistryIncidentDomains(registryVisibleRows);
+        if (registryVisibleRows.length) {
+          setTenantDomainPublicConfigByDomain(assignedNext);
+          setTenantRegistryIncidentDomains(registryVisibleRows);
+          return;
+        }
+        RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
+        RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
+        RUNTIME_DOMAIN_META.labelByDomain.clear();
+        setTenantDomainPublicConfigByDomain(legacyNext);
+        setTenantRegistryIncidentDomains([]);
       } catch (e) {
         const msg = String(e?.message || "").toLowerCase();
         if (!(msg.includes("does not exist") || msg.includes("function") || msg.includes("schema cache"))) {
@@ -23628,13 +23694,13 @@ export default function App({ onBackToHub = null }) {
 
   const activeAggregationStrategy = useMemo(() => {
     if (adminReportDomain === "streetlights") return "asset_based";
-    if (adminReportDomain === "street_signs") return "asset_based";
+    if (adminReportDomain === "street_signs" && isTenantAssetBackedDomain(adminReportDomain)) return "asset_based";
     if (adminReportDomain === "potholes") return "proximity_based";
     if (adminReportDomain === "water_drain_issues") return "water_proximity";
     if (adminReportDomain === "power_outage") return "area_based";
     if (adminReportDomain === "water_main") return "severity_based";
     return "generic_incident";
-  }, [adminReportDomain]);
+  }, [adminReportDomain, isTenantAssetBackedDomain]);
 
   const aggregationStrategies = useMemo(() => {
     return {
