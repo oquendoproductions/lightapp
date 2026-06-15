@@ -4007,7 +4007,6 @@ function DomainReportModal({
             <input
               type="file"
               accept="image/*"
-              capture="environment"
               disabled={saving}
               onChange={(e) => {
                 const f = e.target.files?.[0] || null;
