@@ -166,6 +166,35 @@ function buildTenantOption(tenantConfig, routeRow = null) {
   };
 }
 
+function normalizePublicTenantHost(option = {}, tenantKey = "") {
+  const raw = String(option?.primarySubdomain || "").trim().toLowerCase();
+  if (raw) {
+    if (raw.includes(".")) return raw;
+    return `${raw}.cityreport.io`;
+  }
+  const normalizedTenantKey = String(tenantKey || option?.tenantKey || "").trim().toLowerCase();
+  return normalizedTenantKey ? `${normalizedTenantKey}.cityreport.io` : "";
+}
+
+function buildWebTenantSwitchUrl(env, option, nextTenantKey) {
+  if (typeof window === "undefined") return "";
+  const protocol = String(window.location.protocol || "https:").trim() || "https:";
+  const pathname = String(window.location.pathname || "/");
+  const search = String(window.location.search || "");
+  const hash = String(window.location.hash || "");
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const normalizedTenantKey = String(nextTenantKey || "").trim().toLowerCase();
+  if (!normalizedTenantKey) return "";
+
+  if (env === "staging") {
+    return `${protocol}//dev.cityreport.io/${normalizedTenantKey}${normalizedPath}${search}${hash}`;
+  }
+
+  const host = normalizePublicTenantHost(option, normalizedTenantKey);
+  if (!host) return "";
+  return `${protocol}//${host}${normalizedPath}${search}${hash}`;
+}
+
 async function listAvailablePublicTenants(currentTenantConfig, currentTenantKey) {
   const normalizedCurrentKey = String(currentTenantKey || currentTenantConfig?.tenant_key || "")
     .trim()
@@ -428,9 +457,22 @@ export function TenantProvider({ resolution, children }) {
     async (rawTenantKey) => {
       const nextTenantKey = String(rawTenantKey || "").trim().toLowerCase();
       if (!nextTenantKey) return false;
-      if (!publicMapMode || !isNativeAppRuntime()) return false;
+      if (!publicMapMode) return false;
       if (nextTenantKey === tenantKey) {
         setRuntimeTenantKey(nextTenantKey);
+        return true;
+      }
+
+      const nextOption = [...effectiveAvailableTenants]
+        .find((option) => String(option?.tenantKey || "").trim().toLowerCase() === nextTenantKey) || null;
+
+      if (!isNativeAppRuntime()) {
+        const nextUrl = buildWebTenantSwitchUrl(env, nextOption, nextTenantKey);
+        if (!nextUrl) return false;
+        setSwitchingTenant(nextTenantKey);
+        setRuntimeTenantKey(nextTenantKey);
+        setSupabaseTenantKey(nextTenantKey);
+        window.location.assign(nextUrl);
         return true;
       }
 
@@ -448,7 +490,7 @@ export function TenantProvider({ resolution, children }) {
       setRequestedTenantRoute(nextTenantKey);
       return true;
     },
-    [publicMapMode, tenantKey]
+    [effectiveAvailableTenants, env, publicMapMode, tenantKey]
   );
 
   const completeInitialTenantChoice = useCallback(
