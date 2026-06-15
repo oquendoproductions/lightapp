@@ -1511,7 +1511,7 @@ function adminIncidentLabelForDomain(domain, incidentId, reportNumber, slIdByUui
         : d === "water_main"
           ? "Water Main Incident"
           : "Incident";
-  return report ? `${report} • ${domainTag} ${stableKey}` : `${domainTag} ${stableKey}`;
+  return report ? `${report} • ${stableKey}` : `${domainTag} ${stableKey}`;
 }
 
 function extFromFileName(name, fallback = "jpg") {
