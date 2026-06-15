@@ -12709,10 +12709,24 @@ function OpenReportsModal({
 function IncidentTypePickerModal({
   open,
   onClose,
-  onSelectPothole,
-  onSelectWaterDrain,
+  options = [],
+  onSelectOption,
 }) {
   if (!open) return null;
+
+  const incidentOptions = Array.isArray(options)
+    ? options
+        .map((option) => {
+          const key = String(option?.key || "").trim();
+          if (!key) return null;
+          return {
+            key,
+            label: String(option?.label || key).trim() || key,
+            iconSrc: String(option?.iconSrc || "").trim(),
+          };
+        })
+        .filter(Boolean)
+    : [];
 
   return (
     <ModalShell
@@ -12732,49 +12746,30 @@ function IncidentTypePickerModal({
         </div>
 
         <div style={{ display: "grid", gap: 10 }}>
-          <button
-            type="button"
-            onClick={onSelectPothole}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: 16,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
-              justifyContent: "flex-start",
-            }}
-          >
-            <AppIcon src={UI_ICON_SRC.pothole} size={34} />
-            <span style={{ fontSize: 16 }}>Pothole</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onSelectWaterDrain}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: 16,
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-              fontWeight: 900,
-              cursor: "pointer",
-              justifyContent: "flex-start",
-            }}
-          >
-            <AppIcon src={UI_ICON_SRC.waterMain} size={34} />
-            <span style={{ fontSize: 16 }}>Water / Drain Issue</span>
-          </button>
+          {incidentOptions.map((option) => (
+            <button
+              key={`incident-type-option-${option.key}`}
+              type="button"
+              onClick={() => onSelectOption?.(option.key)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                width: "100%",
+                padding: "14px 16px",
+                borderRadius: 16,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                fontWeight: 900,
+                cursor: "pointer",
+                justifyContent: "flex-start",
+              }}
+            >
+              <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={34} />
+              <span style={{ fontSize: 16 }}>{option.label}</span>
+            </button>
+          ))}
         </div>
 
         <button type="button" onClick={onClose} style={btnSecondary}>
@@ -18411,6 +18406,11 @@ export default function App({ onBackToHub = null }) {
     setPendingIncidentTypeTarget(null);
   }
 
+  const residentIncidentPickerOptions = useMemo(
+    () => (incidentLayerDomainOptions || []).filter((option) => !isTenantAssetBackedDomain(option?.key)),
+    [incidentLayerDomainOptions, isTenantAssetBackedDomain]
+  );
+
   function startIncidentReportAtPoint(domainKey, lat, lng) {
     const normalizedDomain = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true });
     if (!normalizedDomain || isTenantAssetBackedDomain(normalizedDomain)) return;
@@ -20955,6 +20955,23 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
   return Array.isArray(data) ? data : [];
 }
 
+async function selectTenantScopedPublicRows(client, tableName, selectClause, tenantKey, orderColumn = "created_at") {
+  const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  selectTenantScopedPublicRows._missingTenantKeyTables ||= new Set();
+  const knownMissingTenantKey = selectTenantScopedPublicRows._missingTenantKeyTables.has(tableName);
+  const baseQuery = () =>
+    client.from(tableName).select(selectClause).order(orderColumn, { ascending: false });
+
+  if (!normalizedTenantKey || knownMissingTenantKey) {
+    return baseQuery();
+  }
+
+  const first = await baseQuery().eq("tenant_key", normalizedTenantKey);
+  if (!(first?.error && isMissingTenantKeyColumnError(first.error))) return first;
+  selectTenantScopedPublicRows._missingTenantKeyTables.add(tableName);
+  return baseQuery();
+}
+
   useEffect(() => {
     if (!authReady) return; // ✅ wait until auth restored
     if (tenant?.ready === false) return;
@@ -20976,22 +20993,24 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
       const reportsPromise = reportsAdminView
         ? readClient.from("reports").select(reportSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
         : (async () => {
-            const first = await readClient
-              .from("reports_public")
-              .select(reportSelectPublic)
-              .eq("tenant_key", loadTenantKey)
-              .order("created_at", { ascending: false });
+            const first = await selectTenantScopedPublicRows(
+              readClient,
+              "reports_public",
+              reportSelectPublic,
+              loadTenantKey
+            );
             const msg = String(first?.error?.message || "").toLowerCase();
             const missingReportNumber =
               first?.error && msg.includes("report_number") && msg.includes("does not exist");
             const missingTenantKey =
               first?.error && isMissingTenantKeyColumnError(first.error);
             if (!missingReportNumber && !missingTenantKey) return first;
-            return readClient
-              .from("reports_public")
-              .select(reportSelectPublicLegacy)
-              .eq("tenant_key", loadTenantKey)
-              .order("created_at", { ascending: false });
+            return selectTenantScopedPublicRows(
+              readClient,
+              "reports_public",
+              reportSelectPublicLegacy,
+              loadTenantKey
+            );
           })();
 
       const ownReportsPromise = (!reportsAdminView && isAuthed)
@@ -21021,7 +21040,12 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
 
       const actionsPromise = reportsAdminView
         ? readClient.from("light_actions").select(actionsSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
-        : readClient.from("light_actions_public").select(actionsSelectPublic).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false });
+        : selectTenantScopedPublicRows(
+            readClient,
+            "light_actions_public",
+            actionsSelectPublic,
+            loadTenantKey
+          );
 
       const [
         { data: reportDataRaw, error: repErrRaw },
@@ -23044,8 +23068,15 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
     };
 
     if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
-      return [...shapePotholeMarkers(), ...shapeWaterDrainMarkers()]
-        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+      if (resolvedIncidentMapDomain === "potholes") {
+        return shapePotholeMarkers();
+      }
+      if (resolvedIncidentMapDomain === "water_drain_issues") {
+        return shapeWaterDrainMarkers();
+      }
+      const genericIncidentMarkers = Array.isArray(genericDomainMarkers) ? genericDomainMarkers : [];
+      if (!restrictPublicMarkersToCity) return genericIncidentMarkers;
+      return genericIncidentMarkers.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
     }
 
     if (isStreetSignsLayerActive) {
@@ -23096,6 +23127,8 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
     reportsAdminView,
     restrictPublicMarkersToCity,
     isWithinAshtabulaCityLimits,
+    resolvedIncidentMapDomain,
+    genericDomainMarkers,
   ]);
 
   const selectedOfficialLightForPopup = useMemo(() => {
@@ -25639,7 +25672,7 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
         reporter_phone: insReport.data?.reporter_phone || null,
         reporter_email: insReport.data?.reporter_email || null,
       };
-      successReportNumbers = [String(saved.report_number || "").trim()].filter(Boolean);
+      successReportNumbers = [reportNumberForRow({ ...saved, domain: "potholes" }, "potholes")].filter(Boolean);
       successSubmittedAt = saved.ts || Date.now();
       if (saved.id) {
         setPotholeReports((prev) => (prev.some((x) => x.id === saved.id) ? prev : [saved, ...prev]));
@@ -25776,7 +25809,7 @@ async function fetchTenantRegistryIncidentDomains(client = supabase) {
         reporter_phone: data.reporter_phone || null,
         reporter_email: data.reporter_email || null,
       };
-      successReportNumbers = [String(saved.report_number || "").trim()].filter(Boolean);
+      successReportNumbers = [reportNumberForRow({ ...saved, domain: target.domain }, target.domain)].filter(Boolean);
       successSubmittedAt = saved.ts || Date.now();
       setReports((prev) => [saved, ...prev]);
       await refreshIncidentRepairProgress(viewerIdentityKey);
@@ -29509,17 +29542,12 @@ async function insertReportWithFallback(payload) {
       <IncidentTypePickerModal
         open={incidentTypePickerOpen}
         onClose={closeIncidentTypePicker}
-        onSelectPothole={() => {
+        options={residentIncidentPickerOptions}
+        onSelectOption={(domainKey) => {
           const target = pendingIncidentTypeTarget;
           closeIncidentTypePicker();
           if (!target) return;
-          startIncidentReportAtPoint("potholes", target.lat, target.lng);
-        }}
-        onSelectWaterDrain={() => {
-          const target = pendingIncidentTypeTarget;
-          closeIncidentTypePicker();
-          if (!target) return;
-          startIncidentReportAtPoint("water_drain_issues", target.lat, target.lng);
+          startIncidentReportAtPoint(domainKey, target.lat, target.lng);
         }}
       />
 
@@ -30456,7 +30484,7 @@ async function insertReportWithFallback(payload) {
               const shouldPromptLegacyIncidentPicker =
                 !isAdmin &&
                 activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY &&
-                (targetIncidentDomain === "potholes" || targetIncidentDomain === "water_drain_issues");
+                residentIncidentPickerOptions.length > 1;
               if (shouldPromptLegacyIncidentPicker) {
                 setPendingIncidentTypeTarget({ lat, lng });
                 setIncidentTypePickerOpen(true);
