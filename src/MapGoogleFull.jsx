@@ -30476,6 +30476,11 @@ async function insertReportWithFallback(payload) {
             icon={
               String(m?.domain || adminReportDomain) === "street_signs"
                 ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
+                : (
+                  !LEGACY_REPORT_DOMAIN_KEYS.has(String(m?.domain || adminReportDomain).trim().toLowerCase())
+                  && String(m?.glyphSrc || "").trim()
+                )
+                  ? gmapsImageIcon(String(m?.glyphSrc || "").trim(), MAP_MARKER_SIZE)
                 : gmapsDotIcon(
                     m.color || domainMarkerColor,
                     m.ringColor || "#fff",
