@@ -10620,22 +10620,8 @@ function OpenReportsModal({
                       </button>
                     ) : mobileMyReportsCard ? (
                       (() => {
-                        const topLabel = activeDomain === "potholes"
-                          ? "Pothole ID"
-                          : activeDomain === "water_drain_issues"
-                            ? "Water / Drain ID"
-                            : activeDomain === "power_outage"
-                              ? "Power Outage ID"
-                              : activeDomain === "water_main"
-                                ? "Water Main ID"
-                                : activeDomain === "street_signs"
-                                  ? "Street Sign ID"
-                                  : "Incident ID";
-                        const rawValue = String(r.incident_label || r.incident_id || "").trim();
-                        const normalizedPrefix = `${topLabel} `;
-                        const displayValue = rawValue.toLowerCase().startsWith(normalizedPrefix.toLowerCase())
-                          ? rawValue.slice(normalizedPrefix.length).trim()
-                          : rawValue;
+                        const topLabel = "Report #";
+                        const rawValue = String(r.primary_report_number || r.incident_label || r.incident_id || "").trim();
                         return (
                           <button
                             type="button"
@@ -10658,7 +10644,7 @@ function OpenReportsModal({
                               {topLabel}
                             </div>
                             <div style={{ fontSize: 16, lineHeight: 1.2, fontWeight: 900, wordBreak: "break-word" }}>
-                              {displayValue || rawValue}
+                              {rawValue}
                             </div>
                           </button>
                         );
@@ -11307,7 +11293,7 @@ function OpenReportsModal({
                 <thead>
                   <tr style={{ position: "sticky", top: 0, background: "var(--sl-ui-modal-bg)", zIndex: 1 }}>
                     {[
-                      { key: "incident_id", label: activeDomain === "streetlights" ? "Light ID" : "Incident" },
+                      { key: "incident_id", label: isMyReportsModal ? "Report #" : (activeDomain === "streetlights" ? "Light ID" : "Incident") },
                       { key: "current_state", label: "Status" },
                       ...(isMyReportsModal ? [] : [{ key: "report_count", label: "Reports" }]),
                       { key: "submitted_at", label: "Latest report" },
@@ -11368,10 +11354,12 @@ function OpenReportsModal({
                               cursor: "pointer",
                               padding: 0,
                             }}
-                            title="Toggle incident reports"
+                            title={isMyReportsModal ? "Toggle submitted reports" : "Toggle incident reports"}
                           >
                             {adminExpandedSet.has(r.incident_id) ? "▾ " : "▸ "}
-                            {r.incident_label || r.incident_id}
+                            {isMyReportsModal
+                              ? (r.primary_report_number || r.incident_label || r.incident_id)
+                              : (r.incident_label || r.incident_id)}
                             <span
                               style={{
                                 display: "inline-block",
