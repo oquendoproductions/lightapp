@@ -1431,6 +1431,20 @@ function incidentStateLabel(state) {
   return map[v] || v.replace(/_/g, " ");
 }
 
+function isLifecycleStateOpen(state) {
+  const s = String(state || "").trim().toLowerCase();
+  if (!s) return true;
+  if (s === "fixed") return false;
+  if (s === "archived") return false;
+  if (s === "likely_resolved") return false;
+  if (s === "closed") return false;
+  if (s === "resolved") return false;
+  if (s === "completed") return false;
+  if (s === "done") return false;
+  if (s === "operational") return false;
+  return true;
+}
+
 function canonicalOfficialLightId(rawLightId, lat, lng, officialIdByAlias, officialIdByCoordKey) {
   const raw = String(rawLightId || "").trim();
   if (raw && officialIdByAlias?.has(raw)) return officialIdByAlias.get(raw);
@@ -8023,17 +8037,7 @@ function OpenReportsModal({
   }, []);
 
   const isOpenLifecycleState = useCallback((state) => {
-    const s = String(state || "").trim().toLowerCase();
-    if (!s) return true;
-    if (s === "fixed") return false;
-    if (s === "archived") return false;
-    if (s === "likely_resolved") return false;
-    if (s === "closed") return false;
-    if (s === "resolved") return false;
-    if (s === "completed") return false;
-    if (s === "done") return false;
-    if (s === "operational") return false;
-    return true;
+    return isLifecycleStateOpen(state);
   }, []);
 
   const getIncidentStateForDisplay = useCallback((incidentId, rows = []) => {
@@ -23733,7 +23737,7 @@ async function selectTenantScopedPublicRows(
       currentState,
       lastChangedAt,
       viewerHasReport,
-      isFixedNow: !isOpenLifecycleState(currentState),
+      isFixedNow: !isLifecycleStateOpen(currentState),
     };
   }, [
     selectedDomainMarker,
@@ -23742,7 +23746,6 @@ async function selectTenantScopedPublicRows(
     selectedDomainReports,
     getIncidentSnapshot,
     viewerIdentityKey,
-    isOpenLifecycleState,
     resolveReportDomainLabel,
     formatGenericDomainIssueLabel,
   ]);
