@@ -2415,12 +2415,14 @@ function svgDotDataUrl(fill = "#111", r = 7) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-const MAP_MARKER_SIZE = 30;
+const MAP_MARKER_SIZE = 34;
 const MAP_MARKER_CENTER = MAP_MARKER_SIZE / 2;
-const MAP_MARKER_RADIUS = 10.8;
-const MAP_MARKER_STROKE = 2.2;
-const MAP_MARKER_GLYPH_SIZE = 17;
-const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.12;
+const MAP_MARKER_RADIUS = 12.2;
+const MAP_MARKER_STROKE = 2.8;
+const MAP_MARKER_GLYPH_SIZE = 19;
+const MAP_MARKER_HALO_COLOR = "#ffffff";
+const MAP_MARKER_GLYPH_HALO_BLUR = 2.8;
+const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.16;
 const INCIDENT_CLUSTER_MAX_ZOOM = 15;
 const INCIDENT_STACK_LOCATION_DECIMALS = 5;
 
@@ -2515,8 +2517,8 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   const MARKER_SIZE = MAP_MARKER_SIZE;
   const MARKER_CENTER = MAP_MARKER_CENTER;
   const MARKER_RADIUS = MAP_MARKER_RADIUS;
-  const textY = isPotholeGlyph ? 13.8 : 14.5;
-  const textSize = isPotholeGlyph ? 13.5 : 14;
+  const textY = isPotholeGlyph ? 15.3 : 16;
+  const textSize = isPotholeGlyph ? 14.5 : 15;
   const g = window.google?.maps;
 
   // Prefer canvas composition for image glyphs (more reliable than <image href> in SVG data URLs across environments).
@@ -2557,6 +2559,11 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
         const imgSize = MAP_MARKER_GLYPH_SIZE;
         const imgX = (MARKER_SIZE - imgSize) / 2;
         const imgY = (MARKER_SIZE - imgSize) / 2;
+        ctx.save();
+        ctx.shadowColor = MAP_MARKER_HALO_COLOR;
+        ctx.shadowBlur = MAP_MARKER_GLYPH_HALO_BLUR;
+        ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
+        ctx.restore();
         ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
         url = canvas.toDataURL("image/png");
       } catch {
@@ -2570,7 +2577,7 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
         <circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MARKER_RADIUS}" fill="${c}" stroke="${r}" stroke-width="${MAP_MARKER_STROKE}" />
-        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}" fill="#111">${fallbackGlyph}</text>` : ""}
+        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}" fill="#111" stroke="${MAP_MARKER_HALO_COLOR}" stroke-width="2.2" paint-order="stroke fill" stroke-linejoin="round">${fallbackGlyph}</text>` : ""}
       </svg>
     `.trim();
     url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
@@ -2594,6 +2601,9 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   const border = Boolean(opts?.border);
   const borderColor = String(opts?.borderColor || "#39ff14");
   const borderWidth = Number(opts?.borderWidth || 3);
+  const halo = opts?.halo !== false;
+  const haloColor = String(opts?.haloColor || MAP_MARKER_HALO_COLOR);
+  const haloBlur = Number(opts?.haloBlur || MAP_MARKER_GLYPH_HALO_BLUR);
   const resolved = (() => {
     if (/^(https?:|data:)/i.test(raw)) return raw;
     if (raw.startsWith("/") && typeof window !== "undefined" && window.location?.origin) {
@@ -2603,17 +2613,8 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   })();
   const g = window.google?.maps;
   const px = Number(size) > 0 ? Number(size) : STREET_SIGN_MARKER_SIZE;
-  if (!border) {
-    if (!g) return { url: resolved };
-    return {
-      url: resolved,
-      scaledSize: new g.Size(px, px),
-      anchor: new g.Point(px / 2, px / 2),
-    };
-  }
-
-  // Bordered icon variant (used for queued sign mapping markers).
-  let borderedUrl = "";
+  let composedUrl = "";
+  let finalSize = px;
   if (typeof window !== "undefined" && typeof document !== "undefined") {
     gmapsImageIcon._imgCache ||= new Map();
     let img = gmapsImageIcon._imgCache.get(resolved);
@@ -2624,12 +2625,14 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
       gmapsImageIcon._imgCache.set(resolved, img);
     }
     if (img.complete && img.naturalWidth > 0) {
-      const cacheKey = `${resolved}|${px}|border|${borderColor}|${borderWidth}`;
-      gmapsImageIcon._borderCache ||= new Map();
-      if (gmapsImageIcon._borderCache.has(cacheKey)) {
-        borderedUrl = gmapsImageIcon._borderCache.get(cacheKey);
+      const cacheKey = `${resolved}|${px}|border:${border ? 1 : 0}|${borderColor}|${borderWidth}|halo:${halo ? 1 : 0}|${haloColor}|${haloBlur}`;
+      gmapsImageIcon._compositeCache ||= new Map();
+      if (gmapsImageIcon._compositeCache.has(cacheKey)) {
+        const cached = gmapsImageIcon._compositeCache.get(cacheKey);
+        composedUrl = cached?.url || "";
+        finalSize = Number(cached?.size || px) || px;
       } else {
-        const pad = Math.max(4, Math.ceil(borderWidth) + 3);
+        const pad = Math.max(4, halo ? Math.ceil(haloBlur) + 3 : 0, border ? Math.ceil(borderWidth) + 3 : 0);
         const canvasSize = px + pad * 2;
         const canvas = document.createElement("canvas");
         canvas.width = canvasSize;
@@ -2638,24 +2641,33 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
         if (ctx) {
           const x = pad;
           const y = pad;
+          if (halo) {
+            ctx.save();
+            ctx.shadowColor = haloColor;
+            ctx.shadowBlur = haloBlur;
+            ctx.drawImage(img, x, y, px, px);
+            ctx.restore();
+          }
           ctx.drawImage(img, x, y, px, px);
-          const cx = canvasSize / 2;
-          const cy = canvasSize / 2;
-          const radius = (px / 2) + 1;
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.strokeStyle = borderColor;
-          ctx.lineWidth = Math.max(2, borderWidth);
-          ctx.stroke();
-          borderedUrl = canvas.toDataURL("image/png");
-          gmapsImageIcon._borderCache.set(cacheKey, borderedUrl);
+          if (border) {
+            const cx = canvasSize / 2;
+            const cy = canvasSize / 2;
+            const radius = (px / 2) + 1;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.strokeStyle = borderColor;
+            ctx.lineWidth = Math.max(2, borderWidth);
+            ctx.stroke();
+          }
+          composedUrl = canvas.toDataURL("image/png");
+          finalSize = canvasSize;
+          gmapsImageIcon._compositeCache.set(cacheKey, { url: composedUrl, size: finalSize });
         }
       }
     }
   }
 
-  const finalUrl = borderedUrl || resolved;
-  const finalSize = borderedUrl ? px + Math.max(4, Math.ceil(borderWidth) + 3) * 2 : px;
+  const finalUrl = composedUrl || resolved;
   const anchor = finalSize / 2;
   if (!g) return { url: finalUrl };
   return {
@@ -2681,8 +2693,8 @@ function gmapsCountBadgeIcon(count = 0, opts = {}) {
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${center}" cy="${center}" r="${radius}" fill="${fill}" stroke="${ring}" stroke-width="2.4" />
-      <text x="${center}" y="${center + 0.8}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, sans-serif" font-size="${fontSize}" font-weight="800" fill="#ffffff">${label}</text>
+      <circle cx="${center}" cy="${center}" r="${radius}" fill="${fill}" stroke="${ring}" stroke-width="2.8" />
+      <text x="${center}" y="${center + 0.8}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, sans-serif" font-size="${fontSize}" font-weight="800" fill="#ffffff" stroke="rgba(0,0,0,0.28)" stroke-width="0.7" paint-order="stroke fill">${label}</text>
     </svg>
   `.trim();
   const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
