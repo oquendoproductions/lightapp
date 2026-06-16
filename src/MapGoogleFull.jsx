@@ -2421,6 +2421,80 @@ const MAP_MARKER_RADIUS = 10.8;
 const MAP_MARKER_STROKE = 2.2;
 const MAP_MARKER_GLYPH_SIZE = 17;
 const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.12;
+const INCIDENT_CLUSTER_MAX_ZOOM = 15;
+const INCIDENT_STACK_LOCATION_DECIMALS = 5;
+
+function incidentClusterRadiusMetersForZoom(zoom) {
+  const z = Number(zoom || 0);
+  if (z <= 10) return 1200;
+  if (z <= 12) return 700;
+  if (z <= 13) return 420;
+  if (z <= 14) return 260;
+  return 160;
+}
+
+function incidentLocationKey(lat, lng, decimals = INCIDENT_STACK_LOCATION_DECIMALS) {
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return "";
+  return `${nLat.toFixed(decimals)}:${nLng.toFixed(decimals)}`;
+}
+
+function clusterMarkersByDistance(markers = [], radiusMeters = 0) {
+  const radius = Number(radiusMeters || 0);
+  if (!(radius > 0)) {
+    return (Array.isArray(markers) ? markers : []).map((marker) => ({
+      lat: Number(marker?.lat),
+      lng: Number(marker?.lng),
+      markers: [marker],
+      north: Number(marker?.lat),
+      south: Number(marker?.lat),
+      east: Number(marker?.lng),
+      west: Number(marker?.lng),
+    }));
+  }
+
+  const clusters = [];
+  for (const marker of Array.isArray(markers) ? markers : []) {
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+    let best = null;
+    let bestDistance = Infinity;
+    for (const cluster of clusters) {
+      const distance = metersBetween({ lat, lng }, { lat: cluster.lat, lng: cluster.lng });
+      if (distance <= radius && distance < bestDistance) {
+        best = cluster;
+        bestDistance = distance;
+      }
+    }
+
+    if (!best) {
+      clusters.push({
+        lat,
+        lng,
+        north: lat,
+        south: lat,
+        east: lng,
+        west: lng,
+        markers: [marker],
+      });
+      continue;
+    }
+
+    best.markers.push(marker);
+    const count = best.markers.length;
+    best.lat = ((best.lat * (count - 1)) + lat) / count;
+    best.lng = ((best.lng * (count - 1)) + lng) / count;
+    best.north = Math.max(best.north, lat);
+    best.south = Math.min(best.south, lat);
+    best.east = Math.max(best.east, lng);
+    best.west = Math.min(best.west, lng);
+  }
+
+  return clusters;
+}
 
 // CMD+F: function gmapsDotIcon
 function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", glyphSrc = "") {
@@ -2589,6 +2663,37 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
     scaledSize: new g.Size(finalSize, finalSize),
     anchor: new g.Point(anchor, anchor),
   };
+}
+
+function gmapsCountBadgeIcon(count = 0, opts = {}) {
+  const value = Math.max(0, Number(count || 0));
+  const label = value > 99 ? "99+" : String(value || 0);
+  const fill = String(opts?.fill || "#17314f");
+  const ring = String(opts?.ring || "#ffffff");
+  const size = Number(opts?.size || Math.max(MAP_MARKER_SIZE + 4, 34));
+  const radius = Number(opts?.radius || Math.max(12.5, size * 0.36));
+  const center = size / 2;
+  const fontSize = label.length >= 3 ? 11 : 12.5;
+  const g = window.google?.maps;
+  const cacheKey = `${label}|${fill}|${ring}|${size}|${radius}`;
+  gmapsCountBadgeIcon._cache ||= new Map();
+  if (gmapsCountBadgeIcon._cache.has(cacheKey)) return gmapsCountBadgeIcon._cache.get(cacheKey);
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <circle cx="${center}" cy="${center}" r="${radius}" fill="${fill}" stroke="${ring}" stroke-width="2.4" />
+      <text x="${center}" y="${center + 0.8}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, sans-serif" font-size="${fontSize}" font-weight="800" fill="#ffffff">${label}</text>
+    </svg>
+  `.trim();
+  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  if (!g) return { url };
+  const icon = {
+    url,
+    scaledSize: new g.Size(size, size),
+    anchor: new g.Point(center, center),
+  };
+  gmapsCountBadgeIcon._cache.set(cacheKey, icon);
+  return icon;
 }
 
 function defaultMarkerColorForDomain(domainKey) {
@@ -16695,6 +16800,7 @@ export default function App({ onBackToHub = null }) {
   // Google Maps InfoWindow selection
   const [selectedOfficialId, setSelectedOfficialId] = useState(null);
   const [selectedQueuedTempId, setSelectedQueuedTempId] = useState(null);
+  const [selectedIncidentStackMarker, setSelectedIncidentStackMarker] = useState(null);
   // Bulk select toggle for official lights
   const toggleBulkSelect = useCallback((lightId) => {
     setBulkSelectedIds((prev) => {
@@ -23333,6 +23439,87 @@ async function selectTenantScopedPublicRows(
     incidentMapVisibleDomainKeys,
   ]);
 
+  const incidentClusterRenderItems = useMemo(() => {
+    if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return [];
+    const source = Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : [];
+    if (!source.length) return [];
+    if (Number(mapZoom) > INCIDENT_CLUSTER_MAX_ZOOM) return source;
+
+    const clusters = clusterMarkersByDistance(source, incidentClusterRadiusMetersForZoom(mapZoom));
+    return clusters
+      .map((cluster, index) => {
+        const markers = Array.isArray(cluster?.markers) ? cluster.markers.filter(Boolean) : [];
+        if (markers.length <= 1) return markers[0] || null;
+        const totalReports = markers.reduce((sum, marker) => sum + Math.max(1, Number(marker?.count || 0)), 0);
+        const domainCounts = new Map();
+        for (const marker of markers) {
+          const domainKey = String(marker?.domain || "").trim();
+          if (!domainKey) continue;
+          domainCounts.set(domainKey, (domainCounts.get(domainKey) || 0) + Math.max(1, Number(marker?.count || 0)));
+        }
+        return {
+          id: `incident-cluster-${index}-${incidentLocationKey(cluster?.lat, cluster?.lng, 4)}`,
+          kind: "incident_cluster",
+          domain: "incident_cluster",
+          lat: Number(cluster?.lat),
+          lng: Number(cluster?.lng),
+          count: totalReports,
+          markerCount: markers.length,
+          markers,
+          domainCounts: Array.from(domainCounts.entries()),
+          north: Number(cluster?.north),
+          south: Number(cluster?.south),
+          east: Number(cluster?.east),
+          west: Number(cluster?.west),
+        };
+      })
+      .filter(Boolean);
+  }, [activeMapLayerKey, renderedDomainMarkers, mapZoom]);
+
+  const incidentStackRenderItems = useMemo(() => {
+    if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return [];
+    const source = Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : [];
+    if (!source.length) return [];
+    if (Number(mapZoom) <= INCIDENT_CLUSTER_MAX_ZOOM) return [];
+
+    const byLocation = new Map();
+    for (const marker of source) {
+      const key = incidentLocationKey(marker?.lat, marker?.lng);
+      if (!key) continue;
+      const list = byLocation.get(key) || [];
+      list.push(marker);
+      byLocation.set(key, list);
+    }
+
+    const output = [];
+    for (const markers of byLocation.values()) {
+      if (!Array.isArray(markers) || !markers.length) continue;
+      if (markers.length === 1) {
+        output.push(markers[0]);
+        continue;
+      }
+      const sortedMarkers = [...markers].sort((a, b) => (Number(b?.count || 0) - Number(a?.count || 0)) || (Number(b?.lastTs || 0) - Number(a?.lastTs || 0)));
+      output.push({
+        id: `incident-stack-${incidentLocationKey(sortedMarkers[0]?.lat, sortedMarkers[0]?.lng)}`,
+        kind: "incident_stack",
+        domain: "incident_stack",
+        lat: Number(sortedMarkers[0]?.lat),
+        lng: Number(sortedMarkers[0]?.lng),
+        count: sortedMarkers.reduce((sum, marker) => sum + Math.max(1, Number(marker?.count || 0)), 0),
+        markerCount: sortedMarkers.length,
+        markers: sortedMarkers,
+      });
+    }
+
+    return output;
+  }, [activeMapLayerKey, renderedDomainMarkers, mapZoom]);
+
+  const displayedDomainMarkers = useMemo(() => {
+    if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return renderedDomainMarkers;
+    if (Number(mapZoom) <= INCIDENT_CLUSTER_MAX_ZOOM) return incidentClusterRenderItems;
+    return incidentStackRenderItems;
+  }, [activeMapLayerKey, renderedDomainMarkers, mapZoom, incidentClusterRenderItems, incidentStackRenderItems]);
+
   const selectedOfficialLightForPopup = useMemo(() => {
     if (bulkMode || !isStreetlightsLayerActive) return null;
     const id = (selectedOfficialId || "").trim();
@@ -23750,6 +23937,59 @@ async function selectTenantScopedPublicRows(
     formatGenericDomainIssueLabel,
   ]);
 
+  const selectedIncidentStackPopupPixel = useMemo(() => {
+    const marker = selectedIncidentStackMarker;
+    if (!marker) return null;
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(lat, lng) || null;
+  }, [selectedIncidentStackMarker, mapCenter, mapZoom, mapInteracting]);
+
+  const zoomToIncidentCluster = useCallback((clusterMarker) => {
+    if (!clusterMarker) return;
+    setSelectedIncidentStackMarker(null);
+    setSelectedDomainMarker(null);
+    setSelectedOfficialId(null);
+    const map = mapRef.current;
+    const north = Number(clusterMarker?.north);
+    const south = Number(clusterMarker?.south);
+    const east = Number(clusterMarker?.east);
+    const west = Number(clusterMarker?.west);
+    if (
+      map
+      && window?.google?.maps?.LatLngBounds
+      && [north, south, east, west].every(Number.isFinite)
+      && (Math.abs(north - south) > 0.00001 || Math.abs(east - west) > 0.00001)
+    ) {
+      try {
+        const bounds = new window.google.maps.LatLngBounds(
+          { lat: south, lng: west },
+          { lat: north, lng: east }
+        );
+        map.fitBounds(bounds, 56);
+        return;
+      } catch {
+        // fall through to manual zoom if fitBounds fails
+      }
+    }
+
+    const lat = Number(clusterMarker?.lat);
+    const lng = Number(clusterMarker?.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      setMapCenter({ lat, lng });
+    }
+    const nextZoom = Math.min(18, Math.max(INCIDENT_CLUSTER_MAX_ZOOM + 1, Number(mapZoom || 0) + 2));
+    setMapZoom(nextZoom);
+    mapZoomRef.current = nextZoom;
+    try {
+      map?.panTo?.({ lat, lng });
+      map?.setZoom?.(nextZoom);
+    } catch {
+      // state updates above are enough
+    }
+  }, [mapZoom]);
+
   useEffect(() => {
     if (!isStreetlightsLayerActive) {
       if (selectedOfficialId) setSelectedOfficialId(null);
@@ -23769,6 +24009,13 @@ async function selectTenantScopedPublicRows(
       setSelectedDomainMarker(null);
     }
   }, [activeMapLayerKey, selectedDomainMarker]);
+
+  useEffect(() => {
+    if (!selectedIncidentStackMarker) return;
+    if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY || Number(mapZoom) <= INCIDENT_CLUSTER_MAX_ZOOM) {
+      setSelectedIncidentStackMarker(null);
+    }
+  }, [activeMapLayerKey, selectedIncidentStackMarker, mapZoom]);
 
   useEffect(() => {
     if (!queueSignTypeOpen) return;
@@ -23903,7 +24150,7 @@ async function selectTenantScopedPublicRows(
 
   const selectDomainMarkerWithGeo = useCallback((marker) => {
     if (!marker) return;
-    const domainKey = String(adminReportDomain || "").trim();
+    const domainKey = normalizeDomainKeyOrSlug(marker?.domain || adminReportDomain, { allowUnknown: true }) || String(adminReportDomain || "").trim();
     const shouldEnrich = domainKey === "potholes" || domainKey === "water_drain_issues";
     setSelectedDomainMarker(marker);
     if (!shouldEnrich) return;
@@ -23919,6 +24166,19 @@ async function selectTenantScopedPublicRows(
     // Passive marker-click geocoding disabled for cost control.
     // Marker details should come from persisted data only.
   }, [adminReportDomain, isValidLatLng, reverseGeocodeRoadLabel]);
+
+  const openIncidentDomainMarker = useCallback((marker) => {
+    if (!marker) return;
+    setSelectedIncidentStackMarker(null);
+    setSelectedQueuedTempId(null);
+    setSelectedOfficialId(null);
+    const markerDomain = String(marker?.domain || adminReportDomain).trim();
+    if (markerDomain === "potholes" || markerDomain === "water_drain_issues") {
+      selectDomainMarkerWithGeo(marker);
+      return;
+    }
+    setSelectedDomainMarker(marker);
+  }, [adminReportDomain, selectDomainMarkerWithGeo]);
 
   // Only "community" reports get clustered into community lights
   const communityReports = useMemo(
@@ -24470,6 +24730,7 @@ async function selectTenantScopedPublicRows(
     // Google Maps InfoWindow (official)
     try { setSelectedOfficialId(null); } catch {}
     try { setSelectedDomainMarker(null); } catch {}
+    try { setSelectedIncidentStackMarker(null); } catch {}
 
     // ✅ queued marker popup
     try { setSelectedQueuedTempId(null); } catch {}
@@ -28902,6 +29163,7 @@ async function insertReportWithFallback(payload) {
   };
   const selectedOfficialPopupPlacement = getMarkerPopupPlacement(selectedOfficialPopupPixel, { estimatedHeight: 390 });
   const selectedDomainPopupPlacement = getMarkerPopupPlacement(selectedDomainPopupPixel, { estimatedHeight: 340 });
+  const selectedIncidentStackPopupPlacement = getMarkerPopupPlacement(selectedIncidentStackPopupPixel, { estimatedHeight: 360 });
   const selectedQueuedPopupPlacement = getMarkerPopupPlacement(selectedQueuedPopupPixel, { estimatedHeight: 230 });
   const mapHasAnyLoadedData =
     reports.length > 0 ||
@@ -30888,10 +31150,11 @@ async function insertReportWithFallback(payload) {
             }
 
             // Clicking map background should close any open info windows.
-            if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker) {
+            if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker || selectedIncidentStackMarker) {
               setSelectedOfficialId(null);
               setSelectedQueuedTempId(null);
               setSelectedDomainMarker(null);
+              setSelectedIncidentStackMarker(null);
             }
 
             if (
@@ -31008,12 +31271,16 @@ async function insertReportWithFallback(payload) {
           />
         )}
 
-        {activeMapLayerKey !== "streetlights" && renderedDomainMarkers.map((m) => (
+        {activeMapLayerKey !== "streetlights" && displayedDomainMarkers.map((m) => (
           <MarkerF
             key={`domain-${String(m?.domain || adminReportDomain)}-${m.id}`}
             position={{ lat: m.lat, lng: m.lng }}
             icon={
-              String(m?.domain || adminReportDomain) === "street_signs"
+              m?.kind === "incident_cluster"
+                ? gmapsCountBadgeIcon(m?.count, { fill: "#17314f", ring: "#ffffff", size: 36 })
+                : m?.kind === "incident_stack"
+                  ? gmapsCountBadgeIcon(m?.count, { fill: "#2a7262", ring: "#ffffff", size: 34 })
+              : String(m?.domain || adminReportDomain) === "street_signs"
                 ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
                 : gmapsDotIcon(
                     m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor,
@@ -31025,20 +31292,20 @@ async function insertReportWithFallback(payload) {
             onClick={() => {
               setSelectedQueuedTempId(null);
               setSelectedOfficialId(null);
+              if (m?.kind === "incident_cluster") {
+                zoomToIncidentCluster(m);
+                return;
+              }
+              if (m?.kind === "incident_stack") {
+                setSelectedDomainMarker(null);
+                setSelectedIncidentStackMarker(m);
+                return;
+              }
               const markerDomain = String(m?.domain || adminReportDomain).trim();
-              if (markerDomain === "potholes") {
-                selectDomainMarkerWithGeo(m);
-                return;
-              }
               if (markerDomain === "street_signs") {
-                setSelectedDomainMarker(m);
-                return;
+                setSelectedIncidentStackMarker(null);
               }
-              if (markerDomain === "water_drain_issues") {
-                selectDomainMarkerWithGeo(m);
-                return;
-              }
-              setSelectedDomainMarker(m);
+              openIncidentDomainMarker(m);
             }}
           />
         ))}
@@ -31316,6 +31583,93 @@ async function insertReportWithFallback(payload) {
 
           <div
             style={selectedOfficialPopupPlacement.arrowStyle}
+          />
+        </div>
+      )}
+
+      {!bulkMode && selectedIncidentStackMarker && selectedIncidentStackPopupPixel && (
+        <div
+          style={selectedIncidentStackPopupPlacement.frameStyle}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div style={{ ...markerPopupCardStyle, gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => setSelectedIncidentStackMarker(null)}
+              aria-label="Close"
+              style={{
+                position: "absolute",
+                marginLeft: "auto",
+                right: 8,
+                top: 8,
+                width: 26,
+                height: 26,
+                borderRadius: 999,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+                cursor: "pointer",
+                fontWeight: 900,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+            <div style={{ fontWeight: 900, paddingRight: 26 }}>
+              Multiple incidents here
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.88, lineHeight: 1.35 }}>
+              {Number(selectedIncidentStackMarker?.count || 0)} open report{Number(selectedIncidentStackMarker?.count || 0) === 1 ? "" : "s"} across {Number(selectedIncidentStackMarker?.markerCount || 0)} marker{Number(selectedIncidentStackMarker?.markerCount || 0) === 1 ? "" : "s"}.
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {(Array.isArray(selectedIncidentStackMarker?.markers) ? selectedIncidentStackMarker.markers : []).map((marker) => {
+                const domainKey = String(marker?.domain || "").trim();
+                const domainLabel =
+                  domainKey === "potholes"
+                    ? "Pothole Issue"
+                    : domainKey === "water_drain_issues"
+                      ? "Water / Drain Issue"
+                      : domainKey === "street_signs"
+                        ? `Street Sign${String(marker?.sign_type || "").trim() ? ` • ${formatStreetSignTypeLabel(marker.sign_type)}` : ""}`
+                        : String(marker?.domainLabel || resolveReportDomainLabel(domainKey, "Incident")).trim() || "Incident";
+                const issueLabel =
+                  domainKey === "water_drain_issues"
+                    ? formatWaterDrainIssueLabel(String(marker?.rows?.[0]?.type || marker?.rows?.[0]?.report_type || "").trim())
+                    : domainKey === "potholes"
+                      ? ""
+                      : formatGenericDomainIssueLabel(marker?.rows?.[0]?.type || marker?.rows?.[0]?.report_type);
+                return (
+                  <button
+                    key={`stack-item-${domainKey}-${String(marker?.id || "")}`}
+                    type="button"
+                    onClick={() => openIncidentDomainMarker(marker)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      borderRadius: 12,
+                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: "var(--sl-ui-modal-btn-secondary-bg)",
+                      color: "var(--sl-ui-modal-btn-secondary-text)",
+                      padding: "10px 12px",
+                      display: "grid",
+                      gap: 4,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontWeight: 800 }}>{domainLabel}</span>
+                    <span style={{ fontSize: 12, opacity: 0.82 }}>
+                      {Number(marker?.count || 0)} report{Number(marker?.count || 0) === 1 ? "" : "s"}
+                      {issueLabel ? ` • ${issueLabel}` : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div
+            style={selectedIncidentStackPopupPlacement.arrowStyle}
           />
         </div>
       )}
