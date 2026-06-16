@@ -2415,15 +2415,12 @@ function svgDotDataUrl(fill = "#111", r = 7) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-const MAP_MARKER_SIZE = 26;
+const MAP_MARKER_SIZE = 30;
 const MAP_MARKER_CENTER = MAP_MARKER_SIZE / 2;
-const MAP_MARKER_RADIUS = 9.2;
+const MAP_MARKER_RADIUS = 10.8;
 const MAP_MARKER_STROKE = 2.2;
-const MAP_MARKER_GLYPH_SIZE = 15;
-const MAP_MARKER_GLYPH_BADGE_RADIUS = 5.6;
-const MAP_MARKER_GLYPH_BADGE_COLOR = "rgba(255,255,255,0.96)";
-const MAP_MARKER_GLYPH_SHADOW = "rgba(0,0,0,0.20)";
-const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.10;
+const MAP_MARKER_GLYPH_SIZE = 17;
+const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.12;
 
 // CMD+F: function gmapsDotIcon
 function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", glyphSrc = "") {
@@ -2483,14 +2480,6 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
         ctx.lineWidth = MAP_MARKER_STROKE;
         ctx.strokeStyle = r;
         ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(MARKER_CENTER, MARKER_CENTER, MAP_MARKER_GLYPH_BADGE_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = MAP_MARKER_GLYPH_BADGE_COLOR;
-        ctx.shadowColor = MAP_MARKER_GLYPH_SHADOW;
-        ctx.shadowBlur = 3;
-        ctx.fill();
-        ctx.shadowColor = "transparent";
-        ctx.shadowBlur = 0;
         const imgSize = MAP_MARKER_GLYPH_SIZE;
         const imgX = (MARKER_SIZE - imgSize) / 2;
         const imgY = (MARKER_SIZE - imgSize) / 2;
@@ -2507,7 +2496,6 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
         <circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MARKER_RADIUS}" fill="${c}" stroke="${r}" stroke-width="${MAP_MARKER_STROKE}" />
-        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MAP_MARKER_GLYPH_BADGE_RADIUS}" fill="${MAP_MARKER_GLYPH_BADGE_COLOR}" />` : ""}
         ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}" fill="#111">${fallbackGlyph}</text>` : ""}
       </svg>
     `.trim();
@@ -3288,14 +3276,6 @@ const OfficialLightsCanvasOverlay = memo(forwardRef(function OfficialLightsCanva
       ctx.lineWidth = MAP_MARKER_STROKE;
       ctx.strokeStyle = state.getMarkerRingColor?.(ol.id) || "#fff";
       ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(x, y, MAP_MARKER_GLYPH_BADGE_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = MAP_MARKER_GLYPH_BADGE_COLOR;
-      ctx.shadowColor = MAP_MARKER_GLYPH_SHADOW;
-      ctx.shadowBlur = 3;
-      ctx.fill();
-      ctx.shadowColor = "transparent";
-      ctx.shadowBlur = 0;
 
       // Draw streetlight icon glyph (fallback to emoji if image is not ready yet).
       const glyphImg = glyphImgRef.current;
@@ -4479,26 +4459,10 @@ function InfoMenuModal({
         fontSize: showGlyph ? MAP_MARKER_GLYPH_SIZE : 0,
         lineHeight: 1,
         color: glyphColor,
-        position: "relative",
-        overflow: "hidden",
       }}
       aria-hidden="true"
     >
-      {showGlyph ? (
-        <span
-          style={{
-            width: MAP_MARKER_GLYPH_BADGE_RADIUS * 2,
-            height: MAP_MARKER_GLYPH_BADGE_RADIUS * 2,
-            borderRadius: 999,
-            background: MAP_MARKER_GLYPH_BADGE_COLOR,
-            boxShadow: `0 1px 3px ${MAP_MARKER_GLYPH_SHADOW}`,
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          {glyphSrc ? <AppIcon src={glyphSrc} size={MAP_MARKER_GLYPH_SIZE} /> : glyph}
-        </span>
-      ) : ""}
+      {showGlyph ? (glyphSrc ? <AppIcon src={glyphSrc} size={MAP_MARKER_GLYPH_SIZE} /> : glyph) : ""}
     </span>
   );
 
