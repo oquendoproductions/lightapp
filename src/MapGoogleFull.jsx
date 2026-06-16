@@ -2614,38 +2614,6 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   return icon;
 }
 
-function gmapsStandaloneGlyphIcon(glyph = "💡", opts = {}) {
-  const gph = String(glyph || "💡");
-  const ringColor = String(opts?.ringColor || "").trim();
-  const showRing = Boolean(ringColor);
-  const size = Number(opts?.size || INCIDENT_DOMAIN_ICON_SIZE);
-  const center = size / 2;
-  const ringWidth = Number(opts?.ringWidth || 3.6);
-  const radius = Math.max(9, (size / 2) - ringWidth - 1.5);
-  const fontSize = Number(opts?.fontSize || Math.max(20, size * 0.7));
-  const textY = Number(opts?.textY || (center + 0.8));
-  const g = window.google?.maps;
-  const cacheKey = `${gph}|${ringColor}|${showRing ? 1 : 0}|${size}|${ringWidth}|${fontSize}|${textY}`;
-  gmapsStandaloneGlyphIcon._cache ||= new Map();
-  if (gmapsStandaloneGlyphIcon._cache.has(cacheKey)) return gmapsStandaloneGlyphIcon._cache.get(cacheKey);
-
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      ${showRing ? `<circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${ringColor}" stroke-width="${ringWidth}" />` : ""}
-      <text x="${center}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="#111" stroke="${MAP_MARKER_HALO_COLOR}" stroke-width="2.8" paint-order="stroke fill" stroke-linejoin="round">${gph}</text>
-    </svg>
-  `.trim();
-  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-  if (!g) return { url };
-  const icon = {
-    url,
-    scaledSize: new g.Size(size, size),
-    anchor: new g.Point(center, center),
-  };
-  gmapsStandaloneGlyphIcon._cache.set(cacheKey, icon);
-  return icon;
-}
-
 function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   const raw = String(src || "").trim();
   if (!raw) return gmapsDotIcon();
@@ -2732,28 +2700,6 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
     scaledSize: new g.Size(finalSize, finalSize),
     anchor: new g.Point(anchor, anchor),
   };
-}
-
-function gmapsStandaloneDomainIcon({ glyph = "💡", glyphSrc = "", ringColor = "", size = INCIDENT_DOMAIN_ICON_SIZE } = {}) {
-  const normalizedRingColor = String(ringColor || "").trim();
-  const showRing = Boolean(normalizedRingColor)
-    && normalizedRingColor.toLowerCase() !== "#fff"
-    && normalizedRingColor.toLowerCase() !== "#ffffff";
-  const resolvedSrc = String(glyphSrc || "").trim();
-  if (resolvedSrc) {
-    return gmapsImageIcon(resolvedSrc, size, {
-      border: showRing,
-      borderColor: normalizedRingColor || "#1e88e5",
-      borderWidth: 3.5,
-      halo: true,
-      haloColor: MAP_MARKER_HALO_COLOR,
-      haloBlur: Math.max(MAP_MARKER_GLYPH_HALO_BLUR, 3.4),
-    });
-  }
-  return gmapsStandaloneGlyphIcon(glyph, {
-    ringColor: showRing ? normalizedRingColor : "",
-    size,
-  });
 }
 
 function gmapsCountBadgeIcon(count = 0, opts = {}) {
@@ -31513,12 +31459,14 @@ async function insertReportWithFallback(payload) {
                 ? gmapsCountBadgeIcon(m?.count, { fill: "#17314f", ring: "#ffffff", size: 36 })
                 : m?.kind === "incident_stack"
                   ? gmapsCountBadgeIcon(m?.count, { fill: "#2a7262", ring: "#ffffff", size: 34 })
-                : gmapsStandaloneDomainIcon({
-                    glyph: m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
-                    glyphSrc: m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight)),
-                    ringColor: m.ringColor || "",
-                    size: String(m?.domain || adminReportDomain) === "street_signs" ? STREET_SIGN_MARKER_SIZE : INCIDENT_DOMAIN_ICON_SIZE,
-                  })
+                : String(m?.domain || adminReportDomain) === "street_signs"
+                  ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
+                  : gmapsDotIcon(
+                      m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor,
+                      m.ringColor || "#fff",
+                      m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
+                      m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight))
+                    )
             }
             onClick={() => {
               setSelectedQueuedTempId(null);
