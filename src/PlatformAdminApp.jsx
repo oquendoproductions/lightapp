@@ -1089,6 +1089,24 @@ function defaultDomainMarkerColor(domainKey) {
   return sanitizeHexColor(DOMAIN_MARKER_COLOR_DEFAULTS[key], "#234a72");
 }
 
+function sanitizePositiveIntegerSetting(value, fallback, options = {}) {
+  const min = Number.isFinite(Number(options?.min)) ? Number(options.min) : 1;
+  const max = Number.isFinite(Number(options?.max)) ? Number(options.max) : 99;
+  const resolvedFallback = Math.max(min, Math.min(max, Math.round(Number(fallback || min))));
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return resolvedFallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function defaultDomainPublicVisibilityMinReports(domainKey) {
+  return defaultDomainType(domainKey) === "incident_driven" ? 2 : 1;
+}
+
+function defaultDomainHighConfidenceMinReports(domainKey) {
+  const publicMin = defaultDomainPublicVisibilityMinReports(domainKey);
+  return Math.max(publicMin, 4);
+}
+
 function initialDomainConfigForm() {
   const out = {};
   for (const d of DOMAIN_OPTIONS) {
@@ -1102,6 +1120,8 @@ function initialDomainConfigForm() {
       notification_subject_template: preset.subject,
       notification_body_template: preset.body,
       organization_monitored_repairs: true,
+      public_visibility_min_reports: defaultDomainPublicVisibilityMinReports(d.key),
+      high_confidence_min_reports: defaultDomainHighConfidenceMinReports(d.key),
     };
   }
   return out;
@@ -2945,9 +2965,16 @@ export default function PlatformAdminApp() {
       setTenantDomainConfigsByTenant({});
       return;
     }
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("tenant_domain_configs")
-      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs");
+      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports");
+    if (error && isMissingColumnError(error)) {
+      const fallback = await supabase
+        .from("tenant_domain_configs")
+        .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs");
+      data = fallback.data;
+      error = fallback.error;
+    }
     if (error) {
       if (isMissingRelationError(error)) {
         setTenantDomainConfigsByTenant({});
@@ -2965,6 +2992,16 @@ export default function PlatformAdminApp() {
         domain_type: String(row?.domain_type || defaultDomainType(domain)).trim().toLowerCase() || defaultDomainType(domain),
         notification_email: String(row?.notification_email || "").trim(),
         organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+        public_visibility_min_reports: sanitizePositiveIntegerSetting(
+          row?.public_visibility_min_reports,
+          defaultDomainPublicVisibilityMinReports(domain),
+          { min: 1, max: 25 }
+        ),
+        high_confidence_min_reports: sanitizePositiveIntegerSetting(
+          row?.high_confidence_min_reports,
+          defaultDomainHighConfidenceMinReports(domain),
+          { min: 1, max: 25 }
+        ),
       };
     }
     setTenantDomainConfigsByTenant(next);
@@ -4671,6 +4708,16 @@ export default function PlatformAdminApp() {
         organization_monitored_repairs: typeof assignment?.organization_monitored_repairs === "boolean"
           ? assignment.organization_monitored_repairs
           : configured?.organization_monitored_repairs !== false,
+        public_visibility_min_reports: sanitizePositiveIntegerSetting(
+          configured?.public_visibility_min_reports,
+          defaultDomainPublicVisibilityMinReports(d.key),
+          { min: 1, max: 25 }
+        ),
+        high_confidence_min_reports: sanitizePositiveIntegerSetting(
+          configured?.high_confidence_min_reports,
+          defaultDomainHighConfidenceMinReports(d.key),
+          { min: 1, max: 25 }
+        ),
       };
     }
     setDomainConfigForm(nextDomainConfig);
@@ -5567,6 +5614,16 @@ export default function PlatformAdminApp() {
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      public_visibility_min_reports: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_visibility_min_reports,
+        defaultDomainPublicVisibilityMinReports(d.key),
+        { min: 1, max: 25 }
+      ),
+      high_confidence_min_reports: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.high_confidence_min_reports,
+        defaultDomainHighConfidenceMinReports(d.key),
+        { min: 1, max: 25 }
+      ),
       updated_by: cleanOptional(sessionUserId),
     }));
     const assignmentRows = persistedDomainRows.map((d) => ({
@@ -11262,6 +11319,76 @@ export default function PlatformAdminApp() {
                                 style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                               />
                             </label>
+                            {!isAssetBacked ? (
+                              <>
+                                <label style={modalField}>
+                                  <span>Public Visibility Threshold</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.public_visibility_min_reports ?? defaultDomainPublicVisibilityMinReports(d.key)}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        public_visibility_min_reports: e.target.value,
+                                      },
+                                    }))}
+                                    onBlur={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        public_visibility_min_reports: sanitizePositiveIntegerSetting(
+                                          e.target.value,
+                                          defaultDomainPublicVisibilityMinReports(d.key),
+                                          { min: 1, max: 25 }
+                                        ),
+                                      },
+                                    }))}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={modalField}>
+                                  <span>High Confidence Threshold</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.high_confidence_min_reports ?? defaultDomainHighConfidenceMinReports(d.key)}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        high_confidence_min_reports: e.target.value,
+                                      },
+                                    }))}
+                                    onBlur={(e) => setDomainConfigForm((prev) => {
+                                      const publicMin = sanitizePositiveIntegerSetting(
+                                        prev?.[d.key]?.public_visibility_min_reports,
+                                        defaultDomainPublicVisibilityMinReports(d.key),
+                                        { min: 1, max: 25 }
+                                      );
+                                      return {
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          public_visibility_min_reports: publicMin,
+                                          high_confidence_min_reports: sanitizePositiveIntegerSetting(
+                                            e.target.value,
+                                            Math.max(publicMin, defaultDomainHighConfidenceMinReports(d.key)),
+                                            { min: publicMin, max: 25 }
+                                          ),
+                                        },
+                                      };
+                                    })}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                              </>
+                            ) : null}
                             <label style={modalField}>
                               <span>Email Template Preset</span>
                               <select
@@ -11322,6 +11449,11 @@ export default function PlatformAdminApp() {
                                 </span>
                               </label>
                             </div>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                            {isAssetBacked
+                              ? "Asset-backed domains do not use public incident confidence thresholds."
+                              : "Confidence rules: the public visibility threshold controls when an incident becomes visible to everyone on the map. The high confidence threshold is stored per tenant/domain so future scoring, alerting, and operations workflows can follow local reporting patterns."}
                           </div>
                           <div
                             style={{

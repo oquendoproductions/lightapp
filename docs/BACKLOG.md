@@ -63,20 +63,27 @@
 8. Include an image option within Reports:
    - Support adding an image from the report flow.
    - Show attached image in Reports details views.
-9. Ashtabula boundary mask inversion (deferred until sync stability is complete):
+9. Public reporter points / incentives:
+   - Award points for legitimate report actions such as submitting a report, adding a photo, or matching an already-reported issue.
+   - Define abuse controls before launch:
+     - duplicate-report throttling
+     - suspicious scoring / fraud review
+     - no points for obvious spam or repeated self-confirmation loops
+   - Decide whether points are informational only or redeemable for a real benefit.
+10. Ashtabula boundary mask inversion (deferred until sync stability is complete):
    - Keep boundary border visible.
    - Make boundary interior clear/transparent.
    - Shade outside the boundary only.
    - Status: implemented in current branch; pending visual QA in staging.
-10. Streetlights "in view" counters as toggle filters:
+11. Streetlights "in view" counters as toggle filters:
    - Convert `Open reports in view`, `Saved lights in view`, and `Utility reported lights in view` into clickable toggles.
    - Click once: show only that marker set and hide other marker sets.
    - Click again: clear that filter and restore default marker visibility.
-11. Developer municipality settings panel (dev-side control surface):
+12. Developer municipality settings panel (dev-side control surface):
    - Add a developer-facing menu for municipality-level settings and testing controls.
    - Allow toggling domains/features on and off per municipality in development/staging.
    - Include configurable municipality metadata/testing flags for rapid QA without production exposure.
-12. Pilot legal/ops CYA implementation:
+13. Pilot legal/ops CYA implementation:
    - Add public-form disclaimer before submit.
    - Add success-screen disclaimer under report number.
    - Add domain-specific urgent warning copy for sewer/storm backup and other high-risk domains.

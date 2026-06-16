@@ -1015,6 +1015,24 @@ function waterDrainIssueKeyFromNote(note) {
   return "";
 }
 
+function sanitizeIncidentReportThreshold(value, fallback = 2, options = {}) {
+  const min = Number.isFinite(Number(options?.min)) ? Number(options.min) : 1;
+  const max = Number.isFinite(Number(options?.max)) ? Number(options.max) : 25;
+  const resolvedFallback = Math.max(min, Math.min(max, Math.round(Number(fallback || min))));
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return resolvedFallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function defaultDomainPublicVisibilityMinReports(domainKey) {
+  return defaultDomainType(domainKey) === "incident_driven" ? 2 : 1;
+}
+
+function defaultDomainHighConfidenceMinReports(domainKey) {
+  const publicMin = defaultDomainPublicVisibilityMinReports(domainKey);
+  return Math.max(publicMin, 4);
+}
+
 function statusFromCount(count) {
   if (count >= 4) return { label: "Confirmed Out", color: "#b71c1c" };
   if (count >= 2) return { label: "Likely Out", color: "#f57c00" };
@@ -2422,6 +2440,7 @@ const MAP_MARKER_STROKE = 2.8;
 const MAP_MARKER_GLYPH_SIZE = 19;
 const MAP_MARKER_HALO_COLOR = "#ffffff";
 const MAP_MARKER_GLYPH_HALO_BLUR = 2.8;
+const INCIDENT_DOMAIN_ICON_SIZE = Math.round(MAP_MARKER_SIZE * 1.14);
 const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.16;
 const INCIDENT_CLUSTER_MAX_ZOOM = 15;
 const INCIDENT_STACK_LOCATION_DECIMALS = 5;
@@ -2595,6 +2614,38 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   return icon;
 }
 
+function gmapsStandaloneGlyphIcon(glyph = "💡", opts = {}) {
+  const gph = String(glyph || "💡");
+  const ringColor = String(opts?.ringColor || "").trim();
+  const showRing = Boolean(ringColor);
+  const size = Number(opts?.size || INCIDENT_DOMAIN_ICON_SIZE);
+  const center = size / 2;
+  const ringWidth = Number(opts?.ringWidth || 3.6);
+  const radius = Math.max(9, (size / 2) - ringWidth - 1.5);
+  const fontSize = Number(opts?.fontSize || Math.max(20, size * 0.7));
+  const textY = Number(opts?.textY || (center + 0.8));
+  const g = window.google?.maps;
+  const cacheKey = `${gph}|${ringColor}|${showRing ? 1 : 0}|${size}|${ringWidth}|${fontSize}|${textY}`;
+  gmapsStandaloneGlyphIcon._cache ||= new Map();
+  if (gmapsStandaloneGlyphIcon._cache.has(cacheKey)) return gmapsStandaloneGlyphIcon._cache.get(cacheKey);
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      ${showRing ? `<circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${ringColor}" stroke-width="${ringWidth}" />` : ""}
+      <text x="${center}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="#111" stroke="${MAP_MARKER_HALO_COLOR}" stroke-width="2.8" paint-order="stroke fill" stroke-linejoin="round">${gph}</text>
+    </svg>
+  `.trim();
+  const url = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  if (!g) return { url };
+  const icon = {
+    url,
+    scaledSize: new g.Size(size, size),
+    anchor: new g.Point(center, center),
+  };
+  gmapsStandaloneGlyphIcon._cache.set(cacheKey, icon);
+  return icon;
+}
+
 function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   const raw = String(src || "").trim();
   if (!raw) return gmapsDotIcon();
@@ -2675,6 +2726,28 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
     scaledSize: new g.Size(finalSize, finalSize),
     anchor: new g.Point(anchor, anchor),
   };
+}
+
+function gmapsStandaloneDomainIcon({ glyph = "💡", glyphSrc = "", ringColor = "", size = INCIDENT_DOMAIN_ICON_SIZE } = {}) {
+  const normalizedRingColor = String(ringColor || "").trim();
+  const showRing = Boolean(normalizedRingColor)
+    && normalizedRingColor.toLowerCase() !== "#fff"
+    && normalizedRingColor.toLowerCase() !== "#ffffff";
+  const resolvedSrc = String(glyphSrc || "").trim();
+  if (resolvedSrc) {
+    return gmapsImageIcon(resolvedSrc, size, {
+      border: showRing,
+      borderColor: normalizedRingColor || "#1e88e5",
+      borderWidth: 3.5,
+      halo: true,
+      haloColor: MAP_MARKER_HALO_COLOR,
+      haloBlur: Math.max(MAP_MARKER_GLYPH_HALO_BLUR, 3.4),
+    });
+  }
+  return gmapsStandaloneGlyphIcon(glyph, {
+    ringColor: showRing ? normalizedRingColor : "",
+    size,
+  });
 }
 
 function gmapsCountBadgeIcon(count = 0, opts = {}) {
@@ -4583,6 +4656,48 @@ function InfoMenuModal({
     </span>
   );
 
+  const standaloneIconSwatch = (
+    { glyph = "💡", glyphSrc = "", ring = "", size = INCIDENT_DOMAIN_ICON_SIZE } = {}
+  ) => (
+    <span
+      style={{
+        width: size + 10,
+        height: size + 10,
+        display: "grid",
+        placeItems: "center",
+        position: "relative",
+        filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.2))",
+      }}
+      aria-hidden="true"
+    >
+      {ring ? (
+        <span
+          style={{
+            position: "absolute",
+            inset: 2,
+            borderRadius: 999,
+            border: `3px solid ${ring}`,
+          }}
+        />
+      ) : null}
+      {glyphSrc ? (
+        <AppIcon src={glyphSrc} size={size} />
+      ) : (
+        <span
+          style={{
+            fontSize: Math.max(18, size * 0.68),
+            lineHeight: 1,
+            color: "#111",
+            WebkitTextStroke: "2.4px #fff",
+            paintOrder: "stroke fill",
+          }}
+        >
+          {glyph}
+        </span>
+      )}
+    </span>
+  );
+
   // Legend maintenance rule (internal): whenever marker colors, rings, glyphs, helper icons,
   // or visibility rules change on the map, update this Info modal legend in the same pass and
   // bump the app version for the release. See docs/governance/map-legend-and-versioning-rules.md.
@@ -4603,19 +4718,15 @@ function InfoMenuModal({
     {
       title: "Potholes",
       rows: [
-        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.pothole }), label: "Pothole marker" },
-        { swatch: markerSwatch("#fbc02d", { glyphSrc: UI_ICON_SRC.pothole }), label: "Open pothole (yellow indicator)" },
-        { swatch: markerSwatch("#f57c00", { glyphSrc: UI_ICON_SRC.pothole }), label: "Escalated pothole (orange indicator)" },
-        { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.pothole }), label: "Fixed pothole (green indicator)" },
+        { swatch: standaloneIconSwatch({ glyphSrc: UI_ICON_SRC.pothole }), label: "Pothole report location" },
+        { swatch: standaloneIconSwatch({ glyphSrc: UI_ICON_SRC.pothole, ring: "#1e88e5" }), label: "Blue ring means you reported this pothole" },
       ],
     },
     {
       title: "Water / Drain Issues",
       rows: [
-        { swatch: markerSwatch("#111", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Water / Drain marker" },
-        { swatch: markerSwatch("#fbc02d", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Open water/drain issue (yellow indicator)" },
-        { swatch: markerSwatch("#f57c00", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Escalated water/drain issue (orange indicator)" },
-        { swatch: markerSwatch("#2ecc71", { glyphSrc: UI_ICON_SRC.waterMain }), label: "Fixed water/drain issue (green indicator)" },
+        { swatch: standaloneIconSwatch({ glyphSrc: UI_ICON_SRC.waterMain }), label: "Water / drain report location" },
+        { swatch: standaloneIconSwatch({ glyphSrc: UI_ICON_SRC.waterMain, ring: "#1e88e5" }), label: "Blue ring means you reported this issue" },
       ],
     },
     {
@@ -22888,6 +22999,7 @@ async function selectTenantScopedPublicRows(
       if (!prev) {
         byDomainLight.set(mapKey, {
           id: lid,
+          incident_id: lid,
           domain: domainKey,
           domainLabel: String(domainOption?.label || domainKey).trim() || domainKey,
           glyph: String(domainOption?.icon || "📍"),
@@ -22896,10 +23008,16 @@ async function selectTenantScopedPublicRows(
           lng,
           count: 1,
           lastTs: Number(r?.ts || 0) || 0,
+          rows: [r],
+          location_label: readLocationFromNote(r?.note) || "",
         });
       } else {
         prev.count += 1;
         if (Number(r?.ts || 0) > prev.lastTs) prev.lastTs = Number(r?.ts || 0);
+        prev.rows = [...(Array.isArray(prev.rows) ? prev.rows : []), r];
+        if (!String(prev.location_label || "").trim()) {
+          prev.location_label = readLocationFromNote(r?.note) || "";
+        }
       }
     }
     return Array.from(byDomainLight.values());
@@ -23051,9 +23169,19 @@ async function selectTenantScopedPublicRows(
         for (const row of legacyRows || []) {
           const domainKey = String(row?.domain || "").trim().toLowerCase();
           if (!domainKey) continue;
+          const publicVisibilityMin = sanitizeIncidentReportThreshold(
+            row?.public_visibility_min_reports,
+            defaultDomainPublicVisibilityMinReports(domainKey)
+          );
           legacyNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+            public_visibility_min_reports: publicVisibilityMin,
+            high_confidence_min_reports: sanitizeIncidentReportThreshold(
+              row?.high_confidence_min_reports,
+              defaultDomainHighConfidenceMinReports(domainKey),
+              { min: publicVisibilityMin }
+            ),
           };
         }
         const assignedNext = {};
@@ -23069,9 +23197,24 @@ async function selectTenantScopedPublicRows(
           const label = String(row?.label || domainKey).trim() || domainKey;
           const iconSrc = resolveRuntimeDomainIconSrc(domainKey, row?.icon_src, row?.icon_key);
           const markerColor = String(row?.marker_color || "").trim();
+          const legacyConfig = legacyNext[domainKey] || {};
           assignedNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+            public_visibility_min_reports: sanitizeIncidentReportThreshold(
+              legacyConfig?.public_visibility_min_reports,
+              defaultDomainPublicVisibilityMinReports(domainKey)
+            ),
+            high_confidence_min_reports: sanitizeIncidentReportThreshold(
+              legacyConfig?.high_confidence_min_reports,
+              defaultDomainHighConfidenceMinReports(domainKey),
+              {
+                min: sanitizeIncidentReportThreshold(
+                  legacyConfig?.public_visibility_min_reports,
+                  defaultDomainPublicVisibilityMinReports(domainKey)
+                ),
+              }
+            ),
           };
           if (reportPrefix) RUNTIME_DOMAIN_META.reportPrefixByDomain.set(domainKey, reportPrefix);
           if (iconSrc) RUNTIME_DOMAIN_META.iconSrcByDomain.set(domainKey, iconSrc);
@@ -23166,6 +23309,16 @@ async function selectTenantScopedPublicRows(
     if (!hasOrgDomainReportsEditAccess) return false;
     return isOrganizationManagedIncidentDomain(domainKeyRaw);
   }, [isPlatformAdmin, hasOrgDomainReportsEditAccess, isOrganizationManagedIncidentDomain]);
+
+  const incidentPublicVisibilityThresholdForDomain = useCallback((domainKeyRaw) => {
+    const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
+    if (!domainKey) return defaultDomainPublicVisibilityMinReports(domainKeyRaw);
+    const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
+    return sanitizeIncidentReportThreshold(
+      cfg?.public_visibility_min_reports,
+      defaultDomainPublicVisibilityMinReports(domainKey)
+    );
+  }, [tenantDomainPublicConfigByDomain]);
 
   const canShowPublicRepairAction = useCallback((incidentIdRaw, domainKeyRaw) => {
     const incidentId = String(incidentIdRaw || "").trim();
@@ -23296,11 +23449,27 @@ async function selectTenantScopedPublicRows(
     return out;
   }, [viewerIdentityKey, waterDrainDomainMarkers]);
 
+  const viewerReportedStreetSignIdSet = useMemo(() => {
+    const out = new Set();
+    if (!viewerIdentityKey) return out;
+    for (const r of reports || []) {
+      if (reportDomainForRow(r, officialIdSet, officialSignIdSet) !== "street_signs") continue;
+      const signId = String(r?.light_id || "").trim();
+      if (!signId || !officialSignIdSet.has(signId)) continue;
+      const lastFixTs = Math.max(Number(lastFixByLightId?.[signId] || 0), Number(fixedLights?.[signId] || 0));
+      const ts = Number(r?.ts || 0);
+      if (lastFixTs && ts > 0 && ts <= lastFixTs) continue;
+      if (reportIdentityKey(r) === viewerIdentityKey) out.add(signId);
+    }
+    return out;
+  }, [viewerIdentityKey, reports, officialIdSet, officialSignIdSet, lastFixByLightId, fixedLights]);
+
   const renderedDomainMarkers = useMemo(() => {
     const shapePotholeMarkers = () => {
       const isLoggedIn = Boolean(session?.user?.id);
       const adminView = Boolean(reportsAdminView);
       const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("potholes");
+      const publicVisibilityMin = incidentPublicVisibilityThresholdForDomain("potholes");
       const shaped = (potholeDomainMarkers || [])
         .map((m) => {
           const pid = String(m?.pothole_id || "").trim();
@@ -23320,8 +23489,8 @@ async function selectTenantScopedPublicRows(
               glyphSrc: UI_ICON_SRC.pothole,
             };
           }
-          const isPublic = count >= 2;
-          const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          const isPublic = count >= publicVisibilityMin;
+          const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
           if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
           if (!isPublic && !isPrivateOwn) return null;
           return {
@@ -23341,6 +23510,7 @@ async function selectTenantScopedPublicRows(
       const isLoggedIn = Boolean(session?.user?.id);
       const adminView = Boolean(reportsAdminView);
       const usePublicRepairLifecycle = isPublicRepairEnabledForDomain("water_drain_issues");
+      const publicVisibilityMin = incidentPublicVisibilityThresholdForDomain("water_drain_issues");
       const shaped = (waterDrainDomainMarkers || [])
         .map((m) => {
           const count = Number(m?.count || 0);
@@ -23359,8 +23529,8 @@ async function selectTenantScopedPublicRows(
               glyphSrc: UI_ICON_SRC.waterMain,
             };
           }
-          const isPublic = count >= 2;
-          const isPrivateOwn = isLoggedIn && userReported && count === 1;
+          const isPublic = count >= publicVisibilityMin;
+          const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
           if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
           if (!isPublic && !isPrivateOwn) return null;
           const privateOwnYellow = officialStatusFromSinceFixCount(1).color;
@@ -23380,6 +23550,45 @@ async function selectTenantScopedPublicRows(
       return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
     };
 
+    const shapeGenericIncidentMarkers = () => {
+      const isLoggedIn = Boolean(session?.user?.id);
+      const adminView = Boolean(reportsAdminView);
+      const shaped = (genericDomainMarkers || [])
+        .map((m) => {
+          const domainKey = String(m?.domain || "").trim().toLowerCase();
+          if (!domainKey) return null;
+          const count = Number(m?.count || 0);
+          if (count <= 0) return null;
+          const incidentId = String(m?.incident_id || m?.id || "").trim();
+          const repairSnapshot = getIncidentRepairSnapshot(domainKey, incidentId);
+          if (isPublicRepairEnabledForDomain(domainKey) && repairSnapshot?.archived) return null;
+          const rows = Array.isArray(m?.rows) ? m.rows : [];
+          const userReported = Boolean(
+            viewerIdentityKey
+            && rows.some((row) => reportIdentityKey(row) === viewerIdentityKey)
+          );
+          if (adminView) {
+            return {
+              ...m,
+              ringColor: userReported ? "#1e88e5" : "#fff",
+            };
+          }
+          const publicVisibilityMin = incidentPublicVisibilityThresholdForDomain(domainKey);
+          const isPublic = count >= publicVisibilityMin;
+          const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
+          if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
+          if (!isPublic && !isPrivateOwn) return null;
+          return {
+            ...m,
+            ringColor: userReported ? "#1e88e5" : "#fff",
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (Number(b.count || 0) - Number(a.count || 0)) || (Number(b.lastTs || 0) - Number(a.lastTs || 0)));
+      if (!restrictPublicMarkersToCity) return shaped;
+      return shaped.filter((m) => isWithinAshtabulaCityLimits(m?.lat, m?.lng));
+    };
+
     if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
       const visibleIncidentKeySet = new Set(incidentMapVisibleDomainKeys);
       const next = [];
@@ -23391,7 +23600,7 @@ async function selectTenantScopedPublicRows(
       }
       next.push(
         ...(Array.isArray(genericDomainMarkers)
-          ? genericDomainMarkers.filter((marker) => visibleIncidentKeySet.has(String(marker?.domain || "").trim()))
+          ? shapeGenericIncidentMarkers().filter((marker) => visibleIncidentKeySet.has(String(marker?.domain || "").trim()))
           : [])
       );
       if (!restrictPublicMarkersToCity) return next;
@@ -23404,10 +23613,13 @@ async function selectTenantScopedPublicRows(
         .map((m) => {
           const count = Number(m?.count || 0);
           if (!adminView && count < 1) return null;
+          const userReported = String(m?.id || "").trim()
+            ? viewerReportedStreetSignIdSet.has(String(m.id || "").trim())
+            : false;
           return {
             ...m,
             color: officialStatusFromSinceFixCount(count).color,
-            ringColor: "#fff",
+            ringColor: userReported ? "#1e88e5" : "#fff",
             glyph: signMarkerGlyphForType(m?.sign_type),
             glyphSrc: signMarkerIconSrcForType(m?.sign_type),
           };
@@ -23438,9 +23650,12 @@ async function selectTenantScopedPublicRows(
     waterDrainDomainMarkers,
     nonStreetlightDomainMarkers,
     viewerReportedWaterIncidentIdSet,
+    viewerReportedStreetSignIdSet,
     viewerReportedPotholeIdSet,
     getIncidentRepairSnapshot,
     isPublicRepairEnabledForDomain,
+    incidentPublicVisibilityThresholdForDomain,
+    viewerIdentityKey,
     session?.user?.id,
     isAdmin,
     reportsAdminView,
@@ -31292,14 +31507,12 @@ async function insertReportWithFallback(payload) {
                 ? gmapsCountBadgeIcon(m?.count, { fill: "#17314f", ring: "#ffffff", size: 36 })
                 : m?.kind === "incident_stack"
                   ? gmapsCountBadgeIcon(m?.count, { fill: "#2a7262", ring: "#ffffff", size: 34 })
-              : String(m?.domain || adminReportDomain) === "street_signs"
-                ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
-                : gmapsDotIcon(
-                    m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor,
-                    m.ringColor || "#fff",
-                    m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
-                    m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight))
-                  )
+                : gmapsStandaloneDomainIcon({
+                    glyph: m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
+                    glyphSrc: m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight)),
+                    ringColor: m.ringColor || "",
+                    size: String(m?.domain || adminReportDomain) === "street_signs" ? STREET_SIGN_MARKER_SIZE : INCIDENT_DOMAIN_ICON_SIZE,
+                  })
             }
             onClick={() => {
               setSelectedQueuedTempId(null);
