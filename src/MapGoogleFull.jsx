@@ -2671,6 +2671,7 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
     let img = gmapsImageIcon._imgCache.get(resolved);
     if (!img) {
       img = new Image();
+      img.crossOrigin = "anonymous";
       img.decoding = "async";
       img.src = resolved;
       gmapsImageIcon._imgCache.set(resolved, img);
@@ -2690,29 +2691,34 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
         canvas.height = canvasSize;
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          const x = pad;
-          const y = pad;
-          if (halo) {
-            ctx.save();
-            ctx.shadowColor = haloColor;
-            ctx.shadowBlur = haloBlur;
+          try {
+            const x = pad;
+            const y = pad;
+            if (halo) {
+              ctx.save();
+              ctx.shadowColor = haloColor;
+              ctx.shadowBlur = haloBlur;
+              ctx.drawImage(img, x, y, px, px);
+              ctx.restore();
+            }
             ctx.drawImage(img, x, y, px, px);
-            ctx.restore();
+            if (border) {
+              const cx = canvasSize / 2;
+              const cy = canvasSize / 2;
+              const radius = (px / 2) + 1;
+              ctx.beginPath();
+              ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+              ctx.strokeStyle = borderColor;
+              ctx.lineWidth = Math.max(2, borderWidth);
+              ctx.stroke();
+            }
+            composedUrl = canvas.toDataURL("image/png");
+            finalSize = canvasSize;
+            gmapsImageIcon._compositeCache.set(cacheKey, { url: composedUrl, size: finalSize });
+          } catch {
+            composedUrl = "";
+            finalSize = px;
           }
-          ctx.drawImage(img, x, y, px, px);
-          if (border) {
-            const cx = canvasSize / 2;
-            const cy = canvasSize / 2;
-            const radius = (px / 2) + 1;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = borderColor;
-            ctx.lineWidth = Math.max(2, borderWidth);
-            ctx.stroke();
-          }
-          composedUrl = canvas.toDataURL("image/png");
-          finalSize = canvasSize;
-          gmapsImageIcon._compositeCache.set(cacheKey, { url: composedUrl, size: finalSize });
         }
       }
     }
