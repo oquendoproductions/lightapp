@@ -10564,6 +10564,19 @@ export default function PlatformAdminApp() {
                       >
                         {mapUiThemePublishing ? "Publishing..." : "Publish Live"}
                       </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                        onClick={() => {
+                          if (!mapUiThemeSectionOpen) {
+                            setMapUiThemeSectionOpen(true);
+                          }
+                          addMapUiThemeScheduleDraft();
+                        }}
+                      >
+                        Add Temporary Theme
+                      </button>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: palette.textMuted }}>
@@ -10576,6 +10589,20 @@ export default function PlatformAdminApp() {
                       Published live:
                       {" "}
                       {mapUiThemePublishedConfig?.published_at ? new Date(mapUiThemePublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
+                    </span>
+                    <span>
+                      Temporary themes:
+                      {" "}
+                      {mapUiThemeSchedulesDraft.length}
+                    </span>
+                    <span>
+                      Live now:
+                      {" "}
+                      {activePublishedMapUiThemeSchedule?.label
+                        ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
+                        : isMapUiBaseThemeEnabled(mapUiThemePublishedConfig)
+                          ? "Indefinite theme"
+                          : "Default CityReport theme"}
                     </span>
                   </div>
                 </div>
