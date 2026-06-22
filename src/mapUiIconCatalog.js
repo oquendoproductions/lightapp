@@ -30,6 +30,8 @@ export const MAP_UI_ICON_RENDER_MODE_OPTIONS = Object.freeze([
   },
 ]);
 
+export const MAP_UI_THEME_DEFAULT_THEME_ID = "default-theme";
+
 export const MAP_UI_ICON_THEME_DEFAULTS = Object.freeze({
   light: Object.freeze({
     surface_bg: "rgba(255,255,255,0.96)",
@@ -494,6 +496,79 @@ function sanitizeMapUiThemeTimestamp(value) {
   return parsed.toISOString();
 }
 
+function sanitizeMapUiThemeName(value, fallback = "Untitled Theme") {
+  const name = String(value || "").trim();
+  return name || fallback;
+}
+
+function sanitizeMapUiThemeDeploymentState(value, fallback = "draft") {
+  return String(value || "").trim().toLowerCase() === "published" ? "published" : fallback;
+}
+
+function sanitizeMapUiThemeDateWindow(entry) {
+  const startAt = sanitizeMapUiThemeTimestamp(entry?.start_at);
+  const endAt = sanitizeMapUiThemeTimestamp(entry?.end_at);
+  const startsAtMs = Date.parse(startAt);
+  const endsAtMs = Date.parse(endAt);
+  const hasValidWindow = Number.isFinite(startsAtMs) && Number.isFinite(endsAtMs) && endsAtMs > startsAtMs;
+  return {
+    start_at: hasValidWindow ? startAt : "",
+    end_at: hasValidWindow ? endAt : "",
+    has_valid_window: hasValidWindow,
+  };
+}
+
+function normalizePublishedMapUiThemeEntry(entry, index = 0) {
+  if (!entry || typeof entry !== "object") return null;
+  const isDefault = entry?.is_default === true || String(entry?.id || "").trim() === MAP_UI_THEME_DEFAULT_THEME_ID;
+  const theme = sanitizeMapUiTheme(entry);
+  const { start_at, end_at, has_valid_window } = sanitizeMapUiThemeDateWindow(entry);
+  const deploymentState = sanitizeMapUiThemeDeploymentState(entry?.deployment_state, isDefault ? "published" : "draft");
+  if (!Object.keys(theme).length && !isDefault) return null;
+  if (!isDefault && (!has_valid_window || deploymentState !== "published")) return null;
+  return {
+    id: String(entry?.id || (isDefault ? MAP_UI_THEME_DEFAULT_THEME_ID : `map-ui-theme-${index + 1}`)).trim() || (isDefault ? MAP_UI_THEME_DEFAULT_THEME_ID : `map-ui-theme-${index + 1}`),
+    name: sanitizeMapUiThemeName(entry?.name || entry?.label, isDefault ? "Default Theme" : "Untitled Theme"),
+    is_default: isDefault,
+    deployment_state: isDefault ? "published" : "published",
+    start_at: isDefault ? "" : start_at,
+    end_at: isDefault ? "" : end_at,
+    theme,
+    created_at: sanitizeMapUiThemeTimestamp(entry?.created_at),
+    updated_at: sanitizeMapUiThemeTimestamp(entry?.updated_at),
+  };
+}
+
+function buildLegacyPublishedMapUiThemes(raw) {
+  const next = [];
+  const defaultTheme = sanitizeMapUiTheme(raw);
+  next.push({
+    id: MAP_UI_THEME_DEFAULT_THEME_ID,
+    name: "Default Theme",
+    is_default: true,
+    deployment_state: "published",
+    start_at: "",
+    end_at: "",
+    theme: defaultTheme,
+    created_at: sanitizeMapUiThemeTimestamp(raw?.created_at || raw?.published_at || raw?.saved_at),
+    updated_at: sanitizeMapUiThemeTimestamp(raw?.updated_at || raw?.published_at || raw?.saved_at),
+  });
+  sanitizeLegacyMapUiThemeSchedules(raw).forEach((entry, index) => {
+    next.push({
+      id: String(entry?.id || `map-ui-theme-${index + 1}`).trim() || `map-ui-theme-${index + 1}`,
+      name: sanitizeMapUiThemeName(entry?.label, "Untitled Theme"),
+      is_default: false,
+      deployment_state: "published",
+      start_at: String(entry?.start_at || "").trim(),
+      end_at: String(entry?.end_at || "").trim(),
+      theme: sanitizeMapUiTheme(entry),
+      created_at: sanitizeMapUiThemeTimestamp(entry?.created_at),
+      updated_at: sanitizeMapUiThemeTimestamp(entry?.updated_at),
+    });
+  });
+  return next;
+}
+
 function compareMapUiThemeSchedules(a, b) {
   const aStart = Date.parse(String(a?.start_at || ""));
   const bStart = Date.parse(String(b?.start_at || ""));
@@ -506,14 +581,7 @@ function compareMapUiThemeSchedules(a, b) {
   return String(a?.id || "").localeCompare(String(b?.id || ""));
 }
 
-export function isMapUiBaseThemeEnabled(raw) {
-  if (raw && typeof raw === "object" && typeof raw.theme_enabled === "boolean") {
-    return raw.theme_enabled;
-  }
-  return Object.keys(sanitizeMapUiTheme(raw)).length > 0;
-}
-
-export function sanitizeMapUiThemeSchedules(raw) {
+function sanitizeLegacyMapUiThemeSchedules(raw) {
   const source = Array.isArray(raw)
     ? raw
     : Array.isArray(raw?.scheduled_themes)
@@ -544,6 +612,65 @@ export function sanitizeMapUiThemeSchedules(raw) {
   return next;
 }
 
+export function isMapUiBaseThemeEnabled(raw) {
+  if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
+    const defaultTheme = sanitizeMapUiThemes(raw).find((entry) => entry?.is_default);
+    return Boolean(defaultTheme && Object.keys(defaultTheme.theme || {}).length > 0);
+  }
+  if (raw && typeof raw === "object" && typeof raw.theme_enabled === "boolean") {
+    return raw.theme_enabled;
+  }
+  return Object.keys(sanitizeMapUiTheme(raw)).length > 0;
+}
+
+export function sanitizeMapUiThemes(raw) {
+  if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
+    const themes = [];
+    let defaultTheme = null;
+    raw.themes.forEach((entry, index) => {
+      const normalized = normalizePublishedMapUiThemeEntry(entry, index);
+      if (!normalized) return;
+      if (normalized.is_default) {
+        if (!defaultTheme) defaultTheme = normalized;
+        return;
+      }
+      themes.push(normalized);
+    });
+    const resolvedDefaultTheme = defaultTheme || {
+      id: MAP_UI_THEME_DEFAULT_THEME_ID,
+      name: "Default Theme",
+      is_default: true,
+      deployment_state: "published",
+      start_at: "",
+      end_at: "",
+      theme: {},
+      created_at: "",
+      updated_at: "",
+    };
+    themes.sort(compareMapUiThemeSchedules);
+    return [resolvedDefaultTheme, ...themes];
+  }
+  return buildLegacyPublishedMapUiThemes(raw);
+}
+
+export function sanitizeMapUiThemeSchedules(raw) {
+  if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
+    return sanitizeMapUiThemes(raw)
+      .filter((entry) => !entry?.is_default)
+      .map((entry) => ({
+        id: entry.id,
+        label: entry.name,
+        enabled: true,
+        start_at: entry.start_at,
+        end_at: entry.end_at,
+        theme: entry.theme,
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
+      }));
+  }
+  return sanitizeLegacyMapUiThemeSchedules(raw);
+}
+
 export function resolveActiveMapUiThemeSchedule(raw, at = Date.now()) {
   const targetTime = at instanceof Date
     ? at.getTime()
@@ -563,6 +690,10 @@ export function resolveActiveMapUiThemeSchedule(raw, at = Date.now()) {
 export function resolveMapUiThemeOverride(raw, at = Date.now()) {
   const activeSchedule = resolveActiveMapUiThemeSchedule(raw, at);
   if (activeSchedule?.theme) return activeSchedule.theme;
+  if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
+    const defaultTheme = sanitizeMapUiThemes(raw).find((entry) => entry?.is_default);
+    return defaultTheme?.theme || {};
+  }
   if (isMapUiBaseThemeEnabled(raw)) return sanitizeMapUiTheme(raw);
   return {};
 }
@@ -610,6 +741,12 @@ export function buildMapUiIconConfigValue(rawIcons, extra = {}) {
 }
 
 export function buildMapUiThemeConfigValue(rawTheme, extra = {}) {
+  if (rawTheme && typeof rawTheme === "object" && Array.isArray(rawTheme.themes)) {
+    return {
+      themes: rawTheme.themes,
+      ...extra,
+    };
+  }
   const theme = sanitizeMapUiTheme(rawTheme);
   const scheduledThemes = sanitizeMapUiThemeSchedules(rawTheme);
   return {

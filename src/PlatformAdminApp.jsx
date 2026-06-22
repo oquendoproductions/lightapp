@@ -18,6 +18,7 @@ import {
   MAP_UI_ICON_RENDER_MODE,
   MAP_UI_ICON_RENDER_MODE_OPTIONS,
   MAP_UI_ICON_THEME_DEFAULTS,
+  MAP_UI_THEME_DEFAULT_THEME_ID,
   MAP_UI_THEME_DRAFT_CONFIG_KEY,
   MAP_UI_THEME_PUBLISHED_CONFIG_KEY,
   MAP_UI_THEME_FIELDS,
@@ -28,6 +29,7 @@ import {
   resolveActiveMapUiThemeSchedule,
   sanitizeMapUiIconManifest,
   sanitizeMapUiTheme,
+  sanitizeMapUiThemes,
   sanitizeMapUiThemeSchedules,
 } from "./mapUiIconCatalog";
 import {
@@ -245,7 +247,7 @@ const CONTROL_PLANE_PAGES = [
   { key: "account-info", section: "settings", label: "Account Info" },
   { key: "domain-registry", section: "settings", label: "Domain Registry" },
   { key: "map-ui-icons", section: "settings", label: "Map UI Icons" },
-  { key: "map-ui-theme", section: "settings", label: "Map UI Theme" },
+  { key: "map-ui-theme", section: "settings", label: "Map UI Themes" },
   { key: "manage-team", section: "settings", label: "Manage Team" },
   { key: "roles-permissions", section: "settings", label: "Roles & Permissions" },
   { key: "security-checks", section: "settings", label: "Security Checks" },
@@ -287,7 +289,7 @@ const CONTROL_PLANE_SETTINGS_NAV = [
     items: [
       { key: "domain-registry", label: "Domain Registry" },
       { key: "map-ui-icons", label: "Map UI Icons" },
-      { key: "map-ui-theme", label: "Map UI Theme" },
+      { key: "map-ui-theme", label: "Map UI Themes" },
     ],
   },
   {
@@ -1652,10 +1654,175 @@ function getMapUiThemeScheduleStatus(entry, now = Date.now()) {
 
 function hasStoredMapUiThemeConfig(raw) {
   return (
-    Object.keys(sanitizeMapUiTheme(raw)).length > 0
+    (raw && typeof raw === "object" && Array.isArray(raw.themes))
+    || Object.keys(sanitizeMapUiTheme(raw)).length > 0
     || sanitizeMapUiThemeSchedules(raw).length > 0
     || (raw && typeof raw === "object" && raw.theme_enabled === false)
   );
+}
+
+function createMapUiThemeRecordId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `map-ui-theme-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+}
+
+function normalizeMapUiThemeDeploymentState(value, fallback = "draft") {
+  return String(value || "").trim().toLowerCase() === "published" ? "published" : fallback;
+}
+
+function buildMapUiThemeLibraryEntry(seed = {}, fallback = {}) {
+  const isDefault = seed?.is_default === true || fallback?.is_default === true || String(seed?.id || fallback?.id || "").trim() === MAP_UI_THEME_DEFAULT_THEME_ID;
+  const fallbackId = fallback?.id || (isDefault ? MAP_UI_THEME_DEFAULT_THEME_ID : createMapUiThemeRecordId());
+  return {
+    id: String(seed?.id || fallbackId).trim() || fallbackId,
+    name: String(seed?.name || seed?.label || fallback?.name || (isDefault ? "Default Theme" : "")).trim() || (isDefault ? "Default Theme" : "Untitled Theme"),
+    is_default: isDefault,
+    deployment_state: normalizeMapUiThemeDeploymentState(seed?.deployment_state, isDefault ? "published" : normalizeMapUiThemeDeploymentState(fallback?.deployment_state, "draft")),
+    start_at: isDefault ? "" : toLocalDateTimeInputValue(seed?.start_at || fallback?.start_at),
+    end_at: isDefault ? "" : toLocalDateTimeInputValue(seed?.end_at || fallback?.end_at),
+    created_at: String(seed?.created_at || fallback?.created_at || "").trim(),
+    updated_at: String(seed?.updated_at || fallback?.updated_at || "").trim(),
+    themeForm: buildMapUiThemeDraftForm(seed?.theme || seed?.themeForm || fallback?.theme || fallback?.themeForm || {}),
+  };
+}
+
+function normalizeMapUiThemeLibraryDrafts(rawDraftConfig = {}, rawPublishedConfig = {}) {
+  if (rawDraftConfig && typeof rawDraftConfig === "object" && Array.isArray(rawDraftConfig.themes)) {
+    const next = rawDraftConfig.themes.map((entry) => buildMapUiThemeLibraryEntry(entry));
+    const defaultTheme = next.find((entry) => entry?.is_default) || buildMapUiThemeLibraryEntry({ id: MAP_UI_THEME_DEFAULT_THEME_ID, is_default: true, name: "Default Theme", deployment_state: "published" });
+    const others = next.filter((entry) => entry && !entry.is_default);
+    return [defaultTheme, ...others];
+  }
+
+  if (rawPublishedConfig && typeof rawPublishedConfig === "object" && Array.isArray(rawPublishedConfig.themes)) {
+    const next = rawPublishedConfig.themes.map((entry) => buildMapUiThemeLibraryEntry(entry));
+    const defaultTheme = next.find((entry) => entry?.is_default) || buildMapUiThemeLibraryEntry({ id: MAP_UI_THEME_DEFAULT_THEME_ID, is_default: true, name: "Default Theme", deployment_state: "published" });
+    const others = next.filter((entry) => entry && !entry.is_default);
+    return [defaultTheme, ...others];
+  }
+
+  const legacyThemes = sanitizeMapUiThemes(rawDraftConfig && hasStoredMapUiThemeConfig(rawDraftConfig) ? rawDraftConfig : rawPublishedConfig);
+  if (legacyThemes.length) {
+    const defaultTheme = legacyThemes.find((entry) => entry?.is_default) || { id: MAP_UI_THEME_DEFAULT_THEME_ID, is_default: true, name: "Default Theme", theme: {} };
+    const others = legacyThemes.filter((entry) => !entry?.is_default);
+    return [
+      buildMapUiThemeLibraryEntry(defaultTheme),
+      ...others.map((entry) => buildMapUiThemeLibraryEntry(entry)),
+    ];
+  }
+
+  return [buildMapUiThemeLibraryEntry({ id: MAP_UI_THEME_DEFAULT_THEME_ID, is_default: true, name: "Default Theme", deployment_state: "published" })];
+}
+
+function serializeMapUiThemeDraftLibrary(themes = []) {
+  return themes.map((entry) => ({
+    id: String(entry?.id || "").trim() || createMapUiThemeRecordId(),
+    name: String(entry?.name || "").trim() || (entry?.is_default ? "Default Theme" : "Untitled Theme"),
+    is_default: entry?.is_default === true,
+    deployment_state: normalizeMapUiThemeDeploymentState(entry?.deployment_state, entry?.is_default ? "published" : "draft"),
+    start_at: entry?.is_default ? "" : fromLocalDateTimeInputValue(entry?.start_at),
+    end_at: entry?.is_default ? "" : fromLocalDateTimeInputValue(entry?.end_at),
+    created_at: String(entry?.created_at || "").trim(),
+    updated_at: String(entry?.updated_at || "").trim(),
+    theme: extractMapUiThemeFromForm(entry?.themeForm || {}),
+  }));
+}
+
+function serializePublishedMapUiThemeLibrary(themes = []) {
+  const next = [];
+  serializeMapUiThemeDraftLibrary(themes).forEach((entry) => {
+    if (entry?.is_default) {
+      next.push({
+        ...entry,
+        deployment_state: "published",
+      });
+      return;
+    }
+    const startAt = String(entry?.start_at || "").trim();
+    const endAt = String(entry?.end_at || "").trim();
+    const hasTheme = Object.keys(sanitizeMapUiTheme(entry?.theme || {})).length > 0;
+    if (entry?.deployment_state !== "published" || !startAt || !endAt || !hasTheme) return;
+    if (Date.parse(endAt) <= Date.parse(startAt)) return;
+    next.push(entry);
+  });
+  return next;
+}
+
+function formatMapUiThemeStatus(entry, now = Date.now()) {
+  if (entry?.is_default) return "Default";
+  if (String(entry?.deployment_state || "").trim().toLowerCase() !== "published") return "Draft";
+  const startAt = Date.parse(fromLocalDateTimeInputValue(entry?.start_at));
+  const endAt = Date.parse(fromLocalDateTimeInputValue(entry?.end_at));
+  if (!Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= startAt) return "Draft";
+  if (now < startAt) return "Scheduled";
+  if (now >= endAt) return "Ended";
+  return "Active";
+}
+
+function compareMapUiThemeLibraryEntries(a, b) {
+  if (a?.is_default) return -1;
+  if (b?.is_default) return 1;
+  const statusRank = {
+    Active: 0,
+    Scheduled: 1,
+    Draft: 2,
+    Ended: 3,
+  };
+  const aStatus = formatMapUiThemeStatus(a);
+  const bStatus = formatMapUiThemeStatus(b);
+  if ((statusRank[aStatus] ?? 99) !== (statusRank[bStatus] ?? 99)) {
+    return (statusRank[aStatus] ?? 99) - (statusRank[bStatus] ?? 99);
+  }
+  const aStart = Date.parse(fromLocalDateTimeInputValue(a?.start_at));
+  const bStart = Date.parse(fromLocalDateTimeInputValue(b?.start_at));
+  const aEnd = Date.parse(fromLocalDateTimeInputValue(a?.end_at));
+  const bEnd = Date.parse(fromLocalDateTimeInputValue(b?.end_at));
+  if (aStatus === "Active" && Number.isFinite(aEnd) && Number.isFinite(bEnd) && aEnd !== bEnd) return aEnd - bEnd;
+  if (aStatus === "Scheduled" && Number.isFinite(aStart) && Number.isFinite(bStart) && aStart !== bStart) return aStart - bStart;
+  if (aStatus === "Ended" && Number.isFinite(aEnd) && Number.isFinite(bEnd) && aEnd !== bEnd) return bEnd - aEnd;
+  if (aStatus === "Draft") {
+    if (Number.isFinite(aStart) && Number.isFinite(bStart) && aStart !== bStart) return aStart - bStart;
+    const aUpdated = Date.parse(String(a?.updated_at || a?.created_at || ""));
+    const bUpdated = Date.parse(String(b?.updated_at || b?.created_at || ""));
+    if (Number.isFinite(aUpdated) && Number.isFinite(bUpdated) && aUpdated !== bUpdated) return bUpdated - aUpdated;
+  }
+  return String(a?.name || "").localeCompare(String(b?.name || ""));
+}
+
+function createUniqueMapUiThemeName(sourceName, themes, excludeThemeId = "") {
+  const baseName = String(sourceName || "").trim() || "Untitled Theme";
+  const excludedId = String(excludeThemeId || "").trim();
+  const usedNames = new Set(
+    (Array.isArray(themes) ? themes : [])
+      .filter((entry) => String(entry?.id || "").trim() !== excludedId)
+      .map((entry) => String(entry?.name || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (!usedNames.has(baseName.toLowerCase())) return baseName;
+  let copyIndex = 2;
+  let candidate = `${baseName} Copy`;
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${baseName} Copy ${copyIndex}`;
+    copyIndex += 1;
+  }
+  return candidate;
+}
+
+function findMapUiThemeDateConflicts(theme, themes = []) {
+  if (!theme || theme?.is_default) return [];
+  const currentId = String(theme?.id || "").trim();
+  const currentStart = Date.parse(fromLocalDateTimeInputValue(theme?.start_at));
+  const currentEnd = Date.parse(fromLocalDateTimeInputValue(theme?.end_at));
+  if (!Number.isFinite(currentStart) || !Number.isFinite(currentEnd) || currentEnd <= currentStart) return [];
+  return (Array.isArray(themes) ? themes : []).filter((entry) => {
+    if (!entry || entry?.is_default) return false;
+    if (String(entry?.id || "").trim() === currentId) return false;
+    const otherStart = Date.parse(fromLocalDateTimeInputValue(entry?.start_at));
+    const otherEnd = Date.parse(fromLocalDateTimeInputValue(entry?.end_at));
+    if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd) || otherEnd <= otherStart) return false;
+    return currentStart < otherEnd && currentEnd > otherStart;
+  });
 }
 
 function clampToRange(value, min, max, fallback = min) {
@@ -2315,6 +2482,10 @@ export default function PlatformAdminApp() {
   const [mapUiIconPublishedConfig, setMapUiIconPublishedConfig] = useState({});
   const [mapUiThemeDraftConfig, setMapUiThemeDraftConfig] = useState({});
   const [mapUiThemePublishedConfig, setMapUiThemePublishedConfig] = useState({});
+  const [mapUiThemeDraftThemes, setMapUiThemeDraftThemes] = useState(() => normalizeMapUiThemeLibraryDrafts({}, {}));
+  const [mapUiThemePublishedThemes, setMapUiThemePublishedThemes] = useState(() => normalizeMapUiThemeLibraryDrafts({}, {}));
+  const [mapUiThemeEditorOpen, setMapUiThemeEditorOpen] = useState(false);
+  const [mapUiThemeEditorDraft, setMapUiThemeEditorDraft] = useState(null);
   const [mapUiIconDraftForm, setMapUiIconDraftForm] = useState(() => buildMapUiIconDraftForm({}));
   const [mapUiThemeDraftForm, setMapUiThemeDraftForm] = useState(() => buildMapUiThemeDraftForm({}));
   const [mapUiThemeBaseEnabled, setMapUiThemeBaseEnabled] = useState(false);
@@ -2577,9 +2748,22 @@ export default function PlatformAdminApp() {
     () => mergeMapUiIconMeta(mapUiIconPublishedConfig),
     [mapUiIconPublishedConfig]
   );
+  const draftDefaultMapUiThemeEntry = useMemo(
+    () => mapUiThemeDraftThemes.find((entry) => entry?.is_default) || null,
+    [mapUiThemeDraftThemes]
+  );
   const previewMapUiTheme = useMemo(
-    () => mergeMapUiTheme({ theme: extractMapUiThemeFromForm(mapUiThemeDraftForm) }),
-    [mapUiThemeDraftForm]
+    () => mergeMapUiTheme({
+      themes: [
+        {
+          id: MAP_UI_THEME_DEFAULT_THEME_ID,
+          is_default: true,
+          deployment_state: "published",
+          theme: extractMapUiThemeFromForm(draftDefaultMapUiThemeEntry?.themeForm || {}),
+        },
+      ],
+    }),
+    [draftDefaultMapUiThemeEntry]
   );
   const publishedMapUiTheme = useMemo(
     () => mergeMapUiTheme(mapUiThemePublishedConfig),
@@ -2588,6 +2772,29 @@ export default function PlatformAdminApp() {
   const activePublishedMapUiThemeSchedule = useMemo(
     () => resolveActiveMapUiThemeSchedule(mapUiThemePublishedConfig),
     [mapUiThemePublishedConfig]
+  );
+  const sortedMapUiThemeDraftThemes = useMemo(
+    () => [...mapUiThemeDraftThemes].sort(compareMapUiThemeLibraryEntries),
+    [mapUiThemeDraftThemes]
+  );
+  const mapUiThemeEditorPreview = useMemo(() => {
+    if (!mapUiThemeEditorDraft) return mergeMapUiTheme({});
+    return mergeMapUiTheme({
+      themes: [
+        {
+          id: mapUiThemeEditorDraft.id || MAP_UI_THEME_DEFAULT_THEME_ID,
+          is_default: mapUiThemeEditorDraft.is_default === true,
+          deployment_state: "published",
+          start_at: fromLocalDateTimeInputValue(mapUiThemeEditorDraft.start_at),
+          end_at: fromLocalDateTimeInputValue(mapUiThemeEditorDraft.end_at),
+          theme: extractMapUiThemeFromForm(mapUiThemeEditorDraft.themeForm || {}),
+        },
+      ],
+    });
+  }, [mapUiThemeEditorDraft]);
+  const mapUiThemeEditorConflicts = useMemo(
+    () => findMapUiThemeDateConflicts(mapUiThemeEditorDraft, mapUiThemeDraftThemes),
+    [mapUiThemeEditorDraft, mapUiThemeDraftThemes]
   );
   const selectedTenantDomainAssignments = useMemo(
     () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
@@ -3756,6 +3963,11 @@ export default function PlatformAdminApp() {
       setMapUiIconPublishedConfig({});
       setMapUiThemeDraftConfig({});
       setMapUiThemePublishedConfig({});
+      const emptyThemeLibrary = normalizeMapUiThemeLibraryDrafts({}, {});
+      setMapUiThemeDraftThemes(emptyThemeLibrary);
+      setMapUiThemePublishedThemes(emptyThemeLibrary);
+      setMapUiThemeEditorOpen(false);
+      setMapUiThemeEditorDraft(null);
       setMapUiIconDraftForm(buildMapUiIconDraftForm({}));
       setMapUiThemeDraftForm(buildMapUiThemeDraftForm({}));
       setMapUiThemeBaseEnabled(false);
@@ -3804,8 +4016,15 @@ export default function PlatformAdminApp() {
     setMapUiIconPublishedConfig(iconPublishedConfig);
     setMapUiThemeDraftConfig(themeDraftConfig);
     setMapUiThemePublishedConfig(themePublishedConfig);
+    const draftThemeLibrary = normalizeMapUiThemeLibraryDrafts(themeDraftConfig, themePublishedConfig);
+    const publishedThemeLibrary = normalizeMapUiThemeLibraryDrafts(themePublishedConfig, themePublishedConfig);
+    setMapUiThemeDraftThemes(draftThemeLibrary);
+    setMapUiThemePublishedThemes(publishedThemeLibrary);
+    setMapUiThemeEditorOpen(false);
+    setMapUiThemeEditorDraft(null);
     setMapUiIconDraftForm(buildMapUiIconDraftForm(baseIcons));
-    setMapUiThemeDraftForm(buildMapUiThemeDraftForm(baseTheme));
+    const draftDefaultTheme = draftThemeLibrary.find((entry) => entry?.is_default);
+    setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftDefaultTheme?.themeForm || draftDefaultTheme?.theme || baseTheme));
     setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(baseTheme));
     const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(baseTheme);
     setMapUiThemeSchedulesDraft(nextScheduleDrafts);
@@ -6136,6 +6355,336 @@ export default function PlatformAdminApp() {
     const safeAlpha = clampToRange(nextAlphaPercent, 0, 100, currentPicker.alphaPercent);
     updateMapUiThemeDraftValue(modeKey, resolvedFieldKey, rgbaStringFromHex(safeHex, safeAlpha));
   }, [mapUiThemeDraftForm, updateMapUiThemeDraftValue]);
+
+  const openNewMapUiThemeEditor = useCallback(() => {
+    if (!canManageDomainRegistry) return;
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    setMapUiThemeEditorDraft(buildMapUiThemeLibraryEntry({
+      id: createMapUiThemeRecordId(),
+      name: createUniqueMapUiThemeName("New Theme", mapUiThemeDraftThemes),
+      is_default: false,
+      deployment_state: "draft",
+      created_at: new Date().toISOString(),
+    }));
+    setMapUiThemeEditorOpen(true);
+  }, [canManageDomainRegistry, mapUiThemeDraftThemes]);
+
+  const openMapUiThemeEditor = useCallback((themeId) => {
+    const targetId = String(themeId || "").trim();
+    if (!targetId) return;
+    const theme = mapUiThemeDraftThemes.find((entry) => String(entry?.id || "").trim() === targetId);
+    if (!theme) return;
+    if (theme.is_default && !isPlatformOwner) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "Only PCP super users can edit the default theme." }));
+      return;
+    }
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    setMapUiThemeEditorDraft(buildMapUiThemeLibraryEntry(theme));
+    setMapUiThemeEditorOpen(true);
+  }, [isPlatformOwner, mapUiThemeDraftThemes]);
+
+  const duplicateMapUiTheme = useCallback((themeId) => {
+    const targetId = String(themeId || "").trim();
+    if (!targetId) return;
+    const theme = mapUiThemeDraftThemes.find((entry) => String(entry?.id || "").trim() === targetId);
+    if (!theme || theme?.is_default) return;
+    const duplicateName = createUniqueMapUiThemeName(theme?.name || "Theme", mapUiThemeDraftThemes);
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    setMapUiThemeEditorDraft(buildMapUiThemeLibraryEntry({
+      ...theme,
+      id: createMapUiThemeRecordId(),
+      name: duplicateName,
+      deployment_state: "draft",
+      created_at: new Date().toISOString(),
+      updated_at: "",
+    }));
+    setMapUiThemeEditorOpen(true);
+  }, [mapUiThemeDraftThemes]);
+
+  const closeMapUiThemeEditor = useCallback(() => {
+    setMapUiThemeEditorOpen(false);
+    setMapUiThemeEditorDraft(null);
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+  }, []);
+
+  const updateMapUiThemeEditorMeta = useCallback((fieldKey, value) => {
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!["name", "start_at", "end_at"].includes(resolvedFieldKey)) return;
+    setMapUiThemeEditorDraft((prev) => (
+      prev
+        ? {
+            ...prev,
+            [resolvedFieldKey]: prev.is_default && (resolvedFieldKey === "start_at" || resolvedFieldKey === "end_at")
+              ? ""
+              : value,
+          }
+        : prev
+    ));
+  }, []);
+
+  const updateMapUiThemeEditorValue = useCallback((mode, fieldKey, value) => {
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    setMapUiThemeEditorDraft((prev) => (
+      prev
+        ? {
+            ...prev,
+            themeForm: {
+              ...(prev.themeForm || {}),
+              [modeKey]: {
+                ...((prev.themeForm || {})?.[modeKey] || {}),
+                [resolvedFieldKey]: value,
+              },
+            },
+          }
+        : prev
+    ));
+  }, []);
+
+  const updateMapUiThemeEditorPicker = useCallback((mode, fieldKey, nextHex, nextAlphaPercent) => {
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    const fallback = MAP_UI_ICON_THEME_DEFAULTS?.[modeKey]?.[resolvedFieldKey] || "#111111";
+    const currentValue = String(mapUiThemeEditorDraft?.themeForm?.[modeKey]?.[resolvedFieldKey] || fallback).trim();
+    const currentPicker = parseCssColorToPickerValue(currentValue, fallback);
+    const safeHex = String(nextHex || currentPicker.hex || "#111111").trim() || "#111111";
+    const safeAlpha = clampToRange(nextAlphaPercent, 0, 100, currentPicker.alphaPercent);
+    updateMapUiThemeEditorValue(modeKey, resolvedFieldKey, rgbaStringFromHex(safeHex, safeAlpha));
+  }, [mapUiThemeEditorDraft, updateMapUiThemeEditorValue]);
+
+  const saveMapUiThemeEditor = useCallback(async ({ publish = false } = {}) => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "You need the Domains edit permission to manage map UI themes." }));
+      return { ok: false };
+    }
+    if (!mapUiThemeEditorDraft) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "Open a theme before saving." }));
+      return { ok: false };
+    }
+    if (mapUiThemeEditorDraft.is_default && !isPlatformOwner) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "Only PCP super users can edit the default theme." }));
+      return { ok: false };
+    }
+
+    if (publish) {
+      setMapUiThemePublishing(true);
+    } else {
+      setMapUiThemeSavingDraft(true);
+    }
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+
+    try {
+      const nowIso = new Date().toISOString();
+      const trimmedName = String(mapUiThemeEditorDraft?.name || "").trim();
+      if (!trimmedName) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: "Enter a theme name before saving." }));
+        return { ok: false };
+      }
+      const duplicateName = mapUiThemeDraftThemes.some((entry) => (
+        String(entry?.id || "").trim() !== String(mapUiThemeEditorDraft?.id || "").trim()
+        && String(entry?.name || "").trim().toLowerCase() === trimmedName.toLowerCase()
+      ));
+      if (duplicateName) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: `${trimmedName} already exists. Use a unique theme name.` }));
+        return { ok: false };
+      }
+
+      const nextTheme = buildMapUiThemeLibraryEntry({
+        ...mapUiThemeEditorDraft,
+        name: trimmedName,
+        deployment_state: publish
+          ? "published"
+          : normalizeMapUiThemeDeploymentState(mapUiThemeEditorDraft?.deployment_state, mapUiThemeEditorDraft?.is_default ? "published" : "draft"),
+        created_at: String(mapUiThemeEditorDraft?.created_at || nowIso).trim() || nowIso,
+        updated_at: nowIso,
+      });
+      const themeOverride = extractMapUiThemeFromForm(nextTheme.themeForm || {});
+      const nextThemes = (() => {
+        const replaced = mapUiThemeDraftThemes.map((entry) => (
+          String(entry?.id || "").trim() === String(nextTheme?.id || "").trim()
+            ? nextTheme
+            : entry
+        ));
+        if (replaced.some((entry) => String(entry?.id || "").trim() === String(nextTheme?.id || "").trim())) {
+          return replaced;
+        }
+        return [replaced.find((entry) => entry?.is_default) || buildMapUiThemeLibraryEntry({ id: MAP_UI_THEME_DEFAULT_THEME_ID, is_default: true, name: "Default Theme", deployment_state: "published" }), ...replaced.filter((entry) => !entry?.is_default), nextTheme];
+      })();
+
+      if (!nextTheme.is_default && publish) {
+        const startAt = fromLocalDateTimeInputValue(nextTheme.start_at);
+        const endAt = fromLocalDateTimeInputValue(nextTheme.end_at);
+        if (!startAt || !endAt) {
+          setStatus((prev) => ({ ...prev, mapUiTheme: `Choose both a start and end date for ${trimmedName} before publishing.` }));
+          return { ok: false };
+        }
+        if (Date.parse(endAt) <= Date.parse(startAt)) {
+          setStatus((prev) => ({ ...prev, mapUiTheme: `${trimmedName} must end after it starts.` }));
+          return { ok: false };
+        }
+        if (!Object.keys(themeOverride).length) {
+          setStatus((prev) => ({ ...prev, mapUiTheme: `Set at least one theme color override for ${trimmedName} before publishing.` }));
+          return { ok: false };
+        }
+      }
+
+      const conflicts = findMapUiThemeDateConflicts(nextTheme, nextThemes);
+      if (publish && conflicts.length) {
+        const conflictNames = conflicts.map((entry) => entry.name).join(", ");
+        setStatus((prev) => ({ ...prev, mapUiTheme: `${trimmedName} conflicts with ${conflictNames}. Adjust the effective dates before publishing.` }));
+        return { ok: false };
+      }
+
+      const draftThemesPayload = serializeMapUiThemeDraftLibrary(nextThemes);
+      const draftValue = buildMapUiThemeConfigValue(
+        { themes: draftThemesPayload },
+        {
+          saved_at: nowIso,
+          saved_by: sessionUserId || null,
+        }
+      );
+      const draftResult = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_THEME_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (draftResult.error) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: statusText(draftResult.error, "") }));
+        return { ok: false };
+      }
+
+      const normalizedDraftThemes = normalizeMapUiThemeLibraryDrafts(draftValue, mapUiThemePublishedConfig);
+      setMapUiThemeDraftConfig(draftValue);
+      setMapUiThemeDraftThemes(normalizedDraftThemes);
+      const nextDefaultTheme = normalizedDraftThemes.find((entry) => entry?.is_default);
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(nextDefaultTheme?.themeForm || nextDefaultTheme?.theme || {}));
+      setMapUiThemeEditorDraft(buildMapUiThemeLibraryEntry(nextTheme));
+
+      if (publish) {
+        const publishedValue = buildMapUiThemeConfigValue(
+          { themes: serializePublishedMapUiThemeLibrary(nextThemes) },
+          {
+            published_at: nowIso,
+            published_by: sessionUserId || null,
+            source_saved_at: draftValue.saved_at,
+          }
+        );
+        const publishResult = await supabase
+          .from("app_config")
+          .upsert([{ key: MAP_UI_THEME_PUBLISHED_CONFIG_KEY, value: publishedValue }], { onConflict: "key" });
+        if (publishResult.error) {
+          setStatus((prev) => ({ ...prev, mapUiTheme: statusText(publishResult.error, "") }));
+          return { ok: false };
+        }
+        setMapUiThemePublishedConfig(publishedValue);
+        setMapUiThemePublishedThemes(normalizeMapUiThemeLibraryDrafts(publishedValue, publishedValue));
+        setMapUiThemeEditorOpen(false);
+        setMapUiThemeEditorDraft(null);
+        setStatus((prev) => ({ ...prev, mapUiTheme: "Saved the draft and published the selected map UI theme." }));
+      } else {
+        setStatus((prev) => ({ ...prev, mapUiTheme: "Saved the map UI theme draft." }));
+      }
+
+      return { ok: true };
+    } finally {
+      setMapUiThemeSavingDraft(false);
+      setMapUiThemePublishing(false);
+    }
+  }, [canManageDomainRegistry, isPlatformOwner, mapUiThemeDraftThemes, mapUiThemeEditorDraft, mapUiThemePublishedConfig, sessionUserId]);
+
+  const deleteMapUiTheme = useCallback(async (themeId) => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "You need the Domains edit permission to manage map UI themes." }));
+      return;
+    }
+    const targetId = String(themeId || "").trim();
+    if (!targetId) return;
+    const targetTheme = mapUiThemeDraftThemes.find((entry) => String(entry?.id || "").trim() === targetId);
+    if (!targetTheme || targetTheme?.is_default) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${targetTheme.name}?`)) return;
+
+    setMapUiThemeSavingDraft(true);
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    try {
+      const nowIso = new Date().toISOString();
+      const nextThemes = mapUiThemeDraftThemes.filter((entry) => String(entry?.id || "").trim() !== targetId);
+      const draftValue = buildMapUiThemeConfigValue(
+        { themes: serializeMapUiThemeDraftLibrary(nextThemes) },
+        {
+          saved_at: nowIso,
+          saved_by: sessionUserId || null,
+        }
+      );
+      const publishedValue = buildMapUiThemeConfigValue(
+        { themes: serializePublishedMapUiThemeLibrary(nextThemes) },
+        {
+          published_at: nowIso,
+          published_by: sessionUserId || null,
+          source_saved_at: nowIso,
+        }
+      );
+      const [{ error: draftError }, { error: publishError }] = await Promise.all([
+        supabase.from("app_config").upsert([{ key: MAP_UI_THEME_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" }),
+        supabase.from("app_config").upsert([{ key: MAP_UI_THEME_PUBLISHED_CONFIG_KEY, value: publishedValue }], { onConflict: "key" }),
+      ]);
+      if (draftError || publishError) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: statusText(draftError || publishError, "") }));
+        return;
+      }
+      const normalizedDraftThemes = normalizeMapUiThemeLibraryDrafts(draftValue, publishedValue);
+      setMapUiThemeDraftConfig(draftValue);
+      setMapUiThemePublishedConfig(publishedValue);
+      setMapUiThemeDraftThemes(normalizedDraftThemes);
+      setMapUiThemePublishedThemes(normalizeMapUiThemeLibraryDrafts(publishedValue, publishedValue));
+      const nextDefaultTheme = normalizedDraftThemes.find((entry) => entry?.is_default);
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(nextDefaultTheme?.themeForm || nextDefaultTheme?.theme || {}));
+      if (String(mapUiThemeEditorDraft?.id || "").trim() === targetId) {
+        setMapUiThemeEditorOpen(false);
+        setMapUiThemeEditorDraft(null);
+      }
+      setStatus((prev) => ({ ...prev, mapUiTheme: `Deleted ${targetTheme.name}.` }));
+    } finally {
+      setMapUiThemeSavingDraft(false);
+    }
+  }, [canManageDomainRegistry, mapUiThemeDraftThemes, mapUiThemeEditorDraft, sessionUserId]);
+
+  const resetMapUiThemeLibraryToPublished = useCallback(async () => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "You need the Domains edit permission to manage map UI themes." }));
+      return;
+    }
+    setMapUiThemeSavingDraft(true);
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    try {
+      const nowIso = new Date().toISOString();
+      const publishedThemeLibrary = normalizeMapUiThemeLibraryDrafts(mapUiThemePublishedConfig, mapUiThemePublishedConfig);
+      const draftValue = buildMapUiThemeConfigValue(
+        { themes: serializeMapUiThemeDraftLibrary(publishedThemeLibrary) },
+        {
+          saved_at: nowIso,
+          saved_by: sessionUserId || null,
+        }
+      );
+      const { error } = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_THEME_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (error) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: statusText(error, "") }));
+        return;
+      }
+      setMapUiThemeDraftConfig(draftValue);
+      setMapUiThemeDraftThemes(publishedThemeLibrary);
+      const nextDefaultTheme = publishedThemeLibrary.find((entry) => entry?.is_default);
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(nextDefaultTheme?.themeForm || nextDefaultTheme?.theme || {}));
+      setMapUiThemeEditorOpen(false);
+      setMapUiThemeEditorDraft(null);
+      setStatus((prev) => ({ ...prev, mapUiTheme: "Reset the draft theme library back to the currently published themes." }));
+    } finally {
+      setMapUiThemeSavingDraft(false);
+    }
+  }, [canManageDomainRegistry, mapUiThemePublishedConfig, sessionUserId]);
 
   const addMapUiThemeScheduleDraft = useCallback(() => {
     const nextEntry = createMapUiThemeScheduleDraft({});
@@ -8506,6 +9055,282 @@ export default function PlatformAdminApp() {
     gap: 14,
     marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)",
   };
+  const renderMapUiThemeMobilePreview = useCallback((themeBundle, mode) => {
+    const theme = themeBundle?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+    const darkMode = mode === "dark";
+    const frameBorder = darkMode ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
+    const mapBackdrop = darkMode
+      ? "linear-gradient(180deg, rgba(14,25,39,0.96), rgba(21,41,61,0.96))"
+      : "linear-gradient(180deg, rgba(217,232,245,0.98), rgba(199,223,211,0.94))";
+    return (
+      <div
+        key={`map-ui-theme-preview-${mode}`}
+        style={{
+          borderRadius: 28,
+          padding: 12,
+          border: `1px solid ${frameBorder}`,
+          background: darkMode ? "#08111d" : "#dfeaf4",
+          boxShadow: "0 18px 36px rgba(15, 23, 42, 0.18)",
+          display: "grid",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px", fontSize: 11.5, fontWeight: 800, color: darkMode ? "#dbeafe" : palette.navy900 }}>
+          <span>{darkMode ? "Dark Preview" : "Light Preview"}</span>
+          <span>9:41</span>
+        </div>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 310,
+            minHeight: 620,
+            borderRadius: 24,
+            overflow: "hidden",
+            background: mapBackdrop,
+            position: "relative",
+            display: "grid",
+            gridTemplateRows: "auto 1fr auto",
+          }}
+        >
+          <div
+            style={{
+              background: `linear-gradient(135deg, ${theme.header_bg_primary}, ${theme.header_bg_secondary})`,
+              borderBottom: `1px solid ${theme.header_border}`,
+              color: theme.header_text,
+              padding: "16px 16px 14px",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: theme.header_eyebrow, fontWeight: 800 }}>
+              Map UI Theme
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+              <div style={{ display: "grid", gap: 4 }}>
+                <strong style={{ fontSize: 16, lineHeight: 1.1 }}>CityReport Mobile</strong>
+                <span style={{ fontSize: 12, opacity: 0.82 }}>Header, menu, overlays, feeds, and tools</span>
+              </div>
+              <div
+                style={{
+                  borderRadius: 14,
+                  padding: "10px 12px",
+                  border: `1px solid ${theme.header_menu_border}`,
+                  background: theme.header_menu_bg,
+                  color: theme.header_text,
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                Menu
+              </div>
+            </div>
+          </div>
+          <div style={{ position: "relative", minHeight: 0 }}>
+            <div style={{ position: "absolute", inset: 0, opacity: darkMode ? 0.36 : 0.5 }}>
+              <div style={{ position: "absolute", top: 86, left: -10, right: -10, height: 3, background: darkMode ? "rgba(191,219,254,0.18)" : "rgba(17,36,69,0.12)", transform: "rotate(-8deg)" }} />
+              <div style={{ position: "absolute", top: 198, left: -24, right: -24, height: 3, background: darkMode ? "rgba(191,219,254,0.14)" : "rgba(17,36,69,0.10)", transform: "rotate(12deg)" }} />
+              <div style={{ position: "absolute", top: 304, left: 18, right: 18, height: 3, background: darkMode ? "rgba(191,219,254,0.12)" : "rgba(17,36,69,0.10)", transform: "rotate(-18deg)" }} />
+            </div>
+            <div style={{ position: "absolute", top: 16, right: 12, display: "grid", gap: 10 }}>
+              {["Aa", "On", "Go"].map((label, index) => {
+                const active = index === 1;
+                return (
+                  <div
+                    key={`${mode}-${label}`}
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 16,
+                      border: `1px solid ${active ? theme.tool_active_border : theme.tool_button_border}`,
+                      background: active ? theme.tool_active_bg : theme.tool_button_bg,
+                      color: active ? theme.tool_active_text : theme.tool_button_text,
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: 13,
+                      fontWeight: 900,
+                      boxShadow: "0 10px 24px rgba(15, 23, 42, 0.18)",
+                    }}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                left: 16,
+                right: 16,
+                bottom: 96,
+                borderRadius: 22,
+                border: `1px solid ${theme.feed_card_border}`,
+                background: theme.feed_card_bg,
+                color: theme.surface_text,
+                padding: 14,
+                display: "grid",
+                gap: 10,
+                boxShadow: "0 18px 30px rgba(15, 23, 42, 0.16)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <strong style={{ fontSize: 14 }}>Resident Feed</strong>
+                <span
+                  style={{
+                    borderRadius: 999,
+                    padding: "4px 10px",
+                    background: theme.feed_status_scheduled_bg,
+                    border: `1px solid ${theme.feed_status_scheduled_border}`,
+                    color: theme.feed_status_scheduled_text,
+                    fontSize: 11,
+                    fontWeight: 800,
+                  }}
+                >
+                  Scheduled
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: theme.feed_muted_text }}>
+                Previewing feed cards, status chips, utility contact tiles, and modal actions.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_badge_bg, border: `1px solid ${theme.feed_badge_border}`, color: theme.feed_badge_text, fontSize: 11, fontWeight: 800 }}>
+                  Feed Badge
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_new_badge_bg, border: `1px solid ${theme.feed_new_badge_border}`, color: theme.feed_new_badge_text, fontSize: 11, fontWeight: 800 }}>
+                  New
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_alert_info_bg, border: `1px solid ${theme.feed_alert_info_border}`, color: theme.feed_alert_info_text, fontSize: 11, fontWeight: 800 }}>
+                  Alert
+                </span>
+              </div>
+            </div>
+            <div
+              style={{
+                position: "absolute",
+                left: 18,
+                right: 18,
+                bottom: 18,
+                borderRadius: 22,
+                border: `1px solid ${theme.modal_border}`,
+                background: theme.modal_bg,
+                color: theme.surface_text,
+                padding: 14,
+                display: "grid",
+                gap: 10,
+                boxShadow: "0 18px 36px rgba(15, 23, 42, 0.24)",
+              }}
+            >
+              <div style={{ display: "grid", gap: 4 }}>
+                <strong style={{ fontSize: 14 }}>Quick Actions</strong>
+                <div style={{ fontSize: 12, color: theme.feed_muted_text }}>Modal, inputs, and primary/secondary buttons.</div>
+              </div>
+              <div style={{ borderRadius: 14, border: `1px solid ${theme.modal_input_border}`, background: theme.modal_input_bg, padding: "10px 12px", fontSize: 12.5, color: theme.surface_text }}>
+                Search address or report number
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" style={{ borderRadius: 14, border: `1px solid ${theme.modal_secondary_border}`, background: theme.modal_secondary_bg, color: theme.modal_secondary_text, padding: "10px 12px", fontSize: 12, fontWeight: 800 }}>
+                  Secondary
+                </button>
+                <button type="button" style={{ borderRadius: 14, border: "none", background: theme.modal_filled_bg, color: theme.modal_filled_text, padding: "10px 12px", fontSize: 12, fontWeight: 800 }}>
+                  Primary
+                </button>
+              </div>
+              <div style={{ borderRadius: 16, border: `1px solid ${theme.contact_tile_border}`, background: theme.contact_tile_bg, padding: "10px 12px", fontSize: 12, color: theme.surface_text }}>
+                Utility Contact Tile
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              background: theme.surface_bg,
+              borderTop: `1px solid ${theme.surface_border}`,
+              color: theme.surface_text,
+              padding: "10px 12px 14px",
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: 8,
+            }}
+          >
+            {["Map", "Reports", "Alerts", "Account"].map((label, index) => (
+              <div key={`${mode}-${label}-tab`} style={{ display: "grid", justifyItems: "center", gap: 4, color: index === 0 ? theme.tool_active_bg : theme.surface_text }}>
+                <div style={{ width: 28, height: 28, borderRadius: 10, border: `1px solid ${index === 0 ? theme.tool_active_border : theme.tool_button_border}`, background: index === 0 ? theme.tool_active_bg : theme.tool_button_bg, color: index === 0 ? theme.tool_active_text : theme.tool_button_text, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 900 }}>
+                  {label.slice(0, 1)}
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700 }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }, [palette.navy900]);
+  const renderMapUiThemeColorEditor = useCallback((mode, themeForm, onValueChange, onPickerChange, controlsDisabled) => {
+    const theme = mapUiThemeEditorPreview?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+    const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
+    const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
+    const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
+    return (
+      <div key={`theme-editor-${mode}`} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: `1px solid ${theme.tool_button_border}`, background: theme.tool_button_bg, color: theme.tool_button_text, display: "grid", placeItems: "center", boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)" }}>
+              <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
+            </div>
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: `1px solid ${theme.tool_active_border}`, background: theme.tool_active_bg, color: theme.tool_active_text, display: "grid", placeItems: "center", boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)" }}>
+              <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {MAP_UI_THEME_FIELDS.map((field) => {
+            const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
+            const draftValue = String(themeForm?.[field.key] || "").trim();
+            const usingDefault = !draftValue;
+            const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
+            return (
+              <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
+                  <button
+                    type="button"
+                    disabled={controlsDisabled}
+                    onClick={() => onValueChange(mode, field.key, "")}
+                    style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
+                  >
+                    {usingDefault ? "Using Default" : "Use Default"}
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
+                  <input
+                    type="color"
+                    value={pickerValue.hex}
+                    disabled={controlsDisabled}
+                    onChange={(event) => onPickerChange(mode, field.key, event.target.value, pickerValue.alphaPercent)}
+                    style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                  />
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={pickerValue.alphaPercent}
+                      disabled={controlsDisabled}
+                      onChange={(event) => onPickerChange(mode, field.key, pickerValue.hex, Number(event.target.value))}
+                    />
+                    <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span>Opacity {pickerValue.alphaPercent}%</span>
+                      <span>{usingDefault ? "Default palette" : draftValue}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }, [buttonAlt, mapUiThemeEditorPreview, modalInput, palette.navy900, palette.textMuted, subPanel]);
   const currentPageActions = controlPlanePage === "lead-detail" ? (
     <button type="button" style={headerActionButton} onClick={() => openControlPlanePage("manage-leads")}>
       Back to Leads
@@ -8543,6 +9368,32 @@ export default function PlatformAdminApp() {
     >
       New Global Domain
     </button>
+  ) : controlPlanePage === "map-ui-theme" ? (
+    mapUiThemeEditorOpen ? (
+      <button type="button" style={headerActionButton} onClick={closeMapUiThemeEditor}>
+        Back to Themes
+      </button>
+    ) : (
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          style={{ ...headerActionButton, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+          onClick={openNewMapUiThemeEditor}
+          disabled={!canManageDomainRegistry}
+          title={canManageDomainRegistry ? "Create a map UI theme" : "You need the Domains edit permission"}
+        >
+          New Theme
+        </button>
+        <button
+          type="button"
+          style={{ ...headerActionButton, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft ? 1 : 0.55 }}
+          onClick={() => void resetMapUiThemeLibraryToPublished()}
+          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft}
+        >
+          Reset Drafts
+        </button>
+      </div>
+    )
   ) : null;
   const controlPlaneSettingsActions = settingsPageActive && currentPageActions ? (
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
@@ -10526,57 +11377,21 @@ export default function PlatformAdminApp() {
               {controlPlaneSettingsActions}
               <div style={{ ...card, display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 4 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>Map UI Theme</h2>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Map UI Themes</h2>
                   <p style={{ margin: 0, color: palette.textMuted }}>
-                    Manage shared theme colors for the map shell, including indefinite branding and temporary scheduled overrides for holidays or major events.
+                    Build a saved library of default and temporary map UI themes. Draft themes stay in PCP until they are published, and scheduled themes become active only during their effective dates.
                   </p>
                 </div>
                 <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: 4 }}>
-                      <strong style={{ color: palette.navy900 }}>Draft + Publish Flow</strong>
+                      <strong style={{ color: palette.navy900 }}>Theme Library</strong>
                       <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
-                        Save theme work into the draft first. Publish when you want the base theme and any scheduled overrides to go live together.
+                        The default theme is the permanent fallback theme. Temporary themes can be drafted, scheduled, published, duplicated, and deleted individually from the configurator flow.
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                        onClick={() => void resetMapUiThemeDraftToPublished()}
-                      >
-                        Reset Draft
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                        onClick={() => void persistMapUiThemeDraft({ publish: false })}
-                      >
-                        {mapUiThemeSavingDraft ? "Saving Draft..." : "Save Draft"}
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                        onClick={() => void persistMapUiThemeDraft({ publish: true })}
-                      >
-                        {mapUiThemePublishing ? "Publishing..." : "Publish Live"}
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                        onClick={() => {
-                          if (!mapUiThemeSectionOpen) {
-                            setMapUiThemeSectionOpen(true);
-                          }
-                          addMapUiThemeScheduleDraft();
-                        }}
-                      >
-                        Add Temporary Theme
-                      </button>
+                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                      {sortedMapUiThemeDraftThemes.length} saved theme{sortedMapUiThemeDraftThemes.length === 1 ? "" : "s"}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: palette.textMuted }}>
@@ -10591,18 +11406,11 @@ export default function PlatformAdminApp() {
                       {mapUiThemePublishedConfig?.published_at ? new Date(mapUiThemePublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
                     </span>
                     <span>
-                      Temporary themes:
-                      {" "}
-                      {mapUiThemeSchedulesDraft.length}
-                    </span>
-                    <span>
                       Live now:
                       {" "}
                       {activePublishedMapUiThemeSchedule?.label
                         ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
-                        : isMapUiBaseThemeEnabled(mapUiThemePublishedConfig)
-                          ? "Indefinite theme"
-                          : "Default CityReport theme"}
+                        : "Default theme"}
                     </span>
                   </div>
                 </div>
@@ -10611,496 +11419,250 @@ export default function PlatformAdminApp() {
                     {status.mapUiTheme}
                   </div>
                 ) : null}
-                <div style={{ ...subPanel, display: "grid", gap: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
-                      <strong style={{ color: palette.navy900 }}>Map UI Theme</strong>
-                      <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Theme colors for the shared map shell, including the header, menus, modals, bottom tabs, and tool buttons. Scheduled themes temporarily override the indefinite theme and then fall back to the indefinite theme or CityReport defaults automatically.
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMapUiThemeSectionOpen((prev) => !prev)}
-                      style={{ ...buttonAlt, padding: "8px 12px" }}
-                    >
-                      {mapUiThemeSectionOpen ? "Collapse" : "Open Theme"}
-                    </button>
-                  </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    {["light", "dark"].map((mode) => {
-                      const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
-                      const label = mode === "dark" ? "Dark Preview" : "Light Preview";
-                      return (
-                        <div
-                          key={`theme-summary-${mode}`}
-                          style={{
-                            ...subPanel,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            background: mode === "dark" ? "#102445" : "#f8fbff",
-                            border: `1px solid ${mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)"}`,
-                            minWidth: 190,
-                          }}
+                {mapUiThemeEditorOpen && mapUiThemeEditorDraft ? (
+                  <div style={{ ...subPanel, display: "grid", gap: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 4 }}>
+                        <strong style={{ color: palette.navy900 }}>Theme Configurator</strong>
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          {mapUiThemeEditorDraft.is_default
+                            ? "Edit the default fallback theme here. Only PCP super users can publish changes to the default theme."
+                            : "Configure a temporary theme, save it as a draft, or publish it to schedule deployment during its effective dates."}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                          onClick={closeMapUiThemeEditor}
                         >
-                          <div
-                            style={{
-                              width: 42,
-                              height: 42,
-                              borderRadius: 12,
-                              border: `1px solid ${theme.tool_button_border}`,
-                              background: theme.tool_button_bg,
-                              color: theme.tool_button_text,
-                              display: "grid",
-                              placeItems: "center",
-                              boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                              flexShrink: 0,
-                            }}
-                          >
-                            <span style={{ fontSize: 15, fontWeight: 900 }}>Aa</span>
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                          onClick={() => void saveMapUiThemeEditor({ publish: false })}
+                        >
+                          {mapUiThemeSavingDraft ? "Saving Draft..." : "Save Draft"}
+                        </button>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                          onClick={() => void saveMapUiThemeEditor({ publish: true })}
+                        >
+                          {mapUiThemePublishing ? "Publishing..." : mapUiThemeEditorDraft.is_default ? "Publish Default Theme" : "Publish + Schedule"}
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Theme Name</span>
+                        <input
+                          type="text"
+                          value={mapUiThemeEditorDraft.name}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing || (mapUiThemeEditorDraft.is_default && !isPlatformOwner)}
+                          onChange={(event) => updateMapUiThemeEditorMeta("name", event.target.value)}
+                          style={modalInput}
+                          placeholder={mapUiThemeEditorDraft.is_default ? "Default Theme" : "Fourth of July"}
+                        />
+                      </label>
+                      {!mapUiThemeEditorDraft.is_default ? (
+                        <>
+                          <label style={{ display: "grid", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective Start</span>
+                            <input
+                              type="datetime-local"
+                              value={mapUiThemeEditorDraft.start_at}
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                              onChange={(event) => updateMapUiThemeEditorMeta("start_at", event.target.value)}
+                              style={modalInput}
+                            />
+                          </label>
+                          <label style={{ display: "grid", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective End</span>
+                            <input
+                              type="datetime-local"
+                              value={mapUiThemeEditorDraft.end_at}
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                              onChange={(event) => updateMapUiThemeEditorMeta("end_at", event.target.value)}
+                              style={modalInput}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <div style={{ ...subPanel, display: "grid", gap: 6, background: "rgba(248,251,255,0.84)" }}>
+                          <strong style={{ color: palette.navy900, fontSize: 12.5 }}>Default Theme Rules</strong>
+                          <span style={{ fontSize: 12, color: palette.textMuted }}>
+                            The default theme has no effective dates. It is the permanent fallback whenever no active temporary theme is live.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {!mapUiThemeEditorDraft.is_default && mapUiThemeEditorConflicts.length ? (
+                      <div style={{ ...subPanel, display: "grid", gap: 4, background: "rgba(209,67,67,0.08)", borderColor: "rgba(209,67,67,0.2)" }}>
+                        <strong style={{ color: palette.red600, fontSize: 12.5 }}>Date Conflict</strong>
+                        <span style={{ fontSize: 12, color: palette.red600 }}>
+                          This theme overlaps with {mapUiThemeEditorConflicts.map((entry) => entry.name).join(", ")}. Save the draft if needed, but publish only after the dates no longer conflict.
+                        </span>
+                      </div>
+                    ) : null}
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <strong style={{ color: palette.navy900 }}>Mobile Preview</strong>
+                      <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+                        {["light", "dark"].map((mode) => renderMapUiThemeMobilePreview(mapUiThemeEditorPreview, mode))}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+                      {["light", "dark"].map((mode) => renderMapUiThemeColorEditor(
+                        mode,
+                        mapUiThemeEditorDraft?.themeForm?.[mode] || {},
+                        updateMapUiThemeEditorValue,
+                        updateMapUiThemeEditorPicker,
+                        !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing || (mapUiThemeEditorDraft.is_default && !isPlatformOwner)
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {sortedMapUiThemeDraftThemes.map((themeEntry) => {
+                      const statusLabel = formatMapUiThemeStatus(themeEntry);
+                      const statusBackground = statusLabel === "Active"
+                        ? "rgba(18,128,106,0.12)"
+                        : statusLabel === "Scheduled"
+                          ? "rgba(37,99,235,0.10)"
+                          : statusLabel === "Draft"
+                            ? "rgba(245,190,28,0.12)"
+                            : statusLabel === "Ended"
+                              ? "rgba(107,114,128,0.12)"
+                              : "rgba(17,36,69,0.10)";
+                      const statusColor = statusLabel === "Active"
+                        ? palette.mint700
+                        : statusLabel === "Scheduled"
+                          ? "#1d4ed8"
+                          : statusLabel === "Draft"
+                            ? "#7a5a00"
+                            : statusLabel === "Ended"
+                              ? "#4b5563"
+                              : palette.navy700;
+                      const themePreview = mergeMapUiTheme({
+                        themes: [
+                          {
+                            id: themeEntry.id,
+                            is_default: themeEntry.is_default,
+                            deployment_state: "published",
+                            start_at: fromLocalDateTimeInputValue(themeEntry.start_at),
+                            end_at: fromLocalDateTimeInputValue(themeEntry.end_at),
+                            theme: extractMapUiThemeFromForm(themeEntry.themeForm || {}),
+                          },
+                        ],
+                      });
+                      return (
+                        <div key={themeEntry.id} style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                            <div style={{ display: "grid", gap: 6 }}>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                <strong style={{ color: palette.navy900 }}>{themeEntry.name}</strong>
+                                <span style={{ fontSize: 11.5, fontWeight: 800, color: statusColor, background: statusBackground, borderRadius: 999, padding: "4px 10px" }}>
+                                  {statusLabel}
+                                </span>
+                                {themeEntry.is_default ? (
+                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy700, background: "rgba(17,36,69,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                                    Fallback
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                {themeEntry.is_default
+                                  ? "Permanent fallback theme used whenever no active temporary theme is live."
+                                  : themeEntry.start_at && themeEntry.end_at
+                                    ? `${formatDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.start_at))} to ${formatDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.end_at))}`
+                                    : "Draft theme with no effective dates yet."}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && (!themeEntry.is_default || isPlatformOwner) ? 1 : 0.55 }}
+                                disabled={!canManageDomainRegistry || (themeEntry.is_default && !isPlatformOwner)}
+                                onClick={() => openMapUiThemeEditor(themeEntry.id)}
+                                title={themeEntry.is_default && !isPlatformOwner ? "Only PCP super users can edit the default theme." : "Edit theme"}
+                              >
+                                Edit
+                              </button>
+                              {!themeEntry.is_default ? (
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                                  disabled={!canManageDomainRegistry}
+                                  onClick={() => duplicateMapUiTheme(themeEntry.id)}
+                                >
+                                  Copy
+                                </button>
+                              ) : null}
+                              {!themeEntry.is_default ? (
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                                  disabled={!canManageDomainRegistry}
+                                  onClick={() => void deleteMapUiTheme(themeEntry.id)}
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
-                          <div style={{ display: "grid", gap: 2 }}>
-                            <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900, fontSize: 12.5 }}>{label}</strong>
-                            <span style={{ fontSize: 11.5, color: mode === "dark" ? "rgba(245,251,255,0.72)" : palette.textMuted }}>
-                              Header, menus, resident feeds, modals, tabs, and tool buttons
-                            </span>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {["light", "dark"].map((mode) => {
+                              const theme = themePreview?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                              return (
+                                <div
+                                  key={`${themeEntry.id}-${mode}`}
+                                  style={{
+                                    ...subPanel,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 10,
+                                    background: mode === "dark" ? "#102445" : "#f8fbff",
+                                    border: `1px solid ${mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)"}`,
+                                    minWidth: 190,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      width: 42,
+                                      height: 42,
+                                      borderRadius: 12,
+                                      border: `1px solid ${theme.tool_button_border}`,
+                                      background: theme.tool_button_bg,
+                                      color: theme.tool_button_text,
+                                      display: "grid",
+                                      placeItems: "center",
+                                      boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 15, fontWeight: 900 }}>Aa</span>
+                                  </div>
+                                  <div style={{ display: "grid", gap: 2 }}>
+                                    <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900, fontSize: 12.5 }}>
+                                      {mode === "dark" ? "Dark Preview" : "Light Preview"}
+                                    </strong>
+                                    <span style={{ fontSize: 11.5, color: mode === "dark" ? "rgba(245,251,255,0.72)" : palette.textMuted }}>
+                                      Mobile map shell preview
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: palette.textMuted }}>
-                    <span>
-                      Base theme:
-                      {" "}
-                      {mapUiThemeBaseEnabled ? "Enabled" : "Using default colors"}
-                    </span>
-                    <span>
-                      Temporary themes:
-                      {" "}
-                      {mapUiThemeSchedulesDraft.length}
-                    </span>
-                    <span>
-                      Live now:
-                      {" "}
-                      {activePublishedMapUiThemeSchedule?.label
-                        ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
-                        : isMapUiBaseThemeEnabled(mapUiThemePublishedConfig)
-                          ? "Indefinite theme"
-                          : "Default CityReport theme"}
-                    </span>
-                  </div>
-                  {mapUiThemeSectionOpen ? (
-                    <div style={{ display: "grid", gap: 12 }}>
-                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(248,251,255,0.84)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <strong style={{ color: palette.navy900 }}>Temporary Scheduled Themes</strong>
-                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                              Use these for holidays, launches, or event windows. An active scheduled theme overrides the indefinite theme until its end time.
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                            onClick={addMapUiThemeScheduleDraft}
-                            style={{ ...buttonBase, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                          >
-                            Add Temporary Theme
-                          </button>
-                        </div>
-                        {mapUiThemeSchedulesDraft.length ? (
-                          <div style={{ display: "grid", gap: 10 }}>
-                            {mapUiThemeSchedulesDraft.map((schedule) => {
-                              const scheduleTheme = mergeMapUiTheme({ theme: extractMapUiThemeFromForm(schedule.themeForm) });
-                              const isExpanded = mapUiThemeExpandedScheduleId === schedule.id;
-                              const statusLabel = getMapUiThemeScheduleStatus(schedule);
-                              const statusBackground = statusLabel === "Active"
-                                ? "rgba(18,128,106,0.12)"
-                                : statusLabel === "Scheduled"
-                                  ? "rgba(37,99,235,0.10)"
-                                  : statusLabel === "Ended"
-                                    ? "rgba(107,114,128,0.12)"
-                                    : "rgba(17,36,69,0.10)";
-                              const statusColor = statusLabel === "Active"
-                                ? palette.mint700
-                                : statusLabel === "Scheduled"
-                                  ? "#1d4ed8"
-                                  : statusLabel === "Ended"
-                                    ? "#4b5563"
-                                    : palette.navy700;
-                              return (
-                                <div key={schedule.id} style={{ ...subPanel, display: "grid", gap: 10, background: "#ffffff" }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                                    <div style={{ display: "grid", gap: 6 }}>
-                                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                        <strong style={{ color: palette.navy900 }}>{schedule.label || "Untitled temporary theme"}</strong>
-                                        <span style={{ fontSize: 11.5, fontWeight: 800, color: statusColor, background: statusBackground, borderRadius: 999, padding: "4px 10px" }}>
-                                          {statusLabel}
-                                        </span>
-                                        {schedule.enabled === false ? (
-                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.red600, background: "rgba(209,67,67,0.10)", borderRadius: 999, padding: "4px 10px" }}>
-                                            Disabled
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <span style={{ fontSize: 12, color: palette.textMuted }}>
-                                        {schedule.start_at && schedule.end_at
-                                          ? `${formatDateTimeDisplay(fromLocalDateTimeInputValue(schedule.start_at))} to ${formatDateTimeDisplay(fromLocalDateTimeInputValue(schedule.end_at))}`
-                                          : "Choose a start and end window"}
-                                      </span>
-                                    </div>
-                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                      <button
-                                        type="button"
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onClick={() => setMapUiThemeExpandedScheduleId((prev) => (prev === schedule.id ? "" : schedule.id))}
-                                        style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                                      >
-                                        {isExpanded ? "Collapse" : "Edit Theme"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onClick={() => removeMapUiThemeScheduleDraft(schedule.id)}
-                                        style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                                    <label style={{ display: "grid", gap: 6 }}>
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Theme Label</span>
-                                      <input
-                                        type="text"
-                                        value={schedule.label}
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "label", event.target.value)}
-                                        style={modalInput}
-                                        placeholder="Fourth of July"
-                                      />
-                                    </label>
-                                    <label style={{ display: "grid", gap: 6 }}>
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Start</span>
-                                      <input
-                                        type="datetime-local"
-                                        value={schedule.start_at}
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "start_at", event.target.value)}
-                                        style={modalInput}
-                                      />
-                                    </label>
-                                    <label style={{ display: "grid", gap: 6 }}>
-                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>End</span>
-                                      <input
-                                        type="datetime-local"
-                                        value={schedule.end_at}
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "end_at", event.target.value)}
-                                        style={modalInput}
-                                      />
-                                    </label>
-                                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: palette.navy900 }}>
-                                      <input
-                                        type="checkbox"
-                                        checked={schedule.enabled !== false}
-                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "enabled", event.target.checked)}
-                                      />
-                                      Enable this temporary theme
-                                    </label>
-                                  </div>
-                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                    {["light", "dark"].map((mode) => {
-                                      const theme = scheduleTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
-                                      const label = mode === "dark" ? "Dark Preview" : "Light Preview";
-                                      return (
-                                        <div
-                                          key={`${schedule.id}-${mode}-summary`}
-                                          style={{
-                                            ...subPanel,
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 10,
-                                            background: mode === "dark" ? "#102445" : "#f8fbff",
-                                            border: `1px solid ${mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)"}`,
-                                            minWidth: 190,
-                                          }}
-                                        >
-                                          <div
-                                            style={{
-                                              width: 42,
-                                              height: 42,
-                                              borderRadius: 12,
-                                              border: `1px solid ${theme.tool_button_border}`,
-                                              background: theme.tool_button_bg,
-                                              color: theme.tool_button_text,
-                                              display: "grid",
-                                              placeItems: "center",
-                                              boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                              flexShrink: 0,
-                                            }}
-                                          >
-                                            <span style={{ fontSize: 15, fontWeight: 900 }}>Aa</span>
-                                          </div>
-                                          <div style={{ display: "grid", gap: 2 }}>
-                                            <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900, fontSize: 12.5 }}>{label}</strong>
-                                            <span style={{ fontSize: 11.5, color: mode === "dark" ? "rgba(245,251,255,0.72)" : palette.textMuted }}>
-                                              Scheduled override preview
-                                            </span>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                  {isExpanded ? (
-                                    <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
-                                      {["light", "dark"].map((mode) => {
-                                        const theme = scheduleTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
-                                        const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
-                                        const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
-                                        const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
-                                        const themeForm = schedule?.themeForm?.[mode] || {};
-                                        return (
-                                          <div key={`${schedule.id}-${mode}`} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
-                                            <div style={{ display: "grid", gap: 4 }}>
-                                              <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
-                                              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                                <div
-                                                  style={{
-                                                    width: 52,
-                                                    height: 52,
-                                                    borderRadius: 14,
-                                                    border: `1px solid ${theme.tool_button_border}`,
-                                                    background: theme.tool_button_bg,
-                                                    color: theme.tool_button_text,
-                                                    display: "grid",
-                                                    placeItems: "center",
-                                                    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                                  }}
-                                                >
-                                                  <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
-                                                </div>
-                                                <div
-                                                  style={{
-                                                    width: 52,
-                                                    height: 52,
-                                                    borderRadius: 14,
-                                                    border: `1px solid ${theme.tool_active_border}`,
-                                                    background: theme.tool_active_bg,
-                                                    color: theme.tool_active_text,
-                                                    display: "grid",
-                                                    placeItems: "center",
-                                                    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                                  }}
-                                                >
-                                                  <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
-                                                </div>
-                                              </div>
-                                            </div>
-                                            <div style={{ display: "grid", gap: 10 }}>
-                                              {MAP_UI_THEME_FIELDS.map((field) => {
-                                                const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
-                                                const draftValue = String(themeForm?.[field.key] || "").trim();
-                                                const usingDefault = !draftValue;
-                                                const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
-                                                const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
-                                                return (
-                                                  <div key={`${schedule.id}-${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
-                                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                                      <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
-                                                      <button
-                                                        type="button"
-                                                        disabled={controlsDisabled}
-                                                        onClick={() => updateMapUiThemeScheduleDraftValue(schedule.id, mode, field.key, "")}
-                                                        style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
-                                                      >
-                                                        {usingDefault ? "Using Default" : "Use Default"}
-                                                      </button>
-                                                    </div>
-                                                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
-                                                      <input
-                                                        type="color"
-                                                        value={pickerValue.hex}
-                                                        disabled={controlsDisabled}
-                                                        onChange={(event) => updateMapUiThemeScheduleDraftPicker(schedule.id, mode, field.key, event.target.value, pickerValue.alphaPercent)}
-                                                        style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
-                                                      />
-                                                      <div style={{ display: "grid", gap: 6 }}>
-                                                        <input
-                                                          type="range"
-                                                          min="0"
-                                                          max="100"
-                                                          step="1"
-                                                          value={pickerValue.alphaPercent}
-                                                          disabled={controlsDisabled}
-                                                          onChange={(event) => updateMapUiThemeScheduleDraftPicker(schedule.id, mode, field.key, pickerValue.hex, Number(event.target.value))}
-                                                        />
-                                                        <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                                          <span>Opacity {pickerValue.alphaPercent}%</span>
-                                                          <span>{usingDefault ? "Default palette" : draftValue}</span>
-                                                        </div>
-                                                      </div>
-                                                    </div>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            No temporary themes scheduled yet.
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <strong style={{ color: palette.navy900 }}>Indefinite Theme</strong>
-                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                              This is the always-on theme that stays live until you disable it or replace it. Temporary schedules revert back here when they end.
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                              onClick={() => setMapUiThemeBaseEnabled((prev) => !prev)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                            >
-                              {mapUiThemeBaseEnabled ? "Disable Base Theme" : "Enable Base Theme"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                              onClick={() => setMapUiThemeBaseEnabled(false)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                            >
-                              Use Default Theme Live
-                            </button>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 11.5, fontWeight: 800, color: mapUiThemeBaseEnabled ? palette.mint700 : palette.navy700, background: mapUiThemeBaseEnabled ? "rgba(18,128,106,0.12)" : "rgba(17,36,69,0.10)", borderRadius: 999, padding: "4px 10px" }}>
-                            {mapUiThemeBaseEnabled ? "Enabled live after publish" : "Disabled after publish"}
-                          </span>
-                          {!mapUiThemeBaseEnabled ? (
-                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              Saved colors stay here even while the live app falls back to defaults.
-                            </span>
-                          ) : null}
-                        </div>
-                        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
-                          {["light", "dark"].map((mode) => {
-                            const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
-                            const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
-                            const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
-                            const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
-                            const themeForm = mapUiThemeDraftForm?.[mode] || {};
-                            return (
-                              <div key={mode} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
-                                <div style={{ display: "grid", gap: 4 }}>
-                                  <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
-                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                    <div
-                                      style={{
-                                        width: 52,
-                                        height: 52,
-                                        borderRadius: 14,
-                                        border: `1px solid ${theme.tool_button_border}`,
-                                        background: theme.tool_button_bg,
-                                        color: theme.tool_button_text,
-                                        display: "grid",
-                                        placeItems: "center",
-                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                      }}
-                                    >
-                                      <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
-                                    </div>
-                                    <div
-                                      style={{
-                                        width: 52,
-                                        height: 52,
-                                        borderRadius: 14,
-                                        border: `1px solid ${theme.tool_active_border}`,
-                                        background: theme.tool_active_bg,
-                                        color: theme.tool_active_text,
-                                        display: "grid",
-                                        placeItems: "center",
-                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                      }}
-                                    >
-                                      <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div style={{ display: "grid", gap: 10 }}>
-                                  {MAP_UI_THEME_FIELDS.map((field) => {
-                                    const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
-                                    const draftValue = String(themeForm?.[field.key] || "").trim();
-                                    const usingDefault = !draftValue;
-                                    const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
-                                    const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
-                                    return (
-                                      <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                          <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
-                                          <button
-                                            type="button"
-                                            disabled={controlsDisabled}
-                                            onClick={() => updateMapUiThemeDraftValue(mode, field.key, "")}
-                                            style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
-                                          >
-                                            {usingDefault ? "Using Default" : "Use Default"}
-                                          </button>
-                                        </div>
-                                        <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
-                                          <input
-                                            type="color"
-                                            value={pickerValue.hex}
-                                            disabled={controlsDisabled}
-                                            onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, event.target.value, pickerValue.alphaPercent)}
-                                            style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
-                                          />
-                                          <div style={{ display: "grid", gap: 6 }}>
-                                            <input
-                                              type="range"
-                                              min="0"
-                                              max="100"
-                                              step="1"
-                                              value={pickerValue.alphaPercent}
-                                              disabled={controlsDisabled}
-                                              onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, pickerValue.hex, Number(event.target.value))}
-                                            />
-                                            <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                              <span>Opacity {pickerValue.alphaPercent}%</span>
-                                              <span>{usingDefault ? "Default palette" : draftValue}</span>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                    </div>
-                  ) : null}
-                </div>
+                )}
               </div>
             </div>
           </div>
