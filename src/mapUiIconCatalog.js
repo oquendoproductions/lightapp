@@ -1,5 +1,7 @@
 export const MAP_UI_ICON_PUBLISHED_CONFIG_KEY = "public_map_ui_icons_published";
 export const MAP_UI_ICON_DRAFT_CONFIG_KEY = "platform_map_ui_icons_draft";
+export const MAP_UI_THEME_PUBLISHED_CONFIG_KEY = "public_map_ui_theme_published";
+export const MAP_UI_THEME_DRAFT_CONFIG_KEY = "platform_map_ui_theme_draft";
 export const MAP_UI_ICON_BUCKET = "domain-icons";
 export const MAP_UI_ICON_ACCEPT = ".svg,.png,.webp,image/svg+xml,image/png,image/webp";
 export const MAP_UI_ICON_MAX_BYTES = 2 * 1024 * 1024;
@@ -601,14 +603,18 @@ export function mergeMapUiIconRenderModes(raw) {
 }
 
 export function buildMapUiIconConfigValue(rawIcons, extra = {}) {
-  const maybeTheme = rawIcons && typeof rawIcons === "object" && rawIcons.theme && typeof rawIcons.theme === "object"
-    ? sanitizeMapUiTheme(rawIcons.theme)
-    : {};
-  const scheduledThemes = sanitizeMapUiThemeSchedules(rawIcons);
   return {
     icons: sanitizeMapUiIconManifest(rawIcons),
-    ...(Object.keys(maybeTheme).length ? { theme: maybeTheme } : {}),
-    ...(rawIcons && typeof rawIcons === "object" && typeof rawIcons.theme_enabled === "boolean" ? { theme_enabled: rawIcons.theme_enabled } : {}),
+    ...extra,
+  };
+}
+
+export function buildMapUiThemeConfigValue(rawTheme, extra = {}) {
+  const theme = sanitizeMapUiTheme(rawTheme);
+  const scheduledThemes = sanitizeMapUiThemeSchedules(rawTheme);
+  return {
+    ...(Object.keys(theme).length ? { theme } : {}),
+    ...(rawTheme && typeof rawTheme === "object" && typeof rawTheme.theme_enabled === "boolean" ? { theme_enabled: rawTheme.theme_enabled } : {}),
     ...(scheduledThemes.length ? { scheduled_themes: scheduledThemes } : {}),
     ...extra,
   };

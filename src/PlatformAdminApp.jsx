@@ -18,7 +18,10 @@ import {
   MAP_UI_ICON_RENDER_MODE,
   MAP_UI_ICON_RENDER_MODE_OPTIONS,
   MAP_UI_ICON_THEME_DEFAULTS,
+  MAP_UI_THEME_DRAFT_CONFIG_KEY,
+  MAP_UI_THEME_PUBLISHED_CONFIG_KEY,
   MAP_UI_THEME_FIELDS,
+  buildMapUiThemeConfigValue,
   isMapUiBaseThemeEnabled,
   mergeMapUiIconMeta,
   mergeMapUiTheme,
@@ -1647,6 +1650,14 @@ function getMapUiThemeScheduleStatus(entry, now = Date.now()) {
   return "Active";
 }
 
+function hasStoredMapUiThemeConfig(raw) {
+  return (
+    Object.keys(sanitizeMapUiTheme(raw)).length > 0
+    || sanitizeMapUiThemeSchedules(raw).length > 0
+    || (raw && typeof raw === "object" && raw.theme_enabled === false)
+  );
+}
+
 function clampToRange(value, min, max, fallback = min) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -2302,14 +2313,19 @@ export default function PlatformAdminApp() {
   const [domainRegistrySaving, setDomainRegistrySaving] = useState(false);
   const [mapUiIconDraftConfig, setMapUiIconDraftConfig] = useState({});
   const [mapUiIconPublishedConfig, setMapUiIconPublishedConfig] = useState({});
+  const [mapUiThemeDraftConfig, setMapUiThemeDraftConfig] = useState({});
+  const [mapUiThemePublishedConfig, setMapUiThemePublishedConfig] = useState({});
   const [mapUiIconDraftForm, setMapUiIconDraftForm] = useState(() => buildMapUiIconDraftForm({}));
   const [mapUiThemeDraftForm, setMapUiThemeDraftForm] = useState(() => buildMapUiThemeDraftForm({}));
   const [mapUiThemeBaseEnabled, setMapUiThemeBaseEnabled] = useState(false);
   const [mapUiThemeSchedulesDraft, setMapUiThemeSchedulesDraft] = useState([]);
   const [mapUiThemeSectionOpen, setMapUiThemeSectionOpen] = useState(false);
   const [mapUiThemeExpandedScheduleId, setMapUiThemeExpandedScheduleId] = useState("");
+  const [selectedMapUiIconKeysByGroup, setSelectedMapUiIconKeysByGroup] = useState({});
   const [mapUiIconSavingDraft, setMapUiIconSavingDraft] = useState(false);
   const [mapUiIconPublishing, setMapUiIconPublishing] = useState(false);
+  const [mapUiThemeSavingDraft, setMapUiThemeSavingDraft] = useState(false);
+  const [mapUiThemePublishing, setMapUiThemePublishing] = useState(false);
   const domainRegistryUploadPreviewUrl = useMemo(() => {
     if (!domainRegistryForm?.icon_file) return "";
     return URL.createObjectURL(domainRegistryForm.icon_file);
@@ -2412,6 +2428,8 @@ export default function PlatformAdminApp() {
     roles: "",
     domains: "",
     domainRegistry: "",
+    mapUiIcons: "",
+    mapUiTheme: "",
     domainAssignments: "",
     files: "",
     audit: "",
@@ -2538,6 +2556,23 @@ export default function PlatformAdminApp() {
     }
     return Array.from(groups.entries()).map(([group, items]) => ({ group, items }));
   }, []);
+  useEffect(() => {
+    setSelectedMapUiIconKeysByGroup((prev) => {
+      const next = {};
+      let changed = false;
+      for (const { group, items } of mapUiIconCatalogGroups) {
+        const selectedKey = String(prev?.[group] || "").trim();
+        const fallbackKey = String(items?.[0]?.key || "").trim();
+        const resolvedKey = items.some((entry) => entry.key === selectedKey) ? selectedKey : fallbackKey;
+        next[group] = resolvedKey;
+        if (resolvedKey !== selectedKey) changed = true;
+      }
+      if (!changed && Object.keys(prev || {}).length === Object.keys(next).length) {
+        return prev;
+      }
+      return next;
+    });
+  }, [mapUiIconCatalogGroups]);
   const publishedMapUiIconMeta = useMemo(
     () => mergeMapUiIconMeta(mapUiIconPublishedConfig),
     [mapUiIconPublishedConfig]
@@ -2547,12 +2582,12 @@ export default function PlatformAdminApp() {
     [mapUiThemeDraftForm]
   );
   const publishedMapUiTheme = useMemo(
-    () => mergeMapUiTheme(mapUiIconPublishedConfig),
-    [mapUiIconPublishedConfig]
+    () => mergeMapUiTheme(mapUiThemePublishedConfig),
+    [mapUiThemePublishedConfig]
   );
   const activePublishedMapUiThemeSchedule = useMemo(
-    () => resolveActiveMapUiThemeSchedule(mapUiIconPublishedConfig),
-    [mapUiIconPublishedConfig]
+    () => resolveActiveMapUiThemeSchedule(mapUiThemePublishedConfig),
+    [mapUiThemePublishedConfig]
   );
   const selectedTenantDomainAssignments = useMemo(
     () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
@@ -3719,6 +3754,8 @@ export default function PlatformAdminApp() {
     if (!canViewDomainRegistry) {
       setMapUiIconDraftConfig({});
       setMapUiIconPublishedConfig({});
+      setMapUiThemeDraftConfig({});
+      setMapUiThemePublishedConfig({});
       setMapUiIconDraftForm(buildMapUiIconDraftForm({}));
       setMapUiThemeDraftForm(buildMapUiThemeDraftForm({}));
       setMapUiThemeBaseEnabled(false);
@@ -3729,28 +3766,48 @@ export default function PlatformAdminApp() {
     const { data, error } = await supabase
       .from("app_config")
       .select("key,value")
-      .in("key", [MAP_UI_ICON_DRAFT_CONFIG_KEY, MAP_UI_ICON_PUBLISHED_CONFIG_KEY]);
+      .in("key", [
+        MAP_UI_ICON_DRAFT_CONFIG_KEY,
+        MAP_UI_ICON_PUBLISHED_CONFIG_KEY,
+        MAP_UI_THEME_DRAFT_CONFIG_KEY,
+        MAP_UI_THEME_PUBLISHED_CONFIG_KEY,
+      ]);
     if (error) throw error;
 
     const rows = Array.isArray(data) ? data : [];
-    const draftRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_DRAFT_CONFIG_KEY) || null;
-    const publishedRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
-    const draftConfig = draftRow?.value && typeof draftRow.value === "object" ? draftRow.value : {};
-    const publishedConfig = publishedRow?.value && typeof publishedRow.value === "object" ? publishedRow.value : {};
-    const hasDraftThemeConfig =
-      Object.keys(sanitizeMapUiTheme(draftConfig)).length > 0
-      || sanitizeMapUiThemeSchedules(draftConfig).length > 0
-      || draftConfig?.theme_enabled === false;
-    const baseIcons = Object.keys(sanitizeMapUiIconManifest(draftConfig)).length || hasDraftThemeConfig
-      ? draftConfig
-      : publishedConfig;
+    const iconDraftRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_DRAFT_CONFIG_KEY) || null;
+    const iconPublishedRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
+    const themeDraftRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_THEME_DRAFT_CONFIG_KEY) || null;
+    const themePublishedRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_THEME_PUBLISHED_CONFIG_KEY) || null;
+    const iconDraftConfig = iconDraftRow?.value && typeof iconDraftRow.value === "object" ? iconDraftRow.value : {};
+    const iconPublishedConfig = iconPublishedRow?.value && typeof iconPublishedRow.value === "object" ? iconPublishedRow.value : {};
+    const storedThemeDraftConfig = themeDraftRow?.value && typeof themeDraftRow.value === "object" ? themeDraftRow.value : {};
+    const storedThemePublishedConfig = themePublishedRow?.value && typeof themePublishedRow.value === "object" ? themePublishedRow.value : {};
+    const themeDraftConfig = hasStoredMapUiThemeConfig(storedThemeDraftConfig)
+      ? storedThemeDraftConfig
+      : hasStoredMapUiThemeConfig(iconDraftConfig)
+        ? iconDraftConfig
+        : {};
+    const themePublishedConfig = hasStoredMapUiThemeConfig(storedThemePublishedConfig)
+      ? storedThemePublishedConfig
+      : hasStoredMapUiThemeConfig(iconPublishedConfig)
+        ? iconPublishedConfig
+        : {};
+    const baseIcons = Object.keys(sanitizeMapUiIconManifest(iconDraftConfig)).length
+      ? iconDraftConfig
+      : iconPublishedConfig;
+    const baseTheme = hasStoredMapUiThemeConfig(themeDraftConfig)
+      ? themeDraftConfig
+      : themePublishedConfig;
 
-    setMapUiIconDraftConfig(draftConfig);
-    setMapUiIconPublishedConfig(publishedConfig);
+    setMapUiIconDraftConfig(iconDraftConfig);
+    setMapUiIconPublishedConfig(iconPublishedConfig);
+    setMapUiThemeDraftConfig(themeDraftConfig);
+    setMapUiThemePublishedConfig(themePublishedConfig);
     setMapUiIconDraftForm(buildMapUiIconDraftForm(baseIcons));
-    setMapUiThemeDraftForm(buildMapUiThemeDraftForm(baseIcons));
-    setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(baseIcons));
-    const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(baseIcons);
+    setMapUiThemeDraftForm(buildMapUiThemeDraftForm(baseTheme));
+    setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(baseTheme));
+    const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(baseTheme);
     setMapUiThemeSchedulesDraft(nextScheduleDrafts);
     setMapUiThemeExpandedScheduleId(nextScheduleDrafts[0]?.id || "");
   }, [canViewDomainRegistry]);
@@ -6251,20 +6308,8 @@ export default function PlatformAdminApp() {
         }
       }
 
-      const resolvedTheme = extractMapUiThemeFromForm(mapUiThemeDraftForm);
-      const { schedules: resolvedScheduledThemes, error: scheduledThemeError } = validateAndExtractMapUiThemeScheduleDrafts(
-        mapUiThemeSchedulesDraft
-      );
-      if (scheduledThemeError) {
-        setStatus((prev) => ({ ...prev, mapUiIcons: scheduledThemeError }));
-        return { ok: false };
-      }
-
       const draftValue = {
         icons: sanitizeMapUiIconManifest(resolvedIcons),
-        ...(Object.keys(resolvedTheme).length ? { theme: resolvedTheme } : {}),
-        theme_enabled: mapUiThemeBaseEnabled,
-        scheduled_themes: resolvedScheduledThemes,
         saved_at: new Date().toISOString(),
         saved_by: sessionUserId || null,
       };
@@ -6278,16 +6323,10 @@ export default function PlatformAdminApp() {
 
       setMapUiIconDraftConfig(draftValue);
       setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
-      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
-      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
-      setMapUiThemeSchedulesDraft(buildMapUiThemeScheduleDrafts(draftValue));
 
       if (publish) {
         const publishedValue = {
           icons: draftValue.icons,
-          ...(Object.keys(resolvedTheme).length ? { theme: resolvedTheme } : {}),
-          theme_enabled: mapUiThemeBaseEnabled,
-          scheduled_themes: resolvedScheduledThemes,
           published_at: new Date().toISOString(),
           published_by: sessionUserId || null,
           source_saved_at: draftValue.saved_at,
@@ -6310,7 +6349,7 @@ export default function PlatformAdminApp() {
       setMapUiIconSavingDraft(false);
       setMapUiIconPublishing(false);
     }
-  }, [canManageDomainRegistry, mapUiIconDraftForm, mapUiThemeBaseEnabled, mapUiThemeDraftForm, mapUiThemeSchedulesDraft, sessionUserId]);
+  }, [canManageDomainRegistry, mapUiIconDraftForm, sessionUserId]);
 
   const resetMapUiIconDraftToPublished = useCallback(async () => {
     if (!canManageDomainRegistry) {
@@ -6321,13 +6360,8 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, mapUiIcons: "" }));
     try {
       const publishedIcons = sanitizeMapUiIconManifest(mapUiIconPublishedConfig);
-      const publishedTheme = sanitizeMapUiTheme(mapUiIconPublishedConfig);
-      const publishedThemeSchedules = sanitizeMapUiThemeSchedules(mapUiIconPublishedConfig);
       const draftValue = {
         icons: publishedIcons,
-        ...(Object.keys(publishedTheme).length ? { theme: publishedTheme } : {}),
-        theme_enabled: isMapUiBaseThemeEnabled(mapUiIconPublishedConfig),
-        scheduled_themes: publishedThemeSchedules,
         saved_at: new Date().toISOString(),
         saved_by: sessionUserId || null,
         reset_to_published: true,
@@ -6339,18 +6373,138 @@ export default function PlatformAdminApp() {
         setStatus((prev) => ({ ...prev, mapUiIcons: statusText(error, "") }));
         return;
       }
-      const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(draftValue);
       setMapUiIconDraftConfig(draftValue);
       setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
-      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
-      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
-      setMapUiThemeSchedulesDraft(nextScheduleDrafts);
-      setMapUiThemeExpandedScheduleId(nextScheduleDrafts[0]?.id || "");
       setStatus((prev) => ({ ...prev, mapUiIcons: "Reset the draft icon set back to the currently published version." }));
     } finally {
       setMapUiIconSavingDraft(false);
     }
   }, [canManageDomainRegistry, mapUiIconPublishedConfig, sessionUserId]);
+
+  const persistMapUiThemeDraft = useCallback(async ({ publish = false } = {}) => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "You need the Domains edit permission to manage the map UI theme." }));
+      return { ok: false };
+    }
+
+    if (publish) {
+      setMapUiThemePublishing(true);
+    } else {
+      setMapUiThemeSavingDraft(true);
+    }
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+
+    try {
+      const resolvedTheme = extractMapUiThemeFromForm(mapUiThemeDraftForm);
+      const { schedules: resolvedScheduledThemes, error: scheduledThemeError } = validateAndExtractMapUiThemeScheduleDrafts(
+        mapUiThemeSchedulesDraft
+      );
+      if (scheduledThemeError) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: scheduledThemeError }));
+        return { ok: false };
+      }
+
+      const draftValue = buildMapUiThemeConfigValue(
+        {
+          theme: resolvedTheme,
+          theme_enabled: mapUiThemeBaseEnabled,
+          scheduled_themes: resolvedScheduledThemes,
+        },
+        {
+          saved_at: new Date().toISOString(),
+          saved_by: sessionUserId || null,
+        }
+      );
+      const draftResult = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_THEME_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (draftResult.error) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: statusText(draftResult.error, "") }));
+        return { ok: false };
+      }
+
+      const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(draftValue);
+      setMapUiThemeDraftConfig(draftValue);
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
+      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
+      setMapUiThemeSchedulesDraft(nextScheduleDrafts);
+      setMapUiThemeExpandedScheduleId((prev) => (
+        nextScheduleDrafts.some((entry) => entry.id === prev) ? prev : nextScheduleDrafts[0]?.id || ""
+      ));
+
+      if (publish) {
+        const publishedValue = buildMapUiThemeConfigValue(
+          {
+            theme: resolvedTheme,
+            theme_enabled: mapUiThemeBaseEnabled,
+            scheduled_themes: resolvedScheduledThemes,
+          },
+          {
+            published_at: new Date().toISOString(),
+            published_by: sessionUserId || null,
+            source_saved_at: draftValue.saved_at,
+          }
+        );
+        const publishResult = await supabase
+          .from("app_config")
+          .upsert([{ key: MAP_UI_THEME_PUBLISHED_CONFIG_KEY, value: publishedValue }], { onConflict: "key" });
+        if (publishResult.error) {
+          setStatus((prev) => ({ ...prev, mapUiTheme: statusText(publishResult.error, "") }));
+          return { ok: false };
+        }
+        setMapUiThemePublishedConfig(publishedValue);
+        setStatus((prev) => ({ ...prev, mapUiTheme: "Saved the draft and published the map UI theme live." }));
+      } else {
+        setStatus((prev) => ({ ...prev, mapUiTheme: "Saved the map UI theme draft." }));
+      }
+
+      return { ok: true };
+    } finally {
+      setMapUiThemeSavingDraft(false);
+      setMapUiThemePublishing(false);
+    }
+  }, [canManageDomainRegistry, mapUiThemeBaseEnabled, mapUiThemeDraftForm, mapUiThemeSchedulesDraft, sessionUserId]);
+
+  const resetMapUiThemeDraftToPublished = useCallback(async () => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiTheme: "You need the Domains edit permission to manage the map UI theme." }));
+      return;
+    }
+    setMapUiThemeSavingDraft(true);
+    setStatus((prev) => ({ ...prev, mapUiTheme: "" }));
+    try {
+      const publishedTheme = sanitizeMapUiTheme(mapUiThemePublishedConfig);
+      const publishedThemeSchedules = sanitizeMapUiThemeSchedules(mapUiThemePublishedConfig);
+      const draftValue = buildMapUiThemeConfigValue(
+        {
+          theme: publishedTheme,
+          theme_enabled: isMapUiBaseThemeEnabled(mapUiThemePublishedConfig),
+          scheduled_themes: publishedThemeSchedules,
+        },
+        {
+          saved_at: new Date().toISOString(),
+          saved_by: sessionUserId || null,
+          reset_to_published: true,
+        }
+      );
+      const { error } = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_THEME_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (error) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: statusText(error, "") }));
+        return;
+      }
+      const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(draftValue);
+      setMapUiThemeDraftConfig(draftValue);
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
+      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
+      setMapUiThemeSchedulesDraft(nextScheduleDrafts);
+      setMapUiThemeExpandedScheduleId(nextScheduleDrafts[0]?.id || "");
+      setStatus((prev) => ({ ...prev, mapUiTheme: "Reset the draft map UI theme back to the currently published version." }));
+    } finally {
+      setMapUiThemeSavingDraft(false);
+    }
+  }, [canManageDomainRegistry, mapUiThemePublishedConfig, sessionUserId]);
 
   const saveDomainDefinition = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -10388,27 +10542,27 @@ export default function PlatformAdminApp() {
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
-                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
-                        onClick={() => void resetMapUiIconDraftToPublished()}
+                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                        onClick={() => void resetMapUiThemeDraftToPublished()}
                       >
                         Reset Draft
                       </button>
                       <button
                         type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
-                        onClick={() => void persistMapUiIconDraft({ publish: false })}
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                        onClick={() => void persistMapUiThemeDraft({ publish: false })}
                       >
-                        {mapUiIconSavingDraft ? "Saving Draft..." : "Save Draft"}
+                        {mapUiThemeSavingDraft ? "Saving Draft..." : "Save Draft"}
                       </button>
                       <button
                         type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
-                        onClick={() => void persistMapUiIconDraft({ publish: true })}
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                        onClick={() => void persistMapUiThemeDraft({ publish: true })}
                       >
-                        {mapUiIconPublishing ? "Publishing..." : "Publish Live"}
+                        {mapUiThemePublishing ? "Publishing..." : "Publish Live"}
                       </button>
                     </div>
                   </div>
@@ -10416,18 +10570,18 @@ export default function PlatformAdminApp() {
                     <span>
                       Draft saved:
                       {" "}
-                      {mapUiIconDraftConfig?.saved_at ? new Date(mapUiIconDraftConfig.saved_at).toLocaleString() : "Not yet"}
+                      {mapUiThemeDraftConfig?.saved_at ? new Date(mapUiThemeDraftConfig.saved_at).toLocaleString() : "Not yet"}
                     </span>
                     <span>
                       Published live:
                       {" "}
-                      {mapUiIconPublishedConfig?.published_at ? new Date(mapUiIconPublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
+                      {mapUiThemePublishedConfig?.published_at ? new Date(mapUiThemePublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
                     </span>
                   </div>
                 </div>
-                {status.mapUiIcons ? (
-                  <div style={{ fontSize: 12.5, color: status.mapUiIcons.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
-                    {status.mapUiIcons}
+                {status.mapUiTheme ? (
+                  <div style={{ fontSize: 12.5, color: status.mapUiTheme.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                    {status.mapUiTheme}
                   </div>
                 ) : null}
                 <div style={{ ...subPanel, display: "grid", gap: 12 }}>
@@ -10505,7 +10659,7 @@ export default function PlatformAdminApp() {
                       {" "}
                       {activePublishedMapUiThemeSchedule?.label
                         ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
-                        : isMapUiBaseThemeEnabled(mapUiIconPublishedConfig)
+                        : isMapUiBaseThemeEnabled(mapUiThemePublishedConfig)
                           ? "Indefinite theme"
                           : "Default CityReport theme"}
                     </span>
@@ -10523,17 +10677,17 @@ export default function PlatformAdminApp() {
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button
                               type="button"
-                              disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                               onClick={() => setMapUiThemeBaseEnabled((prev) => !prev)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
                             >
                               {mapUiThemeBaseEnabled ? "Disable Base Theme" : "Enable Base Theme"}
                             </button>
                             <button
                               type="button"
-                              disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                               onClick={() => setMapUiThemeBaseEnabled(false)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
                             >
                               Use Default Theme Live
                             </button>
@@ -10599,7 +10753,7 @@ export default function PlatformAdminApp() {
                                     const draftValue = String(themeForm?.[field.key] || "").trim();
                                     const usingDefault = !draftValue;
                                     const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
-                                    const controlsDisabled = !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing;
+                                    const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
                                     return (
                                       <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -10657,9 +10811,9 @@ export default function PlatformAdminApp() {
                           </div>
                           <button
                             type="button"
-                            disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                            disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                             onClick={addMapUiThemeScheduleDraft}
-                            style={{ ...buttonBase, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                            style={{ ...buttonBase, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
                           >
                             Add Temporary Theme
                           </button>
@@ -10708,17 +10862,17 @@ export default function PlatformAdminApp() {
                                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                       <button
                                         type="button"
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onClick={() => setMapUiThemeExpandedScheduleId((prev) => (prev === schedule.id ? "" : schedule.id))}
-                                        style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                                        style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
                                       >
                                         {isExpanded ? "Collapse" : "Edit Theme"}
                                       </button>
                                       <button
                                         type="button"
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onClick={() => removeMapUiThemeScheduleDraft(schedule.id)}
-                                        style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                                        style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
                                       >
                                         Remove
                                       </button>
@@ -10730,7 +10884,7 @@ export default function PlatformAdminApp() {
                                       <input
                                         type="text"
                                         value={schedule.label}
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "label", event.target.value)}
                                         style={modalInput}
                                         placeholder="Fourth of July"
@@ -10741,7 +10895,7 @@ export default function PlatformAdminApp() {
                                       <input
                                         type="datetime-local"
                                         value={schedule.start_at}
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "start_at", event.target.value)}
                                         style={modalInput}
                                       />
@@ -10751,7 +10905,7 @@ export default function PlatformAdminApp() {
                                       <input
                                         type="datetime-local"
                                         value={schedule.end_at}
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "end_at", event.target.value)}
                                         style={modalInput}
                                       />
@@ -10760,7 +10914,7 @@ export default function PlatformAdminApp() {
                                       <input
                                         type="checkbox"
                                         checked={schedule.enabled !== false}
-                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                                         onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "enabled", event.target.checked)}
                                       />
                                       Enable this temporary theme
@@ -10860,7 +11014,7 @@ export default function PlatformAdminApp() {
                                                 const draftValue = String(themeForm?.[field.key] || "").trim();
                                                 const usingDefault = !draftValue;
                                                 const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
-                                                const controlsDisabled = !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing;
+                                                const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
                                                 return (
                                                   <div key={`${schedule.id}-${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -10995,16 +11149,33 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : null}
                 <div style={{ display: "grid", gap: 12 }}>
-                  {mapUiIconCatalogGroups.map(({ group, items }) => (
+                  {mapUiIconCatalogGroups.map(({ group, items }) => {
+                    const selectedEntryKey = String(selectedMapUiIconKeysByGroup?.[group] || items?.[0]?.key || "").trim();
+                    const selectedEntry = items.find((entry) => entry.key === selectedEntryKey) || items[0] || null;
+                    return (
                     <div key={group} style={{ ...subPanel, display: "grid", gap: 12 }}>
-                      <div style={{ display: "grid", gap: 3 }}>
-                        <strong style={{ color: palette.navy900 }}>{group}</strong>
-                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          These icons are published together as one live set.
-                        </span>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+                        <div style={{ display: "grid", gap: 3 }}>
+                          <strong style={{ color: palette.navy900 }}>{group}</strong>
+                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            Choose one icon from this category to edit. Only the selected icon is shown below.
+                          </span>
+                        </div>
+                        <label style={{ display: "grid", gap: 6, minWidth: 240 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Select Icon</span>
+                          <select
+                            value={selectedEntryKey}
+                            onChange={(event) => setSelectedMapUiIconKeysByGroup((prev) => ({ ...prev, [group]: event.target.value }))}
+                            style={modalInput}
+                          >
+                            {items.map((entry) => (
+                              <option key={entry.key} value={entry.key}>{entry.label}</option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
                       <div style={{ display: "grid", gap: 10 }}>
-                        {items.map((entry) => {
+                        {[selectedEntry].filter(Boolean).map((entry) => {
                           const row = mapUiIconDraftForm?.[entry.key] || {};
                           const previewSrc = String(row?.preview_url || row?.src || entry.defaultSrc || "").trim();
                           const previewRenderMode = String(row?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER).trim();
@@ -11290,7 +11461,8 @@ export default function PlatformAdminApp() {
                         })}
                       </div>
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               </div>
             </div>

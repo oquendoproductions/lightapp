@@ -24,6 +24,7 @@ import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile
 import {
   MAP_UI_ICON_PUBLISHED_CONFIG_KEY,
   MAP_UI_ICON_RENDER_MODE,
+  MAP_UI_THEME_PUBLISHED_CONFIG_KEY,
   mergeMapUiIconMeta,
   mergeMapUiTheme,
   sanitizeMapUiThemeSchedules,
@@ -242,7 +243,7 @@ const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim() ||
   "https://www.firstenergycorp.com/outages_help/Report_Power_Outages.html?_gl=1*te1hi8*_up*MQ..*_ga*MTEyODI2NTQ5OS4xNzcyMjU3MDQ4*_ga_TVQJK7Z44E*czE3NzI0Mzc3NzEkbzIkZzEkdDE3NzI0Mzc3ODQkajQ3JGwwJGgw";
 const TITLE_LOGO_ALT = "CityReport.io";
-const MAP_UI_ICON_MANIFEST_CACHE_KEY = "cityreport.public_map_ui_icons_published.v1";
+const MAP_UI_ICON_MANIFEST_CACHE_KEY = "cityreport.public_map_ui_bundle.v2";
 let UI_ICON_META = mergeMapUiIconMeta({});
 let UI_ICON_SRC = Object.fromEntries(
   Object.entries(UI_ICON_META).map(([key, value]) => [key, String(value?.src || "").trim()])
@@ -296,12 +297,12 @@ function clearCachedRuntimeUiIconManifest() {
 
 const cachedRuntimeUiIconManifest = readCachedRuntimeUiIconManifest();
 if (cachedRuntimeUiIconManifest) {
-  setRuntimeUiIconManifest(cachedRuntimeUiIconManifest);
+  setRuntimeUiIconManifest(cachedRuntimeUiIconManifest?.icons || cachedRuntimeUiIconManifest, cachedRuntimeUiIconManifest?.theme_bundle || cachedRuntimeUiIconManifest);
 }
 
-function setRuntimeUiIconManifest(raw) {
-  UI_ICON_THEME_SOURCE = raw && typeof raw === "object" ? raw : {};
-  UI_ICON_META = mergeMapUiIconMeta(raw);
+function setRuntimeUiIconManifest(rawIcons, rawTheme = {}) {
+  UI_ICON_THEME_SOURCE = rawTheme && typeof rawTheme === "object" ? rawTheme : {};
+  UI_ICON_META = mergeMapUiIconMeta(rawIcons);
   UI_ICON_SRC = Object.fromEntries(
     Object.entries(UI_ICON_META).map(([key, value]) => [key, String(value?.src || "").trim()])
   );
@@ -18378,30 +18379,44 @@ export default function App({ onBackToHub = null }) {
       try {
         const { data, error } = await supabase
           .from("app_config")
-          .select("value")
-          .eq("key", MAP_UI_ICON_PUBLISHED_CONFIG_KEY)
-          .maybeSingle();
+          .select("key,value")
+          .in("key", [MAP_UI_ICON_PUBLISHED_CONFIG_KEY, MAP_UI_THEME_PUBLISHED_CONFIG_KEY]);
         if (cancelled) return;
-        if (error || !data?.value) {
+        if (error) {
           clearCachedRuntimeUiIconManifest();
-          setRuntimeUiIconManifest({});
+          setRuntimeUiIconManifest({}, {});
           setDomainIconRenderTick((tick) => tick + 1);
           return;
         }
-        const normalizedValue = await normalizePublishedMapUiIconManifest(data.value);
+        const rows = Array.isArray(data) ? data : [];
+        const iconRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
+        const themeRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_THEME_PUBLISHED_CONFIG_KEY) || null;
+        const iconValue = iconRow?.value && typeof iconRow.value === "object" ? iconRow.value : {};
+        const themeValue = themeRow?.value && typeof themeRow.value === "object" ? themeRow.value : iconValue;
+        if (!Object.keys(iconValue || {}).length && !Object.keys(themeValue || {}).length) {
+          clearCachedRuntimeUiIconManifest();
+          setRuntimeUiIconManifest({}, {});
+          setDomainIconRenderTick((tick) => tick + 1);
+          return;
+        }
+        const normalizedValue = await normalizePublishedMapUiIconManifest(iconValue);
         if (cancelled) return;
-        writeCachedRuntimeUiIconManifest(normalizedValue);
-        setRuntimeUiIconManifest(normalizedValue);
+        const runtimeBundle = {
+          icons: normalizedValue,
+          theme_bundle: themeValue,
+        };
+        writeCachedRuntimeUiIconManifest(runtimeBundle);
+        setRuntimeUiIconManifest(runtimeBundle.icons, runtimeBundle.theme_bundle);
         setDomainIconRenderTick((tick) => tick + 1);
       } catch {
         if (cancelled) return;
         const cachedValue = readCachedRuntimeUiIconManifest();
         if (cachedValue) {
-          setRuntimeUiIconManifest(cachedValue);
+          setRuntimeUiIconManifest(cachedValue?.icons || cachedValue, cachedValue?.theme_bundle || cachedValue);
           setDomainIconRenderTick((tick) => tick + 1);
           return;
         }
-        setRuntimeUiIconManifest({});
+        setRuntimeUiIconManifest({}, {});
         setDomainIconRenderTick((tick) => tick + 1);
       }
     })();
