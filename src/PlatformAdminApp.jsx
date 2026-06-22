@@ -10666,141 +10666,6 @@ export default function PlatformAdminApp() {
                   </div>
                   {mapUiThemeSectionOpen ? (
                     <div style={{ display: "grid", gap: 12 }}>
-                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <strong style={{ color: palette.navy900 }}>Indefinite Theme</strong>
-                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                              This is the always-on theme that stays live until you disable it or replace it. Temporary schedules revert back here when they end.
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                              onClick={() => setMapUiThemeBaseEnabled((prev) => !prev)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                            >
-                              {mapUiThemeBaseEnabled ? "Disable Base Theme" : "Enable Base Theme"}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
-                              onClick={() => setMapUiThemeBaseEnabled(false)}
-                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
-                            >
-                              Use Default Theme Live
-                            </button>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 11.5, fontWeight: 800, color: mapUiThemeBaseEnabled ? palette.mint700 : palette.navy700, background: mapUiThemeBaseEnabled ? "rgba(18,128,106,0.12)" : "rgba(17,36,69,0.10)", borderRadius: 999, padding: "4px 10px" }}>
-                            {mapUiThemeBaseEnabled ? "Enabled live after publish" : "Disabled after publish"}
-                          </span>
-                          {!mapUiThemeBaseEnabled ? (
-                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              Saved colors stay here even while the live app falls back to defaults.
-                            </span>
-                          ) : null}
-                        </div>
-                        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
-                          {["light", "dark"].map((mode) => {
-                            const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
-                            const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
-                            const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
-                            const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
-                            const themeForm = mapUiThemeDraftForm?.[mode] || {};
-                            return (
-                              <div key={mode} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
-                                <div style={{ display: "grid", gap: 4 }}>
-                                  <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
-                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                    <div
-                                      style={{
-                                        width: 52,
-                                        height: 52,
-                                        borderRadius: 14,
-                                        border: `1px solid ${theme.tool_button_border}`,
-                                        background: theme.tool_button_bg,
-                                        color: theme.tool_button_text,
-                                        display: "grid",
-                                        placeItems: "center",
-                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                      }}
-                                    >
-                                      <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
-                                    </div>
-                                    <div
-                                      style={{
-                                        width: 52,
-                                        height: 52,
-                                        borderRadius: 14,
-                                        border: `1px solid ${theme.tool_active_border}`,
-                                        background: theme.tool_active_bg,
-                                        color: theme.tool_active_text,
-                                        display: "grid",
-                                        placeItems: "center",
-                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
-                                      }}
-                                    >
-                                      <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div style={{ display: "grid", gap: 10 }}>
-                                  {MAP_UI_THEME_FIELDS.map((field) => {
-                                    const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
-                                    const draftValue = String(themeForm?.[field.key] || "").trim();
-                                    const usingDefault = !draftValue;
-                                    const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
-                                    const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
-                                    return (
-                                      <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                          <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
-                                          <button
-                                            type="button"
-                                            disabled={controlsDisabled}
-                                            onClick={() => updateMapUiThemeDraftValue(mode, field.key, "")}
-                                            style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
-                                          >
-                                            {usingDefault ? "Using Default" : "Use Default"}
-                                          </button>
-                                        </div>
-                                        <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
-                                          <input
-                                            type="color"
-                                            value={pickerValue.hex}
-                                            disabled={controlsDisabled}
-                                            onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, event.target.value, pickerValue.alphaPercent)}
-                                            style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
-                                          />
-                                          <div style={{ display: "grid", gap: 6 }}>
-                                            <input
-                                              type="range"
-                                              min="0"
-                                              max="100"
-                                              step="1"
-                                              value={pickerValue.alphaPercent}
-                                              disabled={controlsDisabled}
-                                              onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, pickerValue.hex, Number(event.target.value))}
-                                            />
-                                            <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                              <span>Opacity {pickerValue.alphaPercent}%</span>
-                                              <span>{usingDefault ? "Default palette" : draftValue}</span>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
                       <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(248,251,255,0.84)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
                           <div style={{ display: "grid", gap: 4 }}>
@@ -11071,6 +10936,141 @@ export default function PlatformAdminApp() {
                           </div>
                         )}
                       </div>
+                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <strong style={{ color: palette.navy900 }}>Indefinite Theme</strong>
+                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              This is the always-on theme that stays live until you disable it or replace it. Temporary schedules revert back here when they end.
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                              onClick={() => setMapUiThemeBaseEnabled((prev) => !prev)}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
+                            >
+                              {mapUiThemeBaseEnabled ? "Disable Base Theme" : "Enable Base Theme"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                              onClick={() => setMapUiThemeBaseEnabled(false)}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing ? 0.55 : 1 }}
+                            >
+                              Use Default Theme Live
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 800, color: mapUiThemeBaseEnabled ? palette.mint700 : palette.navy700, background: mapUiThemeBaseEnabled ? "rgba(18,128,106,0.12)" : "rgba(17,36,69,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                            {mapUiThemeBaseEnabled ? "Enabled live after publish" : "Disabled after publish"}
+                          </span>
+                          {!mapUiThemeBaseEnabled ? (
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              Saved colors stay here even while the live app falls back to defaults.
+                            </span>
+                          ) : null}
+                        </div>
+                        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
+                          {["light", "dark"].map((mode) => {
+                            const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                            const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
+                            const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
+                            const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
+                            const themeForm = mapUiThemeDraftForm?.[mode] || {};
+                            return (
+                              <div key={mode} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
+                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                    <div
+                                      style={{
+                                        width: 52,
+                                        height: 52,
+                                        borderRadius: 14,
+                                        border: `1px solid ${theme.tool_button_border}`,
+                                        background: theme.tool_button_bg,
+                                        color: theme.tool_button_text,
+                                        display: "grid",
+                                        placeItems: "center",
+                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        width: 52,
+                                        height: 52,
+                                        borderRadius: 14,
+                                        border: `1px solid ${theme.tool_active_border}`,
+                                        background: theme.tool_active_bg,
+                                        color: theme.tool_active_text,
+                                        display: "grid",
+                                        placeItems: "center",
+                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                  {MAP_UI_THEME_FIELDS.map((field) => {
+                                    const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
+                                    const draftValue = String(themeForm?.[field.key] || "").trim();
+                                    const usingDefault = !draftValue;
+                                    const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
+                                    const controlsDisabled = !canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing;
+                                    return (
+                                      <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
+                                          <button
+                                            type="button"
+                                            disabled={controlsDisabled}
+                                            onClick={() => updateMapUiThemeDraftValue(mode, field.key, "")}
+                                            style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
+                                          >
+                                            {usingDefault ? "Using Default" : "Use Default"}
+                                          </button>
+                                        </div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
+                                          <input
+                                            type="color"
+                                            value={pickerValue.hex}
+                                            disabled={controlsDisabled}
+                                            onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, event.target.value, pickerValue.alphaPercent)}
+                                            style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                          />
+                                          <div style={{ display: "grid", gap: 6 }}>
+                                            <input
+                                              type="range"
+                                              min="0"
+                                              max="100"
+                                              step="1"
+                                              value={pickerValue.alphaPercent}
+                                              disabled={controlsDisabled}
+                                              onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, pickerValue.hex, Number(event.target.value))}
+                                            />
+                                            <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                              <span>Opacity {pickerValue.alphaPercent}%</span>
+                                              <span>{usingDefault ? "Default palette" : draftValue}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                     </div>
                   ) : null}
                 </div>
