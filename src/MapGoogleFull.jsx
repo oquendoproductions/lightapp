@@ -21,6 +21,20 @@ import { APP_VERSION } from "./appMeta";
 import AppLaunchScreen from "./AppLaunchScreen.jsx";
 import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
+import {
+  MAP_UI_ICON_PUBLISHED_CONFIG_KEY,
+  MAP_UI_ICON_RENDER_MODE,
+  mergeMapUiIconMeta,
+  mergeMapUiTheme,
+  sanitizeMapUiThemeSchedules,
+} from "./mapUiIconCatalog";
+import {
+  DOMAIN_ICON_TINT_MODE,
+  normalizeDomainIconRenderMode,
+  normalizeDomainIconTintColor,
+  normalizeDomainIconTintMode,
+  resolveDomainMarkerIconTintColor,
+} from "./domainIconRendering";
 import { buildMailtoHref, hasNonEmptyValue, normalizePhoneHref, normalizeWebsiteHref } from "./lib/workspaceSupport";
 
 // ✅ Google Maps API key
@@ -51,7 +65,7 @@ function isPrivateIpv4Host(hostname) {
   return false;
 }
 
-function createTenantScopedReadClient(tenantKey, accessToken = "") {
+function createTenantScopedReadClient(tenantKey) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
   const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
   const supabaseAnonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
@@ -60,8 +74,6 @@ function createTenantScopedReadClient(tenantKey, accessToken = "") {
   const headers = {
     "x-tenant-key": normalizedTenantKey,
   };
-  const token = String(accessToken || "").trim();
-  if (token) headers.Authorization = `Bearer ${token}`;
 
   return createClient(supabaseUrl, supabaseAnonKey, {
     global: {
@@ -211,7 +223,7 @@ const OFFICIAL_LIGHTS_MIN_ZOOM = 13;
 const LOCATE_ZOOM = 17;
 const MAPPING_MIN_ZOOM = 17;
 const REPORTING_MIN_ZOOM = 17;
-const TRAVEL_FOLLOW_LOOKAHEAD_METERS = 120;
+const TRAVEL_FOLLOW_LOOKAHEAD_METERS = 150;
 const LOCATION_PREDICT_MIN_SPEED_MPS = 3.2; // ~7 mph; avoids over-leading walking/standing users.
 const LOCATION_PREDICT_MAX_SECONDS = 1.45;
 const LOCATION_PREDICT_MAX_METERS = 30;
@@ -230,35 +242,93 @@ const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim() ||
   "https://www.firstenergycorp.com/outages_help/Report_Power_Outages.html?_gl=1*te1hi8*_up*MQ..*_ga*MTEyODI2NTQ5OS4xNzcyMjU3MDQ4*_ga_TVQJK7Z44E*czE3NzI0Mzc3NzEkbzIkZzEkdDE3NzI0Mzc3ODQkajQ3JGwwJGgw";
 const TITLE_LOGO_ALT = "CityReport.io";
-const UI_ICON_SRC = {
-  account: "/account_icon.png",
-  streetlight: "/streetlight_icon.png",
-  streetSign: "/street_sign_icons/street_sign_domain_icon.png",
-  pothole: "/pothole_icon.png",
-  powerOutage: "/power_outage_icon.png",
-  waterMain: "/water_main_icon.png",
-  filter: "/filter_icon.png",
-  openReports: "/open_reports_icon.png",
-  mapping: "/streetlight_mapping_icon.png",
-  bulk: "/bulk_reporting_icon.png",
-  toolbox: "/toolbox_icon.png",
-  headingReset: "/heading_reset_icon.png",
-  info: "/info_icon.png",
-  location: "/location_icon.png",
-  homeRecenter: "/Icons/Map Tools/home_recenter_button.png",
-  navigationArrow: "/Icons/Map Tools/navigation_arrow_icon.png",
-  incidentReportingLayer: "/Icons/Map Tools/incident_driven_map_layer_button.png",
-  mapTab: "/Icons/Buttons/tab_buttons/map_tab_icon.png",
-  calendar: "/calendar_icon.png",
-  notification: "/notification_icon.png",
-  satellite: "/satellite_icon.png",
-  streetMap: "/street_map_icon.png",
-};
+const MAP_UI_ICON_MANIFEST_CACHE_KEY = "cityreport.public_map_ui_icons_published.v1";
+let UI_ICON_META = mergeMapUiIconMeta({});
+let UI_ICON_SRC = Object.fromEntries(
+  Object.entries(UI_ICON_META).map(([key, value]) => [key, String(value?.src || "").trim()])
+);
+let UI_ICON_THEME_SOURCE = {};
+let UI_ICON_THEME = mergeMapUiTheme({});
+let UI_ICON_RENDER_MODE_BY_SRC = new Map(
+  Object.values(UI_ICON_META)
+    .map((value) => [String(value?.src || "").trim(), String(value?.render_mode || "").trim()])
+    .filter(([src, renderMode]) => src && renderMode)
+);
+let UI_ICON_PRIMARY_KEY_BY_SRC = new Map(
+  Object.entries(UI_ICON_META)
+    .map(([key, value]) => [String(value?.src || "").trim(), key])
+    .filter(([src]) => src)
+);
+
+function readCachedRuntimeUiIconManifest() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = String(window.localStorage.getItem(MAP_UI_ICON_MANIFEST_CACHE_KEY) || "").trim();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedRuntimeUiIconManifest(raw) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!raw || typeof raw !== "object") {
+      window.localStorage.removeItem(MAP_UI_ICON_MANIFEST_CACHE_KEY);
+      return;
+    }
+    window.localStorage.setItem(MAP_UI_ICON_MANIFEST_CACHE_KEY, JSON.stringify(raw));
+  } catch {
+    // Ignore cache write failures.
+  }
+}
+
+function clearCachedRuntimeUiIconManifest() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(MAP_UI_ICON_MANIFEST_CACHE_KEY);
+  } catch {
+    // Ignore cache clear failures.
+  }
+}
+
+const cachedRuntimeUiIconManifest = readCachedRuntimeUiIconManifest();
+if (cachedRuntimeUiIconManifest) {
+  setRuntimeUiIconManifest(cachedRuntimeUiIconManifest);
+}
+
+function setRuntimeUiIconManifest(raw) {
+  UI_ICON_THEME_SOURCE = raw && typeof raw === "object" ? raw : {};
+  UI_ICON_META = mergeMapUiIconMeta(raw);
+  UI_ICON_SRC = Object.fromEntries(
+    Object.entries(UI_ICON_META).map(([key, value]) => [key, String(value?.src || "").trim()])
+  );
+  UI_ICON_THEME = mergeMapUiTheme(UI_ICON_THEME_SOURCE);
+  UI_ICON_RENDER_MODE_BY_SRC = new Map(
+    Object.values(UI_ICON_META)
+      .map((value) => [String(value?.src || "").trim(), String(value?.render_mode || "").trim()])
+      .filter(([src, renderMode]) => src && renderMode)
+  );
+  UI_ICON_PRIMARY_KEY_BY_SRC = new Map(
+    Object.entries(UI_ICON_META)
+      .map(([key, value]) => [String(value?.src || "").trim(), key])
+      .filter(([src]) => src)
+  );
+}
+
 const RUNTIME_DOMAIN_META = {
   reportPrefixByDomain: new Map(),
   iconSrcByDomain: new Map(),
+  iconRenderModeByDomain: new Map(),
+  iconTintModeByDomain: new Map(),
+  iconTintColorByDomain: new Map(),
   labelByDomain: new Map(),
   markerColorByDomain: new Map(),
+  issueTypesByDomain: new Map(),
+  typeOptionsByDomain: new Map(),
+  disclosuresByDomain: new Map(),
 };
 // Per-light cooldown (client-side guardrail; reversible)
 const REPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -309,6 +379,13 @@ const REPORT_TYPES = {
   storm_drain_clog: "Storm Drain Blocked / Flooding",
   other: "Other",
 };
+const STREETLIGHT_ISSUE_OPTIONS = [
+  { value: "out", label: "Light is out" },
+  { value: "flickering", label: "Dim / Flickering" },
+  { value: "dayburner", label: "On during daytime" },
+  { value: "downed_pole", label: "Pole down" },
+  { value: "other", label: "Other" },
+];
 const STREET_SIGN_ISSUE_OPTIONS = [
   { value: "damaged", label: "Damaged sign" },
   { value: "missing", label: "Missing sign" },
@@ -336,8 +413,24 @@ const REPORT_DOMAIN_OPTIONS = [
   { key: "illegal_dumping", label: "Illegal Dumping", icon: "🗑️", iconSrc: "/icon-concepts-v4/domain/dumping_domain_icon_v4.svg", enabled: true },
   { key: "graffiti", label: "Graffiti", icon: "🎨", iconSrc: "/icon-concepts-v4/domain/graffiti_domain_icon_v4.svg", enabled: true },
 ];
+const ALL_REPORT_DOMAINS_KEY = "__all__";
 const INCIDENT_REPORTING_LAYER_KEY = "incident_reporting";
 const DEFAULT_PUBLIC_DOMAINS = new Set(["potholes", "water_drain_issues", "streetlights"]);
+
+function normalizeExplicitDomainSelection(keysRaw, allowedKeysRaw = []) {
+  const allowedKeys = Array.isArray(allowedKeysRaw)
+    ? allowedKeysRaw.map((key) => String(key || "").trim()).filter(Boolean)
+    : [];
+  const allowedSet = new Set(allowedKeys);
+  const next = Array.isArray(keysRaw)
+    ? keysRaw
+        .map((key) => String(key || "").trim())
+        .filter((key) => key && allowedSet.has(key))
+    : [];
+  const unique = Array.from(new Set(next));
+  if (!allowedKeys.length || unique.length >= allowedKeys.length) return [];
+  return unique;
+}
 const STREET_SIGN_TYPE_OPTIONS = [
   { value: "stop", label: "Stop" },
   { value: "yield", label: "Yield" },
@@ -443,8 +536,283 @@ function isAssetBackedDomainKey(domainKey) {
 
 function defaultDomainIssueFor(domainKey) {
   const d = String(domainKey || "").trim().toLowerCase();
+  if (d === "streetlights") return STREETLIGHT_ISSUE_OPTIONS[0].value;
   if (d === "street_signs") return STREET_SIGN_ISSUE_OPTIONS[0].value;
   if (d === "water_drain_issues") return WATER_DRAIN_ISSUE_OPTIONS[0].value;
+  return "other";
+}
+
+function normalizeDomainTypeOptions(typeOptions) {
+  const rows = Array.isArray(typeOptions) ? typeOptions : [];
+  const seen = new Set();
+  return rows
+    .map((row, index) => {
+      const value = String(row?.type_key || row?.value || "").trim().toLowerCase();
+      const label = String(row?.type_label || row?.label || "").trim();
+      if (!value || !label || seen.has(value)) return null;
+      seen.add(value);
+      return {
+        value,
+        label,
+        sortOrder: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : (index + 1) * 10,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (
+      Number(a?.sortOrder || 0) - Number(b?.sortOrder || 0)
+      || String(a?.label || "").localeCompare(String(b?.label || ""))
+      || String(a?.value || "").localeCompare(String(b?.value || ""))
+    ));
+}
+
+function defaultDomainTypeChoices(domainKey) {
+  const d = String(domainKey || "").trim().toLowerCase();
+  if (d === "street_signs") {
+    return STREET_SIGN_TYPE_OPTIONS.map((option, index) => ({
+      value: String(option?.value || "").trim().toLowerCase(),
+      label: String(option?.label || "").trim(),
+      sortOrder: (index + 1) * 10,
+    }));
+  }
+  return [];
+}
+
+function defaultDomainTypeOptionLabel(domainKey = "", index = 0) {
+  const normalizedDomain = String(domainKey || "").trim().toLowerCase();
+  if (normalizedDomain === "street_signs" && index === 0) return "Sign Type";
+  return `Type Option ${index + 1}`;
+}
+
+function normalizeDomainTypeOptionConfigs(typeOptions, domainKey = "") {
+  const rows = Array.isArray(typeOptions) ? typeOptions : [];
+  if (!rows.length) return [];
+  const looksLegacyFlat = rows.every((row) => (
+    row
+    && typeof row === "object"
+    && !Array.isArray(row?.choices)
+    && !Array.isArray(row?.options)
+    && !Array.isArray(row?.type_choices)
+    && !row?.optionKey
+    && !row?.optionLabel
+    && (row?.type_key || row?.type_label || row?.label || row?.value)
+  ));
+  if (looksLegacyFlat) {
+    const choices = normalizeDomainTypeOptions(rows);
+    return choices.length ? [{
+      id: `${String(domainKey || "domain").trim().toLowerCase() || "domain"}_type_option_1`,
+      optionKey: domainKey === "street_signs" ? "sign_type" : "type_option_1",
+      optionLabel: defaultDomainTypeOptionLabel(domainKey, 0),
+      choices,
+    }] : [];
+  }
+
+  return rows.map((row, index) => {
+    const optionLabel = String(row?.optionLabel || row?.option_label || row?.label || "").replace(/\s+/g, " ").trim() || defaultDomainTypeOptionLabel(domainKey, index);
+    const optionKey = normalizeLooseIssueToken(row?.optionKey || row?.option_key || optionLabel || `type_option_${index + 1}`) || `type_option_${index + 1}`;
+    const rawChoices = Array.isArray(row?.choices)
+      ? row.choices
+      : Array.isArray(row?.options)
+        ? row.options
+        : Array.isArray(row?.type_choices)
+          ? row.type_choices
+          : [];
+    const choices = normalizeDomainTypeOptions(rawChoices);
+    return {
+      id: String(row?.id || "").trim() || `${String(domainKey || "domain").trim().toLowerCase() || "domain"}_${optionKey}`,
+      optionKey,
+      optionLabel,
+      choices,
+    };
+  }).filter((row) => row.optionLabel || row.choices.length);
+}
+
+function defaultDomainTypeOptionConfigs(domainKey) {
+  const d = String(domainKey || "").trim().toLowerCase();
+  if (d === "street_signs") {
+    return [{
+      id: "street_signs_sign_type",
+      optionKey: "sign_type",
+      optionLabel: "Sign Type",
+      choices: defaultDomainTypeChoices(d),
+    }];
+  }
+  return [];
+}
+
+function buildInitialDomainTypeSelections(target, typeOptionConfigs = []) {
+  const configs = Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [];
+  const next = {};
+  const rawSelections = target && typeof target?.typeSelections === "object" && !Array.isArray(target.typeSelections)
+    ? target.typeSelections
+    : {};
+  for (const [index, cfg] of configs.entries()) {
+    const existingValue = String(rawSelections?.[cfg.optionKey] || "").trim();
+    const existingMatch = findNormalizedTypeOption(existingValue, cfg.choices);
+    const taggedTypeValue = readTaggedValueFromNote(target?.note || "", [`Type Option ${cfg.optionLabel}`]);
+    const fallbackCandidates = index === 0
+      ? [target?.typeValue, target?.type, target?.signType, taggedTypeValue, readDomainTypeFromNote(target?.note || "")]
+      : [taggedTypeValue];
+    const fallbackMatch = fallbackCandidates
+      .map((candidate) => findNormalizedTypeOption(candidate, cfg.choices))
+      .find(Boolean);
+    const defaultValue = String(cfg?.choices?.[0]?.value || "").trim().toLowerCase();
+    next[cfg.optionKey] = String(existingMatch?.value || fallbackMatch?.value || defaultValue).trim().toLowerCase();
+  }
+  return next;
+}
+
+function resolveDomainTypeSelectionLabel(selectionValue, typeOptionConfig) {
+  const matched = findNormalizedTypeOption(selectionValue, typeOptionConfig?.choices || []);
+  return String(matched?.label || "").trim();
+}
+
+function buildDomainTypeOptionNoteTags(typeSelections = {}, typeOptionConfigs = []) {
+  return (Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [])
+    .map((cfg) => {
+      const selectedValue = String(typeSelections?.[cfg.optionKey] || "").trim().toLowerCase();
+      const selectedLabel = resolveDomainTypeSelectionLabel(selectedValue, cfg);
+      if (!selectedLabel) return null;
+      return `Type Option ${String(cfg.optionLabel || "Type").trim()}: ${selectedLabel}`;
+    })
+    .filter(Boolean);
+}
+
+function buildDomainTypeOptionPayload(typeSelections = {}, typeOptionConfigs = []) {
+  return (Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [])
+    .map((cfg) => {
+      const selectedValue = String(typeSelections?.[cfg.optionKey] || "").trim().toLowerCase();
+      const selectedLabel = resolveDomainTypeSelectionLabel(selectedValue, cfg);
+      if (!selectedLabel) return null;
+      return {
+        key: String(cfg.optionKey || "").trim(),
+        label: String(cfg.optionLabel || "").trim() || "Type",
+        value: selectedValue,
+        valueLabel: selectedLabel,
+        macroKey: `type_option_${normalizeLooseIssueToken(cfg.optionKey || cfg.optionLabel || "type_option")}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeDomainIssueOptions(issueTypes) {
+  const rows = Array.isArray(issueTypes) ? issueTypes : [];
+  const seen = new Set();
+  return rows
+    .map((row, index) => {
+      const value = String(row?.issue_key || row?.value || "").trim().toLowerCase();
+      const label = String(row?.issue_label || row?.label || "").trim();
+      if (!value || !label || seen.has(value)) return null;
+      seen.add(value);
+      return {
+        value,
+        label,
+        sortOrder: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : (index + 1) * 10,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (
+      Number(a?.sortOrder || 0) - Number(b?.sortOrder || 0)
+      || String(a?.label || "").localeCompare(String(b?.label || ""))
+      || String(a?.value || "").localeCompare(String(b?.value || ""))
+    ));
+}
+
+function defaultDomainIssueOptions(domainKey) {
+  const d = String(domainKey || "").trim().toLowerCase();
+  if (d === "streetlights") return STREETLIGHT_ISSUE_OPTIONS.map((option, index) => ({
+    value: String(option?.value || "").trim().toLowerCase(),
+    label: String(option?.label || "").trim(),
+    sortOrder: (index + 1) * 10,
+  }));
+  if (d === "street_signs") return STREET_SIGN_ISSUE_OPTIONS.map((option, index) => ({
+    value: String(option?.value || "").trim().toLowerCase(),
+    label: String(option?.label || "").trim(),
+    sortOrder: (index + 1) * 10,
+  }));
+  if (d === "water_drain_issues") return WATER_DRAIN_ISSUE_OPTIONS.map((option, index) => ({
+    value: String(option?.value || "").trim().toLowerCase(),
+    label: String(option?.label || "").trim(),
+    sortOrder: (index + 1) * 10,
+  }));
+  return [];
+}
+
+function defaultRoadRequiredForDomain(domainKey) {
+  return normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true }) === "potholes";
+}
+
+function defaultDomainIssueValue(domainKey, issueOptions = []) {
+  const normalizedOptions = normalizeDomainIssueOptions(issueOptions);
+  if (normalizedOptions.length) return String(normalizedOptions[0]?.value || "").trim().toLowerCase();
+  return defaultDomainIssueFor(domainKey);
+}
+
+function normalizeLooseIssueToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_{2,}/g, "_");
+}
+
+function findNormalizedIssueOption(issueValue, issueOptions = []) {
+  const normalizedValue = normalizeLooseIssueToken(issueValue);
+  return normalizeDomainIssueOptions(issueOptions).find((option) => normalizeLooseIssueToken(option?.value) === normalizedValue) || null;
+}
+
+function streetlightIssueLabelMatches(issueValue, issueOptions = [], { values = [], labelPatterns = [] } = {}) {
+  const normalizedValue = normalizeLooseIssueToken(issueValue);
+  const matchedOption = findNormalizedIssueOption(issueValue, issueOptions);
+  const normalizedLabel = normalizeLooseIssueToken(matchedOption?.label || "");
+  if ((Array.isArray(values) ? values : []).some((value) => normalizeLooseIssueToken(value) === normalizedValue)) {
+    return true;
+  }
+  return (Array.isArray(labelPatterns) ? labelPatterns : []).some((pattern) => {
+    const matcher = normalizeLooseIssueToken(pattern);
+    return Boolean(matcher) && (normalizedLabel === matcher || normalizedLabel.includes(matcher));
+  });
+}
+
+function isStreetlightOtherIssue(issueValue, issueOptions = []) {
+  return streetlightIssueLabelMatches(issueValue, issueOptions, {
+    values: ["other"],
+    labelPatterns: ["other"],
+  });
+}
+
+function isStreetlightDownedPoleIssue(issueValue, issueOptions = []) {
+  return streetlightIssueLabelMatches(issueValue, issueOptions, {
+    values: ["downed_pole", "pole_down", "downed-pole", "pole-down"],
+    labelPatterns: ["pole_down", "downed_pole"],
+  });
+}
+
+function resolveStoredStreetlightReportType(issueValue, issueOptions = []) {
+  if (streetlightIssueLabelMatches(issueValue, issueOptions, {
+    values: ["out", "light_out", "light_is_out"],
+    labelPatterns: ["light_is_out", "light_out"],
+  })) {
+    return "out";
+  }
+  if (streetlightIssueLabelMatches(issueValue, issueOptions, {
+    values: ["flickering", "dim_flickering", "dim", "flicker"],
+    labelPatterns: ["flickering", "dim_flickering"],
+  })) {
+    return "flickering";
+  }
+  if (streetlightIssueLabelMatches(issueValue, issueOptions, {
+    values: ["dayburner", "day_burner", "on_during_daytime", "on_during_day"],
+    labelPatterns: ["during_daytime", "day_burner", "daytime"],
+  })) {
+    return "dayburner";
+  }
+  if (isStreetlightDownedPoleIssue(issueValue, issueOptions)) {
+    return "downed_pole";
+  }
+  if (isStreetlightOtherIssue(issueValue, issueOptions)) {
+    return "other";
+  }
   return "other";
 }
 
@@ -534,23 +902,31 @@ function residentCommunityStatusDescription(status) {
 function residentCommunityStatusTone(status, darkMode = false) {
   const key = String(status || "").trim().toLowerCase();
   if (key === "published") {
-    return darkMode
-      ? { bg: "rgba(24, 108, 94, 0.34)", border: "rgba(95, 208, 180, 0.2)", color: "#b7efe1" }
-      : { bg: "rgba(22, 109, 120, 0.09)", border: "rgba(22, 109, 120, 0.15)", color: "#176d78" };
+    return {
+      bg: "var(--sl-ui-feed-status-published-bg)",
+      border: "var(--sl-ui-feed-status-published-border)",
+      color: "var(--sl-ui-feed-status-published-text)",
+    };
   }
   if (key === "scheduled") {
-    return darkMode
-      ? { bg: "rgba(37, 99, 235, 0.28)", border: "rgba(147, 197, 253, 0.2)", color: "#bfdbfe" }
-      : { bg: "rgba(37, 99, 235, 0.10)", border: "rgba(37, 99, 235, 0.16)", color: "#1d4ed8" };
+    return {
+      bg: "var(--sl-ui-feed-status-scheduled-bg)",
+      border: "var(--sl-ui-feed-status-scheduled-border)",
+      color: "var(--sl-ui-feed-status-scheduled-text)",
+    };
   }
   if (key === "archived") {
-    return darkMode
-      ? { bg: "rgba(75, 85, 99, 0.42)", border: "rgba(156, 163, 175, 0.22)", color: "#d1d5db" }
-      : { bg: "rgba(107, 114, 128, 0.10)", border: "rgba(107, 114, 128, 0.16)", color: "#4b5563" };
+    return {
+      bg: "var(--sl-ui-feed-status-archived-bg)",
+      border: "var(--sl-ui-feed-status-archived-border)",
+      color: "var(--sl-ui-feed-status-archived-text)",
+    };
   }
-  return darkMode
-    ? { bg: "rgba(140, 106, 0, 0.24)", border: "rgba(255, 227, 132, 0.16)", color: "#ffe79a" }
-    : { bg: "rgba(245, 190, 28, 0.13)", border: "rgba(245, 190, 28, 0.2)", color: "#7a5a00" };
+  return {
+    bg: "var(--sl-ui-feed-status-draft-bg)",
+    border: "var(--sl-ui-feed-status-draft-border)",
+    color: "var(--sl-ui-feed-status-draft-text)",
+  };
 }
 
 function formatResidentFeedDateTime(value, opts = {}) {
@@ -913,10 +1289,143 @@ function normalizeResidentNotificationDraft(topicKey, raw = {}, topics = []) {
   };
 }
 
-function AppIcon({ src, alt = "", size = 18, style = {} }) {
+function isTintableSvgIconSrc(src) {
+  const value = String(src || "").trim();
+  if (value.startsWith("data:image/svg+xml")) return true;
+  return /\.svg(?:[?#].*)?$/i.test(value);
+}
+
+function sanitizeInlineSvgMarkup(markup = "") {
+  const raw = String(markup || "");
+  if (!raw) return "";
+  const stripped = raw
+    .replace(/<\?xml[\s\S]*?\?>/gi, "")
+    .replace(/<!doctype[\s\S]*?>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .trim();
+  const match = stripped.match(/<svg[\s\S]*<\/svg>/i);
+  return String(match?.[0] || "").trim();
+}
+
+function svgMarkupToDataUrl(markup = "") {
+  const svg = sanitizeInlineSvgMarkup(markup);
+  if (!svg) return "";
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+async function normalizePublishedMapUiIconManifest(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const cloned = JSON.parse(JSON.stringify(raw));
+  const icons = cloned?.icons && typeof cloned.icons === "object" ? cloned.icons : {};
+  const entries = Object.entries(icons);
+  if (!entries.length || typeof fetch !== "function") return cloned;
+
+  await Promise.all(entries.map(async ([key, meta]) => {
+    if (!meta || typeof meta !== "object") return;
+    const src = String(meta?.src || "").trim();
+    const renderMode = String(meta?.render_mode || "").trim().toLowerCase();
+    const shouldInline =
+      renderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG
+      || (renderMode === "" && isTintableSvgIconSrc(src));
+    if (!shouldInline || !src || src.startsWith("data:image/svg+xml")) return;
+    try {
+      const response = await fetch(src, { method: "GET", mode: "cors", credentials: "omit" });
+      if (!response.ok) return;
+      const markup = await response.text();
+      const dataUrl = svgMarkupToDataUrl(markup);
+      if (!dataUrl) return;
+      cloned.icons[key] = {
+        ...meta,
+        src: dataUrl,
+      };
+    } catch {
+      // Keep the original source if the inline normalization request fails.
+    }
+  }));
+
+  return cloned;
+}
+
+function resolveAppIconRenderMode(src, explicitRenderMode = "") {
+  const iconSrc = String(src || "").trim();
+  const requestedMode = String(explicitRenderMode || "").trim().toLowerCase();
+  if (requestedMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG) return MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG;
+  if (requestedMode === MAP_UI_ICON_RENDER_MODE.FULL_COLOR_SVG) return MAP_UI_ICON_RENDER_MODE.FULL_COLOR_SVG;
+  if (requestedMode === MAP_UI_ICON_RENDER_MODE.RASTER) return MAP_UI_ICON_RENDER_MODE.RASTER;
+  const runtimeMode = String(UI_ICON_RENDER_MODE_BY_SRC.get(iconSrc) || "").trim().toLowerCase();
+  if (runtimeMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG) return MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG;
+  if (runtimeMode === MAP_UI_ICON_RENDER_MODE.FULL_COLOR_SVG) return MAP_UI_ICON_RENDER_MODE.FULL_COLOR_SVG;
+  if (runtimeMode === MAP_UI_ICON_RENDER_MODE.RASTER) return MAP_UI_ICON_RENDER_MODE.RASTER;
+  return isTintableSvgIconSrc(iconSrc) ? MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG : MAP_UI_ICON_RENDER_MODE.RASTER;
+}
+
+function resolveAppIconThemeMeta(iconKey = "", src = "") {
+  const directKey = String(iconKey || "").trim();
+  if (directKey && UI_ICON_META?.[directKey]) return UI_ICON_META[directKey];
+  const iconSrc = String(src || "").trim();
+  const fallbackKey = String(UI_ICON_PRIMARY_KEY_BY_SRC.get(iconSrc) || "").trim();
+  return fallbackKey ? UI_ICON_META?.[fallbackKey] || null : null;
+}
+
+function isRuntimeUiIconEnabled(iconKey = "", src = "") {
+  const themedMeta = resolveAppIconThemeMeta(iconKey, src);
+  return themedMeta?.enabled !== false;
+}
+
+function AppIcon({ src, alt = "", size = 18, style = {}, renderMode = "", iconKey = "", darkMode = null, active = false }) {
+  const iconSrc = String(src || "").trim();
+  const resolvedRenderMode = resolveAppIconRenderMode(iconSrc, renderMode);
+  const themedMeta = resolveAppIconThemeMeta(iconKey, iconSrc);
+  const resolvedDarkMode = darkMode == null
+    ? typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
+    : Boolean(darkMode);
+  if (iconSrc && resolvedRenderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG) {
+    const {
+      color,
+      backgroundColor,
+      WebkitMaskImage,
+      maskImage,
+      WebkitMaskRepeat,
+      maskRepeat,
+      WebkitMaskPosition,
+      maskPosition,
+      WebkitMaskSize,
+      maskSize,
+      ...restStyle
+    } = style || {};
+    const modeTint = resolvedDarkMode
+      ? String(themedMeta?.dark_tint_color || "").trim()
+      : String(themedMeta?.light_tint_color || "").trim();
+    const tintColor = String(active ? (color || backgroundColor || "currentColor") : (modeTint || color || backgroundColor || "currentColor")).trim() || "currentColor";
+    return (
+      <span
+        role={alt ? "img" : undefined}
+        aria-label={alt || undefined}
+        aria-hidden={alt ? undefined : true}
+        style={{
+          width: size,
+          height: size,
+          display: "block",
+          verticalAlign: "middle",
+          flexShrink: 0,
+          backgroundColor: tintColor,
+          WebkitMaskImage: `url("${iconSrc}")`,
+          maskImage: `url("${iconSrc}")`,
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+          ...restStyle,
+        }}
+      />
+    );
+  }
+
   return (
     <img
-      src={src}
+      src={iconSrc}
       alt={alt}
       style={{
         width: size,
@@ -928,6 +1437,98 @@ function AppIcon({ src, alt = "", size = 18, style = {} }) {
         ...style,
       }}
     />
+  );
+}
+
+function resolveRuntimeDomainIconRenderMode(domainKeyRaw, iconSrc = "") {
+  const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const explicit = key ? String(RUNTIME_DOMAIN_META.iconRenderModeByDomain.get(key) || "").trim() : "";
+  return normalizeDomainIconRenderMode(explicit, iconSrc);
+}
+
+function resolveRuntimeDomainIconTintMode(domainKeyRaw) {
+  const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const explicit = key ? String(RUNTIME_DOMAIN_META.iconTintModeByDomain.get(key) || "").trim() : "";
+  return normalizeDomainIconTintMode(explicit || DOMAIN_ICON_TINT_MODE.DEFAULT);
+}
+
+function resolveRuntimeDomainIconTintColor(domainKeyRaw) {
+  const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const explicit = key ? String(RUNTIME_DOMAIN_META.iconTintColorByDomain.get(key) || "").trim() : "";
+  return normalizeDomainIconTintColor(explicit, "");
+}
+
+function resolveDomainMarkerIconPresentation(domainKeyRaw, markerColor = "", iconSrc = "") {
+  const renderMode = resolveRuntimeDomainIconRenderMode(domainKeyRaw, iconSrc);
+  const tintMode = resolveRuntimeDomainIconTintMode(domainKeyRaw);
+  const tintColor = resolveRuntimeDomainIconTintColor(domainKeyRaw);
+  return {
+    renderMode,
+    tintMode,
+    tintColor,
+    glyphColor: resolveDomainMarkerIconTintColor({
+      renderMode,
+      tintMode,
+      tintColor,
+      markerColor,
+    }),
+  };
+}
+
+function DomainAppIcon({
+  domainKey = "",
+  src,
+  alt = "",
+  size = 18,
+  style = {},
+  markerColor = "",
+  markerContext = false,
+}) {
+  const iconSrc = String(src || "").trim();
+  const renderMode = resolveRuntimeDomainIconRenderMode(domainKey, iconSrc);
+  const markerPresentation = markerContext
+    ? resolveDomainMarkerIconPresentation(domainKey, markerColor, iconSrc)
+    : null;
+  const nextStyle = markerContext && markerPresentation?.glyphColor
+    ? { color: markerPresentation.glyphColor, ...style }
+    : style;
+  return (
+    <AppIcon
+      src={iconSrc}
+      alt={alt}
+      size={size}
+      style={nextStyle}
+      renderMode={renderMode}
+    />
+  );
+}
+
+function DomainSelectorListIcon({
+  domainKey = "",
+  src = "",
+  size = 18,
+  containerSize = null,
+}) {
+  const resolvedContainerSize = Number.isFinite(Number(containerSize)) ? Number(containerSize) : size;
+  return (
+    <span
+      style={{
+        width: resolvedContainerSize,
+        height: resolvedContainerSize,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "currentColor",
+        flexShrink: 0,
+      }}
+    >
+      <DomainAppIcon
+        domainKey={domainKey}
+        src={src}
+        size={size}
+        style={{ color: "currentColor" }}
+      />
+    </span>
   );
 }
 
@@ -1002,6 +1603,24 @@ function formatWaterDrainIssueLabel(raw) {
   return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function formatGenericDomainIssueLabel(issueKey) {
+  const key = String(issueKey || "").trim().toLowerCase();
+  if (!key || key === "other") return "";
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolveRuntimeDomainIssueLabel(domainKeyRaw, issueValueRaw) {
+  const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const issueValue = String(issueValueRaw || "").trim().toLowerCase();
+  if (!key || !issueValue) return "";
+  const option = (RUNTIME_DOMAIN_META.issueTypesByDomain.get(key) || []).find((row) => row.value === issueValue);
+  return String(option?.label || "").trim();
+}
+
 function waterDrainIssueKeyFromNote(note) {
   const text = String(note || "");
   if (!text) return "";
@@ -1045,27 +1664,6 @@ function officialStatusFromSinceFixCount(count) {
   if (count >= 5) return { label: "Likely Out", color: "#f57c00" };    // orange
   if (count >= 1) return { label: "Reported", color: "#fbc02d" };      // yellow
   return { label: "Operational", color: "#111" };                      // black
-}
-
-function potholeColorFromCount(count) {
-  const n = Number(count || 0);
-  const yellow = officialStatusFromSinceFixCount(1).color; // keep exact streetlight yellow
-  if (n >= 7) return "#b71c1c"; // red
-  if (n >= 4) return "#f57c00"; // orange
-  if (n >= 2) return yellow;      // yellow
-  if (n >= 1) return yellow;      // private single-report view
-  return "#111";
-}
-
-function waterDrainColorFromCount(count) {
-  const n = Number(count || 0);
-  const yellow = officialStatusFromSinceFixCount(1).color; // keep same yellow tone
-  // Requested thresholds:
-  // 2-3 = yellow, 4-5 = orange, >5 = red.
-  if (n > 5) return "#b71c1c";  // red
-  if (n >= 4) return "#f57c00"; // orange
-  if (n >= 2) return yellow;    // yellow
-  return "#111";
 }
 
 function majorityReportType(reports) {
@@ -1484,19 +2082,25 @@ function reportNumberForRow(row, domainHint = "") {
   const persisted = String(row?.report_number || "").trim();
   const runtimePrefix = String(RUNTIME_DOMAIN_META.reportPrefixByDomain.get(domain) || "").trim().toUpperCase();
   if (persisted) {
-    if (domain === "street_signs") {
-      const m = persisted.match(/^slr(\d+)$/i);
-      if (m) return `SSR${m[1]}`;
-    }
-    if (domain === "water_drain_issues") {
-      const m = persisted.match(/^slr(\d+)$/i);
-      if (m) return `WDR${m[1]}`;
-    }
-    if (runtimePrefix) {
-      const m = persisted.match(/^slr(\d+)$/i);
-      if (m) return `${runtimePrefix}${m[1]}`;
-    }
-    return persisted;
+    const explicitPrefix =
+      runtimePrefix
+      || (domain === "potholes"
+        ? "PHR"
+        : domain === "street_signs"
+          ? "SSR"
+          : domain === "water_drain_issues"
+            ? "WDR"
+            : domain === "power_outage"
+              ? "POR"
+              : domain === "water_main"
+                ? "WMR"
+                : "SLR");
+    const normalized = persisted.toUpperCase();
+    const digits = normalized.match(/(\d+)$/)?.[1] || "";
+    const prefixedMatch = normalized.match(/^R-([A-Z0-9]+)(\d+)$/);
+    if (prefixedMatch) return `R-${prefixedMatch[1]}${prefixedMatch[2]}`;
+    if (digits) return `R-${explicitPrefix}${digits.padStart(7, "0")}`;
+    return normalized.startsWith("R-") ? normalized : `R-${normalized}`;
   }
 
   const prefix =
@@ -1514,7 +2118,7 @@ function reportNumberForRow(row, domainHint = "") {
 
   const idRaw = row?.id;
   const asNum = Number(idRaw);
-  if (Number.isFinite(asNum) && asNum > 0) return `${prefix}${String(Math.trunc(asNum)).padStart(7, "0")}`;
+  if (Number.isFinite(asNum) && asNum > 0) return `R-${prefix}${String(Math.trunc(asNum)).padStart(7, "0")}`;
 
   const s = String(idRaw ?? `${row?.light_id || ""}|${row?.pothole_id || ""}|${row?.ts || 0}`);
   let h = 2166136261 >>> 0;
@@ -1522,7 +2126,7 @@ function reportNumberForRow(row, domainHint = "") {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619) >>> 0;
   }
-  return `${prefix}${String(h % 10000000).padStart(7, "0")}`;
+  return `R-${prefix}${String(h % 10000000).padStart(7, "0")}`;
 }
 
 function shortIncidentKey(incidentId) {
@@ -1727,6 +2331,160 @@ function readLandmarkFromNote(note) {
   return v;
 }
 
+function readIntersectionFromNote(note) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/(?:^|\s)Intersection:\s*([^|]+?)(?:\s*\||$)/i);
+  if (!m) return "";
+  return String(m[1] || "").trim();
+}
+
+function readTaggedValueFromNote(note, labels = []) {
+  const raw = String(note || "").trim();
+  if (!raw) return "";
+  for (const label of Array.isArray(labels) ? labels : []) {
+    const escaped = String(label || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!escaped) continue;
+    const m = raw.match(new RegExp(`(?:^|\\s)${escaped}:\\s*([^|]+?)(?:\\s*\\||$)`, "i"));
+    if (m) return String(m[1] || "").trim();
+  }
+  return "";
+}
+
+function readIssueTypeFromNote(note) {
+  return readTaggedValueFromNote(note, ["Issue Type", "Water issue", "Sign issue"]);
+}
+
+function readDomainTypeFromNote(note) {
+  return readTaggedValueFromNote(note, ["Type", "Sign type"]);
+}
+
+function findNormalizedTypeOption(typeValue, typeOptions = []) {
+  const normalizedValue = normalizeLooseIssueToken(typeValue);
+  return normalizeDomainTypeOptions(typeOptions).find((option) => (
+    normalizeLooseIssueToken(option?.value) === normalizedValue
+    || normalizeLooseIssueToken(option?.label) === normalizedValue
+  )) || null;
+}
+
+function resolveConfiguredDomainTypeLabel(domainKeyRaw, typeValueRaw, typeOptions = []) {
+  const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const matched = findNormalizedTypeOption(typeValueRaw, typeOptions);
+  if (matched?.label) return String(matched.label || "").trim();
+  if (domainKey === "street_signs") {
+    return formatStreetSignTypeLabel(typeValueRaw);
+  }
+  return formatGenericDomainIssueLabel(typeValueRaw);
+}
+
+function domainIssueNoteTag(domainKeyRaw) {
+  const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  if (domainKey === "street_signs") return "Sign issue";
+  if (domainKey === "water_drain_issues") return "Water issue";
+  return "Issue Type";
+}
+
+function resolveConfiguredDomainIssueLabel(domainKeyRaw, issueValueRaw, issueOptions = []) {
+  const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  const issueValue = String(issueValueRaw || "").trim().toLowerCase();
+  if (!domainKey || !issueValue) return "";
+
+  const configuredOptions = normalizeDomainIssueOptions(issueOptions);
+  const configuredLabel = String(configuredOptions.find((option) => option.value === issueValue)?.label || "").trim();
+  if (configuredLabel) return configuredLabel;
+
+  const runtimeLabel = resolveRuntimeDomainIssueLabel(domainKey, issueValue);
+  if (runtimeLabel) return runtimeLabel;
+
+  if (domainKey === "water_drain_issues") {
+    return formatWaterDrainIssueLabel(issueValue);
+  }
+  if (domainKey === "streetlights") {
+    return String(REPORT_TYPES?.[issueValue] || "").trim() || formatGenericDomainIssueLabel(issueValue);
+  }
+  return formatGenericDomainIssueLabel(issueValue);
+}
+
+function resolveReportIssueLabel(row, domainKeyRaw, waterDrainIncidentsById = {}) {
+  const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  if (!domainKey || domainKey === "potholes") return "";
+
+  const rawNotes = String(row?.note || row?.raw_notes || row?.notes || "");
+  const noteIssueLabel = readIssueTypeFromNote(rawNotes);
+  const rawType = String(row?.type || row?.report_type || "").trim();
+
+  if (domainKey === "water_drain_issues") {
+    const incidentId = String(row?.light_id || row?.incident_id || "").trim();
+    const cachedIssueType = String(waterDrainIncidentsById?.[incidentId]?.issue_type || "").trim();
+    const normalizedIssueType =
+      cachedIssueType
+      || waterDrainIssueKeyFromNote(rawNotes)
+      || normalizeReportTypeValue(rawType);
+    if (normalizedIssueType) {
+      const resolvedIssueLabel = resolveConfiguredDomainIssueLabel(domainKey, normalizedIssueType);
+      if (resolvedIssueLabel) return resolvedIssueLabel;
+    }
+    return noteIssueLabel || "";
+  }
+
+  return (
+    noteIssueLabel
+    || resolveConfiguredDomainIssueLabel(domainKey, rawType)
+  );
+}
+
+function resolveReportTypeOptionDetails(row, domainKeyRaw) {
+  const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+  if (!domainKey) return [];
+
+  const rawNotes = String(row?.note || row?.raw_notes || row?.notes || "");
+  const typeOptionConfigs = normalizeDomainTypeOptionConfigs(
+    RUNTIME_DOMAIN_META.typeOptionsByDomain.get(domainKey) || defaultDomainTypeOptionConfigs(domainKey),
+    domainKey
+  );
+  if (!typeOptionConfigs.length) return [];
+
+  return typeOptionConfigs
+    .map((cfg, index) => {
+      const optionLabel = String(cfg?.optionLabel || "").trim();
+      if (!optionLabel) return null;
+      const taggedValue = readTaggedValueFromNote(rawNotes, [`Type Option ${optionLabel}`]);
+      const fallbackValue = index === 0 ? readDomainTypeFromNote(rawNotes) : "";
+      const rawValue = String(taggedValue || fallbackValue || "").trim();
+      if (!rawValue) return null;
+      const valueLabel = resolveDomainTypeSelectionLabel(rawValue, cfg) || rawValue;
+      if (!String(valueLabel || "").trim()) return null;
+      return {
+        key: String(cfg?.optionKey || "").trim() || `type_option_${index + 1}`,
+        label: optionLabel,
+        valueLabel: String(valueLabel || "").trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+function ReportTypeOptionDetails({ details = [], textStyle = {} }) {
+  if (!Array.isArray(details) || !details.length) return null;
+  return (
+    <div style={{ display: "grid", gap: 2, ...textStyle }}>
+      {details.map((detail) => (
+        <div key={detail.key || detail.label}>
+          <b>{detail.label}:</b> {detail.valueLabel}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function isCoordinatePairText(value) {
+  return /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/i.test(String(value || "").trim());
+}
+
+function isUsableAddressText(value) {
+  const text = String(value || "").trim();
+  return Boolean(text) && !isCoordinatePairText(text);
+}
+
 function stripSystemMetadataFromNote(note) {
   const raw = String(note || "").trim();
   if (!raw) return "";
@@ -1743,10 +2501,14 @@ function stripSystemMetadataFromNote(note) {
     .replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Cross Street:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Intersection:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Issue Type:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Water issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Type:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign type:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Type Option\s+[^:|]+:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/\[SL_QA\s+power_on=(yes|no|unknown)\s+hazardous=(yes|no|unknown)\]/gi, "")
     .replace(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/gi, "")
     .replace(/^\|\s*/, "")
@@ -1760,7 +2522,7 @@ function noteDisplayText(note) {
   return stripSystemMetadataFromNote(note);
 }
 
-function composeStreetlightQaNote(userNote, areaPowerOn, hazardYesNo) {
+function composeStreetlightQaNote(userNote, areaPowerOn, hazardYesNo, issueLabel = "") {
   const power = ["yes", "no"].includes(String(areaPowerOn || "").toLowerCase())
     ? String(areaPowerOn || "").toLowerCase()
     : "unknown";
@@ -1768,8 +2530,9 @@ function composeStreetlightQaNote(userNote, areaPowerOn, hazardYesNo) {
     ? String(hazardYesNo || "").toLowerCase()
     : "unknown";
   const qaTag = `[SL_QA power_on=${power} hazardous=${hazard}]`;
+  const issueTag = String(issueLabel || "").trim() ? `Issue Type: ${String(issueLabel || "").trim()}` : "";
   const noteText = String(userNote || "").trim();
-  return [noteText, qaTag].filter(Boolean).join(" | ");
+  return [issueTag, noteText, qaTag].filter(Boolean).join(" | ");
 }
 
 function parseStreetlightQaFromNote(note) {
@@ -2433,6 +3196,18 @@ function svgDotDataUrl(fill = "#111", r = 7) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+function isInlineSvgDataUrl(src = "") {
+  const value = String(src || "").trim().toLowerCase();
+  return value.startsWith("data:image/svg+xml");
+}
+
+function isSvgGlyphSource(src = "") {
+  const value = String(src || "").trim().toLowerCase();
+  if (!value) return false;
+  if (isInlineSvgDataUrl(value)) return true;
+  return /\.svg(?:[?#].*)?$/i.test(value);
+}
+
 const MAP_MARKER_SIZE = 34;
 const MAP_MARKER_CENTER = MAP_MARKER_SIZE / 2;
 const MAP_MARKER_RADIUS = 12.2;
@@ -2440,6 +3215,7 @@ const MAP_MARKER_STROKE = 2.8;
 const MAP_MARKER_GLYPH_SIZE = 19;
 const MAP_MARKER_HALO_COLOR = "#ffffff";
 const MAP_MARKER_GLYPH_HALO_BLUR = 2.8;
+const MAP_MARKER_SVG_GLYPH_INSET = 8.1;
 const INCIDENT_DOMAIN_ICON_SIZE = Math.round(MAP_MARKER_SIZE * 1.14);
 const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.16;
 const INCIDENT_CLUSTER_MAX_ZOOM = 15;
@@ -2475,54 +3251,155 @@ function clusterMarkersByDistance(markers = [], radiusMeters = 0) {
     }));
   }
 
-  const clusters = [];
-  for (const marker of Array.isArray(markers) ? markers : []) {
-    const lat = Number(marker?.lat);
-    const lng = Number(marker?.lng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+  const source = (Array.isArray(markers) ? markers : [])
+    .map((marker) => ({
+      marker,
+      lat: Number(marker?.lat),
+      lng: Number(marker?.lng),
+    }))
+    .filter((entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng));
 
-    let best = null;
-    let bestDistance = Infinity;
-    for (const cluster of clusters) {
-      const distance = metersBetween({ lat, lng }, { lat: cluster.lat, lng: cluster.lng });
-      if (distance <= radius && distance < bestDistance) {
-        best = cluster;
-        bestDistance = distance;
+  const visited = new Set();
+  const clusters = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    if (visited.has(index)) continue;
+    visited.add(index);
+
+    const queue = [index];
+    const members = [];
+
+    while (queue.length) {
+      const currentIndex = queue.shift();
+      const current = source[currentIndex];
+      if (!current) continue;
+      members.push(current);
+
+      for (let candidateIndex = 0; candidateIndex < source.length; candidateIndex += 1) {
+        if (visited.has(candidateIndex)) continue;
+        const candidate = source[candidateIndex];
+        if (!candidate) continue;
+        const distance = metersBetween(
+          { lat: current.lat, lng: current.lng },
+          { lat: candidate.lat, lng: candidate.lng }
+        );
+        if (distance > radius) continue;
+        visited.add(candidateIndex);
+        queue.push(candidateIndex);
       }
     }
 
-    if (!best) {
-      clusters.push({
-        lat,
-        lng,
-        north: lat,
-        south: lat,
-        east: lng,
-        west: lng,
-        markers: [marker],
-      });
-      continue;
-    }
-
-    best.markers.push(marker);
-    const count = best.markers.length;
-    best.lat = ((best.lat * (count - 1)) + lat) / count;
-    best.lng = ((best.lng * (count - 1)) + lng) / count;
-    best.north = Math.max(best.north, lat);
-    best.south = Math.min(best.south, lat);
-    best.east = Math.max(best.east, lng);
-    best.west = Math.min(best.west, lng);
+    if (!members.length) continue;
+    const latSum = members.reduce((sum, entry) => sum + entry.lat, 0);
+    const lngSum = members.reduce((sum, entry) => sum + entry.lng, 0);
+    clusters.push({
+      lat: latSum / members.length,
+      lng: lngSum / members.length,
+      north: members.reduce((max, entry) => Math.max(max, entry.lat), -Infinity),
+      south: members.reduce((min, entry) => Math.min(min, entry.lat), Infinity),
+      east: members.reduce((max, entry) => Math.max(max, entry.lng), -Infinity),
+      west: members.reduce((min, entry) => Math.min(min, entry.lng), Infinity),
+      markers: members.map((entry) => entry.marker),
+    });
   }
 
   return clusters;
 }
 
+function incidentMarkerDedupKey(marker) {
+  if (!marker || typeof marker !== "object") return "";
+  const domain = String(marker?.domain || "").trim().toLowerCase();
+  const incidentId = String(
+    marker?.incident_id
+    || marker?.pothole_id
+    || marker?.id
+    || marker?.display_id
+    || ""
+  ).trim().toLowerCase();
+  if (domain && incidentId) return `${domain}::${incidentId}`;
+  const lat = Number(marker?.lat);
+  const lng = Number(marker?.lng);
+  if (!domain || !Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+  return `${domain}::${lat.toFixed(6)}:${lng.toFixed(6)}`;
+}
+
+function mergeIncidentMarkerRows(rows = []) {
+  const next = [];
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    const rowKey = String(
+      row?.id
+      || `${String(row?.light_id || row?.pothole_id || "").trim()}::${Number(row?.ts || 0)}::${Number(row?.lat || 0)}::${Number(row?.lng || 0)}`
+    ).trim().toLowerCase();
+    if (!rowKey || seen.has(rowKey)) continue;
+    seen.add(rowKey);
+    next.push(row);
+  }
+  return next.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+}
+
+function dedupeIncidentMarkerRenderSource(markers = []) {
+  const merged = new Map();
+  for (const marker of Array.isArray(markers) ? markers : []) {
+    const key = incidentMarkerDedupKey(marker);
+    if (!key) continue;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, {
+        ...marker,
+        rows: mergeIncidentMarkerRows(marker?.rows || []),
+      });
+      continue;
+    }
+
+    const mergedRows = mergeIncidentMarkerRows([
+      ...(Array.isArray(existing?.rows) ? existing.rows : []),
+      ...(Array.isArray(marker?.rows) ? marker.rows : []),
+    ]);
+    const mergedCount = mergedRows.length
+      || Math.max(Number(existing?.count || 0), Number(marker?.count || 0));
+    const existingLastTs = Number(existing?.lastTs || 0);
+    const markerLastTs = Number(marker?.lastTs || 0);
+    const preferred = markerLastTs > existingLastTs ? marker : existing;
+
+    merged.set(key, {
+      ...preferred,
+      rows: mergedRows,
+      count: mergedCount,
+      lastTs: Math.max(existingLastTs, markerLastTs),
+    });
+  }
+  return Array.from(merged.values());
+}
+
+function containRect(srcWidth, srcHeight, destWidth, destHeight) {
+  const sw = Number(srcWidth);
+  const sh = Number(srcHeight);
+  const dw = Number(destWidth);
+  const dh = Number(destHeight);
+  if (!(sw > 0) || !(sh > 0) || !(dw > 0) || !(dh > 0)) {
+    return { x: 0, y: 0, width: Math.max(0, dw), height: Math.max(0, dh) };
+  }
+  const scale = Math.min(dw / sw, dh / sh);
+  const width = sw * scale;
+  const height = sh * scale;
+  return {
+    x: (dw - width) / 2,
+    y: (dh - height) / 2,
+    width,
+    height,
+  };
+}
+
 // CMD+F: function gmapsDotIcon
-function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", glyphSrc = "") {
+function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", glyphSrc = "", options = {}) {
   const c = color || "#1976d2";
   const r = ringColor || "white";
   const gph = String(glyph || "💡");
   const gsrc = String(glyphSrc || "").trim();
+  const renderMode = normalizeDomainIconRenderMode(options?.renderMode, gsrc);
+  const glyphColor = String(options?.glyphColor || "#111").trim() || "#111";
   const gsrcResolved = (() => {
     if (!gsrc) return "";
     if (/^(https?:|data:)/i.test(gsrc)) return gsrc;
@@ -2539,6 +3416,10 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   const textY = isPotholeGlyph ? 15.3 : 16;
   const textSize = isPotholeGlyph ? 14.5 : 15;
   const g = window.google?.maps;
+  const renderScale =
+    typeof window !== "undefined"
+      ? Math.max(1, Math.min(4, Number(window.devicePixelRatio || 1) || 1))
+      : 1;
 
   // Prefer canvas composition for image glyphs (more reliable than <image href> in SVG data URLs across environments).
   let glyphImg = null;
@@ -2556,18 +3437,21 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
   }
 
   const usingImageGlyph = Boolean(glyphImg);
-  const cacheKey = `${c}|${r}|${gph}|${gsrcResolved}|${MARKER_SIZE}|${MARKER_RADIUS}|${MAP_MARKER_STROKE}|${MAP_MARKER_GLYPH_SIZE}|${textY}|${textSize}|${usingImageGlyph ? "img" : "txt"}|${g ? "g" : "nog"}`;
+  const cacheKey = `${c}|${r}|${gph}|${gsrcResolved}|${renderMode}|${glyphColor}|${MARKER_SIZE}|${MARKER_RADIUS}|${MAP_MARKER_STROKE}|${MAP_MARKER_GLYPH_SIZE}|${textY}|${textSize}|${usingImageGlyph ? "img" : "txt"}|scale:${renderScale}|${g ? "g" : "nog"}`;
   gmapsDotIcon._cache ||= new Map();
   if (gmapsDotIcon._cache.has(cacheKey)) return gmapsDotIcon._cache.get(cacheKey);
 
   let url = "";
   if (usingImageGlyph && typeof document !== "undefined") {
     const canvas = document.createElement("canvas");
-    canvas.width = MARKER_SIZE;
-    canvas.height = MARKER_SIZE;
+    canvas.width = Math.round(MARKER_SIZE * renderScale);
+    canvas.height = Math.round(MARKER_SIZE * renderScale);
     const ctx = canvas.getContext("2d");
     if (ctx) {
       try {
+        ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.beginPath();
         ctx.arc(MARKER_CENTER, MARKER_CENTER, MARKER_RADIUS, 0, Math.PI * 2);
         ctx.fillStyle = c;
@@ -2575,15 +3459,48 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
         ctx.lineWidth = MAP_MARKER_STROKE;
         ctx.strokeStyle = r;
         ctx.stroke();
-        const imgSize = MAP_MARKER_GLYPH_SIZE;
-        const imgX = (MARKER_SIZE - imgSize) / 2;
-        const imgY = (MARKER_SIZE - imgSize) / 2;
+        const glyphInset = isSvgGlyphSource(gsrcResolved) ? MAP_MARKER_SVG_GLYPH_INSET : 6;
+        const destBoxSize = MARKER_SIZE - glyphInset * 2;
+        const srcX = 0;
+        const srcY = 0;
+        const srcW = glyphImg.naturalWidth;
+        const srcH = glyphImg.naturalHeight;
+        const destFit = containRect(srcW, srcH, destBoxSize, destBoxSize);
+        const imgX = glyphInset + destFit.x;
+        const imgY = glyphInset + destFit.y;
+        const imgW = destFit.width;
+        const imgH = destFit.height;
+        let glyphCanvas = null;
+        let glyphCtx = null;
+        if (renderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG) {
+          glyphCanvas = document.createElement("canvas");
+          glyphCanvas.width = Math.max(1, Math.round(destBoxSize * renderScale));
+          glyphCanvas.height = Math.max(1, Math.round(destBoxSize * renderScale));
+          glyphCtx = glyphCanvas.getContext("2d");
+        }
         ctx.save();
         ctx.shadowColor = MAP_MARKER_HALO_COLOR;
         ctx.shadowBlur = MAP_MARKER_GLYPH_HALO_BLUR;
-        ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
+        if (glyphCtx && glyphCanvas) {
+          glyphCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+          glyphCtx.imageSmoothingEnabled = true;
+          glyphCtx.imageSmoothingQuality = "high";
+          glyphCtx.clearRect(0, 0, destBoxSize, destBoxSize);
+          glyphCtx.drawImage(glyphImg, srcX, srcY, srcW, srcH, destFit.x, destFit.y, imgW, imgH);
+          glyphCtx.globalCompositeOperation = "source-in";
+          glyphCtx.fillStyle = glyphColor;
+          glyphCtx.fillRect(0, 0, destBoxSize, destBoxSize);
+          glyphCtx.globalCompositeOperation = "source-over";
+          ctx.drawImage(glyphCanvas, glyphInset, glyphInset, destBoxSize, destBoxSize);
+        } else {
+          ctx.drawImage(glyphImg, srcX, srcY, srcW, srcH, imgX, imgY, imgW, imgH);
+        }
         ctx.restore();
-        ctx.drawImage(glyphImg, imgX, imgY, imgSize, imgSize);
+        if (glyphCanvas) {
+          ctx.drawImage(glyphCanvas, glyphInset, glyphInset, destBoxSize, destBoxSize);
+        } else {
+          ctx.drawImage(glyphImg, srcX, srcY, srcW, srcH, imgX, imgY, imgW, imgH);
+        }
         url = canvas.toDataURL("image/png");
       } catch {
         url = "";
@@ -2596,7 +3513,7 @@ function gmapsDotIcon(color = "#1976d2", ringColor = "white", glyph = "💡", gl
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${MARKER_SIZE}" height="${MARKER_SIZE}" viewBox="0 0 ${MARKER_SIZE} ${MARKER_SIZE}">
         <circle cx="${MARKER_CENTER}" cy="${MARKER_CENTER}" r="${MARKER_RADIUS}" fill="${c}" stroke="${r}" stroke-width="${MAP_MARKER_STROKE}" />
-        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}" fill="#111" stroke="${MAP_MARKER_HALO_COLOR}" stroke-width="2.2" paint-order="stroke fill" stroke-linejoin="round">${fallbackGlyph}</text>` : ""}
+        ${fallbackGlyph && fallbackGlyph !== "📍" ? `<text x="${MARKER_CENTER}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-size="${textSize}" fill="${glyphColor}" stroke="${MAP_MARKER_HALO_COLOR}" stroke-width="2.2" paint-order="stroke fill" stroke-linejoin="round">${fallbackGlyph}</text>` : ""}
       </svg>
     `.trim();
     url = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
@@ -2632,6 +3549,10 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
   })();
   const g = window.google?.maps;
   const px = Number(size) > 0 ? Number(size) : STREET_SIGN_MARKER_SIZE;
+  const renderScale =
+    typeof window !== "undefined"
+      ? Math.max(1, Math.min(3, Number(window.devicePixelRatio || 1) || 1))
+      : 1;
   let composedUrl = "";
   let finalSize = px;
   if (typeof window !== "undefined" && typeof document !== "undefined") {
@@ -2645,7 +3566,7 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
       gmapsImageIcon._imgCache.set(resolved, img);
     }
     if (img.complete && img.naturalWidth > 0) {
-      const cacheKey = `${resolved}|${px}|border:${border ? 1 : 0}|${borderColor}|${borderWidth}|halo:${halo ? 1 : 0}|${haloColor}|${haloBlur}`;
+      const cacheKey = `${resolved}|${px}|border:${border ? 1 : 0}|${borderColor}|${borderWidth}|halo:${halo ? 1 : 0}|${haloColor}|${haloBlur}|scale:${renderScale}`;
       gmapsImageIcon._compositeCache ||= new Map();
       if (gmapsImageIcon._compositeCache.has(cacheKey)) {
         const cached = gmapsImageIcon._compositeCache.get(cacheKey);
@@ -2655,11 +3576,14 @@ function gmapsImageIcon(src = "", size = STREET_SIGN_MARKER_SIZE, opts = {}) {
         const pad = Math.max(4, halo ? Math.ceil(haloBlur) + 3 : 0, border ? Math.ceil(borderWidth) + 3 : 0);
         const canvasSize = px + pad * 2;
         const canvas = document.createElement("canvas");
-        canvas.width = canvasSize;
-        canvas.height = canvasSize;
+        canvas.width = Math.round(canvasSize * renderScale);
+        canvas.height = Math.round(canvasSize * renderScale);
         const ctx = canvas.getContext("2d");
         if (ctx) {
           try {
+            ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
             const x = pad;
             const y = pad;
             if (halo) {
@@ -3598,6 +4522,86 @@ function publicConsentDisclosureText(domainKey = "") {
   return "";
 }
 
+function defaultDomainDisclosures(domainKey = "") {
+  const domain = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true }) || normalizeDomainKey(domainKey);
+  const base = [
+    {
+      id: `${domain || "domain"}_submission_notice`,
+      title: "Submission notice",
+      body: publicSubmitDisclosureText(domain),
+      required_acknowledgement: false,
+      display_position: "inside_form",
+    },
+  ];
+  if (domain === "potholes") {
+    return [
+      {
+        id: "potholes_vehicle_damage_notice",
+        title: "Vehicle damage notice",
+        body: "If you need to report damage to your vehicle from a pothole, you will need to file a police report as soon as possible, then bring this information to the City Manager's Office.",
+        required_acknowledgement: false,
+        display_position: "before_form",
+      },
+      {
+        id: "potholes_submit_authorization",
+        title: "Authorization to submit",
+        body: publicConsentDisclosureText(domain),
+        required_acknowledgement: true,
+        display_position: "inside_form",
+      },
+      ...base,
+    ];
+  }
+  if (domain === "water_drain_issues") {
+    return [
+      {
+        id: "water_drain_submit_authorization",
+        title: "Authorization to submit",
+        body: publicConsentDisclosureText(domain),
+        required_acknowledgement: true,
+        display_position: "inside_form",
+      },
+      ...base,
+    ];
+  }
+  return base;
+}
+
+function normalizeDomainDisclosureRows(value, domainKey = "", options = {}) {
+  const { fallbackToDefaults = false } = options;
+  if (!Array.isArray(value)) {
+    return fallbackToDefaults ? defaultDomainDisclosures(domainKey) : [];
+  }
+  const rows = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const title = String(row?.title || "").trim();
+    const body = String(row?.body || "").trim();
+    if (!title && !body) continue;
+    rows.push({
+      id: String(row?.id || "").trim(),
+      title: title || "Disclosure",
+      body,
+      required_acknowledgement: row?.required_acknowledgement === true || row?.required === true,
+      display_position: String(row?.display_position || "").trim().toLowerCase() === "before_form"
+        ? "before_form"
+        : "inside_form",
+    });
+  }
+  if (!rows.length && fallbackToDefaults) {
+    return defaultDomainDisclosures(domainKey);
+  }
+  return rows;
+}
+
+function domainDisclosureAckKey(disclosure, index = 0) {
+  const id = String(disclosure?.id || "").trim();
+  if (id) return id;
+  const position = String(disclosure?.display_position || "inside_form").trim().toLowerCase();
+  const title = String(disclosure?.title || "disclosure").trim().toLowerCase().replace(/\s+/g, "_");
+  return `${position}:${title || "disclosure"}:${index}`;
+}
+
 function publicSuccessDisclaimerText(reportCount = 1) {
   if (Number(reportCount || 0) > 1) {
     return "These reports were recorded by CityReport. Keep the report numbers for your records. Submission through CityReport does not guarantee city review or acceptance as legal notice.";
@@ -3618,12 +4622,16 @@ function ConfirmReportModal({
   hazardYesNo,
   setHazardYesNo,
   saving,
+  issueOptions = [],
   titleLabel = "Save this report?",
   confirmLabel = "Save light",
 }) {
-  const notesRequired = reportType === "other";
+  const selectableIssueOptions = normalizeDomainIssueOptions(issueOptions).length
+    ? normalizeDomainIssueOptions(issueOptions)
+    : defaultDomainIssueOptions("streetlights");
+  const notesRequired = isStreetlightOtherIssue(reportType, selectableIssueOptions);
   const notesMissing = notesRequired && !note.trim();
-  const showSafetyNote = reportType === "downed_pole";
+  const showSafetyNote = isStreetlightDownedPoleIssue(reportType, selectableIssueOptions);
   const powerAnswered = areaPowerOn === "yes" || areaPowerOn === "no";
   const hazardRequired = areaPowerOn === "yes";
   const hazardAnswered = !hazardRequired || hazardYesNo === "yes" || hazardYesNo === "no";
@@ -3814,9 +4822,9 @@ function ConfirmReportModal({
           }}
           disabled={saving}
         >
-          {Object.entries(REPORT_TYPES).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
+          {selectableIssueOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
@@ -4053,6 +5061,104 @@ function ReportSuccessModal({
   );
 }
 
+function DomainDisclosureGateModal({
+  open,
+  domainLabel,
+  disclosures = [],
+  acknowledgements = {},
+  setAcknowledgements,
+  onCancel,
+  onContinue,
+}) {
+  if (!open) return null;
+  const requiredDisclosures = disclosures.filter((row) => row?.required_acknowledgement === true);
+  const canContinue = requiredDisclosures.every((row, index) => Boolean(acknowledgements?.[domainDisclosureAckKey(row, index)]));
+  return (
+    <ModalShell open={open} zIndex={10011}>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 900 }}>Before you report {domainLabel}</div>
+          <div style={{ fontSize: 12.5, opacity: 0.84, lineHeight: 1.45 }}>
+            Please review the following disclosure{disclosures.length === 1 ? "" : "s"} before continuing.
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {disclosures.map((disclosure, index) => {
+            const ackKey = domainDisclosureAckKey(disclosure, index);
+            return (
+              <div
+                key={ackKey}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "1px solid var(--sl-ui-modal-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 900 }}>{disclosure.title || "Disclosure"}</div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: disclosure.required_acknowledgement ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)",
+                      color: disclosure.required_acknowledgement ? "#b71c1c" : "#127f6a",
+                    }}
+                  >
+                    {disclosure.required_acknowledgement ? "Required acknowledgement" : "Informational"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12.5, lineHeight: 1.5, opacity: 0.92 }}>
+                  {disclosure.body}
+                </div>
+                {disclosure.required_acknowledgement ? (
+                  <label
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "flex-start",
+                      cursor: "pointer",
+                      fontSize: 12.5,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(acknowledgements?.[ackKey])}
+                      onChange={(e) => setAcknowledgements((prev) => ({
+                        ...(prev || {}),
+                        [ackKey]: e.target.checked,
+                      }))}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>I have read and agree to this disclosure.</span>
+                  </label>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={btnSecondary}>
+            Cancel
+          </button>
+          <button
+            onClick={onContinue}
+            disabled={!canContinue}
+            style={{ ...btnPrimary, opacity: canContinue ? 1 : 0.6 }}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function DomainReportModal({
   open,
   domain,
@@ -4060,10 +5166,15 @@ function DomainReportModal({
   locationLabel,
   note,
   setNote,
-  streetSignIssue,
-  setStreetSignIssue,
-  consentChecked,
-  setConsentChecked,
+  issueValue,
+  setIssueValue,
+  issueOptions = [],
+  typeSelections = {},
+  setTypeSelections,
+  typeOptionConfigs = [],
+  disclosures = [],
+  acknowledgements = {},
+  setAcknowledgements,
   imageFile,
   imagePreviewUrl,
   setImageFile,
@@ -4073,22 +5184,31 @@ function DomainReportModal({
   onSubmit,
 }) {
   if (!open) return null;
-  const requiresConsent = domain === "potholes" || domain === "water_drain_issues";
-  const requiresStreetSignIssue = domain === "street_signs";
-  const requiresWaterDrainIssue = domain === "water_drain_issues";
+  const insideFormDisclosures = disclosures.filter((row) => row?.display_position !== "before_form");
+  const requiredInsideFormDisclosures = insideFormDisclosures.filter((row) => row?.required_acknowledgement === true);
+  const resolvedIssueOptions = normalizeDomainIssueOptions(issueOptions);
+  const resolvedTypeOptionConfigs = normalizeDomainTypeOptionConfigs(typeOptionConfigs, domain);
+  const requiresIssueSelection = resolvedIssueOptions.length > 0;
+  const requiresTypeSelection = resolvedTypeOptionConfigs.length > 0;
   const supportsImageAttachment = Boolean(imageUploadEnabled);
-  const issueValid = !requiresStreetSignIssue && !requiresWaterDrainIssue
+  const issueValid = !requiresIssueSelection
     ? true
-    : Boolean(String(streetSignIssue || "").trim());
-  const canSubmit = !saving && (!requiresConsent || consentChecked);
-  const canSubmitFinal = canSubmit && issueValid;
-  const notesPlaceholder = requiresStreetSignIssue
+    : Boolean(String(issueValue || "").trim());
+  const typeValid = !requiresTypeSelection || resolvedTypeOptionConfigs.every((cfg) => (
+    Boolean(String(typeSelections?.[cfg.optionKey] || "").trim())
+  ));
+  const disclosuresValid = requiredInsideFormDisclosures.every((row, index) => (
+    Boolean(acknowledgements?.[domainDisclosureAckKey(row, index)])
+  ));
+  const canSubmit = !saving && disclosuresValid;
+  const canSubmitFinal = canSubmit && issueValid && typeValid;
+  const notesPlaceholder = domain === "street_signs"
     ? "Add details (visibility issue, lane, landmark)"
-    : requiresWaterDrainIssue
+    : domain === "water_drain_issues"
       ? "Add details (depth, lane affected, nearest drain/intersection)"
-    : requiresConsent
-      ? "Add details (size, lane, nearby landmark)"
-      : "Add details (what you observed)";
+      : requiredInsideFormDisclosures.length
+        ? "Add details (size, lane, nearby landmark)"
+        : "Add details (what you observed)";
   return (
     <ModalShell
       open={open}
@@ -4111,14 +5231,14 @@ function DomainReportModal({
       </div>
 
       <div style={{ padding: 16, overflow: "auto", display: "grid", gap: 12, minHeight: 0 }}>
-        {requiresStreetSignIssue && (
+        {requiresIssueSelection && (
           <label style={{ display: "grid", gap: 8 }}>
             <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
               What issue are you seeing?
             </div>
             <select
-              value={streetSignIssue}
-              onChange={(e) => setStreetSignIssue(e.target.value)}
+              value={issueValue}
+              onChange={(e) => setIssueValue(e.target.value)}
               style={{
                 padding: 10,
                 height: 40,
@@ -4132,7 +5252,7 @@ function DomainReportModal({
               }}
               disabled={saving}
             >
-              {STREET_SIGN_ISSUE_OPTIONS.map((opt) => (
+              {resolvedIssueOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -4141,14 +5261,17 @@ function DomainReportModal({
           </label>
         )}
 
-        {requiresWaterDrainIssue && (
-          <label style={{ display: "grid", gap: 8 }}>
+        {requiresTypeSelection ? resolvedTypeOptionConfigs.map((cfg, index) => (
+          <label key={cfg.id || cfg.optionKey || `type-option-${index}`} style={{ display: "grid", gap: 8 }}>
             <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-              What issue are you seeing?
+              {String(cfg.optionLabel || defaultDomainTypeOptionLabel(domain, index)).trim()}
             </div>
             <select
-              value={streetSignIssue}
-              onChange={(e) => setStreetSignIssue(e.target.value)}
+              value={String(typeSelections?.[cfg.optionKey] || "").trim()}
+              onChange={(e) => setTypeSelections((prev) => ({
+                ...(prev || {}),
+                [cfg.optionKey]: String(e.target.value || "").trim().toLowerCase(),
+              }))}
               style={{
                 padding: 10,
                 height: 40,
@@ -4162,14 +5285,14 @@ function DomainReportModal({
               }}
               disabled={saving}
             >
-              {WATER_DRAIN_ISSUE_OPTIONS.map((opt) => (
+              {cfg.choices.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
               ))}
             </select>
           </label>
-        )}
+        )) : null}
 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
@@ -4239,40 +5362,67 @@ function DomainReportModal({
           </label>
         )}
 
-        <div
-          style={{
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-border)",
-            background: "var(--sl-ui-modal-input-bg)",
-            display: "grid",
-            gap: 10,
-            fontSize: 11.8,
-            lineHeight: 1.45,
-            opacity: 0.9,
-          }}
-        >
-          {requiresConsent ? (
-            <label
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "flex-start",
-                cursor: saving ? "default" : "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={Boolean(consentChecked)}
-                onChange={(e) => setConsentChecked(Boolean(e.target.checked))}
-                disabled={saving}
-                style={{ marginTop: 2 }}
-              />
-              <span>{publicConsentDisclosureText(domain)}</span>
-            </label>
-          ) : null}
-          <div>{publicSubmitDisclosureText(domain)}</div>
-        </div>
+        {insideFormDisclosures.length ? (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              display: "grid",
+              gap: 10,
+              fontSize: 11.8,
+              lineHeight: 1.45,
+              opacity: 0.9,
+            }}
+          >
+            {insideFormDisclosures.map((disclosure, index) => {
+              const ackKey = domainDisclosureAckKey(disclosure, index);
+              return (
+                <div key={ackKey} style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 900 }}>{disclosure.title || "Disclosure"}</span>
+                    <span
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 800,
+                        padding: "3px 8px",
+                        borderRadius: 999,
+                        background: disclosure.required_acknowledgement ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)",
+                        color: disclosure.required_acknowledgement ? "#b71c1c" : "#127f6a",
+                      }}
+                    >
+                      {disclosure.required_acknowledgement ? "Required acknowledgement" : "Informational"}
+                    </span>
+                  </div>
+                  <div>{disclosure.body}</div>
+                  {disclosure.required_acknowledgement ? (
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "flex-start",
+                        cursor: saving ? "default" : "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(acknowledgements?.[ackKey])}
+                        onChange={(e) => setAcknowledgements((prev) => ({
+                          ...(prev || {}),
+                          [ackKey]: e.target.checked,
+                        }))}
+                        disabled={saving}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>I have read and agree to this disclosure.</span>
+                    </label>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ padding: 16, borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 10 }}>
@@ -4586,7 +5736,7 @@ function InfoMenuModal({
 
   const markerSwatch = (
     fill,
-    { ring = "#fff", glyph = "💡", glyphSrc = "", glyphColor = "#111", showGlyph = true } = {}
+    { ring = "#fff", glyph = "💡", glyphSrc = "", glyphColor = "#111", showGlyph = true, domainKey = "" } = {}
   ) => (
     <span
       style={{
@@ -4604,12 +5754,24 @@ function InfoMenuModal({
       }}
       aria-hidden="true"
     >
-      {showGlyph ? (glyphSrc ? <AppIcon src={glyphSrc} size={MAP_MARKER_GLYPH_SIZE} /> : glyph) : ""}
+      {showGlyph ? (
+        glyphSrc
+          ? (
+            <DomainAppIcon
+              domainKey={domainKey}
+              src={glyphSrc}
+              size={MAP_MARKER_GLYPH_SIZE}
+              markerColor={fill}
+              markerContext
+            />
+          )
+          : glyph
+      ) : ""}
     </span>
   );
 
   const standaloneIconSwatch = (
-    { glyph = "💡", glyphSrc = "", ring = "", size = INCIDENT_DOMAIN_ICON_SIZE } = {}
+    { glyph = "💡", glyphSrc = "", ring = "", size = INCIDENT_DOMAIN_ICON_SIZE, domainKey = "", markerColor = "" } = {}
   ) => (
     <span
       style={{
@@ -4633,7 +5795,13 @@ function InfoMenuModal({
         />
       ) : null}
       {glyphSrc ? (
-        <AppIcon src={glyphSrc} size={size} />
+        <DomainAppIcon
+          domainKey={domainKey}
+          src={glyphSrc}
+          size={size}
+          markerColor={markerColor}
+          markerContext={Boolean(markerColor)}
+        />
       ) : (
         <span
           style={{
@@ -6047,6 +7215,10 @@ function AllReportsModal({
             const isWorkingReport = it.kind === "report" && isWorkingReportType(it.type);
             const imageUrl = readImageUrlFromNote(it.note);
             const displayNote = noteDisplayText(it.note);
+            const typeOptionDetails = resolveReportTypeOptionDetails(
+              it,
+              it?.domainKey || it?.report_domain || it?.domain || ""
+            );
             const actorUserId = String(it?.actor_user_id || "").trim();
             const actorProfile = actorUserId ? actionProfileByUserId[actorUserId] : null;
             const actorName =
@@ -6129,6 +7301,16 @@ function AllReportsModal({
                     )}
                   </>
                 )}
+
+                {!!String(it?.issueLabel || "").trim() && String(it?.issueLabel || "").trim() !== String(it?.label || "").trim() && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Issue type:</b> {it.issueLabel}
+                  </div>
+                )}
+                <ReportTypeOptionDetails
+                  details={typeOptionDetails}
+                  textStyle={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}
+                />
 
                 {(it.kind === "report" || it.kind === "working") && (
                   <div style={{ fontSize: 11.5, opacity: 0.9, lineHeight: 1.3 }}>
@@ -6307,6 +7489,7 @@ function MyReportsModal({
           if (!normalizedQuery) return true;
           const no = reportNumberForRow(r, g?.domainKey || activeDomain).toLowerCase();
           const type = String(REPORT_TYPES?.[r?.type] || r?.type || "").toLowerCase();
+          const issueLabel = resolveReportIssueLabel(r, g?.domainKey || activeDomain, waterDrainIncidentsById).toLowerCase();
           const note = String(noteDisplayText(r?.note || "") || "").toLowerCase();
           const email = String(r?.reporter_email || "").toLowerCase();
           const name = String(r?.reporter_name || "").toLowerCase();
@@ -6314,6 +7497,7 @@ function MyReportsModal({
           return (
             no.includes(normalizedQuery) ||
             type.includes(normalizedQuery) ||
+            issueLabel.includes(normalizedQuery) ||
             note.includes(normalizedQuery) ||
             displayId.includes(normalizedQuery) ||
             email.includes(normalizedQuery) ||
@@ -6331,7 +7515,7 @@ function MyReportsModal({
       });
     }
     return out.sort((a, b) => Number(b?.filteredLastTs || 0) - Number(a?.filteredLastTs || 0));
-  }, [groups, slIdByUuid, normalizedQuery, inDateRange, activeDomain]);
+  }, [groups, slIdByUuid, normalizedQuery, inDateRange, activeDomain, waterDrainIncidentsById]);
 
   const myMetrics = useMemo(() => {
     const allGroups = Array.isArray(groups) ? groups : [];
@@ -6410,7 +7594,7 @@ function MyReportsModal({
               }}
             >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <AppIcon src={d.iconSrc} size={32} />
+                  <DomainAppIcon domainKey={d.key} src={d.iconSrc} size={32} />
                   <span>{d.label} ({count})</span>
                 </span>
             </button>
@@ -6641,6 +7825,9 @@ function MyReportsModal({
                             {(g.filteredRows || []).map((r) => {
                               const imageUrl = readImageUrlFromNote(r?.note || "");
                               const displayNote = noteDisplayText(r?.note || "");
+                              const issueLabel = resolveReportIssueLabel(r, g.domainKey || activeDomain, waterDrainIncidentsById);
+                              const typeOptionDetails = resolveReportTypeOptionDetails(r, g.domainKey || activeDomain);
+                              const isStreetlights = normalizeDomainKeyOrSlug(g.domainKey || activeDomain, { allowUnknown: true }) === "streetlights";
                               return (
                                 <div
                                   key={`${g.lightId}:${r.id}`}
@@ -6654,10 +7841,19 @@ function MyReportsModal({
                                 >
                                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                                     <div style={{ fontWeight: 900 }}>
-                                      {REPORT_TYPES?.[r.type] || r.type || "Report"}
+                                      {issueLabel || REPORT_TYPES?.[r.type] || r.type || "Report"}
                                     </div>
                                     <div style={{ opacity: 0.8 }}>{formatTs(r.ts)}</div>
                                   </div>
+                                  {!!String(issueLabel || "").trim() && !isStreetlights && (
+                                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                      <b>Issue type:</b> {issueLabel}
+                                    </div>
+                                  )}
+                                  <ReportTypeOptionDetails
+                                    details={typeOptionDetails}
+                                    textStyle={{ opacity: 0.9, lineHeight: 1.3 }}
+                                  />
                                   <div style={{ fontWeight: 900, opacity: 0.9 }}>
                                     Report #: {reportNumberForRow(r, g.domainKey || activeDomain)}
                                   </div>
@@ -7242,6 +8438,9 @@ function OpenReportsModal({
   activeDomain = "streetlights",
   onSelectDomain,
   domainOptions = REPORT_DOMAIN_OPTIONS,
+  selectedDomains = [],
+  onToggleDomain = null,
+  onSelectAllDomains = null,
   groups, // [{ lightId, rows, count, lastTs }]
   expandedSet,
   onToggleExpand,
@@ -7557,19 +8756,64 @@ function OpenReportsModal({
     if (confidence?.canViewerMarkWorking) return "available";
     return "hidden";
   }, [activeDomain, canMarkWorkingIncidents, getStreetlightConfidence]);
-  const getRepairSnapshotForIncident = useCallback((incidentId) => {
-    const key = incidentSnapshotKey(activeDomain, incidentId);
+  const getRepairSnapshotForIncident = useCallback((incidentId, domainOverride = "") => {
+    const domainKey = normalizeDomainKeyOrSlug(domainOverride || activeDomain, { allowUnknown: true })
+      || String(activeDomain || "streetlights").trim()
+      || "streetlights";
+    const key = incidentSnapshotKey(domainKey, incidentId);
     if (!key) return null;
     return incidentRepairProgressByKey?.[key] || null;
   }, [activeDomain, incidentRepairProgressByKey]);
 
   const isMyReportsModal =
     String(modalTitle || "").trim().toLowerCase() === "my reports";
-  const isStreetlightMyReports = isMyReportsModal && activeDomain === "streetlights";
+  const enabledDomainOptions = useMemo(
+    () => (Array.isArray(domainOptions) ? domainOptions : []).filter((option) => option?.enabled !== false),
+    [domainOptions]
+  );
+  const normalizedSelectedDomains = useMemo(
+    () => normalizeExplicitDomainSelection(selectedDomains, enabledDomainOptions.map((option) => option.key)),
+    [selectedDomains, enabledDomainOptions]
+  );
+  const isMultiDomainMyReports =
+    isMyReportsModal
+    && normalizedReportedByMode !== "all";
+  const activeDomainKeys = useMemo(() => {
+    if (!isMultiDomainMyReports) return [String(activeDomain || "").trim() || "streetlights"];
+    return normalizedSelectedDomains.length
+      ? normalizedSelectedDomains
+      : enabledDomainOptions.map((option) => String(option?.key || "").trim()).filter(Boolean);
+  }, [isMultiDomainMyReports, normalizedSelectedDomains, enabledDomainOptions, activeDomain]);
+  const primaryActiveDomain = String(activeDomainKeys?.[0] || activeDomain || "streetlights").trim() || "streetlights";
+  const hasExplicitDomainSelection = isMultiDomainMyReports && normalizedSelectedDomains.length > 0;
+  const isStreetlightMyReports =
+    isMyReportsModal
+    && activeDomainKeys.length === 1
+    && activeDomainKeys[0] === "streetlights";
   const isCompactMyReports = compactDomainPicker && isMyReportsModal;
   const modalTitleText = String(modalTitle || "").trim().toLowerCase() === "my reports"
     ? "Reports"
     : modalTitle;
+  const selectedDomainLabel = useMemo(() => {
+    if (isMultiDomainMyReports) {
+      if (!hasExplicitDomainSelection) return "All";
+      if (activeDomainKeys.length === 1) {
+        return enabledDomainOptions.find((option) => option.key === activeDomainKeys[0])?.label || activeDomainKeys[0];
+      }
+      return `${activeDomainKeys.length} domains`;
+    }
+    return "";
+  }, [isMultiDomainMyReports, hasExplicitDomainSelection, activeDomainKeys, enabledDomainOptions]);
+
+  const resolveItemDomainKey = useCallback((group = null, row = null, fallback = primaryActiveDomain) => {
+    const rawValue =
+      group?.domainKey
+      || group?.domain
+      || row?.domainKey
+      || row?.domain
+      || fallback;
+    return normalizeDomainKeyOrSlug(rawValue, { allowUnknown: true }) || String(fallback || "streetlights").trim() || "streetlights";
+  }, [primaryActiveDomain]);
   const utilityReportUserId = String(session?.user?.id || "").trim();
   const [utilityReportedByIncident, setUtilityReportedByIncident] = useState({});
   const [utilityReportReferenceByIncident, setUtilityReportReferenceByIncident] = useState({});
@@ -7938,11 +9182,10 @@ function OpenReportsModal({
   }, [open]);
 
   const selectedDomainMeta = useMemo(() => {
-    const opts = Array.isArray(domainOptions) && domainOptions.length
-      ? domainOptions
-      : REPORT_DOMAIN_OPTIONS;
-    return opts.find((d) => d.key === activeDomain) || opts[0] || REPORT_DOMAIN_OPTIONS[0];
-  }, [activeDomain, domainOptions]);
+    const opts = enabledDomainOptions.length ? enabledDomainOptions : REPORT_DOMAIN_OPTIONS;
+    if (isMultiDomainMyReports && activeDomainKeys.length !== 1) return null;
+    return opts.find((d) => d.key === primaryActiveDomain) || opts[0] || REPORT_DOMAIN_OPTIONS[0];
+  }, [enabledDomainOptions, isMultiDomainMyReports, activeDomainKeys, primaryActiveDomain]);
 
   const scrollGroupToTop = useCallback((lightId) => {
     const lid = (lightId || "").trim();
@@ -8024,8 +9267,10 @@ function OpenReportsModal({
   }, [groups, sortMode]);
   const groupCoordsForViewFilter = useCallback((g) => {
     if (!g) return null;
-    if (activeDomain === "streetlights") {
-      return getCoordsForLightId(g.lightId, reports, officialLights);
+    const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || g?.mineRows?.[0] || null);
+    const incidentId = String(g?.incidentId || g?.lightId || "").trim();
+    if (domainKey === "streetlights") {
+      return getCoordsForLightId(incidentId || g.lightId, reports, officialLights);
     }
     const centerLat = Number(g?.center?.lat);
     const centerLng = Number(g?.center?.lng);
@@ -8038,7 +9283,7 @@ function OpenReportsModal({
       return { lat, lng, isOfficial: false };
     }
     return null;
-  }, [activeDomain, reports, officialLights]);
+  }, [resolveItemDomainKey, reports, officialLights]);
   const visibleGroups = useMemo(() => {
     const base = Array.isArray(sortedGroups) ? sortedGroups : [];
     if (!(inViewOnlyActive && mapBounds)) return base;
@@ -8100,9 +9345,10 @@ function OpenReportsModal({
     const digitsQ = normalizePhone(q);
     const out = [];
     for (const g of visibleGroups || []) {
-      const isStreetlights = activeDomain === "streetlights";
+      const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || null);
+      const isStreetlights = domainKey === "streetlights";
       const coords = isStreetlights
-        ? getCoordsForLightId(g.lightId, reports, officialLights)
+        ? getCoordsForLightId(String(g?.incidentId || g?.lightId || "").trim() || g.lightId, reports, officialLights)
         : groupCoordsForViewFilter(g);
       const locationLabel =
         String(g.location_label || "").trim() ||
@@ -8113,7 +9359,8 @@ function OpenReportsModal({
       for (const r of g?.rows || []) {
         const ts = Number(r?.ts || 0);
         if (!inRange(ts)) continue;
-        const reportNo = reportNumberForRow(r, activeDomain).toLowerCase();
+        const rowDomainKey = resolveItemDomainKey(g, r, domainKey);
+        const reportNo = reportNumberForRow(r, rowDomainKey).toLowerCase();
         const name = String(r?.reporter_name || "").toLowerCase();
         const email = String(r?.reporter_email || "").toLowerCase();
         const phoneNorm = normalizePhone(r?.reporter_phone || "");
@@ -8121,7 +9368,7 @@ function OpenReportsModal({
         const incidentIdRaw = String(r?.incident_id || g?.incidentId || g?.lightId || "").trim();
         const groupDisplayIdRaw = String(g?.displayId || "").trim();
         const displayId =
-          activeDomain === "potholes"
+          rowDomainKey === "potholes"
             ? (
               /^PH\d{10}$/i.test(groupDisplayIdRaw)
                 ? groupDisplayIdRaw.toUpperCase()
@@ -8131,7 +9378,7 @@ function OpenReportsModal({
                     : ""
                 )
             )
-            : activeDomain === "water_drain_issues"
+            : rowDomainKey === "water_drain_issues"
               ? (
                 /^WD\d{10}$/i.test(groupDisplayIdRaw)
                   ? groupDisplayIdRaw.toUpperCase()
@@ -8139,19 +9386,20 @@ function OpenReportsModal({
               )
               : (/^SL\d{10}$/i.test(groupDisplayIdRaw) ? groupDisplayIdRaw.toUpperCase() : displayLightId(incidentIdRaw || g?.lightId, slIdByUuid));
         const incidentLabel =
-          activeDomain === "potholes"
+          rowDomainKey === "potholes"
             ? `Pothole ID ${displayId || `PH${shortIncidentKey(incidentIdRaw || g?.lightId)}`}`
-            : activeDomain === "water_drain_issues"
+            : rowDomainKey === "water_drain_issues"
               ? `Water/Drain ID ${displayId || `WD${shortIncidentKey(incidentIdRaw || g?.lightId)}`}`
               : displayLightId(incidentIdRaw || g?.lightId, slIdByUuid);
+        const issueLabel = resolveReportIssueLabel(r, rowDomainKey, waterDrainIncidentsById);
         const incidentIdNorm = String(incidentIdRaw || "").trim().toLowerCase();
         const groupIncidentIdNorm = String(g?.incidentId || "").trim().toLowerCase();
         const potholeIdNorm =
-          activeDomain === "potholes"
+          rowDomainKey === "potholes"
             ? incidentIdNorm.replace(/^pothole:/i, "").replace(/^potholes:/i, "").trim()
             : "";
         const waterDrainIdNorm =
-          activeDomain === "water_drain_issues"
+          rowDomainKey === "water_drain_issues"
             ? incidentIdNorm.replace(/^water_drain_issues:/i, "").trim()
             : "";
         const displayIdNorm = String(displayId || "").toLowerCase();
@@ -8165,6 +9413,7 @@ function OpenReportsModal({
           potholeIdNorm.includes(q) ||
           waterDrainIdNorm.includes(q) ||
           incidentLabel.toLowerCase().includes(q) ||
+          String(issueLabel || "").toLowerCase().includes(q) ||
           displayIdNorm.includes(q) ||
           (digitsQ && phoneNorm.includes(digitsQ));
         if (!matches) continue;
@@ -8176,7 +9425,9 @@ function OpenReportsModal({
           locationLabel,
           count: Number(g?.count || 0),
           isStreetlights,
+          domainKey: rowDomainKey,
           incidentLabel,
+          issueLabel,
         });
       }
     }
@@ -8194,6 +9445,8 @@ function OpenReportsModal({
     parseIsoDate,
     bypassDateRangeForExactIncidentSearch,
     groupCoordsForViewFilter,
+    resolveItemDomainKey,
+    waterDrainIncidentsById,
   ]);
 
   const parseLocalDateStart = useCallback((v) => {
@@ -8220,11 +9473,12 @@ function OpenReportsModal({
     return isLifecycleStateOpen(state);
   }, []);
 
-  const getIncidentStateForDisplay = useCallback((incidentId, rows = []) => {
+  const getIncidentStateForDisplay = useCallback((incidentId, rows = [], domainOverride = "") => {
     const id = String(incidentId || "").trim();
     if (!id) return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
+    const domainKey = resolveItemDomainKey(null, { domain: domainOverride || activeDomain }, activeDomain);
 
-    if (activeDomain === "streetlights") {
+    if (domainKey === "streetlights") {
       const confidence = getStreetlightConfidence(id);
       if (confidence) {
         const closedAtMs = Number(confidence?.latestWorkingTs || confidence?.lastSignalTs || 0);
@@ -8238,7 +9492,7 @@ function OpenReportsModal({
     }
 
     return deriveIncidentStateFromTimeline(id, rows);
-  }, [activeDomain, deriveIncidentStateFromTimeline, getStreetlightConfidence]);
+  }, [activeDomain, deriveIncidentStateFromTimeline, getStreetlightConfidence, resolveItemDomainKey]);
 
   const matchesStatusFilter = useCallback((state) => {
     if (statusFilter === "all") return true;
@@ -8401,24 +9655,25 @@ function OpenReportsModal({
       for (const item of matchedSearchRows) {
         const ts = Number(item?.row?.ts || 0);
         if (!inRange(ts)) continue;
-        const reportNumber = reportNumberForRow(item.row, activeDomain);
+        const rowDomainKey = resolveItemDomainKey(null, item?.row, item?.domainKey || activeDomain);
+        const reportNumber = reportNumberForRow(item.row, rowDomainKey);
         const rawIncidentId = item?.isStreetlights
           ? String(item.lightId || "")
           : String(item.row?.incident_id || item.lightId || "");
         const incidentId = (() => {
-          if (activeDomain === "potholes") {
+          if (rowDomainKey === "potholes") {
             const fromRowPid = String(item?.row?.pothole_id || "").trim();
             if (fromRowPid) return `pothole:${fromRowPid}`;
             return rawIncidentId.replace(/^potholes:/i, "pothole:");
           }
           return rawIncidentId;
         })();
-        const snapshot = incidentStateByKey?.[incidentSnapshotKey(activeDomain, incidentId)] || null;
+        const snapshot = incidentStateByKey?.[incidentSnapshotKey(rowDomainKey, incidentId)] || null;
         detail.push({
           report_id: String(item?.row?.id || ""),
           report_number: reportNumber,
           report_type: String(item?.row?.type || item?.row?.report_type || ""),
-          domain: activeDomain,
+          domain: rowDomainKey,
           incident_id: incidentId,
           submitted_at: ts ? new Date(ts).toISOString() : "",
           fixed_at: snapshot?.state === "fixed" ? String(snapshot?.last_changed_at || "") : "",
@@ -8434,7 +9689,7 @@ function OpenReportsModal({
       return detail;
     }
 
-    if (isAdmin && (activeDomain === "potholes" || activeDomain === "water_drain_issues")) {
+    if (!isMyReportsModal && isAdmin && (activeDomain === "potholes" || activeDomain === "water_drain_issues")) {
       const byIncident = new Map();
       for (const r of allDomainReports || []) {
         let incidentId = "";
@@ -8482,17 +9737,18 @@ function OpenReportsModal({
       }
     } else {
       for (const g of visibleGroups || []) {
+        const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || null);
         const incidentId = String(g?.incidentId || g?.lightId || "");
-        const snapshot = incidentStateByKey?.[incidentSnapshotKey(activeDomain, incidentId)] || null;
-        const timelineState = getIncidentStateForDisplay(incidentId, g?.rows || []);
+        const snapshot = incidentStateByKey?.[incidentSnapshotKey(domainKey, incidentId)] || null;
+        const timelineState = getIncidentStateForDisplay(incidentId, g?.rows || [], domainKey);
         for (const r of g?.rows || []) {
           const ts = Number(r?.ts || 0);
           if (!inRange(ts)) continue;
           detail.push({
             report_id: String(r?.id || ""),
-            report_number: reportNumberForRow(r, activeDomain),
+            report_number: reportNumberForRow(r, domainKey),
             report_type: String(r?.type || r?.report_type || ""),
-            domain: activeDomain,
+            domain: domainKey,
             incident_id: incidentId,
             submitted_at: ts ? new Date(ts).toISOString() : "",
             fixed_at: timelineState.fixedAtIso || (snapshot?.state === "fixed" ? String(snapshot?.last_changed_at || "") : ""),
@@ -8524,6 +9780,8 @@ function OpenReportsModal({
     activeDomain,
     incidentStateByKey,
     bypassDateRangeForExactIncidentSearch,
+    isMyReportsModal,
+    resolveItemDomainKey,
   ]);
 
   const exportDetailRows = useMemo(() => {
@@ -8606,15 +9864,16 @@ function OpenReportsModal({
       });
 
     // Hygiene: drop stale incidents tied to deleted/missing official assets for asset-based domains.
-    if (activeDomain === "streetlights") {
+    if (!isMyReportsModal && activeDomain === "streetlights") {
       return baseRows.filter((r) => officialIdSetForExport.has(String(r?.incident_id || "").trim()));
     }
-    if (activeDomain === "street_signs") {
+    if (!isMyReportsModal && activeDomain === "street_signs") {
       return baseRows.filter((r) => officialSignIdSetForExport.has(String(r?.incident_id || "").trim()));
     }
     return baseRows;
   }, [
     useServerViews,
+    isMyReportsModal,
     serverDetailRows,
     incidentStateByKey,
     actionsByLightId,
@@ -8687,9 +9946,12 @@ function OpenReportsModal({
     for (const r of filteredExportDetailRows || []) {
       const incidentId = String(r?.incident_id || "").trim();
       if (!incidentId) continue;
+      const rowDomainKey = isMyReportsModal
+        ? resolveItemDomainKey(null, { domain: r?.domain || r?.domainKey }, activeDomain)
+        : activeDomain;
       if (!grouped.has(incidentId)) {
         const g = groupByIncidentId.get(incidentId);
-        const isStreetlights = activeDomain === "streetlights";
+        const isStreetlights = rowDomainKey === "streetlights";
         let coords = isStreetlights
           ? getCoordsForLightId(incidentId, reports, officialLights)
           : {
@@ -8698,8 +9960,9 @@ function OpenReportsModal({
               isOfficial: false,
             };
         grouped.set(incidentId, {
+          domainKey: rowDomainKey,
           incident_id: incidentId,
-          incident_display_id: String(g?.lightId || "").trim(),
+          incident_display_id: String(g?.displayId || g?.lightId || "").trim(),
           incident_public_id: String(r?.incident_public_id || "").trim(),
           incident_label: "",
           primary_report_number: "",
@@ -8742,14 +10005,17 @@ function OpenReportsModal({
 
     const rows = Array.from(grouped.values());
     for (const row of rows) {
-      if (activeDomain === "potholes" && (!Number.isFinite(Number(row?.coords?.lat)) || !Number.isFinite(Number(row?.coords?.lng)))) {
+      const rowDomainKey = isMyReportsModal
+        ? resolveItemDomainKey(null, { domain: row?.domainKey || row?.domain }, activeDomain)
+        : activeDomain;
+      if (rowDomainKey === "potholes" && (!Number.isFinite(Number(row?.coords?.lat)) || !Number.isFinite(Number(row?.coords?.lng)))) {
         const pid = String(row?.incident_id || "").replace(/^pothole:/i, "").trim();
         const p = potholeById.get(pid);
         if (p && Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))) {
           row.coords = { lat: Number(p.lat), lng: Number(p.lng), isOfficial: false };
         }
       }
-      if (activeDomain === "potholes") {
+      if (rowDomainKey === "potholes") {
         const pid = String(row?.incident_id || "").replace(/^pothole:/i, "").trim();
         const p = potholeById.get(pid);
         if (p) {
@@ -8758,7 +10024,7 @@ function OpenReportsModal({
           row.nearest_cross_street = String(p?.nearest_cross_street || "").trim();
           row.nearest_landmark = String(p?.nearest_landmark || "").trim();
         }
-      } else if (activeDomain === "water_drain_issues") {
+      } else if (rowDomainKey === "water_drain_issues") {
         const waterMeta = waterDrainIncidentsById?.[String(row?.incident_id || "").trim()] || null;
         if (waterMeta) {
           row.location_label = String(row.location_label || waterMeta?.nearest_address || "").trim();
@@ -8770,7 +10036,7 @@ function OpenReportsModal({
       row.rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
       row.primary_report_number = String(row.rows?.[0]?.report_number || "").trim();
       const shownDisplay = String(row.incident_display_id || "").trim();
-      if (activeDomain === "potholes") {
+      if (rowDomainKey === "potholes") {
         const ph = /^PH\d{10}$/i.test(shownDisplay)
           ? shownDisplay.toUpperCase()
           : (
@@ -8779,7 +10045,7 @@ function OpenReportsModal({
               : ""
           );
         row.incident_label = `Pothole ID ${ph || `PH${shortIncidentKey(row.incident_id)}`}`;
-      } else if (activeDomain === "water_drain_issues") {
+      } else if (rowDomainKey === "water_drain_issues") {
         const exportedWd = String(row?.incident_public_id || "").trim();
         const wd = /^WD\d{10}$/i.test(shownDisplay)
           ? shownDisplay.toUpperCase()
@@ -8787,7 +10053,7 @@ function OpenReportsModal({
         row.incident_label = `Water/Drain ID ${wd}`;
       } else {
         row.incident_label = adminIncidentLabelForDomain(
-          activeDomain,
+          rowDomainKey,
           row.incident_id,
           row.primary_report_number,
           slIdByUuid,
@@ -8875,7 +10141,10 @@ function OpenReportsModal({
     const cityFilteredRows = rows.filter((row) => {
       if (!cityBoundaryLoaded) return true;
       if (typeof isWithinCityLimits !== "function") return true;
-      if (activeDomain !== "potholes" && activeDomain !== "water_drain_issues") return true;
+      const rowDomainKey = isMyReportsModal
+        ? resolveItemDomainKey(null, { domain: row?.domainKey || row?.domain }, activeDomain)
+        : activeDomain;
+      if (rowDomainKey !== "potholes" && rowDomainKey !== "water_drain_issues") return true;
       const lat = Number(row?.coords?.lat);
       const lng = Number(row?.coords?.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
@@ -8928,6 +10197,8 @@ function OpenReportsModal({
     waterDrainIncidentsById,
     cityBoundaryLoaded,
     isWithinCityLimits,
+    isMyReportsModal,
+    resolveItemDomainKey,
   ]);
 
   const displayedAdminRows = adminTableRows;
@@ -8992,12 +10263,16 @@ function OpenReportsModal({
   const openSubmittedReportsForRow = useCallback(async (row) => {
     if (!isMyReportsModal || typeof onOpenAllReports !== "function" || !row) return;
     const history = [];
+    const domainKey = resolveItemDomainKey(null, row, activeDomain);
+    const isStreetlights = domainKey === "streetlights";
 
     for (const detail of row.rows || []) {
+      const issueLabel = resolveReportIssueLabel(detail, domainKey, waterDrainIncidentsById);
       history.push({
         kind: "report",
         ts: Date.parse(String(detail?.submitted_at || "")) || 0,
-        label: REPORT_TYPES?.[String(detail?.report_type || "").trim()] || String(detail?.report_type || "").trim() || "Report",
+        label: issueLabel || REPORT_TYPES?.[String(detail?.report_type || "").trim()] || String(detail?.report_type || "").trim() || "Report",
+        issueLabel,
         note: String(detail?.raw_notes || detail?.notes || ""),
         type: String(detail?.report_type || ""),
         report_number: detail?.report_number || null,
@@ -9037,10 +10312,10 @@ function OpenReportsModal({
     history.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
     const firstRawNote = String(row?.rows?.[0]?.raw_notes || row?.rows?.[0]?.notes || "");
     const incidentId = String(row?.incident_id || "").trim();
-    const potholeMeta = activeDomain === "potholes"
+    const potholeMeta = domainKey === "potholes"
       ? (potholes || []).find((item) => String(item?.id || "").trim() === incidentId.replace(/^pothole:/i, "").trim())
       : null;
-    const waterDrainMeta = activeDomain === "water_drain_issues"
+    const waterDrainMeta = domainKey === "water_drain_issues"
       ? waterDrainIncidentsById?.[incidentId] || null
       : null;
     const incidentLocation =
@@ -9079,7 +10354,7 @@ function OpenReportsModal({
         : Number.isFinite(Number(potholeMeta?.lng)) ? Number(potholeMeta.lng)
           : Number.isFinite(Number(waterDrainMeta?.lng)) ? Number(waterDrainMeta.lng)
             : NaN;
-    const incidentModalKey = `${activeDomain}:${incidentId || String(row?.incident_label || row?.incident_id || "").trim()}`;
+    const incidentModalKey = `${domainKey}:${incidentId || String(row?.incident_label || row?.incident_id || "").trim()}`;
     const shouldLookupGeo =
       typeof getStreetlightUtilityDetails === "function" &&
       Number.isFinite(fallbackLat) &&
@@ -9090,7 +10365,7 @@ function OpenReportsModal({
       history,
       {
         incidentKey: incidentModalKey,
-        domainKey: activeDomain,
+        domainKey,
         incidentLabel: "",
         sharedLocation: "",
         sharedAddress: incidentAddress,
@@ -9122,14 +10397,17 @@ function OpenReportsModal({
         return { ...prev, geoLoading: false };
       });
     }
-  }, [activeDomain, getStreetlightUtilityDetails, isMyReportsModal, onOpenAllReports, potholes, waterDrainIncidentsById]);
+  }, [activeDomain, getStreetlightUtilityDetails, isMyReportsModal, onOpenAllReports, potholes, resolveItemDomainKey, waterDrainIncidentsById]);
 
   const adminIncidentDotForRow = useCallback((row) => {
     const incidentId = String(row?.incident_id || "").trim();
     if (!incidentId) return { color: "#9e9e9e", label: "Unknown incident" };
-    const repairSnapshot = getRepairSnapshotForIncident(incidentId);
+    const rowDomainKey = isMyReportsModal
+      ? resolveItemDomainKey(null, row, activeDomain)
+      : activeDomain;
+    const repairSnapshot = getRepairSnapshotForIncident(incidentId, rowDomainKey);
 
-    if (activeDomain === "streetlights") {
+    if (rowDomainKey === "streetlights") {
       const confidence = getStreetlightConfidence(incidentId);
       const stateText = String(confidence?.state || row?.current_state || "").trim().toLowerCase();
       if (stateText === "likely_resolved" || stateText === "archived") {
@@ -9147,37 +10425,35 @@ function OpenReportsModal({
       return { color: "#111", label: "Operational" };
     }
 
-    if (activeDomain === "potholes") {
+    if (rowDomainKey === "potholes") {
       if (publicRepairLifecycleEnabled && (repairSnapshot?.archived || repairSnapshot?.likelyFixed)) {
         return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
       }
       if (!isOpenLifecycleState(row?.current_state || "")) {
         return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
       }
-      const openCount = Number(row?.report_count || 0);
       return {
-        color: potholeColorFromCount(openCount > 0 ? openCount : 1),
+        color: defaultMarkerColorForDomain("potholes"),
         label: "Pothole incident",
       };
     }
-    if (activeDomain === "water_drain_issues") {
+    if (rowDomainKey === "water_drain_issues") {
       if (publicRepairLifecycleEnabled && (repairSnapshot?.archived || repairSnapshot?.likelyFixed)) {
         return { color: "var(--sl-ui-brand-green)", label: "Community likely fixed" };
       }
       if (!isOpenLifecycleState(row?.current_state || "")) {
         return { color: "var(--sl-ui-brand-green)", label: "Fixed incident" };
       }
-      const openCount = Number(row?.report_count || 0);
       return {
-        color: openCount <= 1 ? officialStatusFromSinceFixCount(1).color : waterDrainColorFromCount(openCount),
+        color: defaultMarkerColorForDomain("water_drain_issues"),
         label: "Water / Drain incident",
       };
     }
-    if (activeDomain === "street_signs") return { color: "#1e88e5", label: "Street sign incident" };
-    if (activeDomain === "power_outage") return { color: "#f39c12", label: "Power outage incident" };
-    if (activeDomain === "water_main") return { color: "#3498db", label: "Water main incident" };
-    return { color: "#616161", label: "Incident" };
-  }, [activeDomain, getStreetlightConfidence, getRepairSnapshotForIncident, isOpenLifecycleState, publicRepairLifecycleEnabled]);
+    if (rowDomainKey === "street_signs") return { color: defaultMarkerColorForDomain("street_signs"), label: "Street sign incident" };
+    if (rowDomainKey === "power_outage") return { color: defaultMarkerColorForDomain("power_outage"), label: "Power outage incident" };
+    if (rowDomainKey === "water_main") return { color: defaultMarkerColorForDomain("water_main"), label: "Water main incident" };
+    return { color: defaultMarkerColorForDomain(rowDomainKey), label: "Incident" };
+  }, [activeDomain, getStreetlightConfidence, getRepairSnapshotForIncident, isMyReportsModal, isOpenLifecycleState, publicRepairLifecycleEnabled, resolveItemDomainKey]);
 
   const adminMetrics = useMemo(() => {
     const summary = exportSummaryRows || [];
@@ -9684,9 +10960,13 @@ function OpenReportsModal({
                   cursor: "pointer",
                 }}
                 aria-label="Report domain"
-                title={`Report domain: ${selectedDomainMeta?.label || activeDomain}`}
+                title={`Report domain: ${isMultiDomainMyReports ? selectedDomainLabel : (selectedDomainMeta?.label || activeDomain)}`}
               >
-                <AppIcon src={selectedDomainMeta?.iconSrc} size={38} />
+                {isMultiDomainMyReports && activeDomainKeys.length !== 1 ? (
+                  <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={darkMode} active={!hasExplicitDomainSelection} size={28} />
+                ) : (
+                  <DomainAppIcon domainKey={selectedDomainMeta?.key} src={selectedDomainMeta?.iconSrc} size={38} />
+                )}
               </button>
               {compactDomainMenuOpen && (
                 <div
@@ -9706,15 +10986,51 @@ function OpenReportsModal({
                     zIndex: 4,
                   }}
                 >
-                  {(domainOptions || []).filter((d) => d.enabled).map((d) => {
-                    const selected = activeDomain === d.key;
+                  {isMultiDomainMyReports && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectAllDomains?.();
+                      }}
+                      style={{
+                        borderRadius: 9,
+                        border: !hasExplicitDomainSelection
+                          ? "1px solid var(--sl-ui-brand-green-border)"
+                          : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: !hasExplicitDomainSelection
+                          ? "var(--sl-ui-brand-green)"
+                          : "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: !hasExplicitDomainSelection ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        padding: "7px 9px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        justifyContent: "flex-start",
+                        width: "100%",
+                        minWidth: 0,
+                        textAlign: "left",
+                      }}
+                      aria-label="All domains"
+                      title="All domains"
+                    >
+                      <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={darkMode} active={!hasExplicitDomainSelection} size={22} />
+                      <span style={{ fontSize: 12, lineHeight: 1.2 }}>All</span>
+                    </button>
+                  )}
+                  {enabledDomainOptions.map((d) => {
+                    const selected = isMultiDomainMyReports ? activeDomainKeys.includes(d.key) : activeDomain === d.key;
                     return (
                       <button
                         key={d.key}
                         type="button"
                         onClick={() => {
-                          onSelectDomain?.(d.key);
-                          setCompactDomainMenuOpen(false);
+                          if (isMultiDomainMyReports) onToggleDomain?.(d.key);
+                          else {
+                            onSelectDomain?.(d.key);
+                            setCompactDomainMenuOpen(false);
+                          }
                         }}
                         style={{
                           borderRadius: 9,
@@ -9739,7 +11055,7 @@ function OpenReportsModal({
                         aria-label={d.label}
                         title={d.label}
                       >
-                        <AppIcon src={d.iconSrc} size={26} />
+                        <DomainAppIcon domainKey={d.key} src={d.iconSrc} size={26} />
                         <span style={{ fontSize: 12, lineHeight: 1.2, whiteSpace: "normal", overflowWrap: "anywhere" }}>{d.label}</span>
                       </button>
                     );
@@ -9842,11 +11158,15 @@ function OpenReportsModal({
                   cursor: "pointer",
                 }}
                 aria-label="Report domain"
-                title={`Report domain: ${selectedDomainMeta?.label || activeDomain}`}
+                title={`Report domain: ${isMultiDomainMyReports ? selectedDomainLabel : (selectedDomainMeta?.label || activeDomain)}`}
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <AppIcon src={selectedDomainMeta?.iconSrc} size={28} />
-                  <span>{selectedDomainMeta?.label || activeDomain}</span>
+                  {isMultiDomainMyReports && activeDomainKeys.length !== 1 ? (
+                    <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={darkMode} active={!hasExplicitDomainSelection} size={20} />
+                  ) : (
+                    <DomainAppIcon domainKey={selectedDomainMeta?.key} src={selectedDomainMeta?.iconSrc} size={28} />
+                  )}
+                  <span>{isMultiDomainMyReports ? selectedDomainLabel : (selectedDomainMeta?.label || activeDomain)}</span>
                 </span>
                   <span style={{ opacity: 0.85 }}>▾</span>
               </button>
@@ -9877,7 +11197,7 @@ function OpenReportsModal({
                 aria-label="Search and filters"
                 title="Search and filters"
               >
-                <AppIcon src={UI_ICON_SRC.filter} size={24} />
+                <AppIcon src={UI_ICON_SRC.filter} iconKey="filter" darkMode={darkMode} active={compactFiltersOpen} size={24} />
               </button>
               {compactDomainMenuOpen && (
                 <div
@@ -9896,15 +11216,51 @@ function OpenReportsModal({
                     zIndex: 4,
                   }}
                 >
-                  {(domainOptions || []).filter((d) => d.enabled).map((d) => {
-                    const selected = activeDomain === d.key;
+                  {isMultiDomainMyReports && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectAllDomains?.();
+                      }}
+                      style={{
+                        borderRadius: 9,
+                        border: !hasExplicitDomainSelection
+                          ? "1px solid var(--sl-ui-brand-green-border)"
+                          : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: !hasExplicitDomainSelection
+                          ? "var(--sl-ui-brand-green)"
+                          : "var(--sl-ui-modal-btn-secondary-bg)",
+                        color: !hasExplicitDomainSelection ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        padding: "7px 9px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        justifyContent: "flex-start",
+                        width: "100%",
+                        minWidth: 0,
+                        textAlign: "left",
+                      }}
+                      aria-label="All domains"
+                      title="All domains"
+                    >
+                      <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={darkMode} active={!hasExplicitDomainSelection} size={22} />
+                      <span style={{ fontSize: 12, lineHeight: 1.2 }}>All</span>
+                    </button>
+                  )}
+                  {enabledDomainOptions.map((d) => {
+                    const selected = isMultiDomainMyReports ? activeDomainKeys.includes(d.key) : activeDomain === d.key;
                     return (
                       <button
                         key={d.key}
                         type="button"
                         onClick={() => {
-                          onSelectDomain?.(d.key);
-                          setCompactDomainMenuOpen(false);
+                          if (isMultiDomainMyReports) onToggleDomain?.(d.key);
+                          else {
+                            onSelectDomain?.(d.key);
+                            setCompactDomainMenuOpen(false);
+                          }
                         }}
                         style={{
                           borderRadius: 9,
@@ -9929,7 +11285,7 @@ function OpenReportsModal({
                         aria-label={d.label}
                         title={d.label}
                       >
-                        <AppIcon src={d.iconSrc} size={26} />
+                        <DomainAppIcon domainKey={d.key} src={d.iconSrc} size={26} />
                         <span style={{ fontSize: 12, lineHeight: 1.2, whiteSpace: "normal", overflowWrap: "anywhere" }}>{d.label}</span>
                       </button>
                     );
@@ -9939,15 +11295,42 @@ function OpenReportsModal({
             </div>
           ) : (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {isMultiDomainMyReports ? (
+                <button
+                  type="button"
+                  onClick={onSelectAllDomains}
+                  style={{
+                    borderRadius: 10,
+                    border: !hasExplicitDomainSelection
+                      ? "1px solid var(--sl-ui-brand-green-border)"
+                      : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: !hasExplicitDomainSelection
+                      ? "var(--sl-ui-brand-green)"
+                      : "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: !hasExplicitDomainSelection ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    padding: "8px 10px",
+                    whiteSpace: "nowrap",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={darkMode} active={!hasExplicitDomainSelection} size={18} />
+                  <span style={{ fontSize: 12.5 }}>All</span>
+                </button>
+              ) : null}
               {(domainOptions || []).map((d) => {
-                const selected = activeDomain === d.key;
+                const selected = isMultiDomainMyReports ? activeDomainKeys.includes(d.key) : activeDomain === d.key;
                 return (
                   <button
                     key={d.key}
                     type="button"
                     onClick={() => {
                       if (!d.enabled) return;
-                      onSelectDomain?.(d.key);
+                      if (isMultiDomainMyReports) onToggleDomain?.(d.key);
+                      else onSelectDomain?.(d.key);
                     }}
                     disabled={!d.enabled}
                     style={{
@@ -9971,7 +11354,7 @@ function OpenReportsModal({
                     aria-label={d.label}
                     title={d.enabled ? d.label : `${d.label} (Soon)`}
                   >
-                    <AppIcon src={d.iconSrc} size={32} />
+                    <DomainAppIcon domainKey={d.key} src={d.iconSrc} size={32} />
                     <span style={{ fontSize: 12.5 }}>{d.label}</span>
                   </button>
                 );
@@ -10756,7 +12139,7 @@ function OpenReportsModal({
                 aria-label="Search and filters"
                 title="Search and filters"
               >
-                <AppIcon src={UI_ICON_SRC.filter} size={18} />
+                <AppIcon src={UI_ICON_SRC.filter} iconKey="filter" darkMode={darkMode} active={compactFiltersOpen} size={18} />
               </button>
             ) : null}
           </div>
@@ -10790,13 +12173,17 @@ function OpenReportsModal({
           ) : compactDomainPicker ? (
             <div style={{ display: "grid", gap: 8, width: "100%", alignContent: "start", gridAutoRows: "max-content" }}>
               {displayedAdminRows.map((r) => {
-                const repairSnapshot = getRepairSnapshotForIncident(r.incident_id);
+                const rowDomainKey = isMyReportsModal
+                  ? resolveItemDomainKey(null, r, activeDomain)
+                  : activeDomain;
+                const repairSnapshot = getRepairSnapshotForIncident(r.incident_id, rowDomainKey);
                 const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
-                  ? canShowPublicRepairAction(r.incident_id, activeDomain)
+                  ? canShowPublicRepairAction(r.incident_id, rowDomainKey)
                   : false;
                 const showOrganizationRepairAction = canMutateIncidents && !showPublicRepairAction;
-                const mobileMyReportsCard = isMyReportsModal && !isStreetlightMyReports;
-                const streetlightMobileSummaryCard = isStreetlightMyReports && isMyReportsModal;
+                const isStreetlightRow = rowDomainKey === "streetlights";
+                const mobileMyReportsCard = isMyReportsModal && !isStreetlightRow;
+                const streetlightMobileSummaryCard = isStreetlightRow && isMyReportsModal;
                 const streetlightDisplayId = displayLightId(r.incident_id, slIdByUuid);
                 const workingState = getWorkingActionStateForIncident(r.incident_id);
                 return (
@@ -10973,7 +12360,7 @@ function OpenReportsModal({
                         {showPublicRepairAction && (
                           <button
                             type="button"
-                            onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                            onClick={() => onConfirmRepairIncident?.(r.incident_id, rowDomainKey)}
                             style={{
                               padding: "6px 8px",
                               borderRadius: 8,
@@ -11001,7 +12388,7 @@ function OpenReportsModal({
                   )}
                   <div style={{ fontSize: 12, opacity: 0.9 }}>
                     <b>{mobileMyReportsCard ? "Last report:" : "Latest report:"}</b>{" "}
-                    {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                    {formatTs(isStreetlightRow ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                   </div>
                   {showCommunityRepairDiagnostics && repairSnapshot && (
                     <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
@@ -11028,7 +12415,7 @@ function OpenReportsModal({
                     >
                       Fly to
                     </button>
-                    {activeDomain === "streetlights" && canMutateIncidents && (
+                    {rowDomainKey === "streetlights" && canMutateIncidents && (
                       <button
                         type="button"
                         onClick={() => {
@@ -11067,7 +12454,7 @@ function OpenReportsModal({
                     {showPublicRepairAction && (
                       <button
                         type="button"
-                        onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                        onClick={() => onConfirmRepairIncident?.(r.incident_id, rowDomainKey)}
                         style={{
                           padding: "6px 8px",
                           borderRadius: 8,
@@ -11081,7 +12468,7 @@ function OpenReportsModal({
                         Is fixed
                       </button>
                     )}
-                    {isStreetlightMyReports && isOpenLifecycleState(r.current_state || "") && (
+                    {isStreetlightRow && isOpenLifecycleState(r.current_state || "") && (
                       <>
                         {getWorkingActionStateForIncident(r.incident_id) === "available" && (
                           <button
@@ -11162,12 +12549,12 @@ function OpenReportsModal({
                     )}
                   </div>
                 )}
-                  {isStreetlightMyReports && !streetlightMobileSummaryCard && Boolean(utilityReportedByIncident[r.incident_id]) && (
+                  {isStreetlightRow && !streetlightMobileSummaryCard && Boolean(utilityReportedByIncident[r.incident_id]) && (
                     <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
                       <b>Utility report #:</b> {utilityReportReferenceByIncident?.[r.incident_id] || "Not added yet"}
                     </div>
                   )}
-                  {repairSnapshot?.viewerHasRepairSignal && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                  {repairSnapshot?.viewerHasRepairSignal && rowDomainKey !== "streetlights" && rowDomainKey !== "street_signs" && (
                     <div style={{ fontSize: 12, opacity: 0.8, lineHeight: 1.3 }}>
                       You already confirmed this repair.
                     </div>
@@ -11317,6 +12704,10 @@ function OpenReportsModal({
                         const imageUrl = readImageUrlFromNote(rawNotes);
                         const noteText = noteDisplayText(rawNotes);
                         const qa = parseStreetlightQaFromNote(rawNotes);
+                        const detailDomainKey = resolveItemDomainKey(null, detail, rowDomainKey);
+                        const detailIsStreetlight = detailDomainKey === "streetlights";
+                        const issueLabel = resolveReportIssueLabel(detail, detailDomainKey, waterDrainIncidentsById);
+                        const typeOptionDetails = resolveReportTypeOptionDetails(detail, detailDomainKey);
                         return (
                           <div
                             key={`mobile-detail-${r.incident_id}-${detail.report_id}`}
@@ -11333,19 +12724,28 @@ function OpenReportsModal({
                               <div style={{ fontWeight: 900 }}>Submitted report</div>
                               <div style={{ opacity: 0.8 }}>{formatTs(detail.submitted_at)}</div>
                             </div>
-                            {isStreetlightMyReports && (
+                            {detailIsStreetlight && (
                               <>
                                 <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
-                                  <b>What are you seeing:</b> {REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
+                                  <b>What are you seeing:</b> {issueLabel || REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
                                 </div>
                                 <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
                                   <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
                                 </div>
-                                <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
-                                  <b>Hazardous situation:</b> {qa?.hazardous ? (qa.hazardous === "yes" ? "Yes" : qa.hazardous === "no" ? "No" : "Unknown") : "Unknown"}
-                                </div>
-                              </>
+                              <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                <b>Hazardous situation:</b> {qa?.hazardous ? (qa.hazardous === "yes" ? "Yes" : qa.hazardous === "no" ? "No" : "Unknown") : "Unknown"}
+                              </div>
+                            </>
+                          )}
+                            {!!String(issueLabel || "").trim() && !detailIsStreetlight && (
+                              <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                <b>Issue type:</b> {issueLabel}
+                              </div>
                             )}
+                            <ReportTypeOptionDetails
+                              details={typeOptionDetails}
+                              textStyle={{ opacity: 0.9, lineHeight: 1.3 }}
+                            />
                             {canViewReporterDetails && (
                               <div style={{ opacity: 0.9, lineHeight: 1.3, display: "grid", gap: 2 }}>
                                 <b>Submitted by:</b>{" "}
@@ -11383,7 +12783,7 @@ function OpenReportsModal({
                                 ) : null}
                               </div>
                             )}
-                            {canViewReporterDetails && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                            {canViewReporterDetails && detailDomainKey !== "streetlights" && detailDomainKey !== "street_signs" && (
                               <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
                                 <b>Location:</b> {locationInfoForReportDetail(detail, r)}
                               </div>
@@ -11419,7 +12819,7 @@ function OpenReportsModal({
                           </div>
                         );
                       })}
-                      {activeDomain === "streetlights" && (() => {
+                      {rowDomainKey === "streetlights" && (() => {
                         const utilityOpen = streetlightUtilityExpandedSet.has(r.incident_id);
                         const utilityLoading = Boolean(streetlightUtilityLoadingByIncident?.[r.incident_id]);
                         const util = getStreetlightUtilityForIncident(r.incident_id);
@@ -11554,9 +12954,13 @@ function OpenReportsModal({
                 </thead>
                 <tbody>
                   {displayedAdminRows.map((r) => {
-                    const repairSnapshot = getRepairSnapshotForIncident(r.incident_id);
+                    const rowDomainKey = isMyReportsModal
+                      ? resolveItemDomainKey(null, r, activeDomain)
+                      : activeDomain;
+                    const isStreetlightRow = rowDomainKey === "streetlights";
+                    const repairSnapshot = getRepairSnapshotForIncident(r.incident_id, rowDomainKey);
                     const showPublicRepairAction = typeof canShowPublicRepairAction === "function"
-                      ? canShowPublicRepairAction(r.incident_id, activeDomain)
+                      ? canShowPublicRepairAction(r.incident_id, rowDomainKey)
                       : false;
                     const showOrganizationRepairAction = canMutateIncidents && !showPublicRepairAction;
                     return (
@@ -11604,7 +13008,7 @@ function OpenReportsModal({
                           </td>
                         )}
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
-                          {formatTs(isStreetlightMyReports ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
+                          {formatTs(isStreetlightRow ? r.latest_submitted_at : (r.latest_activity_at || r.latest_submitted_at))}
                         </td>
                         <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -11626,7 +13030,7 @@ function OpenReportsModal({
                             >
                               Fly to
                             </button>
-                            {activeDomain === "streetlights" && canMutateIncidents && (
+                            {rowDomainKey === "streetlights" && canMutateIncidents && (
                               <button
                                 type="button"
                                 onClick={() => {
@@ -11665,7 +13069,7 @@ function OpenReportsModal({
                             {showPublicRepairAction && (
                               <button
                                 type="button"
-                                onClick={() => onConfirmRepairIncident?.(r.incident_id, activeDomain)}
+                                onClick={() => onConfirmRepairIncident?.(r.incident_id, rowDomainKey)}
                                 style={{
                                   padding: "6px 8px",
                                   borderRadius: 8,
@@ -11681,7 +13085,7 @@ function OpenReportsModal({
                             )}
                           </div>
                         </td>
-                        {isStreetlightMyReports && (
+                        {isStreetlightRow && (
                           <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                         {isOpenLifecycleState(r.current_state || "") ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -11776,7 +13180,7 @@ function OpenReportsModal({
                       </tr>
                       {adminExpandedSet.has(r.incident_id) && (
                         <tr>
-                          <td colSpan={isMyReportsModal ? (isStreetlightMyReports ? 5 : 4) : (isStreetlightMyReports ? 6 : 5)} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
+                          <td colSpan={isMyReportsModal ? (isStreetlightRow ? 5 : 4) : (isStreetlightRow ? 6 : 5)} style={{ padding: 0, borderBottom: "1px solid var(--sl-ui-open-reports-item-border)" }}>
                             <div style={{ padding: 8, display: "grid", gap: 6, background: "var(--sl-ui-modal-subtle-bg)" }}>
                               {showCommunityRepairDiagnostics && repairSnapshot && (
                                 <div
@@ -11951,16 +13355,20 @@ function OpenReportsModal({
                                     const imageUrl = readImageUrlFromNote(rawNotes);
                                     const noteText = noteDisplayText(rawNotes);
                                     const qa = parseStreetlightQaFromNote(rawNotes);
+                                    const detailDomainKey = resolveItemDomainKey(null, detail, rowDomainKey);
+                                    const detailIsStreetlight = detailDomainKey === "streetlights";
+                                    const issueLabel = resolveReportIssueLabel(detail, detailDomainKey, waterDrainIncidentsById);
+                                    const typeOptionDetails = resolveReportTypeOptionDetails(detail, detailDomainKey);
                                     return (
                                       <>
                                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                                     <div style={{ fontWeight: 900 }}>Submitted report</div>
                                     <div style={{ opacity: 0.8 }}>{formatTs(detail.submitted_at)}</div>
                                   </div>
-                                  {isStreetlightMyReports && (
+                                  {detailIsStreetlight && (
                                     <>
                                       <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
-                                        <b>What are you seeing:</b> {REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
+                                        <b>What are you seeing:</b> {issueLabel || REPORT_TYPES?.[String(detail.report_type || "").trim()] || "Streetlight issue"}
                                       </div>
                                       <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
                                         <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
@@ -11970,6 +13378,15 @@ function OpenReportsModal({
                                       </div>
                                     </>
                                   )}
+                                  {!!String(issueLabel || "").trim() && !detailIsStreetlight && (
+                                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                                      <b>Issue type:</b> {issueLabel}
+                                    </div>
+                                  )}
+                                  <ReportTypeOptionDetails
+                                    details={typeOptionDetails}
+                                    textStyle={{ opacity: 0.9, lineHeight: 1.3 }}
+                                  />
                                   {canViewReporterDetails && (
                                     <div style={{ opacity: 0.9, lineHeight: 1.3, display: "grid", gap: 2 }}>
                                       <b>Submitted by:</b>{" "}
@@ -12007,7 +13424,7 @@ function OpenReportsModal({
                                       ) : null}
                                     </div>
                                   )}
-                                  {canViewReporterDetails && activeDomain !== "streetlights" && activeDomain !== "street_signs" && (
+                                  {canViewReporterDetails && detailDomainKey !== "streetlights" && detailDomainKey !== "street_signs" && (
                                     <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
                                       <b>Location:</b> {locationInfoForReportDetail(detail, r)}
                                     </div>
@@ -12046,7 +13463,7 @@ function OpenReportsModal({
                                   })()}
                                 </div>
                               ))}
-                              {activeDomain === "streetlights" && (() => {
+                              {rowDomainKey === "streetlights" && (() => {
                                 const utilityOpen = streetlightUtilityExpandedSet.has(r.incident_id);
                                 const utilityLoading = Boolean(streetlightUtilityLoadingByIncident?.[r.incident_id]);
                                 const util = getStreetlightUtilityForIncident(r.incident_id);
@@ -12210,6 +13627,15 @@ function OpenReportsModal({
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
                   {formatTs(item.row?.ts)}
                 </div>
+                {!!String(item.issueLabel || "").trim() && !item.isStreetlights && (
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Issue type:</b> {item.issueLabel}
+                  </div>
+                )}
+                <ReportTypeOptionDetails
+                  details={resolveReportTypeOptionDetails(item.row, item.domainKey || activeDomain)}
+                  textStyle={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}
+                />
                 {!item.isStreetlights && (
                   <div style={{ fontSize: 12, opacity: 0.85, lineHeight: 1.3 }}>
                     <b>Location:</b> {item.locationLabel}
@@ -12293,21 +13719,7 @@ function OpenReportsModal({
                   isFixed: Boolean(confidence?.closed),
                 }
               : { majorityLabel: (domainOptions || []).find((d) => d.key === activeDomain)?.label || "Report" };
-            const adminMarkerView = Boolean(reportsAdminView);
-            const nonStreetlightDotColor =
-              activeDomain === "potholes"
-                ? potholeColorFromCount(Number(g?.count || 0))
-                : activeDomain === "water_drain_issues"
-                  ? ((!adminMarkerView && Number(g?.count || 0) === 1)
-                      ? officialStatusFromSinceFixCount(1).color
-                      : waterDrainColorFromCount(Number(g?.count || 0)))
-                : activeDomain === "street_signs"
-                  ? "#1e88e5"
-                : activeDomain === "power_outage"
-                  ? "#f39c12"
-                  : activeDomain === "water_main"
-                    ? "#3498db"
-                    : "#616161";
+            const nonStreetlightDotColor = defaultMarkerColorForDomain(activeDomain);
             const dot = isStreetlights
               ? (() => {
                   if (confidence?.state === "high_confidence_outage") return { color: "#f57c00", label: "High-confidence outage" };
@@ -12463,50 +13875,69 @@ function OpenReportsModal({
                     }}
                   >
                     {(g.rows || []).slice(0, 5).map((r) => (
-                      <div
-                        key={r.id}
-                        style={{
-                          fontSize: 12,
-                          padding: 8,
-                          borderRadius: 10,
-                          border: "1px solid var(--sl-ui-open-reports-item-border)",
-                          background: "var(--sl-ui-modal-subtle-bg)",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        <div style={{ fontWeight: 900 }}>
-                          {REPORT_TYPES?.[r.type] || r.type || "Report"}
-                        </div>
-                        <div style={{ opacity: 0.8 }}>
-                          {formatTs(r.ts)}
-                          {r.note ? ` • ${r.note}` : ""}
-                        </div>
-                        <div style={{ opacity: 0.9, fontWeight: 900 }}>
-                          Report #: {reportNumberForRow(r, activeDomain)}
-                        </div>
-                        {canViewReporterDetails && (
-                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
-                            <b>Submitted by:</b>{" "}
-                            <button
-                              type="button"
-                              onClick={() => onReporterDetails?.(r)}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                padding: 0,
-                                margin: 0,
-                                color: "var(--sl-ui-brand-green)",
-                                textDecoration: "underline",
-                                cursor: "pointer",
-                                fontWeight: 900,
-                                fontSize: 12,
-                              }}
-                            >
-                              {String(r?.reporter_name || "").trim() || String(r?.reporter_email || "").trim() || "Unknown"}
-                            </button>
+                      (() => {
+                        const issueLabel = resolveReportIssueLabel(r, activeDomain, waterDrainIncidentsById);
+                        const displayNote = noteDisplayText(r?.note || "");
+                        return (
+                          <div
+                            key={r.id}
+                            style={{
+                              fontSize: 12,
+                              padding: 8,
+                              borderRadius: 10,
+                              border: "1px solid var(--sl-ui-open-reports-item-border)",
+                              background: "var(--sl-ui-modal-subtle-bg)",
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            <div style={{ fontWeight: 900 }}>
+                              {issueLabel || REPORT_TYPES?.[r.type] || r.type || "Report"}
+                            </div>
+                            <div style={{ opacity: 0.8 }}>
+                              {formatTs(r.ts)}
+                            </div>
+                            {!!String(issueLabel || "").trim() && !isStreetlights && (
+                              <div style={{ opacity: 0.9 }}>
+                                <b>Issue type:</b> {issueLabel}
+                              </div>
+                            )}
+                            <ReportTypeOptionDetails
+                              details={resolveReportTypeOptionDetails(r, activeDomain)}
+                              textStyle={{ opacity: 0.9 }}
+                            />
+                            <div style={{ opacity: 0.9, fontWeight: 900 }}>
+                              Report #: {reportNumberForRow(r, activeDomain)}
+                            </div>
+                            {!!String(displayNote || "").trim() && (
+                              <div style={{ opacity: 0.85 }}>
+                                <b>Note:</b> {displayNote}
+                              </div>
+                            )}
+                            {canViewReporterDetails && (
+                              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                                <b>Submitted by:</b>{" "}
+                                <button
+                                  type="button"
+                                  onClick={() => onReporterDetails?.(r)}
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    padding: 0,
+                                    margin: 0,
+                                    color: "var(--sl-ui-brand-green)",
+                                    textDecoration: "underline",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {String(r?.reporter_name || "").trim() || String(r?.reporter_email || "").trim() || "Unknown"}
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        );
+                      })()
                     ))}
 
                     {(g.rows || []).length > 5 && (
@@ -12668,7 +14099,7 @@ function OpenReportsModal({
                   )}
                   <div style={{ fontSize: 12, opacity: 0.82 }}>{formatTs(latestDetail.submitted_at)}</div>
                   <div style={{ opacity: 0.96, lineHeight: 1.3 }}>
-                    <b>What are you seeing:</b> {REPORT_TYPES?.[String(latestDetail.report_type || "").trim()] || "Streetlight issue"}
+                    <b>What are you seeing:</b> {resolveReportIssueLabel(latestDetail, activeDomain, waterDrainIncidentsById) || REPORT_TYPES?.[String(latestDetail.report_type || "").trim()] || "Streetlight issue"}
                   </div>
                   <div style={{ opacity: 0.96, lineHeight: 1.3 }}>
                     <b>Power on in area:</b> {qa?.powerOn ? (qa.powerOn === "yes" ? "Yes" : qa.powerOn === "no" ? "No" : "Unknown") : "Unknown"}
@@ -12967,14 +14398,19 @@ function IncidentTypePickerModal({
                 padding: "14px 16px",
                 borderRadius: 16,
                 border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
+                background: "var(--sl-ui-surface-bg)",
+                color: "var(--sl-ui-text)",
                 fontWeight: 900,
                 cursor: "pointer",
                 justifyContent: "flex-start",
               }}
             >
-              <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={34} />
+              <DomainSelectorListIcon
+                domainKey={option.key}
+                src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer}
+                size={24}
+                containerSize={28}
+              />
               <span style={{ fontSize: 16 }}>{option.label}</span>
             </button>
           ))}
@@ -13390,7 +14826,9 @@ function DeleteAccountModal({
 function MobileBottomRailButton({
   label,
   iconSrc,
+  iconKey = "",
   active = false,
+  darkMode = false,
   onClick,
   badgeCount = 0,
   disabled = false,
@@ -13427,9 +14865,9 @@ function MobileBottomRailButton({
           lineHeight: 1,
           position: "relative",
         }}
-      >
+        >
         <span style={{ position: "relative", width: wide ? 30 : 28, height: wide ? 30 : 28, display: "grid", placeItems: "center" }}>
-          <AppIcon src={iconSrc} size={wide ? 26 : 24} />
+          <AppIcon src={iconSrc} iconKey={iconKey} darkMode={darkMode} active={active} size={wide ? 26 : 24} />
           {showBadge ? (
             <span
               style={{
@@ -14247,29 +15685,26 @@ function AccountMenuPanel({
     sessionEmail ||
     "—";
 
-  const panelStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.22)",
-        background: "linear-gradient(180deg, rgba(16, 25, 37, 0.98) 0%, rgba(20, 33, 47, 0.98) 100%)",
-        boxShadow: "0 22px 42px rgba(0, 0, 0, 0.32)",
-        color: "#edf6ff",
-      }
-    : null;
+  const panelStyle = {
+    border: "1px solid var(--sl-ui-surface-border)",
+    background: "color-mix(in srgb, var(--sl-ui-surface-bg) 96%, transparent)",
+    boxShadow: "var(--sl-ui-surface-shadow)",
+    color: "var(--sl-ui-text)",
+  };
 
-  const eyebrowStyle = darkMode ? { color: "#9cb6cf" } : null;
-  const titleStyle = darkMode ? { color: "#edf6ff" } : null;
-  const subtitleStyle = darkMode ? { color: "#c4d6e8" } : null;
+  const eyebrowStyle = { color: "color-mix(in srgb, var(--sl-ui-text) 72%, transparent)" };
+  const titleStyle = { color: "var(--sl-ui-text)" };
+  const subtitleStyle = { color: "color-mix(in srgb, var(--sl-ui-text) 78%, transparent)" };
   const wideButtonStyle = isWidePage ? { fontSize: 16, padding: "14px 16px", borderRadius: 16 } : null;
   const wideEyebrowStyle = isWidePage ? { fontSize: 13 } : null;
   const wideTitleStyle = isWidePage ? { fontSize: 26 } : null;
   const wideMetaStyle = isWidePage ? { fontSize: 15 } : null;
-  const buttonStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.24)",
-        background: "rgba(28, 43, 60, 0.92)",
-        color: "#edf6ff",
-      }
-    : null;
+  const buttonStyle = {
+    border: "1px solid var(--sl-ui-tool-btn-border)",
+    background: "color-mix(in srgb, var(--sl-ui-tool-btn-bg) 82%, var(--sl-ui-surface-bg) 18%)",
+    color: "var(--sl-ui-tool-btn-text)",
+    boxShadow: "var(--sl-ui-tool-btn-shadow)",
+  };
 
   const menuBody = session ? (
     <>
@@ -14396,16 +15831,17 @@ function AccountMenuPanel({
           onClick={(event) => event.stopPropagation()}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 950, color: darkMode ? "#edf6ff" : undefined }}>Account</div>
+            <div style={{ fontSize: 13, fontWeight: 950, color: "var(--sl-ui-text)" }}>Account</div>
             <button
               onClick={onClose}
               style={{
                 width: 34,
                 height: 34,
                 borderRadius: 10,
-                border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
-                color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
+                border: "1px solid var(--sl-ui-tool-btn-border)",
+                background: "color-mix(in srgb, var(--sl-ui-tool-btn-bg) 82%, var(--sl-ui-surface-bg) 18%)",
+                color: "var(--sl-ui-tool-btn-text)",
+                boxShadow: "var(--sl-ui-tool-btn-shadow)",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
@@ -14496,16 +15932,17 @@ function AccountMenuPanel({
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 950, color: darkMode ? "#edf6ff" : undefined }}>Account</div>
+          <div style={{ fontSize: 13, fontWeight: 950, color: "var(--sl-ui-text)" }}>Account</div>
           <button
             onClick={onClose}
             style={{
               width: 34,
               height: 34,
               borderRadius: 10,
-              border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
-              color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
+              border: "1px solid var(--sl-ui-tool-btn-border)",
+              background: "color-mix(in srgb, var(--sl-ui-tool-btn-bg) 82%, var(--sl-ui-surface-bg) 18%)",
+              color: "var(--sl-ui-tool-btn-text)",
+              boxShadow: "var(--sl-ui-tool-btn-shadow)",
               fontWeight: 900,
               cursor: "pointer",
             }}
@@ -14555,23 +15992,6 @@ function MobileHeaderMenuPanel({
 }) {
   if (!open) return null;
 
-  const panelStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.22)",
-        background: "linear-gradient(180deg, rgba(16, 25, 37, 0.98) 0%, rgba(20, 33, 47, 0.98) 100%)",
-        boxShadow: "0 22px 42px rgba(0, 0, 0, 0.32)",
-        color: "#edf6ff",
-      }
-    : null;
-
-  const buttonStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.24)",
-        background: "rgba(28, 43, 60, 0.92)",
-        color: "#edf6ff",
-      }
-    : null;
-
   return (
     <div
       style={{
@@ -14596,32 +16016,27 @@ function MobileHeaderMenuPanel({
           bottom: 0,
           width: "min(320px, calc(100vw - 22px))",
           maxWidth: "calc(100vw - 22px)",
-          borderLeft: darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.10)",
-          background: darkMode
-            ? "linear-gradient(180deg, rgba(16, 25, 37, 0.985) 0%, rgba(20, 33, 47, 0.985) 100%)"
-            : "linear-gradient(180deg, rgba(252, 254, 255, 0.99) 0%, rgba(244, 249, 253, 0.99) 100%)",
-          boxShadow: darkMode
-            ? "-18px 0 40px rgba(0, 0, 0, 0.30)"
-            : "-18px 0 34px rgba(17, 39, 64, 0.16)",
-          color: darkMode ? "#edf6ff" : "var(--sl-ui-text)",
+          borderLeft: "1px solid var(--sl-ui-header-menu-border)",
+          background: "var(--sl-ui-header-menu-bg)",
+          boxShadow: "var(--sl-ui-header-menu-shadow)",
+          color: "var(--sl-ui-text)",
           padding: "16px 14px 18px",
           overflowY: "auto",
           display: "grid",
           alignContent: "start",
           gap: 14,
-          ...(panelStyle || {}),
         }}
         onClick={(event) => event.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
           <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", opacity: darkMode ? 0.78 : 0.62 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--sl-ui-header-eyebrow)" }}>
               Menu
             </div>
-            <div style={{ fontSize: 22, fontWeight: 950, lineHeight: 1.05, color: darkMode ? "#edf6ff" : "var(--sl-ui-text)" }}>
+            <div style={{ fontSize: 22, fontWeight: 950, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
               More
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.78 }}>
+            <div style={{ fontSize: 13, lineHeight: 1.45, color: "var(--sl-ui-feed-muted-text)" }}>
               General app information and public help links.
             </div>
           </div>
@@ -14632,9 +16047,9 @@ function MobileHeaderMenuPanel({
               width: 38,
               height: 38,
               borderRadius: 999,
-              border: darkMode ? "1px solid rgba(143, 170, 198, 0.24)" : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: darkMode ? "rgba(28, 43, 60, 0.92)" : "var(--sl-ui-modal-btn-secondary-bg)",
-              color: darkMode ? "#edf6ff" : "var(--sl-ui-modal-btn-secondary-text)",
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
               fontWeight: 900,
               cursor: "pointer",
               flex: "0 0 auto",
@@ -14654,7 +16069,7 @@ function MobileHeaderMenuPanel({
                   fontWeight: 900,
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
-                  opacity: darkMode ? 0.72 : 0.58,
+                  color: "var(--sl-ui-header-eyebrow)",
                 }}
               >
                 Resident Links
@@ -14670,7 +16085,9 @@ function MobileHeaderMenuPanel({
                     justifyItems: "start",
                     textAlign: "left",
                     gap: 6,
-                    ...(buttonStyle || {}),
+                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                    background: "var(--sl-ui-modal-btn-secondary-bg)",
+                    color: "var(--sl-ui-modal-btn-secondary-text)",
                   }}
                   onClick={() => {
                     if (typeof onOpenResidentMenuLink === "function") {
@@ -14689,7 +16106,7 @@ function MobileHeaderMenuPanel({
                         fontSize: 12.5,
                         fontWeight: 600,
                         lineHeight: 1.35,
-                        opacity: 0.76,
+                        color: "var(--sl-ui-feed-muted-text)",
                         whiteSpace: "normal",
                       }}
                     >
@@ -14701,19 +16118,55 @@ function MobileHeaderMenuPanel({
             </>
           ) : null}
           {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
-            <button onClick={onOpenCitySwitcher} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            <button
+              onClick={onOpenCitySwitcher}
+              className="workspace-menu-button"
+              style={{
+                width: "100%",
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+              }}
+            >
               Switch Location
             </button>
           ) : null}
           {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
-            <button onClick={onOpenLocationDiagnostics} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+            <button
+              onClick={onOpenLocationDiagnostics}
+              className="workspace-menu-button"
+              style={{
+                width: "100%",
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                color: "var(--sl-ui-modal-btn-secondary-text)",
+              }}
+            >
               Location Diagnostics
             </button>
           ) : null}
-          <button onClick={onContactUs} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+          <button
+            onClick={onContactUs}
+            className="workspace-menu-button"
+            style={{
+              width: "100%",
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+            }}
+          >
             Contact Us
           </button>
-          <button onClick={onOpenAbout} className="workspace-menu-button" style={{ width: "100%", ...(buttonStyle || {}) }}>
+          <button
+            onClick={onOpenAbout}
+            className="workspace-menu-button"
+            style={{
+              width: "100%",
+              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+              background: "var(--sl-ui-modal-btn-secondary-bg)",
+              color: "var(--sl-ui-modal-btn-secondary-text)",
+            }}
+          >
             About
           </button>
         </div>
@@ -14759,12 +16212,10 @@ function ContactUsModal({
       : null,
   ].filter(Boolean);
 
-  const contactEyebrowColor = darkMode ? "#9cb6cf" : "#4f6983";
-  const contactTileBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.12)";
-  const contactTileBackground = darkMode
-    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
-    : "linear-gradient(180deg, rgba(247, 251, 255, 0.98) 0%, rgba(240, 247, 255, 0.92) 100%)";
-  const contactMutedColor = darkMode ? "#c4d6e8" : "#4b6784";
+  const contactEyebrowColor = "var(--sl-ui-header-eyebrow)";
+  const contactTileBorder = "1px solid var(--sl-ui-contact-tile-border)";
+  const contactTileBackground = "var(--sl-ui-contact-tile-bg)";
+  const contactMutedColor = "var(--sl-ui-feed-muted-text)";
 
   return (
     <ModalShell
@@ -14786,7 +16237,7 @@ function ContactUsModal({
             <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.05, color: "var(--sl-ui-text)" }}>
               {organizationDisplayName || "Organization"}
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.45, opacity: 0.82 }}>
+            <div style={{ fontSize: 13, lineHeight: 1.45, color: contactMutedColor }}>
               Reach this organization using the contact options they have made available for the reporting map.
             </div>
           </div>
@@ -15144,6 +16595,14 @@ function residentFeedBadgeStyle({ bg = "rgba(22, 109, 120, 0.12)", border = "rgb
   };
 }
 
+function residentFeedCssTone(prefix) {
+  return {
+    bg: `var(--sl-ui-${prefix}-bg)`,
+    border: `var(--sl-ui-${prefix}-border)`,
+    color: `var(--sl-ui-${prefix}-text)`,
+  };
+}
+
 function residentFeedAdminButtonStyle(darkMode = false) {
   return {
     display: "inline-flex",
@@ -15152,15 +16611,13 @@ function residentFeedAdminButtonStyle(darkMode = false) {
     minHeight: 34,
     padding: "8px 12px",
     borderRadius: 12,
-    border: darkMode ? "1px solid rgba(95, 208, 180, 0.28)" : "1px solid rgba(22, 109, 120, 0.22)",
-    background: darkMode
-      ? "linear-gradient(180deg, rgba(28, 112, 95, 0.92) 0%, rgba(20, 82, 72, 0.92) 100%)"
-      : "linear-gradient(180deg, rgba(31, 132, 113, 0.96) 0%, rgba(24, 108, 94, 0.96) 100%)",
-    color: "#fff",
+    border: "1px solid var(--sl-ui-tool-active-border)",
+    background: "var(--sl-ui-tool-active-bg)",
+    color: "var(--sl-ui-tool-active-text)",
     fontSize: 12,
     fontWeight: 900,
     letterSpacing: "0.01em",
-    boxShadow: darkMode ? "0 10px 22px rgba(0, 0, 0, 0.22)" : "0 10px 20px rgba(17, 61, 95, 0.14)",
+    boxShadow: "var(--sl-ui-tool-btn-shadow)",
     cursor: "pointer",
     whiteSpace: "nowrap",
   };
@@ -15187,24 +16644,19 @@ function ResidentFeedWindow({
   onCreate = null,
 }) {
   const isWidePageMode = pageMode && typeof window !== "undefined" && window.innerWidth >= 900;
-  const headerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
-  const eyebrowBadgeTone = darkMode
-    ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
-    : { bg: "rgba(17, 61, 95, 0.10)", border: "rgba(17, 61, 95, 0.14)", color: "#113d5f" };
-  const countBadgeTone = darkMode
-    ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
-    : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
-  const iconShellStyle = darkMode
-    ? {
-        background: "linear-gradient(180deg, rgba(24, 38, 55, 0.98) 0%, rgba(16, 27, 39, 0.98) 100%)",
-        border: "1px solid rgba(143, 170, 198, 0.18)",
-      }
-    : {
-        background: "linear-gradient(180deg, rgba(242, 247, 251, 0.98) 0%, rgba(232, 240, 247, 0.98) 100%)",
-        border: "1px solid rgba(23, 49, 79, 0.08)",
-      };
-  const subtitleColor = darkMode ? "#c4d6e8" : undefined;
-  const errorColor = darkMode ? "#ffb4b4" : "#b23a48";
+  const headerBorder = "1px solid var(--sl-ui-feed-card-border)";
+  const eyebrowBadgeTone = residentFeedCssTone("feed-badge");
+  const countBadgeTone = {
+    bg: "var(--sl-ui-tool-active-bg)",
+    border: "var(--sl-ui-tool-active-border)",
+    color: "var(--sl-ui-tool-active-text)",
+  };
+  const iconShellStyle = {
+    background: "var(--sl-ui-feed-card-bg)",
+    border: "1px solid var(--sl-ui-feed-card-border)",
+  };
+  const subtitleColor = "var(--sl-ui-feed-muted-text)";
+  const errorColor = "var(--sl-ui-alert-danger-text)";
 
   return (
     <ModalShell
@@ -15359,25 +16811,17 @@ function AlertsWindow({
   const activeCount = useMemo(() => countActivePublishedAlerts(alerts), [alerts]);
   const sessionNewKeySet = useMemo(() => new Set(Array.isArray(newItemKeys) ? newItemKeys : []), [newItemKeys]);
   const countLabel = activeCount === 1 ? "1 active alert" : `${activeCount} active alerts`;
-  const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
-  const cardBackground = darkMode
-    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
-    : "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)";
-  const titleColor = darkMode ? "#edf6ff" : "#17314f";
-  const summaryColor = darkMode ? "#d4e0ec" : "#35516d";
-  const bodyColor = darkMode ? "#b9cadd" : "#58718a";
-  const metaColor = darkMode ? "#9cb6cf" : "#4f6983";
-  const ctaStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.22)",
-        background: "rgba(28, 43, 60, 0.92)",
-        color: "#edf6ff",
-      }
-    : {
-        border: "1px solid rgba(23, 49, 79, 0.15)",
-        background: "rgba(255, 255, 255, 0.92)",
-        color: "#17314f",
-      };
+  const cardBorder = "1px solid var(--sl-ui-feed-card-border)";
+  const cardBackground = "var(--sl-ui-feed-card-bg)";
+  const titleColor = "var(--sl-ui-text)";
+  const summaryColor = "var(--sl-ui-feed-muted-text)";
+  const bodyColor = "var(--sl-ui-feed-muted-text)";
+  const metaColor = "var(--sl-ui-feed-muted-text)";
+  const ctaStyle = {
+    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+    background: "var(--sl-ui-modal-btn-secondary-bg)",
+    color: "var(--sl-ui-modal-btn-secondary-text)",
+  };
   return (
     <ResidentFeedWindow
       open={open}
@@ -15402,26 +16846,19 @@ function AlertsWindow({
         const severityKey = String(alert?.severity || "info").trim().toLowerCase();
         const severityTone =
           severityKey === "emergency"
-            ? (darkMode
-              ? { bg: "rgba(143, 29, 29, 0.32)", border: "rgba(255, 132, 132, 0.2)", color: "#ffb4b4" }
-              : { bg: "rgba(183, 28, 28, 0.10)", border: "rgba(183, 28, 28, 0.16)", color: "#8f1d1d" })
+            ? residentFeedCssTone("feed-alert-emergency")
             : severityKey === "urgent"
-              ? (darkMode
-                ? { bg: "rgba(178, 86, 0, 0.28)", border: "rgba(255, 193, 125, 0.18)", color: "#ffd6a6" }
-                : { bg: "rgba(239, 108, 0, 0.10)", border: "rgba(239, 108, 0, 0.16)", color: "#b25600" })
+              ? residentFeedCssTone("feed-alert-urgent")
               : severityKey === "advisory"
-                ? (darkMode
-                  ? { bg: "rgba(140, 106, 0, 0.24)", border: "rgba(255, 227, 132, 0.16)", color: "#ffe79a" }
-                  : { bg: "rgba(245, 190, 28, 0.12)", border: "rgba(245, 190, 28, 0.18)", color: "#8c6a00" })
-                : (darkMode
-                  ? { bg: "rgba(27, 111, 180, 0.24)", border: "rgba(143, 196, 242, 0.18)", color: "#c8e6ff" }
-                  : { bg: "rgba(30, 136, 229, 0.10)", border: "rgba(30, 136, 229, 0.16)", color: "#1b6fb4" });
-        const pinnedTone = darkMode
-          ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
-          : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
-        const topicTone = darkMode
-          ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
-          : { bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" };
+                ? residentFeedCssTone("feed-alert-advisory")
+                : residentFeedCssTone("feed-alert-info");
+        const pinnedTone = {
+          bg: "var(--sl-ui-tool-active-bg)",
+          border: "var(--sl-ui-tool-active-border)",
+          color: "var(--sl-ui-tool-active-text)",
+        };
+        const topicTone = residentFeedCssTone("feed-badge");
+        const newTone = residentFeedCssTone("feed-new-badge");
         return (
           <article
             key={`map-alert-${alert.id}`}
@@ -15448,13 +16885,7 @@ function AlertsWindow({
                   </div>
                 ) : null}
                 {isNew ? (
-                  <div
-                    style={residentFeedBadgeStyle(
-                      darkMode
-                        ? { bg: "rgba(95, 208, 180, 0.22)", border: "rgba(126, 231, 195, 0.24)", color: "#c6f5e8" }
-                        : { bg: "rgba(28, 169, 118, 0.12)", border: "rgba(28, 169, 118, 0.18)", color: "#13684d" }
-                    )}
-                  >
+                  <div style={residentFeedBadgeStyle(newTone)}>
                     New
                   </div>
                 ) : null}
@@ -15534,31 +16965,24 @@ function EventsWindow({
   const upcomingCount = useMemo(() => countUpcomingPublishedEvents(events), [events]);
   const sessionNewKeySet = useMemo(() => new Set(Array.isArray(newItemKeys) ? newItemKeys : []), [newItemKeys]);
   const countLabel = upcomingCount === 1 ? "1 upcoming event" : `${upcomingCount} upcoming events`;
-  const cardBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.18)" : "1px solid rgba(23, 49, 79, 0.08)";
-  const cardBackground = darkMode
-    ? "linear-gradient(180deg, rgba(23, 37, 53, 0.96) 0%, rgba(17, 28, 40, 0.96) 100%)"
-    : "linear-gradient(180deg, rgba(251, 253, 255, 0.98) 0%, rgba(242, 247, 251, 0.98) 100%)";
-  const titleColor = darkMode ? "#edf6ff" : "#17314f";
-  const summaryColor = darkMode ? "#d4e0ec" : "#35516d";
-  const bodyColor = darkMode ? "#b9cadd" : "#58718a";
-  const metaColor = darkMode ? "#9cb6cf" : "#4f6983";
-  const topicTone = darkMode
-    ? { bg: "rgba(49, 78, 112, 0.42)", border: "rgba(143, 170, 198, 0.2)", color: "#d9e7f5" }
-    : { bg: "rgba(17, 61, 95, 0.08)", border: "rgba(17, 61, 95, 0.12)", color: "#113d5f" };
-  const allDayTone = darkMode
-    ? { bg: "rgba(27, 96, 84, 0.34)", border: "rgba(95, 208, 180, 0.18)", color: "#b7efe1" }
-    : { bg: "rgba(22, 109, 120, 0.08)", border: "rgba(22, 109, 120, 0.12)", color: "#176d78" };
-  const ctaStyle = darkMode
-    ? {
-        border: "1px solid rgba(143, 170, 198, 0.22)",
-        background: "rgba(28, 43, 60, 0.92)",
-        color: "#edf6ff",
-      }
-    : {
-        border: "1px solid rgba(23, 49, 79, 0.15)",
-        background: "rgba(255, 255, 255, 0.92)",
-        color: "#17314f",
-      };
+  const cardBorder = "1px solid var(--sl-ui-feed-card-border)";
+  const cardBackground = "var(--sl-ui-feed-card-bg)";
+  const titleColor = "var(--sl-ui-text)";
+  const summaryColor = "var(--sl-ui-feed-muted-text)";
+  const bodyColor = "var(--sl-ui-feed-muted-text)";
+  const metaColor = "var(--sl-ui-feed-muted-text)";
+  const topicTone = residentFeedCssTone("feed-badge");
+  const allDayTone = {
+    bg: "var(--sl-ui-tool-active-bg)",
+    border: "var(--sl-ui-tool-active-border)",
+    color: "var(--sl-ui-tool-active-text)",
+  };
+  const newTone = residentFeedCssTone("feed-new-badge");
+  const ctaStyle = {
+    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+    background: "var(--sl-ui-modal-btn-secondary-bg)",
+    color: "var(--sl-ui-modal-btn-secondary-text)",
+  };
   return (
     <ResidentFeedWindow
       open={open}
@@ -15598,13 +17022,7 @@ function EventsWindow({
                   {event.topic_label || event.topic_key || "Event"}
                 </div>
                 {isNew ? (
-                  <div
-                    style={residentFeedBadgeStyle(
-                      darkMode
-                        ? { bg: "rgba(95, 208, 180, 0.22)", border: "rgba(126, 231, 195, 0.24)", color: "#c6f5e8" }
-                        : { bg: "rgba(28, 169, 118, 0.12)", border: "rgba(28, 169, 118, 0.18)", color: "#13684d" }
-                    )}
-                  >
+                  <div style={residentFeedBadgeStyle(newTone)}>
                     New
                   </div>
                 ) : null}
@@ -16175,6 +17593,45 @@ function makePotholeIdFromCoords(lat, lng) {
   return `PH${lng5}${lat5}`;
 }
 
+function displayIdDigitsFromCoords(lat, lng) {
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return "";
+  const lat5 = String(Math.abs(nLat).toFixed(5).split(".")[1] || "00000").slice(0, 5).padEnd(5, "0");
+  const lng5 = String(Math.abs(nLng).toFixed(5).split(".")[1] || "00000").slice(0, 5).padEnd(5, "0");
+  if (!/^\d{5}$/.test(lat5) || !/^\d{5}$/.test(lng5)) return "";
+  return `${lng5}${lat5}`;
+}
+
+function displayIdDigitsFromIncidentId(incidentId) {
+  const s = String(incidentId || "").trim();
+  if (!s) return "";
+  const m = s.match(/^[^:]+:([-]?\d+(?:\.\d+)?):([-]?\d+(?:\.\d+)?)$/);
+  if (!m) return "";
+  return displayIdDigitsFromCoords(Number(m[1]), Number(m[2]));
+}
+
+function incidentDisplayPrefixForDomain(domainKey) {
+  const domain = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true }) || String(domainKey || "").trim().toLowerCase();
+  const runtimePrefix = String(RUNTIME_DOMAIN_META.reportPrefixByDomain.get(domain) || "").trim().toUpperCase();
+  if (runtimePrefix) return runtimePrefix.replace(/[^A-Z0-9]/g, "") || runtimePrefix;
+  if (domain === "streetlights") return "SL";
+  if (domain === "street_signs") return "SS";
+  if (domain === "potholes") return "PH";
+  if (domain === "water_drain_issues") return "WD";
+  if (domain === "power_outage") return "PO";
+  if (domain === "water_main") return "WM";
+  const fallback = String(domain || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  return (fallback.slice(0, 3) || "INC");
+}
+
+function genericIncidentDisplayId(domainKey, lat, lng, incidentId = "") {
+  const prefix = incidentDisplayPrefixForDomain(domainKey);
+  const digits = displayIdDigitsFromCoords(lat, lng) || displayIdDigitsFromIncidentId(incidentId);
+  if (digits) return `${prefix}${digits}`;
+  return `${prefix}${shortIncidentKey(incidentId || `${domainKey || ""}|${lat || ""}|${lng || ""}`)}`;
+}
+
 function makeWaterDrainIdFromIncidentId(incidentId) {
   const s = String(incidentId || "").trim();
   if (!s) return "WD0000000000";
@@ -16282,17 +17739,23 @@ function nearestPotholeForPoint(lat, lng, potholes, radiusMeters = POTHOLE_MERGE
 function buildLightHistory({ reportRows, fixActionRows }) {
   const items = [];
   const hasWorkingReport = (reportRows || []).some((r) => isWorkingReportType(r));
+  const domainKey = normalizeDomainKeyOrSlug(
+    reportRows?.[0]?.domain_key || reportRows?.[0]?.domain || reportDomainFromLightId(reportRows?.[0]?.light_id) || "streetlights",
+    { allowUnknown: true }
+  ) || "streetlights";
 
   // reports
   for (const r of reportRows || []) {
     const typeKey = normalizeReportTypeValue(r.type || r.report_type);
+    const issueLabel = resolveReportIssueLabel(r, domainKey, waterDrainIncidentsById);
     const label = isWorkingReportType(typeKey)
       ? "Reported Working"
-      : (REPORT_TYPES[typeKey] || r.type || "Report");
+      : ((!["streetlights", "potholes"].includes(domainKey) && issueLabel) || (REPORT_TYPES[typeKey] || r.type || "Report"));
       items.push({
         kind: "report",
         ts: r.ts || 0,
         label,
+        issueLabel,
         note: r.note || "",
         type: r.type || "",
         report_number: reportNumberForRow(r, r.pothole_id ? "potholes" : reportDomainFromLightId(r.light_id)),
@@ -16401,6 +17864,9 @@ function normalizeOfficialSignRow(row) {
     sign_type: String(row.sign_type || "other").trim().toLowerCase() || "other",
     lat,
     lng,
+    nearest_address: String(row?.nearest_address || "").trim() || "",
+    nearest_cross_street: String(row?.nearest_cross_street || "").trim() || "",
+    nearest_landmark: String(row?.nearest_landmark || "").trim() || "",
     active: row.active !== false,
   };
 }
@@ -16455,6 +17921,15 @@ export default function App({ onBackToHub = null }) {
   const [googleMapsAuthError, setGoogleMapsAuthError] = useState("");
   const suppressMapClickRef = useRef({ until: 0 });
   const clickDelayRef = useRef({ lastTs: 0, timer: null, lastLatLng: null });
+  useEffect(() => {
+    return () => {
+      const ref = clickDelayRef.current;
+      if (ref?.timer) {
+        clearTimeout(ref.timer);
+        ref.timer = null;
+      }
+    };
+  }, []);
   const titleLogoSrc = prefersDarkMode ? TITLE_LOGO_DARK_SRC : TITLE_LOGO_SRC;
   const mobileTitleLogoSrc = prefersDarkMode ? MOBILE_TITLE_LOGO_DARK_SRC : MOBILE_TITLE_LOGO_SRC;
   const headerTenantKey = useMemo(() => String(tenant?.tenantKey || activeTenantKey() || "").trim(), [tenant?.tenantKey]);
@@ -16518,6 +17993,12 @@ export default function App({ onBackToHub = null }) {
     ? "min(560px, calc(100vw - 220px))"
     : "min(420px, calc(100vw - 132px))";
   const mobileHeaderCopyPadding = useWideAppShellHeader ? "0 12px" : "0 20px";
+  const mobileHeaderCopyBottomPadding = useWideAppShellHeader
+    ? 2
+    : (GMAPS_PLATFORM === "ios" ? 2 : 6);
+  const mobileHeaderCopyTranslateY = !useWideAppShellHeader && GMAPS_PLATFORM === "ios"
+    ? -10
+    : 0;
   const mobileHeaderTitleSize = useWideAppShellHeader ? "clamp(18px, 2vw, 24px)" : undefined;
   const mobileHeaderEyebrowSize = useWideAppShellHeader ? 9 : 10;
   const mobileHeaderGuardrailMarginTop = useWideAppShellHeader ? 0 : 2;
@@ -16528,14 +18009,12 @@ export default function App({ onBackToHub = null }) {
     width: 40,
     height: 40,
     borderRadius: 13,
-    border: "1px solid rgba(17, 39, 64, 0.18)",
-    background: prefersDarkMode
-      ? "linear-gradient(180deg, rgba(28, 43, 60, 0.96) 0%, rgba(19, 30, 43, 0.98) 100%)"
-      : "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(241, 246, 252, 0.96) 100%)",
+    border: "1px solid var(--sl-ui-tool-btn-border)",
+    background: "var(--sl-ui-tool-btn-bg)",
     boxShadow: prefersDarkMode
       ? "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.34)"
       : "inset 0 1px 0 rgba(255,255,255,0.9), 0 10px 22px rgba(17,39,64,0.20)",
-    color: "var(--sl-ui-text)",
+    color: "var(--sl-ui-tool-btn-text)",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -16549,38 +18028,20 @@ export default function App({ onBackToHub = null }) {
     borderRadius: 13,
   };
   const mapHeaderTheme = useMemo(
-    () => (
-      prefersDarkMode
-        ? {
-            eyebrowColor: "#5fd0b4",
-            textColor: "#edf6ff",
-            subtleText: "#c4d6e8",
-            desktopBackground: "rgba(11, 18, 29, 0.88)",
-            desktopBorder: "1px solid rgba(143, 170, 198, 0.16)",
-            desktopMenuBorder: "1px solid rgba(143, 170, 198, 0.28)",
-            desktopMenuBackground: "rgba(18, 29, 43, 0.92)",
-            desktopMenuShadow: "0 10px 24px rgba(0,0,0,0.22)",
-            mobileBackground: "linear-gradient(112deg, rgba(17, 27, 40, 0.94), rgba(20, 39, 49, 0.92))",
-            mobileBorder: "1px solid rgba(143, 170, 198, 0.24)",
-            mobileMenuBorder: "1px solid rgba(143, 170, 198, 0.28)",
-            mobileMenuBackground: "rgba(18, 29, 43, 0.92)",
-          }
-        : {
-            eyebrowColor: "#13856e",
-            textColor: "#102b46",
-            subtleText: "#4f6983",
-            desktopBackground: "rgba(248, 251, 255, 0.88)",
-            desktopBorder: "1px solid rgba(23, 49, 79, 0.08)",
-            desktopMenuBorder: "1px solid rgba(26, 49, 83, 0.22)",
-            desktopMenuBackground: "rgba(255,255,255,0.92)",
-            desktopMenuShadow: "none",
-            mobileBackground: "var(--mobile-header-background)",
-            mobileBorder: "var(--mobile-header-border)",
-            mobileMenuBorder: "var(--mobile-header-menu-border)",
-            mobileMenuBackground: "var(--mobile-header-menu-background)",
-          }
-    ),
-    [prefersDarkMode]
+    () => ({
+      eyebrowColor: "var(--sl-ui-header-eyebrow)",
+      textColor: "var(--sl-ui-header-text)",
+      desktopBackground: "var(--sl-ui-header-bg)",
+      desktopBorder: "1px solid var(--sl-ui-header-border)",
+      desktopMenuBorder: "1px solid var(--sl-ui-header-menu-border)",
+      desktopMenuBackground: "var(--sl-ui-header-menu-bg)",
+      desktopMenuShadow: "var(--sl-ui-header-menu-shadow)",
+      mobileBackground: "var(--sl-ui-header-bg)",
+      mobileBorder: "1px solid var(--sl-ui-header-border)",
+      mobileMenuBorder: "1px solid var(--sl-ui-header-menu-border)",
+      mobileMenuBackground: "var(--sl-ui-header-menu-bg)",
+    }),
+    []
   );
   const notificationTopics = useMemo(
     () => Object.entries(RESIDENT_NOTIFICATION_TOPIC_DETAILS).map(([topic_key, value]) => ({ topic_key, ...value })),
@@ -16869,7 +18330,9 @@ export default function App({ onBackToHub = null }) {
   const [incidentStateByKey, setIncidentStateByKey] = useState({});
   const [tenantDomainPublicConfigByDomain, setTenantDomainPublicConfigByDomain] = useState({});
   const [tenantRegistryIncidentDomains, setTenantRegistryIncidentDomains] = useState([]);
-  const [, setDomainIconRenderTick] = useState(0);
+  const [domainIconRenderTick, setDomainIconRenderTick] = useState(0);
+  const [mapUiThemeRenderTick, setMapUiThemeRenderTick] = useState(0);
+  const preloadedDomainIconUrlsRef = useRef(new Set());
   const [incidentRepairProgressByKey, setIncidentRepairProgressByKey] = useState({});
   const [waterDrainIncidentsById, setWaterDrainIncidentsById] = useState({});
   // Google Maps InfoWindow selection
@@ -16909,6 +18372,80 @@ export default function App({ onBackToHub = null }) {
   const [mapCenter, setMapCenter] = useState({ lat: USA_OVERVIEW[0], lng: USA_OVERVIEW[1] });
   const [mapBounds, setMapBounds] = useState(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("app_config")
+          .select("value")
+          .eq("key", MAP_UI_ICON_PUBLISHED_CONFIG_KEY)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error || !data?.value) {
+          clearCachedRuntimeUiIconManifest();
+          setRuntimeUiIconManifest({});
+          setDomainIconRenderTick((tick) => tick + 1);
+          return;
+        }
+        const normalizedValue = await normalizePublishedMapUiIconManifest(data.value);
+        if (cancelled) return;
+        writeCachedRuntimeUiIconManifest(normalizedValue);
+        setRuntimeUiIconManifest(normalizedValue);
+        setDomainIconRenderTick((tick) => tick + 1);
+      } catch {
+        if (cancelled) return;
+        const cachedValue = readCachedRuntimeUiIconManifest();
+        if (cachedValue) {
+          setRuntimeUiIconManifest(cachedValue);
+          setDomainIconRenderTick((tick) => tick + 1);
+          return;
+        }
+        setRuntimeUiIconManifest({});
+        setDomainIconRenderTick((tick) => tick + 1);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const builtInReportDomainOptions = useMemo(
+    () => REPORT_DOMAIN_OPTIONS.map((option) => ({
+      ...option,
+      iconSrc: resolveRuntimeDomainIconSrc(option.key, option.iconSrc, option.key),
+    })),
+    [domainIconRenderTick]
+  );
+  const runtimeUiTheme = useMemo(() => {
+    UI_ICON_THEME = mergeMapUiTheme(UI_ICON_THEME_SOURCE);
+    return UI_ICON_THEME;
+  }, [domainIconRenderTick, mapUiThemeRenderTick]);
+  UI_ICON_THEME = runtimeUiTheme;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    let timerId = null;
+    const scheduleRefresh = () => {
+      const now = Date.now();
+      const nextBoundary = sanitizeMapUiThemeSchedules(UI_ICON_THEME_SOURCE)
+        .flatMap((entry) => [Date.parse(String(entry?.start_at || "")), Date.parse(String(entry?.end_at || ""))])
+        .filter((value) => Number.isFinite(value) && value > now)
+        .sort((a, b) => a - b)[0];
+      if (!Number.isFinite(nextBoundary)) return;
+      const delay = Math.min(Math.max(nextBoundary - now + 250, 250), 2147483647);
+      timerId = window.setTimeout(() => {
+        UI_ICON_THEME = mergeMapUiTheme(UI_ICON_THEME_SOURCE);
+        setMapUiThemeRenderTick((tick) => tick + 1);
+        scheduleRefresh();
+      }, delay);
+    };
+    scheduleRefresh();
+    return () => {
+      if (timerId != null) window.clearTimeout(timerId);
+    };
+  }, [domainIconRenderTick]);
+
   const [reports, setReports] = useState([]);
   const [picked, setPicked] = useState(null);
 
@@ -16937,14 +18474,16 @@ export default function App({ onBackToHub = null }) {
   // activeLight: object for modal context
   const [activeLight, setActiveLight] = useState(null);
   const [domainReportTarget, setDomainReportTarget] = useState(null); // { domain, lat, lng, lightId, locationLabel }
+  const [domainDisclosureGateTarget, setDomainDisclosureGateTarget] = useState(null);
   const [domainReportNote, setDomainReportNote] = useState("");
   const [domainReportImageFile, setDomainReportImageFile] = useState(null);
   const [domainReportImagePreviewUrl, setDomainReportImagePreviewUrl] = useState("");
   const [markFixedImageFile, setMarkFixedImageFile] = useState(null);
   const [markFixedImagePreviewUrl, setMarkFixedImagePreviewUrl] = useState("");
   const [markFixedSubmitting, setMarkFixedSubmitting] = useState(false);
-  const [domainReportIssue, setDomainReportIssue] = useState(defaultDomainIssueFor("water_drain_issues"));
-  const [potholeConsentChecked, setPotholeConsentChecked] = useState(false);
+  const [domainReportIssue, setDomainReportIssue] = useState(defaultDomainIssueValue("water_drain_issues", WATER_DRAIN_ISSUE_OPTIONS));
+  const [domainReportTypeSelections, setDomainReportTypeSelections] = useState({});
+  const [domainDisclosureAcknowledgements, setDomainDisclosureAcknowledgements] = useState({});
   const [streetlightUtilityContext, setStreetlightUtilityContext] = useState({
     lightId: "",
     loading: false,
@@ -16955,20 +18494,6 @@ export default function App({ onBackToHub = null }) {
     nearestLandmark: "",
   });
   const [streetlightLocationInfoOpen, setStreetlightLocationInfoOpen] = useState(false);
-
-  useEffect(() => {
-    if (!domainReportTarget) {
-      setPotholeConsentChecked(false);
-      setDomainReportIssue(defaultDomainIssueFor(""));
-      setDomainReportImageFile(null);
-      setDomainReportImagePreviewUrl("");
-      return;
-    }
-    if (domainReportTarget?.domain === "potholes" || domainReportTarget?.domain === "water_drain_issues") {
-      setPotholeConsentChecked(false);
-    }
-    setDomainReportIssue(defaultDomainIssueFor(domainReportTarget?.domain));
-  }, [domainReportTarget?.domain, domainReportTarget?.lat, domainReportTarget?.lng]);
 
   useEffect(() => {
     if (!domainReportImageFile) {
@@ -17255,6 +18780,7 @@ export default function App({ onBackToHub = null }) {
   const [myReportsOpen, setMyReportsOpen] = useState(false);
   const [myReportsExpanded, setMyReportsExpanded] = useState(() => new Set()); // lightIds expanded
   const [myReportsDomain, setMyReportsDomain] = useState("potholes");
+  const [myReportsDomainFilters, setMyReportsDomainFilters] = useState([]);
   const [myReportsFocusIncidentId, setMyReportsFocusIncidentId] = useState("");
   const [myReportsFocusQuery, setMyReportsFocusQuery] = useState("");
   const [myReportsInViewOnly, setMyReportsInViewOnly] = useState(false);
@@ -17339,7 +18865,6 @@ export default function App({ onBackToHub = null }) {
     return String(list?.[0]?.key || "streetlights").trim() || "streetlights";
   }
 
-
   function toggleMyReportsExpanded(lightId) {
     setMyReportsExpanded((prev) => {
       const next = new Set(prev);
@@ -17358,7 +18883,9 @@ export default function App({ onBackToHub = null }) {
   }
 
   function openMyReports(opts = {}) {
-    const domainKey = String(opts?.domainKey || adminReportDomain || "potholes").trim() || "potholes";
+    const requestedDomainKey = String(opts?.domainKey || "").trim();
+    const defaultDomainKey = String(adminReportDomain || preferredInitialDomainKey(visibleDomainOptions) || "potholes").trim() || "potholes";
+    const domainKey = requestedDomainKey || defaultDomainKey;
     const focusIncidentId = String(opts?.focusIncidentId || "").trim();
     const focusQuery = String(opts?.focusQuery || "").trim();
     const inViewOnly = Boolean(opts?.inViewOnly);
@@ -17374,6 +18901,7 @@ export default function App({ onBackToHub = null }) {
     setEventsWindowOpen(false);
     setAdminReportDomain(domainKey);
     setMyReportsDomain(domainKey);
+    setMyReportsDomainFilters(requestedDomainKey ? [domainKey] : []);
     setMyReportsExpanded(focusIncidentId ? new Set([focusIncidentId]) : new Set());
     setMyReportsFocusIncidentId(focusIncidentId);
     setMyReportsFocusQuery(focusQuery);
@@ -17925,8 +19453,8 @@ export default function App({ onBackToHub = null }) {
   const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
   const [canEditDomainReports, setCanEditDomainReports] = useState(false);
   const tenantScopedReadClient = useMemo(
-    () => createTenantScopedReadClient(tenant?.tenantKey || activeTenantKey(), session?.access_token),
-    [tenant?.tenantKey, session?.access_token]
+    () => createTenantScopedReadClient(tenant?.tenantKey || activeTenantKey()),
+    [tenant?.tenantKey]
   );
   const followedCityOptions = useMemo(() => {
     const keys = new Set(
@@ -17974,13 +19502,22 @@ export default function App({ onBackToHub = null }) {
         const key = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
         if (!key) return null;
         const iconSrc = resolveRuntimeDomainIconSrc(key, row?.icon_src, row?.icon_key);
+        const issueTypes = normalizeDomainIssueOptions(row?.issue_types);
+        const typeOptions = normalizeDomainTypeOptionConfigs(row?.type_options, key);
         return {
           key,
           label: String(row?.label || key).trim() || key,
           icon: "📍",
           iconSrc,
+          iconRenderMode: normalizeDomainIconRenderMode(row?.icon_render_mode, iconSrc),
+          iconTintMode: normalizeDomainIconTintMode(row?.icon_tint_mode),
+          iconTintColor: normalizeDomainIconTintColor(row?.icon_tint_color, ""),
           markerColor: String(row?.marker_color || "").trim() || defaultMarkerColorForDomain(key),
           allowReportImages: row?.allow_report_images === true,
+          roadRequired: row?.road_required === true,
+          issueTypes,
+          typeOptions,
+          disclosures: normalizeDomainDisclosureRows(row?.report_disclosures, key, { fallbackToDefaults: true }),
           enabled: true,
           source: "registry",
         };
@@ -17988,9 +19525,16 @@ export default function App({ onBackToHub = null }) {
       .filter(Boolean);
   }, [tenantRegistryIncidentDomains]);
   const visibleDomainOptions = useMemo(() => {
-    const legacyOptions = REPORT_DOMAIN_OPTIONS.filter((d) => isDomainPublic(d.key)).map((d) => ({
+    const legacyOptions = builtInReportDomainOptions.filter((d) => isDomainPublic(d.key)).map((d) => ({
       ...d,
       allowReportImages: d.key === "potholes" || d.key === "water_drain_issues",
+      roadRequired: defaultRoadRequiredForDomain(d.key),
+      iconRenderMode: normalizeDomainIconRenderMode("", String(d?.iconSrc || "").trim()),
+      iconTintMode: DOMAIN_ICON_TINT_MODE.DEFAULT,
+      iconTintColor: "",
+      issueTypes: defaultDomainIssueOptions(d.key),
+      typeOptions: defaultDomainTypeOptionConfigs(d.key),
+      disclosures: defaultDomainDisclosures(d.key),
       enabled: true,
     }));
     if (!registryVisibleDomainOptions.length) return legacyOptions;
@@ -17999,20 +19543,150 @@ export default function App({ onBackToHub = null }) {
       merged.set(String(option?.key || "").trim().toLowerCase(), option);
     }
     return Array.from(merged.values());
-  }, [isDomainPublic, registryVisibleDomainOptions]);
+  }, [builtInReportDomainOptions, isDomainPublic, registryVisibleDomainOptions]);
+  const visibleReportDomainKeys = useMemo(
+    () => (visibleDomainOptions || [])
+      .map((option) => String(option?.key || "").trim())
+      .filter(Boolean),
+    [visibleDomainOptions]
+  );
+  const activeMyReportsDomainKeys = useMemo(() => {
+    const explicitKeys = normalizeExplicitDomainSelection(myReportsDomainFilters, visibleReportDomainKeys);
+    return explicitKeys.length ? explicitKeys : visibleReportDomainKeys;
+  }, [myReportsDomainFilters, visibleReportDomainKeys]);
+  const hasExplicitMyReportsDomainFilter = useMemo(
+    () => normalizeExplicitDomainSelection(myReportsDomainFilters, visibleReportDomainKeys).length > 0,
+    [myReportsDomainFilters, visibleReportDomainKeys]
+  );
+  const resetMyReportsDomainFilters = useCallback(() => {
+    setMyReportsDomainFilters([]);
+  }, []);
+  const toggleMyReportsDomainFilter = useCallback((domainKeyRaw) => {
+    const domainKey = String(domainKeyRaw || "").trim();
+    if (!domainKey) return;
+    setMyReportsDomainFilters((prev) => {
+      const current = normalizeExplicitDomainSelection(prev, visibleReportDomainKeys);
+      let next = [];
+      if (!current.length) {
+        next = visibleReportDomainKeys.filter((key) => key !== domainKey);
+      } else if (current.includes(domainKey)) {
+        next = current.length === 1 ? [] : current.filter((key) => key !== domainKey);
+      } else {
+        next = [...current, domainKey];
+      }
+      return normalizeExplicitDomainSelection(next, visibleReportDomainKeys);
+    });
+    setMyReportsDomain(domainKey);
+    setAdminReportDomain(domainKey);
+    setMyReportsExpanded(new Set());
+  }, [visibleReportDomainKeys]);
   const canAttachImageForDomain = useCallback((domainKeyRaw) => {
     const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
     if (!domainKey) return false;
     if (domainKey === "potholes" || domainKey === "water_drain_issues") return true;
     return (visibleDomainOptions || []).some((option) => option.key === domainKey && option.allowReportImages === true);
   }, [visibleDomainOptions]);
+  const isRoadRequiredForDomain = useCallback((domainKeyRaw) => {
+    const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!domainKey) return false;
+    const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
+    if (typeof cfg?.road_required === "boolean") return cfg.road_required === true;
+    const visibleOption = (visibleDomainOptions || []).find((option) => option.key === domainKey) || null;
+    if (typeof visibleOption?.roadRequired === "boolean") return visibleOption.roadRequired === true;
+    return defaultRoadRequiredForDomain(domainKey);
+  }, [tenantDomainPublicConfigByDomain, visibleDomainOptions]);
+  const domainIssueOptionsByDomain = useMemo(() => {
+    const next = new Map();
+    for (const option of visibleDomainOptions || []) {
+      const key = normalizeDomainKeyOrSlug(option?.key, { allowUnknown: true });
+      if (!key) continue;
+      const options = normalizeDomainIssueOptions(option?.issueTypes);
+      if (options.length) next.set(key, options);
+    }
+    for (const key of ["streetlights", "street_signs", "water_drain_issues"]) {
+      if (!next.has(key)) {
+        const fallbackOptions = defaultDomainIssueOptions(key);
+        if (fallbackOptions.length) next.set(key, fallbackOptions);
+      }
+    }
+    return next;
+  }, [visibleDomainOptions]);
+  const getDomainIssueOptions = useCallback((domainKeyRaw) => {
+    const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!key) return [];
+    return domainIssueOptionsByDomain.get(key) || defaultDomainIssueOptions(key);
+  }, [domainIssueOptionsByDomain]);
+  const domainTypeOptionConfigsByDomain = useMemo(() => {
+    const next = new Map();
+    for (const option of visibleDomainOptions || []) {
+      const key = normalizeDomainKeyOrSlug(option?.key, { allowUnknown: true });
+      if (!key) continue;
+      const options = normalizeDomainTypeOptionConfigs(option?.typeOptions, key);
+      if (options.length) next.set(key, options);
+    }
+    for (const key of ["street_signs"]) {
+      if (!next.has(key)) {
+        const fallbackOptions = defaultDomainTypeOptionConfigs(key);
+        if (fallbackOptions.length) next.set(key, fallbackOptions);
+      }
+    }
+    return next;
+  }, [visibleDomainOptions]);
+  const getDomainTypeOptionConfigs = useCallback((domainKeyRaw) => {
+    const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!key) return [];
+    return domainTypeOptionConfigsByDomain.get(key) || defaultDomainTypeOptionConfigs(key);
+  }, [domainTypeOptionConfigsByDomain]);
+  const streetlightIssueOptions = useMemo(
+    () => getDomainIssueOptions("streetlights"),
+    [getDomainIssueOptions]
+  );
   useEffect(() => {
-    const urls = (visibleDomainOptions || [])
+    const nextDefaultValue = defaultDomainIssueValue("streetlights", streetlightIssueOptions);
+    if (!nextDefaultValue) return;
+    const currentValue = String(reportType || "").trim().toLowerCase();
+    const validValues = new Set(normalizeDomainIssueOptions(streetlightIssueOptions).map((option) => option.value));
+    if (currentValue && validValues.has(currentValue)) return;
+    setReportType(nextDefaultValue);
+  }, [streetlightIssueOptions, reportType]);
+  const getDomainDisclosures = useCallback((domainKeyRaw, position = "") => {
+    const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!key) return [];
+    const hasRuntimeConfig = RUNTIME_DOMAIN_META.disclosuresByDomain.has(key);
+    const all = hasRuntimeConfig
+      ? normalizeDomainDisclosureRows(RUNTIME_DOMAIN_META.disclosuresByDomain.get(key), key)
+      : defaultDomainDisclosures(key);
+    const normalizedPosition = String(position || "").trim().toLowerCase();
+    if (!normalizedPosition) return all;
+    return all.filter((row) => row?.display_position === normalizedPosition);
+  }, []);
+  const resolveVisibleDomainIconSrc = useCallback((domainKeyRaw, fallback = "") => {
+    const key = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true });
+    if (!key) return String(fallback || "").trim();
+    return String(
+      RUNTIME_DOMAIN_META.iconSrcByDomain.get(key)
+      || visibleDomainOptions.find((option) => option.key === key)?.iconSrc
+      || builtInReportDomainOptions.find((option) => option.key === key)?.iconSrc
+      || fallback
+      || ""
+    ).trim();
+  }, [builtInReportDomainOptions, visibleDomainOptions]);
+  const visibleDomainIconUrlSignature = useMemo(
+    () => (visibleDomainOptions || [])
       .map((option) => String(option?.iconSrc || "").trim())
-      .filter((url) => /^(https?:|\/)/i.test(url));
+      .filter((url) => /^(https?:|\/)/i.test(url))
+      .join("|"),
+    [visibleDomainOptions]
+  );
+  useEffect(() => {
+    const urls = visibleDomainIconUrlSignature
+      ? visibleDomainIconUrlSignature.split("|").filter(Boolean)
+      : [];
     if (!urls.length || typeof window === "undefined") return;
     let cancelled = false;
     urls.forEach((url) => {
+      if (preloadedDomainIconUrlsRef.current.has(url)) return;
+      preloadedDomainIconUrlsRef.current.add(url);
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.decoding = "async";
@@ -18025,26 +19699,46 @@ export default function App({ onBackToHub = null }) {
     return () => {
       cancelled = true;
     };
-  }, [visibleDomainOptions]);
+  }, [visibleDomainIconUrlSignature]);
+  useEffect(() => {
+    if (!domainReportTarget) {
+      setDomainDisclosureAcknowledgements({});
+      setDomainReportIssue(defaultDomainIssueValue("", []));
+      setDomainReportTypeSelections({});
+      setDomainReportImageFile(null);
+      setDomainReportImagePreviewUrl("");
+      return;
+    }
+    const domainOptions = getDomainIssueOptions(domainReportTarget?.domain);
+    setDomainReportIssue((prev) => {
+      const normalizedPrev = String(prev || "").trim().toLowerCase();
+      if (domainOptions.some((option) => option.value === normalizedPrev)) {
+        return normalizedPrev;
+      }
+      return defaultDomainIssueValue(domainReportTarget?.domain, domainOptions);
+    });
+    const domainTypeOptionConfigs = getDomainTypeOptionConfigs(domainReportTarget?.domain);
+    setDomainReportTypeSelections(buildInitialDomainTypeSelections(domainReportTarget, domainTypeOptionConfigs));
+  }, [domainReportTarget, getDomainIssueOptions, getDomainTypeOptionConfigs]);
   const assetLayerOptions = useMemo(() => {
     const includeInternalAssetLayers = Boolean(isAdmin);
     const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isTenantAssetBackedDomain(d.key));
     const next = [...visibleAssetOptions];
     const hasStreetlightLayer = next.some((d) => d.key === "streetlights");
     if (!hasStreetlightLayer) {
-      const streetlightsOption = REPORT_DOMAIN_OPTIONS.find((d) => d.key === "streetlights");
+      const streetlightsOption = builtInReportDomainOptions.find((d) => d.key === "streetlights");
       if (streetlightsOption) {
         next.unshift({ ...streetlightsOption, enabled: true });
       }
     }
     if (includeInternalAssetLayers) {
-      for (const option of REPORT_DOMAIN_OPTIONS.filter((d) => isAssetBackedDomainKey(d.key))) {
+      for (const option of builtInReportDomainOptions.filter((d) => isAssetBackedDomainKey(d.key))) {
         if (next.some((d) => d.key === option.key)) continue;
         next.push({ ...option, enabled: true });
       }
     }
     return next;
-  }, [visibleDomainOptions, isAdmin, isTenantAssetBackedDomain]);
+  }, [builtInReportDomainOptions, visibleDomainOptions, isAdmin, isTenantAssetBackedDomain]);
   const incidentLayerDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => isTenantIncidentDrivenDomain(d.key)),
     [visibleDomainOptions, isTenantIncidentDrivenDomain]
@@ -18068,6 +19762,8 @@ export default function App({ onBackToHub = null }) {
       .filter(Boolean);
   }, [activeIncidentMapFilterKeys, incidentLayerDomainOptions]);
   const hasExplicitIncidentMapFilter = activeIncidentMapFilterKeys.length > 0;
+  const incidentLayerButtonEnabled = isRuntimeUiIconEnabled("incidentReportingLayer", UI_ICON_SRC.incidentReportingLayer);
+  const allIncidentReportsOptionEnabled = isRuntimeUiIconEnabled("allIncidentReports", UI_ICON_SRC.allIncidentReports);
   const layerOptions = useMemo(() => {
     const opts = [...assetLayerOptions];
     if (incidentLayerDomainOptions.length) {
@@ -18076,11 +19772,12 @@ export default function App({ onBackToHub = null }) {
         label: "Incident Reporting",
         icon: "📍",
         iconSrc: UI_ICON_SRC.incidentReportingLayer,
-        enabled: true,
+        iconKey: "incidentReportingLayer",
+        enabled: incidentLayerButtonEnabled,
       });
     }
     return opts;
-  }, [assetLayerOptions, incidentLayerDomainOptions]);
+  }, [assetLayerOptions, domainIconRenderTick, incidentLayerDomainOptions, incidentLayerButtonEnabled]);
   const resolvedIncidentMapDomain = useMemo(() => {
     if (incidentLayerDomainOptions.some((d) => d.key === lastIncidentMapDomain)) return lastIncidentMapDomain;
     if (incidentLayerDomainOptions.some((d) => d.key === adminReportDomain)) return adminReportDomain;
@@ -18157,9 +19854,11 @@ export default function App({ onBackToHub = null }) {
   useEffect(() => {
     if (!isAdmin) return;
     if (!myReportsOpen) return;
+    if (hasExplicitMyReportsDomainFilter) return;
+    if (activeMyReportsDomainKeys.length !== 1) return;
     if (myReportsDomain === adminReportDomain) return;
     setMyReportsDomain(adminReportDomain);
-  }, [isAdmin, myReportsOpen, myReportsDomain, adminReportDomain]);
+  }, [isAdmin, myReportsOpen, myReportsDomain, adminReportDomain, hasExplicitMyReportsDomainFilter, activeMyReportsDomainKeys]);
 
       useEffect(() => {
       // simple bridge so AccountMenuPanel can open auth gate without prop-drilling
@@ -18635,8 +20334,6 @@ export default function App({ onBackToHub = null }) {
   const [pendingDomainSwitchTarget, setPendingDomainSwitchTarget] = useState(null);
   const [queueSignTypeOpen, setQueueSignTypeOpen] = useState(false);
   const [pendingQueuedSign, setPendingQueuedSign] = useState(null); // {lat, lng, sign_type}
-  const [potholeAdvisoryOpen, setPotholeAdvisoryOpen] = useState(false);
-  const [pendingPotholeDomainTarget, setPendingPotholeDomainTarget] = useState(null);
   const [incidentTypePickerOpen, setIncidentTypePickerOpen] = useState(false);
   const [pendingIncidentTypeTarget, setPendingIncidentTypeTarget] = useState(null);
 
@@ -18714,38 +20411,127 @@ export default function App({ onBackToHub = null }) {
     [incidentLayerDomainOptions, isTenantAssetBackedDomain]
   );
 
-  function startIncidentReportAtPoint(domainKey, lat, lng) {
+  function buildRoadValidatedSubmitGeo(target) {
+    return {
+      isRoad: true,
+      label: String(target?.locationLabel || "").trim(),
+      nearestAddress: String(target?.nearestAddress || "").trim(),
+      nearestStreet: "",
+      nearestCrossStreet: String(target?.nearestCrossStreet || "").trim(),
+      nearestLandmark: String(target?.nearestLandmark || "").trim(),
+      nearestIntersection: String(target?.nearestIntersection || "").trim(),
+      snappedLat: Number(target?.lat),
+      snappedLng: Number(target?.lng),
+      distance: 0,
+      validationUnavailable: false,
+    };
+  }
+
+  function buildRoadValidatedDomainTarget(target, roadCheck) {
+    const sourceLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target.sourceLat) : Number(target?.lat);
+    const sourceLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target.sourceLng) : Number(target?.lng);
+    const submitLat = Number.isFinite(Number(roadCheck?.snappedLat)) ? Number(roadCheck.snappedLat) : Number(target?.lat);
+    const submitLng = Number.isFinite(Number(roadCheck?.snappedLng)) ? Number(roadCheck.snappedLng) : Number(target?.lng);
+    const nearestAddress = String(roadCheck?.nearestAddress || target?.nearestAddress || "").trim();
+    const nearestLandmark = String(roadCheck?.nearestLandmark || target?.nearestLandmark || "").trim();
+    const nearestCrossStreet = String(roadCheck?.nearestCrossStreet || target?.nearestCrossStreet || "").trim();
+    const nearestIntersection = String(roadCheck?.nearestIntersection || target?.nearestIntersection || "").trim();
+    const locationBase = nearestAddress || String(target?.locationLabel || "").trim() || `${submitLat.toFixed(5)}, ${submitLng.toFixed(5)}`;
+    const locationLabel = nearestLandmark ? `${locationBase} (Near: ${nearestLandmark})` : locationBase;
+    return {
+      ...(target || {}),
+      lat: submitLat,
+      lng: submitLng,
+      sourceLat,
+      sourceLng,
+      locationLabel,
+      nearestAddress,
+      nearestLandmark,
+      nearestCrossStreet,
+      nearestIntersection,
+      roadValidated: true,
+      roadValidatedAt: Date.now(),
+      roadValidationUnavailable: false,
+    };
+  }
+
+  async function validateAndPrepareRoadTarget(target) {
+    const sourceLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target.sourceLat) : Number(target?.lat);
+    const sourceLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target.sourceLng) : Number(target?.lng);
+    if (!Number.isFinite(sourceLat) || !Number.isFinite(sourceLng)) return null;
+    const roadCheck = await reverseGeocodeRoadLabel(sourceLat, sourceLng, { mode: "full" });
+    if (roadCheck?.validationUnavailable) {
+      openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
+      return null;
+    }
+    if (!roadCheck?.isRoad) {
+      openNotice("⚠️", "Road required", "This report must be placed on a road. Tap directly on the road surface and try again.");
+      return null;
+    }
+    return buildRoadValidatedDomainTarget(target, roadCheck);
+  }
+
+  async function openDomainReportFlow(target, options = {}) {
+    if (!target) return;
+    let nextTarget = target;
+    if (
+      isRoadRequiredForDomain(target?.domain)
+      && options?.skipRoadValidation !== true
+      && !target?.roadValidated
+    ) {
+      const preparedTarget = await validateAndPrepareRoadTarget(target);
+      if (!preparedTarget) return;
+      nextTarget = preparedTarget;
+    }
+    const beforeFormDisclosures = getDomainDisclosures(nextTarget?.domain, "before_form");
+    setDomainDisclosureAcknowledgements({});
+    setDomainReportNote("");
+    setDomainReportImageFile(null);
+    setDomainReportImagePreviewUrl("");
+    setDomainReportIssue(defaultDomainIssueValue(nextTarget?.domain, getDomainIssueOptions(nextTarget?.domain)));
+    setDomainReportTypeSelections(buildInitialDomainTypeSelections(nextTarget, getDomainTypeOptionConfigs(nextTarget?.domain)));
+    if (beforeFormDisclosures.length && options?.skipDisclosureGate !== true) {
+      setDomainReportTarget(null);
+      setDomainDisclosureGateTarget(nextTarget);
+      return;
+    }
+    setDomainDisclosureGateTarget(null);
+    setDomainReportTarget(nextTarget);
+  }
+
+  async function continueDomainReportAfterDisclosureGate() {
+    let pendingTarget = domainDisclosureGateTarget;
+    if (!pendingTarget) return;
+    if (
+      isRoadRequiredForDomain(pendingTarget?.domain)
+      && !pendingTarget?.roadValidated
+    ) {
+      const preparedTarget = await validateAndPrepareRoadTarget(pendingTarget);
+      if (!preparedTarget) return;
+      pendingTarget = preparedTarget;
+    }
+    if (
+      pendingTarget?.domain === "potholes"
+      && !municipalBoundaryGate(
+        "potholes",
+        pendingTarget?.sourceLat ?? pendingTarget?.lat,
+        pendingTarget?.sourceLng ?? pendingTarget?.lng,
+        { showNotice: true }
+      )
+    ) {
+      return;
+    }
+    setDomainDisclosureGateTarget(null);
+    setDomainReportTarget(pendingTarget);
+  }
+
+  async function startIncidentReportAtPoint(domainKey, lat, lng) {
     const normalizedDomain = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true });
     if (!normalizedDomain || isTenantAssetBackedDomain(normalizedDomain)) return;
 
     const targetLat = Number(lat);
     const targetLng = Number(lng);
     if (!Number.isFinite(targetLat) || !Number.isFinite(targetLng)) return;
-
-    if (normalizedDomain === "potholes") {
-      const domainLabel =
-        visibleDomainOptions.find((d) => d.key === normalizedDomain)?.label || "Pothole";
-      const targetToken = `pothole:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-      const provisionalTarget = {
-        domain: normalizedDomain,
-        domainLabel,
-        lat: targetLat,
-        lng: targetLng,
-        sourceLat: targetLat,
-        sourceLng: targetLng,
-        lightId: makePotholeIdFromCoords(targetLat, targetLng),
-        pothole_id: null,
-        locationLabel: `${targetLat.toFixed(5)}, ${targetLng.toFixed(5)}`,
-        nearestAddress: "",
-        nearestLandmark: "",
-        nearestCrossStreet: "",
-        nearestIntersection: "",
-        _targetToken: targetToken,
-      };
-      setPendingPotholeDomainTarget(provisionalTarget);
-      setPotholeAdvisoryOpen(true);
-      return;
-    }
 
     const nearestWaterMarker = normalizedDomain === "water_drain_issues"
       ? nearestWaterDrainMarkerForPoint(targetLat, targetLng, waterDrainDomainMarkers)
@@ -18771,8 +20557,7 @@ export default function App({ onBackToHub = null }) {
       nearestCrossStreet: "",
       nearestIntersection: "",
     };
-    setDomainReportTarget(nextTarget);
-    setDomainReportNote("");
+    await openDomainReportFlow(nextTarget);
   }
 
   function requestAdminDomainSwitch(domainKey, domainLabel, opts = {}) {
@@ -19488,7 +21273,7 @@ export default function App({ onBackToHub = null }) {
           .maybeSingle();
 
       const scopedReadClient =
-        tenantScopedReadClient || createTenantScopedReadClient(tenantKey, session?.access_token) || supabase;
+        tenantScopedReadClient || createTenantScopedReadClient(tenantKey) || supabase;
       pushTenantBoundaryDiagnostic("tenant_map_features:fetch-start", {
         tenantKey,
         resolvedTenantMapFeaturesTenantKey,
@@ -19510,7 +21295,7 @@ export default function App({ onBackToHub = null }) {
           usingMemoizedScopedClient: Boolean(tenantScopedReadClient),
           usingSharedSupabaseClient: scopedReadClient === supabase,
         }, { forceWarn: true });
-        const retryClient = createTenantScopedReadClient(tenantKey, session?.access_token);
+        const retryClient = createTenantScopedReadClient(tenantKey);
         if (retryClient) {
           const retryResult = await fetchTenantMapFeatures(retryClient);
           data = retryResult.data;
@@ -20262,7 +22047,8 @@ export default function App({ onBackToHub = null }) {
     }
     const hasMyDomain = visibleDomainOptions.some((d) => d.key === myReportsDomain);
     if (!hasMyDomain) setMyReportsDomain(preferredDomainKey);
-  }, [visibleDomainOptions, adminReportDomain, myReportsDomain, isTenantIncidentDrivenDomain]);
+    setMyReportsDomainFilters((prev) => normalizeExplicitDomainSelection(prev, visibleReportDomainKeys));
+  }, [visibleDomainOptions, visibleReportDomainKeys, adminReportDomain, myReportsDomain, isTenantIncidentDrivenDomain]);
 
   const previousTenantKeyRef = useRef("");
   useEffect(() => {
@@ -20280,6 +22066,7 @@ export default function App({ onBackToHub = null }) {
     setActiveMapLayerKey(isTenantIncidentDrivenDomain(preferredDomainKey) ? INCIDENT_REPORTING_LAYER_KEY : preferredDomainKey);
     setAdminReportDomain(preferredDomainKey);
     setMyReportsDomain(preferredDomainKey);
+    setMyReportsDomainFilters([]);
     setMyReportsReportedByMode("me");
     closeMyReports();
     closeOpenReports();
@@ -21328,8 +23115,9 @@ async function selectTenantScopedPublicRows(
     let cancelled = false;
     async function loadAll() {
       const loadTenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
-      const readClient = tenantScopedReadClient || supabase;
-      const preferScopedPublicReads = Boolean(tenantScopedReadClient);
+      const publicReadClient = tenantScopedReadClient || createTenantScopedReadClient(loadTenantKey) || supabase;
+      const authedReadClient = supabase;
+      const preferScopedPublicReads = publicReadClient !== supabase;
       setLoading(true);
       setError("");
 
@@ -21342,10 +23130,10 @@ async function selectTenantScopedPublicRows(
       const actionsSelectFull = "id, light_id, action, note, created_at, actor_user_id";
 
       const reportsPromise = reportsAdminView
-        ? readClient.from("reports").select(reportSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
+        ? authedReadClient.from("reports").select(reportSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
         : (async () => {
             const first = await selectTenantScopedPublicRows(
-              readClient,
+              publicReadClient,
               "reports_public",
               reportSelectPublic,
               loadTenantKey,
@@ -21359,7 +23147,7 @@ async function selectTenantScopedPublicRows(
               first?.error && isMissingTenantKeyColumnError(first.error);
             if (!missingReportNumber && !missingTenantKey) return first;
             return selectTenantScopedPublicRows(
-              readClient,
+              publicReadClient,
               "reports_public",
               reportSelectPublicLegacy,
               loadTenantKey,
@@ -21369,7 +23157,7 @@ async function selectTenantScopedPublicRows(
           })();
 
       const ownReportsPromise = (!reportsAdminView && isAuthed)
-        ? readClient
+        ? authedReadClient
             .from("reports")
             .select(reportSelectFull)
             .eq("tenant_key", loadTenantKey)
@@ -21377,16 +23165,16 @@ async function selectTenantScopedPublicRows(
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
       const utilityStatusPromise = isAuthed
-        ? readClient
+        ? authedReadClient
             .from("utility_report_status")
             .select("incident_id, report_reference, updated_at, reported_at")
             .eq("tenant_key", loadTenantKey)
             .eq("user_id", session.user.id)
             .order("updated_at", { ascending: false })
         : Promise.resolve({ data: [], error: null });
-      const utilitySignalCountsPromise = readClient.rpc("streetlight_utility_signal_counts");
+      const utilitySignalCountsPromise = publicReadClient.rpc("streetlight_utility_signal_counts");
       const utilityStatusAllPromise = reportsAdminView
-        ? readClient
+        ? authedReadClient
             .from("utility_report_status")
             .select("incident_id")
             .eq("tenant_key", loadTenantKey)
@@ -21394,9 +23182,9 @@ async function selectTenantScopedPublicRows(
         : Promise.resolve({ data: [], error: null });
 
       const actionsPromise = reportsAdminView
-        ? readClient.from("light_actions").select(actionsSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
+        ? authedReadClient.from("light_actions").select(actionsSelectFull).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false })
         : selectTenantScopedPublicRows(
-            readClient,
+            publicReadClient,
             "light_actions_public",
             actionsSelectPublic,
             loadTenantKey,
@@ -21418,13 +23206,13 @@ async function selectTenantScopedPublicRows(
         utilityStatusPromise,
         utilitySignalCountsPromise,
         utilityStatusAllPromise,
-        readClient.from("fixed_lights").select("*").eq("tenant_key", loadTenantKey),
+        publicReadClient.from("fixed_lights").select("*").eq("tenant_key", loadTenantKey),
         actionsPromise,
       ]);
       let utilityStatusData = utilityStatusDataRaw;
       let utilityStatusErr = utilityStatusErrRaw;
       if (utilityStatusErr && isMissingUtilityReportReferenceColumnError(utilityStatusErr) && isAuthed) {
-        const fallback = await readClient
+        const fallback = await authedReadClient
           .from("utility_report_status")
           .select("incident_id, updated_at, reported_at")
           .eq("tenant_key", loadTenantKey)
@@ -21437,7 +23225,7 @@ async function selectTenantScopedPublicRows(
       let repErr = repErrRaw;
       if (!reportsAdminView && (repErr || !(Array.isArray(reportData) && reportData.length))) {
         try {
-          const fallback = await readClient
+          const fallback = await publicReadClient
             .from("reports")
             .select(reportSelectPublicWithNumber)
             .eq("tenant_key", loadTenantKey)
@@ -21461,8 +23249,8 @@ async function selectTenantScopedPublicRows(
       let potholeRepErr = null;
       try {
         const [{ data: pd, error: pe }, { data: prd, error: pre }] = await Promise.all([
-          readClient.from("potholes").select(potholeSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: true }),
-          readClient.from("pothole_reports").select(potholeReportSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false }),
+          publicReadClient.from("potholes").select(potholeSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: true }),
+          publicReadClient.from("pothole_reports").select(potholeReportSelect).eq("tenant_key", loadTenantKey).order("created_at", { ascending: false }),
         ]);
         potholeData = pd || [];
         potholeRepData = prd || [];
@@ -21482,19 +23270,19 @@ async function selectTenantScopedPublicRows(
       let waterDrainIncidentErr = null;
       let cityBoundaryErr = null;
       try {
-        officialData = await fetchAllOfficialLights(readClient, loadTenantKey);
+        officialData = await fetchAllOfficialLights(publicReadClient, loadTenantKey);
       } catch (e) {
         offErr = e;
         console.error("[official_lights] load error:", e);
       }
       try {
-        officialSignData = await fetchAllOfficialSigns(readClient, loadTenantKey);
+        officialSignData = await fetchAllOfficialSigns(publicReadClient, loadTenantKey);
       } catch (e) {
         signErr = e;
         console.error("[official_signs] load error:", e);
       }
       try {
-        incidentStateRows = await fetchAllIncidentStateCurrent(readClient, loadTenantKey);
+        incidentStateRows = await fetchAllIncidentStateCurrent(publicReadClient, loadTenantKey);
       } catch (e) {
         incidentStateErr = e;
         if (!isExpectedPermissionError(e)) {
@@ -21502,7 +23290,7 @@ async function selectTenantScopedPublicRows(
         }
       }
       try {
-        waterDrainIncidentRows = await fetchAllWaterDrainIncidents(readClient, loadTenantKey);
+        waterDrainIncidentRows = await fetchAllWaterDrainIncidents(publicReadClient, loadTenantKey);
       } catch (e) {
         waterDrainIncidentErr = e;
         const msg = String(e?.message || "").toLowerCase();
@@ -21513,7 +23301,7 @@ async function selectTenantScopedPublicRows(
       try {
         let boundaryKey = tenantBoundaryConfigKey();
         const tenantKey = loadTenantKey;
-        const tenantBoundary = await readClient
+        const tenantBoundary = await publicReadClient
           .from("tenants")
           .select("boundary_config_key")
           .eq("tenant_key", tenantKey)
@@ -21522,13 +23310,13 @@ async function selectTenantScopedPublicRows(
           const configuredBoundaryKey = String(tenantBoundary.data.boundary_config_key || "").trim();
           if (configuredBoundaryKey) boundaryKey = configuredBoundaryKey;
         }
-        let { data: cfg, error: cfgErr } = await readClient
+        let { data: cfg, error: cfgErr } = await publicReadClient
           .from("app_config")
           .select("value")
           .eq("key", boundaryKey)
           .maybeSingle();
         if ((!cfg?.value || cfgErr) && tenantKey === "ashtabulacity" && boundaryKey !== "ashtabula_city_geojson") {
-          const fallback = await readClient
+          const fallback = await publicReadClient
             .from("app_config")
             .select("value")
             .eq("key", "ashtabula_city_geojson")
@@ -21539,7 +23327,7 @@ async function selectTenantScopedPublicRows(
           }
         }
         if (!cfg?.value || cfgErr) {
-          const { data: boundaryFiles, error: boundaryFilesErr } = await readClient
+          const { data: boundaryFiles, error: boundaryFilesErr } = await publicReadClient
             .from("tenant_files")
             .select("storage_bucket,storage_path")
             .eq("tenant_key", tenantKey)
@@ -21552,7 +23340,7 @@ async function selectTenantScopedPublicRows(
             const bucket = String(newest?.storage_bucket || "tenant-files").trim() || "tenant-files";
             const path = String(newest?.storage_path || "").trim();
             if (path) {
-              const signed = await readClient.storage.from(bucket).createSignedUrl(path, 90);
+              const signed = await publicReadClient.storage.from(bucket).createSignedUrl(path, 90);
               const signedUrl = String(signed?.data?.signedUrl || "").trim();
               if (!signed?.error && signedUrl) {
                 try {
@@ -22401,8 +24189,9 @@ async function selectTenantScopedPublicRows(
     label: "Incident Reporting",
     icon: "📍",
     iconSrc: UI_ICON_SRC.incidentReportingLayer,
-    enabled: true,
-  }), []);
+    iconKey: "incidentReportingLayer",
+    enabled: incidentLayerButtonEnabled,
+  }), [domainIconRenderTick, incidentLayerButtonEnabled]);
   const activeLayerMeta =
     (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
       ? {
@@ -22422,15 +24211,16 @@ async function selectTenantScopedPublicRows(
     || layerOptions[0]
     || (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY ? incidentLayerMeta : null)
     || visibleDomainOptions.find((d) => d.key === adminReportDomain)
-    || REPORT_DOMAIN_OPTIONS[0];
+    || builtInReportDomainOptions[0];
   const mobilePrimaryLayerOptions = useMemo(() => {
     const opts = [];
-    if (incidentLayerDomainOptions.length) {
+    if (incidentLayerDomainOptions.length && incidentLayerButtonEnabled) {
       opts.push(incidentLayerMeta);
     }
     const streetlightLayerMeta =
       layerOptions.find((d) => d.key === "streetlights")
       || visibleDomainOptions.find((d) => d.key === "streetlights")
+      || builtInReportDomainOptions.find((d) => d.key === "streetlights")
       || { key: "streetlights", label: "Streetlights", iconSrc: UI_ICON_SRC.streetlight, enabled: true };
     if (streetlightLayerMeta?.key === "streetlights") {
       opts.push({
@@ -22440,7 +24230,11 @@ async function selectTenantScopedPublicRows(
       });
     }
     return opts;
-  }, [incidentLayerDomainOptions.length, incidentLayerMeta, layerOptions, visibleDomainOptions, hasExplicitIncidentMapFilter, activeIncidentMapFilterKeys.length, resolvedIncidentLayerOption]);
+  }, [builtInReportDomainOptions, incidentLayerDomainOptions.length, incidentLayerMeta, incidentLayerButtonEnabled, layerOptions, visibleDomainOptions, hasExplicitIncidentMapFilter, activeIncidentMapFilterKeys.length, resolvedIncidentLayerOption]);
+  const webStreetlightsPrimaryOption = useMemo(
+    () => mobilePrimaryLayerOptions.find((layer) => layer?.key === "streetlights") || null,
+    [mobilePrimaryLayerOptions]
+  );
   const canUseStreetlightBulk = isStreetlightsLayerActive;
   const showMobileMapTabContent =
     !myReportsOpen &&
@@ -22867,6 +24661,9 @@ async function selectTenantScopedPublicRows(
         sign_type: String(s?.sign_type || "other").trim().toLowerCase() || "other",
         lat: Number(s.lat),
         lng: Number(s.lng),
+        nearest_address: String(s?.nearest_address || "").trim(),
+        nearest_cross_street: String(s?.nearest_cross_street || "").trim(),
+        nearest_landmark: String(s?.nearest_landmark || "").trim(),
         count: 0,
         lastTs: 0,
         lastFixTs,
@@ -22881,6 +24678,15 @@ async function selectTenantScopedPublicRows(
       if (lastFixTs && ts <= lastFixTs) continue;
       marker.count += 1;
       if (ts > marker.lastTs) marker.lastTs = ts;
+      if (!String(marker.nearest_address || "").trim()) {
+        marker.nearest_address = readAddressFromNote(r?.note) || readLocationFromNote(r?.note) || "";
+      }
+      if (!String(marker.nearest_cross_street || "").trim()) {
+        marker.nearest_cross_street = readCrossStreetFromNote(r?.note) || "";
+      }
+      if (!String(marker.nearest_landmark || "").trim()) {
+        marker.nearest_landmark = readLandmarkFromNote(r?.note) || "";
+      }
     }
     return Array.from(byId.values())
       .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
@@ -22948,6 +24754,10 @@ async function selectTenantScopedPublicRows(
       const mapKey = `${domainKey}::${lid}`;
       const domainOption = domainMetaByKey.get(domainKey) || null;
       const prev = byDomainLight.get(mapKey);
+      const noteAddress = readAddressFromNote(r?.note) || "";
+      const noteCrossStreet = readCrossStreetFromNote(r?.note) || "";
+      const noteIntersection = readIntersectionFromNote(r?.note) || "";
+      const noteLandmark = readLandmarkFromNote(r?.note) || "";
       if (!prev) {
         byDomainLight.set(mapKey, {
           id: lid,
@@ -22961,12 +24771,28 @@ async function selectTenantScopedPublicRows(
           count: 1,
           lastTs: Number(r?.ts || 0) || 0,
           rows: [r],
+          nearest_address: noteAddress,
+          nearest_cross_street: noteCrossStreet,
+          nearest_intersection: noteIntersection,
+          nearest_landmark: noteLandmark,
           location_label: readLocationFromNote(r?.note) || "",
         });
       } else {
         prev.count += 1;
         if (Number(r?.ts || 0) > prev.lastTs) prev.lastTs = Number(r?.ts || 0);
         prev.rows = [...(Array.isArray(prev.rows) ? prev.rows : []), r];
+        if (!String(prev.nearest_address || "").trim()) {
+          prev.nearest_address = noteAddress;
+        }
+        if (!String(prev.nearest_cross_street || "").trim()) {
+          prev.nearest_cross_street = noteCrossStreet;
+        }
+        if (!String(prev.nearest_intersection || "").trim()) {
+          prev.nearest_intersection = noteIntersection;
+        }
+        if (!String(prev.nearest_landmark || "").trim()) {
+          prev.nearest_landmark = noteLandmark;
+        }
         if (!String(prev.location_label || "").trim()) {
           prev.location_label = readLocationFromNote(r?.note) || "";
         }
@@ -23128,6 +24954,7 @@ async function selectTenantScopedPublicRows(
           legacyNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+            road_required: defaultRoadRequiredForDomain(domainKey),
             public_visibility_min_reports: publicVisibilityMin,
             high_confidence_min_reports: sanitizeIncidentReportThreshold(
               row?.high_confidence_min_reports,
@@ -23140,48 +24967,76 @@ async function selectTenantScopedPublicRows(
         const registryVisibleRows = [];
         RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
         RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
+        RUNTIME_DOMAIN_META.iconRenderModeByDomain.clear();
+        RUNTIME_DOMAIN_META.iconTintModeByDomain.clear();
+        RUNTIME_DOMAIN_META.iconTintColorByDomain.clear();
         RUNTIME_DOMAIN_META.labelByDomain.clear();
         RUNTIME_DOMAIN_META.markerColorByDomain.clear();
+        RUNTIME_DOMAIN_META.issueTypesByDomain.clear();
+        RUNTIME_DOMAIN_META.typeOptionsByDomain.clear();
+        RUNTIME_DOMAIN_META.disclosuresByDomain.clear();
         for (const row of assignedRows || []) {
           const domainKey = normalizeDomainKeyOrSlug(row?.domain_key || row?.key, { allowUnknown: true });
           if (!domainKey) continue;
           const reportPrefix = String(row?.report_prefix || "").trim().toUpperCase();
           const label = String(row?.label || domainKey).trim() || domainKey;
           const iconSrc = resolveRuntimeDomainIconSrc(domainKey, row?.icon_src, row?.icon_key);
+          const iconRenderMode = normalizeDomainIconRenderMode(row?.icon_render_mode, iconSrc);
+          const iconTintMode = normalizeDomainIconTintMode(row?.icon_tint_mode);
+          const iconTintColor = normalizeDomainIconTintColor(row?.icon_tint_color, "");
           const markerColor = String(row?.marker_color || "").trim();
+          const issueTypes = normalizeDomainIssueOptions(row?.issue_types);
+          const typeOptions = normalizeDomainTypeOptionConfigs(row?.type_options, domainKey);
+          const disclosures = normalizeDomainDisclosureRows(row?.report_disclosures, domainKey, { fallbackToDefaults: true });
           const legacyConfig = legacyNext[domainKey] || {};
+          const assignedPublicVisibilityMin = sanitizeIncidentReportThreshold(
+            row?.public_visibility_min_reports,
+            legacyConfig?.public_visibility_min_reports ?? defaultDomainPublicVisibilityMinReports(domainKey)
+          );
           assignedNext[domainKey] = {
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
-            public_visibility_min_reports: sanitizeIncidentReportThreshold(
-              legacyConfig?.public_visibility_min_reports,
-              defaultDomainPublicVisibilityMinReports(domainKey)
-            ),
+            road_required: row?.road_required === true,
+            public_visibility_min_reports: assignedPublicVisibilityMin,
             high_confidence_min_reports: sanitizeIncidentReportThreshold(
-              legacyConfig?.high_confidence_min_reports,
+              row?.high_confidence_min_reports ?? legacyConfig?.high_confidence_min_reports,
               defaultDomainHighConfidenceMinReports(domainKey),
               {
-                min: sanitizeIncidentReportThreshold(
-                  legacyConfig?.public_visibility_min_reports,
-                  defaultDomainPublicVisibilityMinReports(domainKey)
-                ),
+                min: assignedPublicVisibilityMin,
               }
             ),
           };
           if (reportPrefix) RUNTIME_DOMAIN_META.reportPrefixByDomain.set(domainKey, reportPrefix);
           if (iconSrc) RUNTIME_DOMAIN_META.iconSrcByDomain.set(domainKey, iconSrc);
+          if (iconRenderMode) RUNTIME_DOMAIN_META.iconRenderModeByDomain.set(domainKey, iconRenderMode);
+          if (iconTintMode) RUNTIME_DOMAIN_META.iconTintModeByDomain.set(domainKey, iconTintMode);
+          if (iconTintColor) RUNTIME_DOMAIN_META.iconTintColorByDomain.set(domainKey, iconTintColor);
           RUNTIME_DOMAIN_META.labelByDomain.set(domainKey, label);
           if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(markerColor)) {
             RUNTIME_DOMAIN_META.markerColorByDomain.set(domainKey, markerColor);
           }
+          if (issueTypes.length) {
+            RUNTIME_DOMAIN_META.issueTypesByDomain.set(domainKey, issueTypes);
+          }
+          if (typeOptions.length) {
+            RUNTIME_DOMAIN_META.typeOptionsByDomain.set(domainKey, typeOptions);
+          }
+          RUNTIME_DOMAIN_META.disclosuresByDomain.set(domainKey, disclosures);
           registryVisibleRows.push({
             domain_key: domainKey,
             label,
             icon_key: String(row?.icon_key || "").trim(),
             icon_src: iconSrc,
+            icon_render_mode: iconRenderMode,
+            icon_tint_mode: iconTintMode,
+            icon_tint_color: iconTintColor,
             report_prefix: reportPrefix,
             marker_color: markerColor,
             allow_report_images: row?.allow_report_images === true,
+            road_required: row?.road_required === true,
+            issue_types: issueTypes,
+            type_options: typeOptions,
+            report_disclosures: disclosures,
             domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
             organization_monitored_repairs: row?.organization_monitored_repairs !== false,
           });
@@ -23193,8 +25048,14 @@ async function selectTenantScopedPublicRows(
         }
         RUNTIME_DOMAIN_META.reportPrefixByDomain.clear();
         RUNTIME_DOMAIN_META.iconSrcByDomain.clear();
+        RUNTIME_DOMAIN_META.iconRenderModeByDomain.clear();
+        RUNTIME_DOMAIN_META.iconTintModeByDomain.clear();
+        RUNTIME_DOMAIN_META.iconTintColorByDomain.clear();
         RUNTIME_DOMAIN_META.labelByDomain.clear();
         RUNTIME_DOMAIN_META.markerColorByDomain.clear();
+        RUNTIME_DOMAIN_META.issueTypesByDomain.clear();
+        RUNTIME_DOMAIN_META.typeOptionsByDomain.clear();
+        RUNTIME_DOMAIN_META.disclosuresByDomain.clear();
         setTenantDomainPublicConfigByDomain(legacyNext);
         setTenantRegistryIncidentDomains([]);
       } catch (e) {
@@ -23235,7 +25096,22 @@ async function selectTenantScopedPublicRows(
   const getIncidentRepairSnapshot = useCallback((domain, incidentId) => {
     const key = incidentSnapshotKey(domain, incidentId);
     if (!key) return null;
-    return incidentRepairProgressByKey?.[key] || null;
+    const directHit = incidentRepairProgressByKey?.[key] || null;
+    if (directHit) return directHit;
+
+    const fallbackStreetlightsKey = incidentSnapshotKey("streetlights", incidentId);
+    if (fallbackStreetlightsKey && fallbackStreetlightsKey !== key) {
+      const legacyHit = incidentRepairProgressByKey?.[fallbackStreetlightsKey] || null;
+      if (legacyHit) return legacyHit;
+    }
+
+    for (const [candidateKey, value] of Object.entries(incidentRepairProgressByKey || {})) {
+      if (String(candidateKey || "").endsWith(`:${String(incidentId || "").trim()}`)) {
+        return value || null;
+      }
+    }
+
+    return null;
   }, [incidentRepairProgressByKey]);
 
   const isPublicRepairEnabledForDomain = useCallback((domainKeyRaw) => {
@@ -23435,10 +25311,10 @@ async function selectTenantScopedPublicRows(
             if (count < 1) return null;
             return {
               ...m,
-              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
+              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : defaultMarkerColorForDomain("potholes"),
               ringColor: userReported ? "#1e88e5" : "#fff",
               glyph: "",
-              glyphSrc: UI_ICON_SRC.pothole,
+              glyphSrc: resolveVisibleDomainIconSrc("potholes", UI_ICON_SRC.pothole),
             };
           }
           const isPublic = count >= publicVisibilityMin;
@@ -23447,10 +25323,10 @@ async function selectTenantScopedPublicRows(
           if (!isPublic && !isPrivateOwn) return null;
           return {
             ...m,
-            color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : potholeColorFromCount(count),
+            color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : defaultMarkerColorForDomain("potholes"),
             ringColor: userReported ? "#1e88e5" : "#fff",
             glyph: "",
-            glyphSrc: UI_ICON_SRC.pothole,
+            glyphSrc: resolveVisibleDomainIconSrc("potholes", UI_ICON_SRC.pothole),
           };
         })
         .filter(Boolean)
@@ -23475,25 +25351,24 @@ async function selectTenantScopedPublicRows(
             if (count < 1) return null;
             return {
               ...m,
-              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : waterDrainColorFromCount(count),
+              color: resolvedByCommunity ? "var(--sl-ui-brand-green)" : defaultMarkerColorForDomain("water_drain_issues"),
               ringColor: userReported ? "#1e88e5" : "#fff",
               glyph: "",
-              glyphSrc: UI_ICON_SRC.waterMain,
+              glyphSrc: resolveVisibleDomainIconSrc("water_drain_issues", UI_ICON_SRC.waterMain),
             };
           }
           const isPublic = count >= publicVisibilityMin;
           const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
           if (!isPublic && isPrivateOwn && repairSnapshot?.viewerHasRepairSignal) return null;
           if (!isPublic && !isPrivateOwn) return null;
-          const privateOwnYellow = officialStatusFromSinceFixCount(1).color;
           return {
             ...m,
             color: resolvedByCommunity
               ? "var(--sl-ui-brand-green)"
-              : (isPrivateOwn ? privateOwnYellow : waterDrainColorFromCount(count)),
+              : defaultMarkerColorForDomain("water_drain_issues"),
             ringColor: userReported ? "#1e88e5" : "#fff",
             glyph: "",
-            glyphSrc: UI_ICON_SRC.waterMain,
+            glyphSrc: resolveVisibleDomainIconSrc("water_drain_issues", UI_ICON_SRC.waterMain),
           };
         })
         .filter(Boolean)
@@ -23616,11 +25491,12 @@ async function selectTenantScopedPublicRows(
     resolvedIncidentMapDomain,
     genericDomainMarkers,
     incidentMapVisibleDomainKeys,
+    resolveVisibleDomainIconSrc,
   ]);
 
   const incidentClusterRenderItems = useMemo(() => {
     if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return [];
-    const source = Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : [];
+    const source = dedupeIncidentMarkerRenderSource(renderedDomainMarkers);
     if (!source.length) return [];
     if (Number(mapZoom) > INCIDENT_CLUSTER_MAX_ZOOM) return source;
 
@@ -23630,6 +25506,7 @@ async function selectTenantScopedPublicRows(
         const markers = Array.isArray(cluster?.markers) ? cluster.markers.filter(Boolean) : [];
         if (markers.length <= 1) return markers[0] || null;
         const totalReports = markers.reduce((sum, marker) => sum + Math.max(1, Number(marker?.count || 0)), 0);
+        const incidentCount = markers.length;
         const domainCounts = new Map();
         for (const marker of markers) {
           const domainKey = String(marker?.domain || "").trim();
@@ -23642,8 +25519,10 @@ async function selectTenantScopedPublicRows(
           domain: "incident_cluster",
           lat: Number(cluster?.lat),
           lng: Number(cluster?.lng),
-          count: totalReports,
-          markerCount: markers.length,
+          count: incidentCount,
+          incidentCount,
+          reportCount: totalReports,
+          markerCount: incidentCount,
           markers,
           domainCounts: Array.from(domainCounts.entries()),
           north: Number(cluster?.north),
@@ -23657,7 +25536,7 @@ async function selectTenantScopedPublicRows(
 
   const incidentStackRenderItems = useMemo(() => {
     if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return [];
-    const source = Array.isArray(renderedDomainMarkers) ? renderedDomainMarkers : [];
+    const source = dedupeIncidentMarkerRenderSource(renderedDomainMarkers);
     if (!source.length) return [];
     if (Number(mapZoom) <= INCIDENT_CLUSTER_MAX_ZOOM) return [];
 
@@ -23678,14 +25557,18 @@ async function selectTenantScopedPublicRows(
         continue;
       }
       const sortedMarkers = [...markers].sort((a, b) => (Number(b?.count || 0) - Number(a?.count || 0)) || (Number(b?.lastTs || 0) - Number(a?.lastTs || 0)));
+      const totalReports = sortedMarkers.reduce((sum, marker) => sum + Math.max(1, Number(marker?.count || 0)), 0);
+      const incidentCount = sortedMarkers.length;
       output.push({
         id: `incident-stack-${incidentLocationKey(sortedMarkers[0]?.lat, sortedMarkers[0]?.lng)}`,
         kind: "incident_stack",
         domain: "incident_stack",
         lat: Number(sortedMarkers[0]?.lat),
         lng: Number(sortedMarkers[0]?.lng),
-        count: sortedMarkers.reduce((sum, marker) => sum + Math.max(1, Number(marker?.count || 0)), 0),
-        markerCount: sortedMarkers.length,
+        count: incidentCount,
+        incidentCount,
+        reportCount: totalReports,
+        markerCount: incidentCount,
         markers: sortedMarkers,
       });
     }
@@ -23837,6 +25720,124 @@ async function selectTenantScopedPublicRows(
     }
   }, [officialLights, reverseGeocodeRoadLabel]);
 
+  const ensureGenericIncidentLocationInfoForPopup = useCallback(async (marker) => {
+    const domainKey = normalizeDomainKeyOrSlug(marker?.domain || adminReportDomain, { allowUnknown: true });
+    if (!domainKey || ["streetlights", "street_signs", "potholes", "water_drain_issues"].includes(domainKey)) return;
+
+    const markerId = String(marker?.incident_id || marker?.id || "").trim();
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!markerId || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const existingAddress =
+      String(marker?._geoNearestAddress || "").trim()
+      || String(marker?.nearest_address || "").trim()
+      || "";
+    const existingCrossStreet =
+      String(marker?._geoNearestCrossStreet || "").trim()
+      || String(marker?.nearest_cross_street || "").trim()
+      || "";
+    const existingIntersection =
+      String(marker?._geoNearestIntersection || "").trim()
+      || String(marker?.nearest_intersection || "").trim()
+      || "";
+    const existingLandmark =
+      String(marker?._geoNearestLandmark || "").trim()
+      || String(marker?.nearest_landmark || "").trim()
+      || "";
+
+    const hasUsefulAddress = isUsableAddressText(existingAddress);
+    if (hasUsefulAddress && existingCrossStreet && existingIntersection && existingLandmark) return;
+
+    try {
+      const geo = await reverseGeocodeRoadLabel(lat, lng, { mode: "full" });
+      const nearestAddress = String(geo?.nearestAddress || "").trim();
+      const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
+      const nearestIntersection = String(geo?.nearestIntersection || "").trim();
+      const nearestLandmark = String(geo?.nearestLandmark || "").trim();
+      if (!(nearestAddress || nearestCrossStreet || nearestIntersection || nearestLandmark)) return;
+
+      setSelectedDomainMarker((prev) => {
+        const prevId = String(prev?.incident_id || prev?.id || "").trim();
+        if (prevId !== markerId) return prev;
+        return {
+          ...prev,
+          _geoNearestAddress: nearestAddress || prev?._geoNearestAddress || prev?.nearest_address || "",
+          _geoNearestCrossStreet: nearestCrossStreet || prev?._geoNearestCrossStreet || prev?.nearest_cross_street || "",
+          _geoNearestIntersection: nearestIntersection || prev?._geoNearestIntersection || prev?.nearest_intersection || "",
+          _geoNearestLandmark: nearestLandmark || prev?._geoNearestLandmark || prev?.nearest_landmark || "",
+          _geoLocationPending: false,
+        };
+      });
+    } catch {
+      setSelectedDomainMarker((prev) => {
+        const prevId = String(prev?.incident_id || prev?.id || "").trim();
+        if (prevId !== markerId) return prev;
+        return {
+          ...prev,
+          _geoLocationPending: false,
+        };
+      });
+    }
+  }, [adminReportDomain, reverseGeocodeRoadLabel]);
+
+  const ensureStreetSignLocationInfoForPopup = useCallback(async (marker) => {
+    const signId = String(marker?.id || "").trim();
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!signId || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const existingAddress =
+      String(marker?._geoNearestAddress || "").trim()
+      || String(marker?.nearest_address || "").trim()
+      || "";
+    const existingCrossStreet =
+      String(marker?._geoNearestCrossStreet || "").trim()
+      || String(marker?.nearest_cross_street || "").trim()
+      || "";
+    const existingIntersection =
+      String(marker?._geoNearestIntersection || "").trim()
+      || "";
+    const existingLandmark =
+      String(marker?._geoNearestLandmark || "").trim()
+      || String(marker?.nearest_landmark || "").trim()
+      || "";
+
+    if (isUsableAddressText(existingAddress) && existingCrossStreet && existingLandmark) return;
+
+    setSelectedDomainMarker((prev) => {
+      const prevId = String(prev?.id || "").trim();
+      if (prevId !== signId) return prev;
+      return { ...prev, _geoLocationPending: true };
+    });
+
+    try {
+      const geo = await reverseGeocodeRoadLabel(lat, lng, { mode: "full" });
+      const nearestAddress = String(geo?.nearestAddress || "").trim();
+      const nearestCrossStreet = String(geo?.nearestCrossStreet || "").trim();
+      const nearestIntersection = String(geo?.nearestIntersection || "").trim();
+      const nearestLandmark = String(geo?.nearestLandmark || "").trim();
+      setSelectedDomainMarker((prev) => {
+        const prevId = String(prev?.id || "").trim();
+        if (prevId !== signId) return prev;
+        return {
+          ...prev,
+          _geoNearestAddress: nearestAddress || prev?._geoNearestAddress || prev?.nearest_address || "",
+          _geoNearestCrossStreet: nearestCrossStreet || prev?._geoNearestCrossStreet || prev?.nearest_cross_street || "",
+          _geoNearestIntersection: nearestIntersection || prev?._geoNearestIntersection || "",
+          _geoNearestLandmark: nearestLandmark || prev?._geoNearestLandmark || prev?.nearest_landmark || "",
+          _geoLocationPending: false,
+        };
+      });
+    } catch {
+      setSelectedDomainMarker((prev) => {
+        const prevId = String(prev?.id || "").trim();
+        if (prevId !== signId) return prev;
+        return { ...prev, _geoLocationPending: false };
+      });
+    }
+  }, [reverseGeocodeRoadLabel]);
+
   const selectedDomainPopupPixel = useMemo(() => {
     const marker = selectedDomainMarker;
     if (!marker) return null;
@@ -23858,6 +25859,61 @@ async function selectTenantScopedPublicRows(
     if (!signId) return null;
     return getIncidentSnapshot("street_signs", signId);
   }, [selectedDomainMarkerDomain, selectedDomainMarker, getIncidentSnapshot]);
+
+  const selectedStreetSignInfo = useMemo(() => {
+    if (!(selectedDomainMarkerDomain === "street_signs" && selectedDomainMarker)) return null;
+    const signId = String(selectedDomainMarker?.id || "").trim();
+    if (!signId) return null;
+    const lastFixTs = Number(selectedDomainMarker?.lastFixTs || lastFixByLightId?.[signId] || 0);
+    const rows = (selectedDomainReports || [])
+      .filter((r) => String(r?.light_id || "").trim() === signId)
+      .filter((r) => Number(r?.ts || 0) > lastFixTs)
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
+    const latest = rows[0] || null;
+    const nearestAddress =
+      String(selectedDomainMarker?._geoNearestAddress || "").trim()
+      || String(selectedDomainMarker?.nearest_address || "").trim()
+      || readAddressFromNote(latest?.note)
+      || readLocationFromNote(latest?.note)
+      || "";
+    const nearestCrossStreet =
+      String(selectedDomainMarker?._geoNearestCrossStreet || "").trim()
+      || String(selectedDomainMarker?.nearest_cross_street || "").trim()
+      || readCrossStreetFromNote(latest?.note)
+      || "";
+    const nearestLandmark =
+      String(selectedDomainMarker?._geoNearestLandmark || "").trim()
+      || String(selectedDomainMarker?.nearest_landmark || "").trim()
+      || readLandmarkFromNote(latest?.note)
+      || "";
+    const nearestIntersection =
+      String(selectedDomainMarker?._geoNearestIntersection || "").trim()
+      || readIntersectionFromNote(latest?.note)
+      || "";
+    const lat = Number(selectedDomainMarker?.lat);
+    const lng = Number(selectedDomainMarker?.lng);
+    const coordsText =
+      Number.isFinite(lat) && Number.isFinite(lng)
+        ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+        : "Unavailable";
+    const locationLabel = nearestLandmark
+      ? `${nearestAddress || coordsText} (Near: ${nearestLandmark})`
+      : (nearestAddress || coordsText);
+    const locationPending = Boolean(selectedDomainMarker?._geoLocationPending) && !isUsableAddressText(nearestAddress);
+    const locationDisplay = locationPending
+      ? "Resolving nearest address..."
+      : (nearestAddress || coordsText);
+    return {
+      nearestAddress,
+      nearestCrossStreet,
+      nearestLandmark,
+      nearestIntersection,
+      locationLabel,
+      locationDisplay,
+      locationPending,
+      coordsText,
+    };
+  }, [selectedDomainMarkerDomain, selectedDomainMarker, selectedDomainReports, lastFixByLightId]);
 
   const selectedPotholeInfo = useMemo(() => {
     if (!(selectedDomainMarkerDomain === "potholes" && selectedDomainMarker)) return null;
@@ -23993,7 +26049,10 @@ async function selectTenantScopedPublicRows(
 
     return {
       displayId,
-      issueLabel: formatWaterDrainIssueLabel(String(cached?.issue_type || "").trim() || issueType),
+      issueLabel: resolveConfiguredDomainIssueLabel(
+        "water_drain_issues",
+        String(cached?.issue_type || "").trim() || issueType
+      ) || "Water / Drain Issue",
       lastReportedTs: latestTs,
       openCount: rows.length,
       isFixedNow: rows.length <= 0 && maxLastFixTs > 0,
@@ -24044,7 +26103,10 @@ async function selectTenantScopedPublicRows(
         ? `${lat.toFixed(5)}, ${lng.toFixed(5)}`
         : "Unavailable";
     const rawLocationLabel =
-      String(selectedDomainMarker?.location_label || "").trim()
+      String(selectedDomainMarker?._geoNearestAddress || "").trim()
+      || String(selectedDomainMarker?.nearest_address || "").trim()
+      || String(selectedDomainMarker?.location_label || "").trim()
+      || readAddressFromNote(latest?.note)
       || readLocationFromNote(latest?.note)
       || (Number.isFinite(lat) && Number.isFinite(lng) ? coordsText : "Location unavailable");
     const nearMatch = rawLocationLabel.match(/\s*\(Near:\s*(.*?)\)\s*$/i);
@@ -24053,17 +26115,32 @@ async function selectTenantScopedPublicRows(
       : rawLocationLabel;
     const nearestAddress =
       String(selectedDomainMarker?._geoNearestAddress || "").trim()
+      || String(selectedDomainMarker?.nearest_address || "").trim()
       || readAddressFromNote(latest?.note)
       || locationBase
       || "Location unavailable";
-    const nearestCrossStreet = readCrossStreetFromNote(latest?.note) || "";
+    const nearestCrossStreet =
+      String(selectedDomainMarker?._geoNearestCrossStreet || "").trim()
+      || String(selectedDomainMarker?.nearest_cross_street || "").trim()
+      || readCrossStreetFromNote(latest?.note)
+      || "";
+    const nearestIntersection =
+      String(selectedDomainMarker?._geoNearestIntersection || "").trim()
+      || String(selectedDomainMarker?.nearest_intersection || "").trim()
+      || readIntersectionFromNote(latest?.note)
+      || "";
     const nearestLandmark =
       String(selectedDomainMarker?._geoNearestLandmark || "").trim()
+      || String(selectedDomainMarker?.nearest_landmark || "").trim()
       || String(nearMatch?.[1] || "").trim()
       || readLandmarkFromNote(latest?.note)
       || "";
     const locationLabel = nearestLandmark
       ? `${nearestAddress} (Near: ${nearestLandmark})`
+      : nearestAddress;
+    const locationPending = Boolean(selectedDomainMarker?._geoLocationPending) && !isUsableAddressText(nearestAddress);
+    const locationDisplay = locationPending
+      ? "Resolving nearest address..."
       : nearestAddress;
     const snapshot = incidentId ? getIncidentSnapshot(domainKey, incidentId) : null;
     const lastReportedTs = Number(latest?.ts || selectedDomainMarker?.lastTs || 0);
@@ -24073,9 +26150,10 @@ async function selectTenantScopedPublicRows(
     const lastChangedAt =
       String(snapshot?.last_changed_at || "").trim()
       || (lastReportedTs ? new Date(lastReportedTs).toISOString() : "");
-    const issueLabel = formatGenericDomainIssueLabel(latest?.type || latest?.report_type);
+    const issueLabel = resolveReportIssueLabel(latest, domainKey, waterDrainIncidentsById);
     const displayId =
       String(selectedDomainMarker?.display_id || "").trim()
+      || genericIncidentDisplayId(domainKey, lat, lng, incidentId || markerId)
       || incidentId
       || markerId
       || "Incident";
@@ -24096,8 +26174,11 @@ async function selectTenantScopedPublicRows(
       issueLabel,
       openCount: rows.length || Number(selectedDomainMarker?.count || 0),
       locationLabel,
+      locationDisplay,
+      locationPending,
       nearestAddress,
       nearestCrossStreet,
+      nearestIntersection,
       nearestLandmark,
       coordsText,
       currentState,
@@ -24110,11 +26191,31 @@ async function selectTenantScopedPublicRows(
     selectedDomainMarkerDomain,
     adminReportDomain,
     selectedDomainReports,
+    waterDrainIncidentsById,
     getIncidentSnapshot,
     viewerIdentityKey,
     resolveReportDomainLabel,
     formatGenericDomainIssueLabel,
+    resolveRuntimeDomainIssueLabel,
   ]);
+
+  useEffect(() => {
+    if (!(selectedDomainMarkerDomain === "street_signs" && selectedDomainMarker && selectedStreetSignInfo)) return;
+    if (selectedStreetSignInfo.locationPending) return;
+    if (
+      isUsableAddressText(selectedStreetSignInfo.nearestAddress)
+      && String(selectedStreetSignInfo.nearestCrossStreet || "").trim()
+      && String(selectedStreetSignInfo.nearestLandmark || "").trim()
+    ) {
+      return;
+    }
+    void ensureStreetSignLocationInfoForPopup(selectedDomainMarker);
+  }, [selectedDomainMarkerDomain, selectedDomainMarker, selectedStreetSignInfo, ensureStreetSignLocationInfoForPopup]);
+
+  useEffect(() => {
+    if (!selectedGenericDomainInfo || !selectedDomainMarker) return;
+    void ensureGenericIncidentLocationInfoForPopup(selectedDomainMarker);
+  }, [selectedGenericDomainInfo, selectedDomainMarker, ensureGenericIncidentLocationInfoForPopup]);
 
   const selectedIncidentStackPopupPixel = useMemo(() => {
     const marker = selectedIncidentStackMarker;
@@ -24346,6 +26447,46 @@ async function selectTenantScopedPublicRows(
     // Marker details should come from persisted data only.
   }, [adminReportDomain, isValidLatLng, reverseGeocodeRoadLabel]);
 
+  const seedGenericMarkerLocationDetails = useCallback((marker) => {
+    if (!marker) return marker;
+    const latest = Array.isArray(marker?.rows) ? [...marker.rows]
+      .sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0))[0] : null;
+    const seededAddress =
+      String(marker?._geoNearestAddress || "").trim()
+      || String(marker?.nearest_address || "").trim()
+      || readAddressFromNote(latest?.note)
+      || "";
+    const seededCrossStreet =
+      String(marker?._geoNearestCrossStreet || "").trim()
+      || String(marker?.nearest_cross_street || "").trim()
+      || readCrossStreetFromNote(latest?.note)
+      || "";
+    const seededIntersection =
+      String(marker?._geoNearestIntersection || "").trim()
+      || String(marker?.nearest_intersection || "").trim()
+      || readIntersectionFromNote(latest?.note)
+      || "";
+    const seededLandmark =
+      String(marker?._geoNearestLandmark || "").trim()
+      || String(marker?.nearest_landmark || "").trim()
+      || readLandmarkFromNote(latest?.note)
+      || "";
+    const seededLocationLabel =
+      String(marker?.location_label || "").trim()
+      || readLocationFromNote(latest?.note)
+      || "";
+    const hasResolvedAddress = isUsableAddressText(seededAddress);
+    return {
+      ...marker,
+      nearest_address: seededAddress,
+      nearest_cross_street: seededCrossStreet,
+      nearest_intersection: seededIntersection,
+      nearest_landmark: seededLandmark,
+      location_label: seededLocationLabel,
+      _geoLocationPending: !hasResolvedAddress,
+    };
+  }, []);
+
   const openIncidentDomainMarker = useCallback((marker) => {
     if (!marker) return;
     setSelectedIncidentStackMarker(null);
@@ -24356,8 +26497,8 @@ async function selectTenantScopedPublicRows(
       selectDomainMarkerWithGeo(marker);
       return;
     }
-    setSelectedDomainMarker(marker);
-  }, [adminReportDomain, selectDomainMarkerWithGeo]);
+    setSelectedDomainMarker(seedGenericMarkerLocationDetails(marker));
+  }, [adminReportDomain, selectDomainMarkerWithGeo, seedGenericMarkerLocationDetails]);
 
   // Only "community" reports get clustered into community lights
   const communityReports = useMemo(
@@ -24386,8 +26527,11 @@ async function selectTenantScopedPublicRows(
   const myReportsByLight = useMemo(() => {
     const identityKey = viewerIdentityKey;
     if (!identityKey) return [];
+    const selectedDomainKeys = new Set((activeMyReportsDomainKeys || []).map((key) => String(key || "").trim()).filter(Boolean));
+    if (!selectedDomainKeys.size) return [];
 
-    if (myReportsDomain === "potholes") {
+    const groups = [];
+    if (selectedDomainKeys.has("potholes")) {
       const potholeById = new Map((potholes || []).map((p) => [String(p?.id || "").trim(), p]));
       const mineRows = (potholeReports || []).filter((r) => reportIdentityKey(r) === identityKey);
       const map = new Map(); // potholeId -> rows
@@ -24395,10 +26539,10 @@ async function selectTenantScopedPublicRows(
         const pid = String(r?.pothole_id || "").trim();
         if (!pid) continue;
         if (!map.has(pid)) map.set(pid, []);
-        map.get(pid).push(r);
+        map.get(pid).push({ ...r, domainKey: "potholes", domain: "potholes" });
       }
 
-      const groups = Array.from(map.entries()).map(([pid, rows]) => {
+      groups.push(...Array.from(map.entries()).map(([pid, rows]) => {
         rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
         const p = potholeById.get(pid);
         const avg = rows.reduce(
@@ -24417,24 +26561,26 @@ async function selectTenantScopedPublicRows(
           totalCount: Number(rows.length || 0),
           lastTs: rows?.[0]?.ts || 0,
         };
-      });
-
-      groups.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-      return groups;
+      }));
     }
 
     // reports you already store are normalized as:
     // { id, lat, lng, type, note, ts, light_id }
     const mine = reports.filter((r) => (
       reportIdentityKey(r) === identityKey &&
-      reportDomainForRow(r, officialIdSet, officialSignIdSet) === myReportsDomain
+      selectedDomainKeys.has(reportDomainForRow(r, officialIdSet, officialSignIdSet))
     ));
 
-    const map = new Map(); // lightId -> array of reports
+    const map = new Map(); // scoped key -> array of reports
     for (const r of mine) {
-      const lid = r.light_id || lightIdFor(r.lat, r.lng);
-      if (!map.has(lid)) map.set(lid, []);
-      map.get(lid).push(r);
+      const domainKey = reportDomainForRow(r, officialIdSet, officialSignIdSet);
+      const incidentId = String(r.light_id || lightIdFor(r.lat, r.lng) || "").trim();
+      if (!incidentId) continue;
+      const scopedLightId = domainKey === "streetlights"
+        ? incidentId
+        : `${domainKey}:${incidentId}`;
+      if (!map.has(scopedLightId)) map.set(scopedLightId, []);
+      map.get(scopedLightId).push({ ...r, domainKey, domain: domainKey });
     }
 
     // sort each group newest first
@@ -24442,18 +26588,23 @@ async function selectTenantScopedPublicRows(
       arr.sort((a, b) => (b.ts || 0) - (a.ts || 0));
     }
 
-    // return list sorted by most recent activity in that light
-    const groups = Array.from(map.entries()).map(([lightId, mineRows]) => ({
-      domainKey: myReportsDomain,
-      lightId,
-      mineRows,
-      lastTs: mineRows?.[0]?.ts || 0,
-      totalCount: mineRows?.length || 0,
+    groups.push(...Array.from(map.entries()).map(([lightId, mineRows]) => {
+      const domainKey = String(mineRows?.[0]?.domainKey || "").trim() || "streetlights";
+      const incidentId = String(mineRows?.[0]?.light_id || lightId || "").trim() || lightId;
+      return {
+        domainKey,
+        lightId,
+        incidentId,
+        displayId: domainKey === "streetlights" ? incidentId : incidentId.replace(new RegExp(`^${domainKey}:`, "i"), ""),
+        mineRows,
+        lastTs: mineRows?.[0]?.ts || 0,
+        totalCount: mineRows?.length || 0,
+      };
     }));
 
     groups.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
     return groups;
-  }, [viewerIdentityKey, reports, potholeReports, potholes, officialIdSet, officialSignIdSet, myReportsDomain]);
+  }, [viewerIdentityKey, reports, potholeReports, potholes, officialIdSet, officialSignIdSet, activeMyReportsDomainKeys]);
 
   const myReportsAllDomainRows = useMemo(
     () => (myReportsByLight || []).flatMap((g) => (Array.isArray(g?.mineRows) ? g.mineRows : [])),
@@ -24463,19 +26614,23 @@ async function selectTenantScopedPublicRows(
   const myReportsStandardGroups = useMemo(() => {
     return (myReportsByLight || []).map((g) => {
       const rows = Array.isArray(g?.mineRows) ? g.mineRows : [];
+      const domainKey = String(g?.domainKey || rows?.[0]?.domainKey || "").trim();
       const lightId = String(g?.lightId || "").trim();
-      const incidentId = myReportsDomain === "potholes"
-        ? String(lightId || "").replace(/^potholes:/i, "pothole:")
-        : lightId;
+      const incidentId = String(g?.incidentId || "").trim() || (
+        domainKey === "potholes"
+          ? String(lightId || "").replace(/^potholes:/i, "pothole:")
+          : lightId
+      );
       return {
         ...g,
+        domainKey,
         incidentId,
         rows,
         count: Number(g?.totalCount || rows.length || 0),
         lastTs: Number(g?.lastTs || rows?.[0]?.ts || 0),
       };
     });
-  }, [myReportsByLight, myReportsDomain]);
+  }, [myReportsByLight]);
 
   const activeAggregationStrategy = useMemo(() => {
     if (adminReportDomain === "streetlights") return "asset_based";
@@ -24603,8 +26758,10 @@ async function selectTenantScopedPublicRows(
           rows: selectedDomainReports
             .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
             .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
-          display_id: String(m?.id || "").trim(),
-          location_label: "",
+          display_id: genericIncidentDisplayId("power_outage", Number(m?.lat), Number(m?.lng), String(m?.id || "").trim()),
+          location_label: String(m?.nearest_address || "").trim() || readAddressFromNote(selectedDomainReports
+            .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0))?.[0]?.note) || "",
         }));
       },
       severity_based: () => {
@@ -24619,8 +26776,10 @@ async function selectTenantScopedPublicRows(
           rows: selectedDomainReports
             .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
             .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
-          display_id: String(m?.id || "").trim(),
-          location_label: "",
+          display_id: genericIncidentDisplayId("water_main", Number(m?.lat), Number(m?.lng), String(m?.id || "").trim()),
+          location_label: String(m?.nearest_address || "").trim() || readAddressFromNote(selectedDomainReports
+            .filter((r) => String(r?.light_id || "").trim() === String(m?.id || "").trim())
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0))?.[0]?.note) || "",
         }));
       },
       generic_incident: () => {
@@ -24635,8 +26794,13 @@ async function selectTenantScopedPublicRows(
           rows: selectedDomainReports
             .filter((r) => String(r?.light_id || `${Number(r?.lat || 0).toFixed(5)}:${Number(r?.lng || 0).toFixed(5)}`).trim() === String(m?.id || "").trim())
             .sort((a, b) => (b.ts || 0) - (a.ts || 0)),
-          display_id: String(m?.id || "").trim(),
-          location_label: String(m?.location_label || "").trim(),
+          display_id: genericIncidentDisplayId(
+            String(m?.domain || adminReportDomain).trim() || adminReportDomain,
+            Number(m?.lat),
+            Number(m?.lng),
+            String(m?.id || "").trim()
+          ),
+          location_label: String(m?.nearest_address || "").trim() || String(m?.location_label || "").trim(),
         }));
       },
     };
@@ -24661,38 +26825,6 @@ async function selectTenantScopedPublicRows(
       .filter((g) => Number(g?.count || 0) > 0)
       .sort((a, b) => (Number(b?.count || 0) - Number(a?.count || 0)) || (Number(b?.last_ts || 0) - Number(a?.last_ts || 0)));
   }, [aggregationStrategies, activeAggregationStrategy]);
-
-  const openReportsInViewCount = useMemo(() => {
-    const inView = (lat, lng) => {
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-      if (!mapBounds) return true;
-      return isPointInBounds(lat, lng, mapBounds);
-    };
-
-    if (isStreetlightsLayerActive) {
-      let count = 0;
-      for (const l of renderedOfficialLights || []) {
-        const lid = String(l?.id || "").trim();
-        if (!lid) continue;
-        const lat = Number(l?.lat);
-        const lng = Number(l?.lng);
-        if (!inView(lat, lng)) continue;
-        const markerColor = String(officialMarkerColorForViewer(lid) || "").trim().toLowerCase();
-        // Operational/closed lights are rendered black and should not count as open reports in view.
-        if (markerColor === "#111" || markerColor === "#111111" || markerColor === "black") continue;
-        count += 1;
-      }
-      return count;
-    }
-
-    let count = 0;
-    for (const m of renderedDomainMarkers || []) {
-      const lat = Number(m?.lat);
-      const lng = Number(m?.lng);
-      if (inView(lat, lng) && Number(m?.count || 0) > 0) count += 1;
-    }
-    return count;
-  }, [isStreetlightsLayerActive, renderedOfficialLights, renderedDomainMarkers, officialMarkerColorForViewer, mapBounds]);
 
   const streetlightPersonalInViewStats = useMemo(() => {
     const empty = { saved: 0, utility: 0 };
@@ -24780,6 +26912,20 @@ async function selectTenantScopedPublicRows(
         return isWithinAshtabulaCityLimits(g?.lat, g?.lng);
       });
   }, [openIncidentGroupsNormalized, adminReportDomain, officialIdSet, cityLimitPolygons.length, isWithinAshtabulaCityLimits]);
+
+  const openReportsInViewCount = useMemo(() => {
+    const base = Array.isArray(openReportsModalGroupsBase) ? openReportsModalGroupsBase : [];
+    if (!base.length) return 0;
+    const rows = !mapBounds
+      ? base
+      : base.filter((g) => {
+        const lat = Number(g?.lat);
+        const lng = Number(g?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+        return isPointInBounds(lat, lng, mapBounds);
+      });
+    return rows.reduce((sum, g) => sum + Math.max(0, Number(g?.count || 0)), 0);
+  }, [openReportsModalGroupsBase, mapBounds]);
 
   const openReportsModalGroups = useMemo(() => {
     const base = Array.isArray(openReportsModalGroupsBase) ? openReportsModalGroupsBase : [];
@@ -25946,6 +28092,64 @@ async function selectTenantScopedPublicRows(
     }, 0);
   }
 
+  async function invokeDomainEmailFunction(payload, logLabel = "domain email notice") {
+    try {
+      const tenantKey = String(activeTenantKey() || "").trim().toLowerCase();
+      const functionUrlBase = String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "");
+      const publishableKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+      if (!tenantKey) {
+        return { ok: false, reason: "missing_tenant_key", skipped: false };
+      }
+      if (!functionUrlBase || !publishableKey) {
+        return { ok: false, reason: "missing_supabase_function_config", skipped: false };
+      }
+
+      const res = await fetch(`${functionUrlBase}/functions/v1/email-domain-report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: publishableKey,
+          Authorization: `Bearer ${publishableKey}`,
+          "x-tenant-key": tenantKey,
+        },
+        body: JSON.stringify({
+          tenant_key: tenantKey,
+          ...(payload && typeof payload === "object" ? payload : {}),
+        }),
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!res.ok) {
+        const reason =
+          String(data?.error || data?.reason || data?.message || `http_${res.status}`).trim()
+          || `http_${res.status}`;
+        console.warn(`[${logLabel}] http error:`, res.status, data || null);
+        return { ok: false, reason, skipped: false };
+      }
+
+      const skipped = Boolean(data?.skipped);
+      const ok = data?.ok !== false && !skipped;
+      const reason = String(data?.reason || "").trim();
+      if (!ok) {
+        console.warn(`[${logLabel}] not sent:`, data);
+      }
+      return {
+        ok,
+        skipped,
+        reason: reason || (skipped ? "skipped" : ""),
+      };
+    } catch (e) {
+      console.warn(`[${logLabel}] invoke failed:`, e?.message || e);
+      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
+    }
+  }
+
 async function sendPotholeEmailNotice({
   potholeCode,
   reportNumber,
@@ -25959,56 +28163,32 @@ async function sendPotholeEmailNotice({
   submittedAtIso,
   reporter,
 }) {
-  try {
-    const tenantKey = activeTenantKey();
-    const { data, error } = await supabase.functions.invoke("email-domain-report", {
-      body: {
-        tenant_key: tenantKey,
-        domain_key: "potholes",
-        domainLabel: "Potholes",
-        issueType: String(potholeCode || "").trim() || "",
-        reportNumber: String(reportNumber || "").trim(),
-        notes: String(notes || "").trim(),
-        location: {
-            lat: Number(lat),
-            lng: Number(lng),
-            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
-          },
-          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
-          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
-          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
-          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
-          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
-          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
-          reporter: {
-            type: reporter?.type === "guest" ? "guest" : "user",
-            userId: reporter?.userId || null,
-            name: String(reporter?.name || "").trim() || "Unknown",
-            email: String(reporter?.email || "").trim() || "Not provided",
-            phone: String(reporter?.phone || "").trim() || "Not provided",
-          },
-        },
-      });
-      if (error) {
-        console.warn("[pothole email notice] invoke error:", error?.message || error);
-        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
-      }
-      const skipped = Boolean(data?.skipped);
-      const ok = data?.ok !== false && !skipped;
-      const reason = String(data?.reason || "").trim();
-      if (!ok) {
-        console.warn("[pothole email notice] not sent:", data);
-      }
-      return {
-        ok,
-        skipped,
-        reason: reason || (skipped ? "skipped" : ""),
-      };
-    } catch (e) {
-      console.warn("[pothole email notice] invoke failed:", e?.message || e);
-      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
-    }
-  }
+  return invokeDomainEmailFunction({
+    domain_key: "potholes",
+    domainLabel: "Potholes",
+    issueType: String(potholeCode || "").trim() || "",
+    reportNumber: String(reportNumber || "").trim(),
+    notes: String(notes || "").trim(),
+    location: {
+      lat: Number(lat),
+      lng: Number(lng),
+      text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+    },
+    closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+    closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+    closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+    closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
+    submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+    submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+    reporter: {
+      type: reporter?.type === "guest" ? "guest" : "user",
+      userId: reporter?.userId || null,
+      name: String(reporter?.name || "").trim() || "Unknown",
+      email: String(reporter?.email || "").trim() || "Not provided",
+      phone: String(reporter?.phone || "").trim() || "Not provided",
+    },
+  }, "pothole email notice");
+}
 
 async function sendWaterDrainEmailNotice({
   issueTypeLabel,
@@ -26023,67 +28203,32 @@ async function sendWaterDrainEmailNotice({
   submittedAtIso,
   reporter,
 }) {
-  try {
-    const tenantKey = activeTenantKey();
-    const { data, error } = await supabase.functions.invoke("email-domain-report", {
-      body: {
-        tenant_key: tenantKey,
-        domain_key: "water_drain_issues",
-        domainLabel: "Water / Drain",
-        issueType: String(issueTypeLabel || "").trim() || "Water / Drain Issue",
-        reportNumber: String(reportNumber || "").trim(),
-        notes: String(notes || "").trim(),
-        location: {
-            lat: Number(lat),
-            lng: Number(lng),
-            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
-          },
-          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
-          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
-          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
-          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
-          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
-          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
-          reporter: {
-            type: reporter?.type === "guest" ? "guest" : "user",
-            userId: reporter?.userId || null,
-            name: String(reporter?.name || "").trim() || "Unknown",
-            email: String(reporter?.email || "").trim() || "Not provided",
-            phone: String(reporter?.phone || "").trim() || "Not provided",
-          },
-        },
-      });
-      if (error) {
-        console.warn("[water/drain email notice] invoke error:", error?.message || error);
-        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
-      }
-
-      const skipped = Boolean(data?.skipped);
-      const ok = data?.ok !== false && !skipped;
-      const reason = String(data?.reason || "").trim();
-      if (!ok) {
-        console.warn("[water/drain email notice] not sent:", data);
-      }
-      return {
-        ok,
-        skipped,
-        reason: reason || (skipped ? "skipped" : ""),
-      };
-    } catch (e) {
-      console.warn("[water/drain email notice] invoke failed:", e?.message || e);
-      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
-    }
-  }
-
-  function formatGenericDomainIssueLabel(issueKey) {
-    const key = String(issueKey || "").trim().toLowerCase();
-    if (!key || key === "other") return "";
-    return key
-      .replace(/[_-]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (char) => char.toUpperCase());
-  }
+  return invokeDomainEmailFunction({
+    domain_key: "water_drain_issues",
+    domainLabel: "Water / Drain",
+    issueType: String(issueTypeLabel || "").trim() || "Water / Drain Issue",
+    reportNumber: String(reportNumber || "").trim(),
+    notes: String(notes || "").trim(),
+    location: {
+      lat: Number(lat),
+      lng: Number(lng),
+      text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+    },
+    closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+    closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+    closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+    closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
+    submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+    submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+    reporter: {
+      type: reporter?.type === "guest" ? "guest" : "user",
+      userId: reporter?.userId || null,
+      name: String(reporter?.name || "").trim() || "Unknown",
+      email: String(reporter?.email || "").trim() || "Not provided",
+      phone: String(reporter?.phone || "").trim() || "Not provided",
+    },
+  }, "water/drain email notice");
+}
 
   function resolveReportDomainLabel(domainKey, fallback = "Incident") {
     const key = normalizeDomainKeyOrSlug(domainKey, { allowUnknown: true });
@@ -26100,6 +28245,7 @@ async function sendWaterDrainEmailNotice({
     domainKey,
     domainLabel,
     issueTypeLabel,
+    typeOptions = [],
     reportNumber,
     notes,
     lat,
@@ -26111,55 +28257,32 @@ async function sendWaterDrainEmailNotice({
     submittedAtIso,
     reporter,
   }) {
-    try {
-      const tenantKey = activeTenantKey();
-      const { data, error } = await supabase.functions.invoke("email-domain-report", {
-        body: {
-          tenant_key: tenantKey,
-          domain_key: String(domainKey || "").trim(),
-          domainLabel: String(domainLabel || "").trim() || resolveReportDomainLabel(domainKey, "Incident"),
-          issueType: String(issueTypeLabel || "").trim() || "",
-          reportNumber: String(reportNumber || "").trim(),
-          notes: String(notes || "").trim(),
-          location: {
-            lat: Number(lat),
-            lng: Number(lng),
-            text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
-          },
-          closestAddress: String(closestAddress || "").trim() || "Address unavailable",
-          closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
-          closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
-          closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
-          submittedAtIso: String(submittedAtIso || new Date().toISOString()),
-          submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
-          reporter: {
-            type: reporter?.type === "guest" ? "guest" : "user",
-            userId: reporter?.userId || null,
-            name: String(reporter?.name || "").trim() || "Unknown",
-            email: String(reporter?.email || "").trim() || "Not provided",
-            phone: String(reporter?.phone || "").trim() || "Not provided",
-          },
-        },
-      });
-      if (error) {
-        console.warn("[incident domain email notice] invoke error:", error?.message || error);
-        return { ok: false, reason: String(error?.message || "invoke_error").trim() || "invoke_error", skipped: false };
-      }
-      const skipped = Boolean(data?.skipped);
-      const ok = data?.ok !== false && !skipped;
-      const reason = String(data?.reason || "").trim();
-      if (!ok) {
-        console.warn("[incident domain email notice] not sent:", data);
-      }
-      return {
-        ok,
-        skipped,
-        reason: reason || (skipped ? "skipped" : ""),
-      };
-    } catch (e) {
-      console.warn("[incident domain email notice] invoke failed:", e?.message || e);
-      return { ok: false, reason: String(e?.message || "invoke_failed"), skipped: false };
-    }
+    return invokeDomainEmailFunction({
+      domain_key: String(domainKey || "").trim(),
+      domainLabel: String(domainLabel || "").trim() || resolveReportDomainLabel(domainKey, "Incident"),
+      issueType: String(issueTypeLabel || "").trim() || "",
+      typeOptions: Array.isArray(typeOptions) ? typeOptions : [],
+      reportNumber: String(reportNumber || "").trim(),
+      notes: String(notes || "").trim(),
+      location: {
+        lat: Number(lat),
+        lng: Number(lng),
+        text: `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+      },
+      closestAddress: String(closestAddress || "").trim() || "Address unavailable",
+      closestLandmark: String(closestLandmark || "").trim() || "No nearby landmark",
+      closestCrossStreet: String(closestCrossStreet || "").trim() || "No nearby cross street",
+      closestIntersection: String(closestIntersection || "").trim() || "No nearby intersection",
+      submittedAtIso: String(submittedAtIso || new Date().toISOString()),
+      submittedAtLocal: new Date(submittedAtIso || Date.now()).toLocaleString(),
+      reporter: {
+        type: reporter?.type === "guest" ? "guest" : "user",
+        userId: reporter?.userId || null,
+        name: String(reporter?.name || "").trim() || "Unknown",
+        email: String(reporter?.email || "").trim() || "Not provided",
+        phone: String(reporter?.phone || "").trim() || "Not provided",
+      },
+    }, "incident domain email notice");
   }
 
   function notifyAsyncEmailDelivery(domainLabel, noticeRes) {
@@ -26171,6 +28294,44 @@ async function sendWaterDrainEmailNotice({
       return;
     }
     console.warn(`[${label} email notice] not confirmed${reason ? ` (${reason})` : ""}`);
+  }
+
+  function shouldUsePotholeServiceFallback(err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    return (
+      msg.includes("row-level security") ||
+      msg.includes("violates row-level security policy") ||
+      msg.includes("permission denied") ||
+      msg.includes("not allowed") ||
+      msg.includes("forbidden")
+    );
+  }
+
+  async function submitPotholeReportViaFunction(payload) {
+    const tenantKey = String(activeTenantKey() || "").trim().toLowerCase();
+    if (!tenantKey) {
+      return { data: null, error: new Error("Missing tenant key for pothole submission.") };
+    }
+    try {
+      const { data, error } = await supabase.functions.invoke("submit-pothole-report", {
+        body: {
+          tenant_key: tenantKey,
+          ...(payload && typeof payload === "object" ? payload : {}),
+        },
+      });
+      if (error) {
+        return { data: null, error };
+      }
+      if (data?.ok === false) {
+        return { data: null, error: new Error(String(data?.error || "Failed to submit pothole report.")) };
+      }
+      return { data, error: null };
+    } catch (error) {
+      return {
+        data: null,
+        error: error instanceof Error ? error : new Error(String(error || "Failed to submit pothole report.")),
+      };
+    }
   }
 
   async function uploadDomainReportImageIfAny(file, domainKey, reportKeyHint = "") {
@@ -26256,6 +28417,92 @@ async function sendWaterDrainEmailNotice({
     return true;
   }
 
+  async function insertPotholeLocationWithFallback(payload, tenantKey) {
+    const selectFields = "id, ph_id, lat, lng, location_label";
+    let first = await supabase
+      .from("potholes")
+      .insert([payload])
+      .select(selectFields)
+      .single();
+
+    if (!first.error) return { data: first.data, error: null };
+
+    if (!canRetryInsertWithoutSelect(first.error)) {
+      return { data: null, error: first.error };
+    }
+
+    const plain = await supabase.from("potholes").insert([payload]);
+    if (plain.error) return { data: null, error: plain.error };
+
+    const readClient = createTenantScopedReadClient(tenantKey) || supabase;
+    const lookup = await readClient
+      .from("potholes")
+      .select(selectFields)
+      .eq("tenant_key", tenantKey)
+      .eq("ph_id", String(payload?.ph_id || "").trim())
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lookup.error || !lookup.data) {
+      return {
+        data: null,
+        error: lookup.error || new Error("Pothole was created, but the new pothole location could not be loaded."),
+      };
+    }
+
+    return { data: lookup.data, error: null };
+  }
+
+  async function insertPotholeReportWithFallback(payload, tenantKey) {
+    const selectFields =
+      "id, pothole_id, lat, lng, note, report_number, created_at, reporter_user_id, reporter_name, reporter_phone, reporter_email";
+    let first = await supabase
+      .from("pothole_reports")
+      .insert([payload])
+      .select(selectFields)
+      .single();
+
+    if (!first.error) return { data: first.data, error: null };
+
+    if (!canRetryInsertWithoutSelect(first.error)) {
+      return { data: null, error: first.error };
+    }
+
+    const plain = await supabase.from("pothole_reports").insert([payload]);
+    if (plain.error) return { data: null, error: plain.error };
+
+    const readClient = createTenantScopedReadClient(tenantKey) || supabase;
+    let lookupQuery = readClient
+      .from("pothole_reports")
+      .select(selectFields)
+      .eq("tenant_key", tenantKey)
+      .eq("pothole_id", payload?.pothole_id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (payload?.reporter_user_id) {
+      lookupQuery = lookupQuery.eq("reporter_user_id", payload.reporter_user_id);
+    } else if (payload?.reporter_email) {
+      lookupQuery = lookupQuery.eq("reporter_email", payload.reporter_email);
+    }
+
+    const lookup = await lookupQuery.maybeSingle();
+    if (lookup.error || !lookup.data) {
+      return {
+        data: {
+          id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          created_at: new Date().toISOString(),
+          ...payload,
+          report_number: null,
+        },
+        error: null,
+      };
+    }
+
+    return { data: lookup.data, error: null };
+  }
+
   async function submitDomainReport() {
     const targetRaw = domainReportTarget;
     if (!targetRaw || saving || domainSubmitInFlightRef.current) return;
@@ -26305,11 +28552,16 @@ async function sendWaterDrainEmailNotice({
       if (!municipalBoundaryGate(target.domain, boundaryLat, boundaryLng, { showNotice: true })) {
         return;
       }
-      if ((target.domain === "potholes" || target.domain === "water_drain_issues") && !potholeConsentChecked) {
+      const requiredInsideDisclosures = getDomainDisclosures(target.domain, "inside_form")
+        .filter((row) => row?.required_acknowledgement === true);
+      const missingRequiredDisclosure = requiredInsideDisclosures.find((row, index) => (
+        !domainDisclosureAcknowledgements?.[domainDisclosureAckKey(row, index)]
+      ));
+      if (missingRequiredDisclosure) {
         openNotice(
           "⚠️",
-          "Consent required",
-          `Please confirm authorization to submit your ${target.domain === "water_drain_issues" ? "water/drain issue" : "pothole"} report and contact information.`
+          "Acknowledgement required",
+          `Please confirm the required disclosure for this ${String(target?.domainLabel || "report").trim().toLowerCase() || "report"} before submitting.`
         );
         return;
       }
@@ -26356,8 +28608,12 @@ async function sendWaterDrainEmailNotice({
         return;
       }
 
+      const roadRequired = isRoadRequiredForDomain(target.domain);
+
       if (target.domain === "potholes") {
-      const submitGeoPromise = reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" });
+      const submitGeoPromise = target?.roadValidated
+        ? Promise.resolve(buildRoadValidatedSubmitGeo(target))
+        : reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" });
       const potholeImageUploadPromise = domainReportImageFile
         ? uploadDomainReportImageIfAny(domainReportImageFile, "potholes", target.lightId || target.pothole_id || "")
             .catch((e) => {
@@ -26367,23 +28623,67 @@ async function sendWaterDrainEmailNotice({
             })
         : Promise.resolve("");
       const [submitGeo, imageUrl] = await Promise.all([submitGeoPromise, potholeImageUploadPromise]);
-      if (!submitGeo.isRoad) {
-        openNotice("⚠️", "Road required", "Pothole reports must be placed on a road.");
+      if (roadRequired && !submitGeo.isRoad) {
+        openNotice("⚠️", "Road required", "This report must be placed on a road.");
         return;
       }
-      if (submitGeo.validationUnavailable) {
+      if (roadRequired && submitGeo.validationUnavailable) {
         openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
         return;
       }
-      const submitLat = Number.isFinite(Number(submitGeo.snappedLat)) ? Number(submitGeo.snappedLat) : Number(target.lat);
-      const submitLng = Number.isFinite(Number(submitGeo.snappedLng)) ? Number(submitGeo.snappedLng) : Number(target.lng);
+      const submitLat = roadRequired && Number.isFinite(Number(submitGeo.snappedLat))
+        ? Number(submitGeo.snappedLat)
+        : Number(target.lat);
+      const submitLng = roadRequired && Number.isFinite(Number(submitGeo.snappedLng))
+        ? Number(submitGeo.snappedLng)
+        : Number(target.lng);
       let potholeId = (target.pothole_id || "").trim();
       let phId = (target.lightId || "").trim();
+      let serviceReportData = null;
+      let servicePotholeData = null;
       const potholeAddress =
         String(submitGeo.nearestAddress || target.nearestAddress || "").trim() || "Address unavailable";
       const potholeLandmark = String(submitGeo.nearestLandmark || target.nearestLandmark || "").trim();
       const potholeCrossStreet = String(submitGeo.nearestCrossStreet || target.nearestCrossStreet || "").trim();
       const potholeIntersection = String(submitGeo.nearestIntersection || target.nearestIntersection || "").trim();
+      const potholeReportPayload = {
+        pothole_id: potholeId || null,
+        lat: submitLat,
+        lng: submitLng,
+        note: [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ") || null,
+        reporter_user_id: isAuthed ? session.user.id : null,
+        reporter_name: name.trim(),
+        reporter_phone: phone.trim() || null,
+        reporter_email: email.trim() || null,
+      };
+
+      const tryServiceFallback = async (fallbackPotholeId = potholeId, fallbackPhId = phId) => {
+        const result = await submitPotholeReportViaFunction({
+          pothole_id: fallbackPotholeId || null,
+          ph_id: fallbackPhId || makePotholeIdFromCoords(submitLat, submitLng),
+          lat: submitLat,
+          lng: submitLng,
+          location_label: potholeAddress,
+          nearest_address: potholeAddress,
+          nearest_cross_street: potholeCrossStreet,
+          nearest_landmark: potholeLandmark,
+          note: potholeReportPayload.note,
+          reporter_user_id: potholeReportPayload.reporter_user_id,
+          reporter_name: potholeReportPayload.reporter_name,
+          reporter_phone: potholeReportPayload.reporter_phone,
+          reporter_email: potholeReportPayload.reporter_email,
+          created_by: session?.user?.id || null,
+        });
+        if (result.error || !result.data?.report) return null;
+        servicePotholeData = result.data?.pothole || null;
+        serviceReportData = result.data?.report || null;
+        potholeId = String(servicePotholeData?.id || fallbackPotholeId || "").trim();
+        phId = String(servicePotholeData?.ph_id || fallbackPhId || phId || "").trim();
+        return {
+          pothole: servicePotholeData,
+          report: serviceReportData,
+        };
+      };
 
       if (!potholeId) {
         const nearest = nearestPotholeForPoint(submitLat, submitLng, potholes, POTHOLE_MERGE_RADIUS_METERS);
@@ -26415,32 +28715,34 @@ async function sendWaterDrainEmailNotice({
       }
 
       if (!potholeId) {
-        const insPothole = await supabase
-          .from("potholes")
-          .insert([{
-            ph_id: phId || makePotholeIdFromCoords(submitLat, submitLng),
-            lat: submitLat,
-            lng: submitLng,
-            location_label: potholeAddress || null,
-            created_by: session?.user?.id || null,
-          }])
-          .select("id, ph_id, lat, lng, location_label")
-          .single();
+        const tenantKey = String(activeTenantKey() || "").trim().toLowerCase();
+        const insPothole = await insertPotholeLocationWithFallback({
+          ph_id: phId || makePotholeIdFromCoords(submitLat, submitLng),
+          lat: submitLat,
+          lng: submitLng,
+          location_label: potholeAddress || null,
+          created_by: session?.user?.id || null,
+        }, tenantKey);
         if (insPothole.error) {
-          console.error(insPothole.error);
-          openNotice("⚠️", "Couldn’t submit", insPothole.error?.message || "Failed to create pothole location.");
-          return;
+          const fallback = shouldUsePotholeServiceFallback(insPothole.error)
+            ? await tryServiceFallback("", phId || makePotholeIdFromCoords(submitLat, submitLng))
+            : null;
+          if (!fallback) {
+            console.error(insPothole.error);
+            openNotice("⚠️", "Couldn’t submit", insPothole.error?.message || "Failed to create pothole location.");
+            return;
+          }
         }
-        potholeId = insPothole.data?.id;
-        phId = (insPothole.data?.ph_id || phId || "").trim();
+        potholeId = String(servicePotholeData?.id || insPothole.data?.id || "").trim();
+        phId = String(servicePotholeData?.ph_id || insPothole.data?.ph_id || phId || "").trim();
         if (potholeId) {
           setPotholes((prev) => {
             const incoming = {
               id: potholeId,
               ph_id: phId || null,
-              lat: Number(insPothole.data?.lat),
-              lng: Number(insPothole.data?.lng),
-              location_label: (insPothole.data?.location_label || "").trim() || null,
+              lat: Number(servicePotholeData?.lat ?? insPothole.data?.lat ?? submitLat),
+              lng: Number(servicePotholeData?.lng ?? insPothole.data?.lng ?? submitLng),
+              location_label: String(servicePotholeData?.location_label || insPothole.data?.location_label || "").trim() || null,
             };
             if (!incoming.id || !isValidLatLng(incoming.lat, incoming.lng)) return prev;
             if (prev.some((x) => x.id === incoming.id)) return prev;
@@ -26477,28 +28779,24 @@ async function sendWaterDrainEmailNotice({
           }));
         })();
       }
+      potholeReportPayload.pothole_id = potholeId;
 
-      const potholeReportPayload = {
-        pothole_id: potholeId,
-        lat: submitLat,
-        lng: submitLng,
-        note: [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ") || null,
-        reporter_user_id: isAuthed ? session.user.id : null,
-        reporter_name: name.trim(),
-        reporter_phone: phone.trim() || null,
-        reporter_email: email.trim() || null,
-      };
+      let insReport = { data: serviceReportData, error: null };
+      if (!serviceReportData) {
+        const tenantKey = String(activeTenantKey() || "").trim().toLowerCase();
+        insReport = await insertPotholeReportWithFallback(potholeReportPayload, tenantKey);
 
-      const insReport = await supabase
-        .from("pothole_reports")
-        .insert([potholeReportPayload])
-        .select("*")
-        .single();
-
-      if (insReport.error) {
-        console.error(insReport.error);
-        openNotice("⚠️", "Couldn’t submit", insReport.error?.message || "Failed to submit pothole report.");
-        return;
+        if (insReport.error) {
+          const fallback = shouldUsePotholeServiceFallback(insReport.error)
+            ? await tryServiceFallback(potholeId, phId)
+            : null;
+          if (!fallback) {
+            console.error(insReport.error);
+            openNotice("⚠️", "Couldn’t submit", insReport.error?.message || "Failed to submit pothole report.");
+            return;
+          }
+          insReport = { data: fallback.report, error: null };
+        }
       }
 
       const saved = {
@@ -26567,9 +28865,9 @@ async function sendWaterDrainEmailNotice({
           return;
         }
       }
-      const waterGeoPromise = isWaterDrainTarget
-        ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" })
-        : Promise.resolve(null);
+      const incidentGeoPromise = target?.roadValidated
+        ? Promise.resolve(buildRoadValidatedSubmitGeo(target))
+        : reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), { mode: "full" });
       const domainImageUploadPromise = (canAttachImageForDomain(target.domain) && domainReportImageFile)
         ? uploadDomainReportImageIfAny(domainReportImageFile, target.domain, target.lightId || "")
             .catch((e) => {
@@ -26578,41 +28876,63 @@ async function sendWaterDrainEmailNotice({
               return "";
             })
         : Promise.resolve("");
-      const [waterSubmitGeo, imageUrl] = await Promise.all([waterGeoPromise, domainImageUploadPromise]);
-      const waterNearestAddress = String(waterSubmitGeo?.nearestAddress || target.nearestAddress || "").trim();
-      const waterNearestLandmark = String(waterSubmitGeo?.nearestLandmark || target.nearestLandmark || "").trim();
-      const waterNearestCrossStreet = String(waterSubmitGeo?.nearestCrossStreet || target.nearestCrossStreet || "").trim();
-      const waterNearestIntersection = String(waterSubmitGeo?.nearestIntersection || target.nearestIntersection || "").trim();
-      const signIssue = isStreetSignsTarget
-        ? STREET_SIGN_ISSUE_OPTIONS.find((x) => x.value === domainReportIssue)?.label || "Other"
-        : "";
-      const waterDrainIssue = isWaterDrainTarget
-        ? WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === domainReportIssue)?.label || "Water / Drain Issue"
-        : "";
-      const issueNote = isStreetSignsTarget
-        ? `Sign issue: ${signIssue}`
-        : isWaterDrainTarget
-          ? `Water issue: ${waterDrainIssue}`
-          : null;
-      const signTypeNote = isStreetSignsTarget
-        ? `Sign type: ${String(target.signType || "").trim() || "Unknown"}`
+      const [incidentSubmitGeo, imageUrl] = await Promise.all([incidentGeoPromise, domainImageUploadPromise]);
+      if (roadRequired && !incidentSubmitGeo?.isRoad) {
+        openNotice("⚠️", "Road required", "This report must be placed on a road.");
+        return;
+      }
+      if (roadRequired && incidentSubmitGeo?.validationUnavailable) {
+        openNotice("⚠️", "Road validation unavailable", "Road validation is temporarily unavailable. Please try again.");
+        return;
+      }
+      const incidentSubmitLat = roadRequired && Number.isFinite(Number(incidentSubmitGeo?.snappedLat))
+        ? Number(incidentSubmitGeo.snappedLat)
+        : Number(target.lat);
+      const incidentSubmitLng = roadRequired && Number.isFinite(Number(incidentSubmitGeo?.snappedLng))
+        ? Number(incidentSubmitGeo.snappedLng)
+        : Number(target.lng);
+      const incidentNearestAddress = String(incidentSubmitGeo?.nearestAddress || target.nearestAddress || "").trim();
+      const incidentNearestLandmark = String(incidentSubmitGeo?.nearestLandmark || target.nearestLandmark || "").trim();
+      const incidentNearestCrossStreet = String(incidentSubmitGeo?.nearestCrossStreet || target.nearestCrossStreet || "").trim();
+      const incidentNearestIntersection = String(incidentSubmitGeo?.nearestIntersection || target.nearestIntersection || "").trim();
+      const incidentLocationLabel = String(
+        incidentNearestAddress
+        || target.locationLabel
+        || `${incidentSubmitLat.toFixed(5)}, ${incidentSubmitLng.toFixed(5)}`
+      ).trim();
+      const domainIssueOptions = getDomainIssueOptions(target.domain);
+      const selectedIssueValue =
+        String(domainReportIssue || defaultDomainIssueValue(target.domain, domainIssueOptions)).trim().toLowerCase();
+      const selectedIssueLabel = resolveConfiguredDomainIssueLabel(target.domain, selectedIssueValue, domainIssueOptions);
+      const issueNote = selectedIssueLabel
+        ? `${domainIssueNoteTag(target.domain)}: ${selectedIssueLabel}`
         : null;
-      const reportType = isWaterDrainTarget
-        ? String(domainReportIssue || WATER_DRAIN_ISSUE_OPTIONS[0].value).trim().toLowerCase()
-        : "other";
-      const normalizedReportType = reportType === "sewer_backup" || reportType === "storm_drain_clog"
-        ? reportType
-        : "storm_drain_clog";
+      const domainTypeOptions = getDomainTypeOptionConfigs(target.domain);
+      const resolvedTypeSelections = buildInitialDomainTypeSelections(
+        {
+          ...target,
+          typeSelections: domainReportTypeSelections,
+        },
+        domainTypeOptions
+      );
+      const typeNotes = buildDomainTypeOptionNoteTags(resolvedTypeSelections, domainTypeOptions);
+      const typeOptionPayload = buildDomainTypeOptionPayload(resolvedTypeSelections, domainTypeOptions);
+      const storedWaterDrainIssueType = isWaterDrainTarget ? selectedIssueValue : "";
       const payload = {
-        lat: target.lat,
-        lng: target.lng,
+        lat: incidentSubmitLat,
+        lng: incidentSubmitLng,
+        report_domain: String(target.domain || "").trim().toLowerCase() || null,
         // Keep DB-compatible value to avoid expected 400 noise from report_type check constraints.
         // Water/drain subtype is preserved in note text and email payload.
         report_type: "other",
         report_quality: "bad",
         note: [
-          `Location: ${waterNearestAddress || target.locationLabel || `${target.lat.toFixed(5)}, ${target.lng.toFixed(5)}`}`,
-          signTypeNote,
+          `Location: ${incidentLocationLabel}`,
+          incidentNearestAddress ? `Address: ${incidentNearestAddress}` : null,
+          incidentNearestCrossStreet ? `Cross Street: ${incidentNearestCrossStreet}` : null,
+          incidentNearestIntersection ? `Intersection: ${incidentNearestIntersection}` : null,
+          incidentNearestLandmark ? `Landmark: ${incidentNearestLandmark}` : null,
+          ...typeNotes,
           issueNote,
           domainReportNote.trim() || null,
           imageUrl ? `Image: ${imageUrl}` : null,
@@ -26621,7 +28941,7 @@ async function sendWaterDrainEmailNotice({
           .join(" | "),
         light_id: (isWaterDrainTarget && canonicalWaterDrainIncidentId)
           ? canonicalWaterDrainIncidentId
-          : (String(target.lightId || "").trim() || `${isWaterDrainTarget ? "water_main" : target.domain}:${target.lat.toFixed(5)}:${target.lng.toFixed(5)}`),
+          : (String(target.lightId || "").trim() || `${isWaterDrainTarget ? "water_main" : target.domain}:${incidentSubmitLat.toFixed(5)}:${incidentSubmitLng.toFixed(5)}`),
         reporter_user_id: isAuthed ? session.user.id : null,
         reporter_name: name.trim(),
         reporter_phone: phone.trim() || null,
@@ -26658,9 +28978,9 @@ async function sendWaterDrainEmailNotice({
       persistedSubmission = true;
 
       if (isWaterDrainTarget && saved?.light_id) {
-        const nearestAddress = String(waterNearestAddress || "").trim();
-        const nearestCrossStreet = String(waterNearestCrossStreet || "").trim();
-        const nearestLandmark = String(waterNearestLandmark || "").trim();
+        const nearestAddress = String(incidentNearestAddress || "").trim();
+        const nearestCrossStreet = String(incidentNearestCrossStreet || "").trim();
+        const nearestLandmark = String(incidentNearestLandmark || "").trim();
         if (nearestAddress || nearestCrossStreet || nearestLandmark) {
           void (async () => {
             const { data: cacheData, error: cacheErr } = await supabase.functions.invoke("cache-official-light-geo", {
@@ -26668,9 +28988,9 @@ async function sendWaterDrainEmailNotice({
                 tenant_key: activeTenantKey(),
                 domain: "water_main",
                 incident_id: String(saved.light_id || "").trim(),
-                lat: Number(data?.lat ?? target.lat),
-                lng: Number(data?.lng ?? target.lng),
-                issue_type: normalizedReportType,
+                lat: Number(data?.lat ?? incidentSubmitLat),
+                lng: Number(data?.lng ?? incidentSubmitLng),
+                issue_type: storedWaterDrainIssueType || null,
                 nearest_address: nearestAddress || null,
                 nearest_cross_street: nearestCrossStreet || null,
                 nearest_landmark: nearestLandmark || null,
@@ -26686,9 +29006,9 @@ async function sendWaterDrainEmailNotice({
                 ...(prev || {}),
                 [incidentKey]: {
                   wd_id: String(cacheData?.row?.wd_id || "").trim() || makeWaterDrainIdFromIncidentId(incidentKey),
-                  issue_type: normalizedReportType,
-                  lat: Number(data?.lat ?? target.lat),
-                  lng: Number(data?.lng ?? target.lng),
+                  issue_type: storedWaterDrainIssueType,
+                  lat: Number(data?.lat ?? incidentSubmitLat),
+                  lng: Number(data?.lng ?? incidentSubmitLng),
                   nearest_address: nearestAddress || "",
                   nearest_cross_street: nearestCrossStreet || "",
                   nearest_landmark: nearestLandmark || "",
@@ -26701,20 +29021,15 @@ async function sendWaterDrainEmailNotice({
         }
       }
 
-      const issueLabel = isStreetSignsTarget
-        ? signIssue
-        : isWaterDrainTarget
-          ? (
-            WATER_DRAIN_ISSUE_OPTIONS.find((x) => x.value === normalizedReportType)?.label
-            || waterDrainIssue
-            || "Water / Drain Issue"
-          )
-          : formatGenericDomainIssueLabel(domainReportIssue);
+      const issueLabel =
+        selectedIssueLabel
+        || resolveConfiguredDomainIssueLabel(target.domain, String(data?.report_type || "").trim(), domainIssueOptions)
+        || (isWaterDrainTarget ? "Water / Drain Issue" : "");
       const submittedAtIso = data?.created_at || new Date().toISOString();
-      const nearestAddress = String(waterNearestAddress || target.locationLabel || "").trim() || "Address unavailable";
-      const nearestLandmark = String(waterNearestLandmark || target.nearestLandmark || "").trim() || "No nearby landmark";
-      const nearestCrossStreet = String(waterNearestCrossStreet || target.nearestCrossStreet || "").trim() || "No nearby cross street";
-      const nearestIntersection = String(waterNearestIntersection || target.nearestIntersection || "").trim() || "No nearby intersection";
+      const nearestAddress = String(incidentNearestAddress || target.locationLabel || "").trim() || "Address unavailable";
+      const nearestLandmark = String(incidentNearestLandmark || target.nearestLandmark || "").trim() || "No nearby landmark";
+      const nearestCrossStreet = String(incidentNearestCrossStreet || target.nearestCrossStreet || "").trim() || "No nearby cross street";
+      const nearestIntersection = String(incidentNearestIntersection || target.nearestIntersection || "").trim() || "No nearby intersection";
       const userNotesOnly = [domainReportNote.trim() || "", imageUrl ? `Image: ${imageUrl}` : ""].filter(Boolean).join(" | ");
       const emailDomainLabel = String(target.domainLabel || resolveReportDomainLabel(target.domain, "Incident")).trim() || "Incident";
       const emailNoticePromise = isWaterDrainTarget
@@ -26722,8 +29037,8 @@ async function sendWaterDrainEmailNotice({
           issueTypeLabel: issueLabel,
           reportNumber: data?.report_number || saved.report_number || "",
           notes: userNotesOnly,
-          lat: Number(data?.lat ?? target.lat),
-          lng: Number(data?.lng ?? target.lng),
+          lat: Number(data?.lat ?? incidentSubmitLat),
+          lng: Number(data?.lng ?? incidentSubmitLng),
           closestAddress: nearestAddress,
           closestLandmark: nearestLandmark,
           closestCrossStreet: nearestCrossStreet,
@@ -26741,10 +29056,11 @@ async function sendWaterDrainEmailNotice({
           domainKey: target.domain,
           domainLabel: emailDomainLabel,
           issueTypeLabel: issueLabel,
+          typeOptions: typeOptionPayload,
           reportNumber: data?.report_number || saved.report_number || "",
           notes: userNotesOnly,
-          lat: Number(data?.lat ?? target.lat),
-          lng: Number(data?.lng ?? target.lng),
+          lat: Number(data?.lat ?? incidentSubmitLat),
+          lng: Number(data?.lng ?? incidentSubmitLng),
           closestAddress: nearestAddress,
           closestLandmark: nearestLandmark,
           closestCrossStreet: nearestCrossStreet,
@@ -26767,8 +29083,10 @@ async function sendWaterDrainEmailNotice({
       setDomainReportNote("");
       setDomainReportImageFile(null);
       setDomainReportImagePreviewUrl("");
-      setDomainReportIssue(defaultDomainIssueFor(target.domain));
-      setPotholeConsentChecked(false);
+      setDomainReportIssue(defaultDomainIssueValue(target.domain, getDomainIssueOptions(target.domain)));
+      setDomainReportTypeSelections({});
+      setDomainDisclosureAcknowledgements({});
+      setDomainDisclosureGateTarget(null);
       setDomainReportTarget(null);
       openReportSuccess({
         kind: "incident",
@@ -26948,6 +29266,7 @@ async function insertReportWithFallback(payload) {
     const workingPayloadBase = {
       lat,
       lng,
+      report_domain: "streetlights",
       report_type: "working",
       report_quality: "good",
       note: null,
@@ -27159,7 +29478,7 @@ async function insertReportWithFallback(payload) {
     setPicked([lat, lng]);
     setActiveLight({ lat, lng, lightId, isOfficial, reports });
     setNote("");           // optional: reset note each time
-    setReportType("out");  // optional: default each time
+    setReportType(defaultDomainIssueValue("streetlights", streetlightIssueOptions));
     setStreetlightAreaPowerOn("");
     setStreetlightHazardYesNo("");
   }
@@ -27177,7 +29496,8 @@ async function insertReportWithFallback(payload) {
     const guestSource = usingGuestBypass ? guestInfoDraft : guestInfo;
     if (usingGuestBypass) guestSubmitBypassRef.current = false;
 
-    if (reportType === "other" && !note.trim()) {
+    const selectedStreetlightIssueValue = String(reportType || defaultDomainIssueValue("streetlights", streetlightIssueOptions)).trim().toLowerCase();
+    if (isStreetlightOtherIssue(selectedStreetlightIssueValue, streetlightIssueOptions) && !note.trim()) {
       openNotice("⚠️", "Notes required", "Please add a brief note for “Other”.");
       return;
     }
@@ -27283,12 +29603,15 @@ async function insertReportWithFallback(payload) {
           }
         }
 
+        const selectedStreetlightIssueLabel = resolveConfiguredDomainIssueLabel("streetlights", selectedStreetlightIssueValue, streetlightIssueOptions);
+        const storedStreetlightReportType = resolveStoredStreetlightReportType(selectedStreetlightIssueValue, streetlightIssueOptions);
         const payload = {
           lat: picked[0],
           lng: picked[1],
-          report_type: reportType,
+          report_domain: "streetlights",
+          report_type: storedStreetlightReportType,
           report_quality: "bad",
-          note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo) || null,
+          note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo, selectedStreetlightIssueLabel) || null,
           light_id: lightId,
 
           reporter_user_id: isAuthed ? session.user.id : null,
@@ -27604,10 +29927,14 @@ async function insertReportWithFallback(payload) {
     }
   }
 
-  if (reportType === "other" && !note.trim()) {
+  const selectedStreetlightIssueValue = String(reportType || defaultDomainIssueValue("streetlights", streetlightIssueOptions)).trim().toLowerCase();
+  if (isStreetlightOtherIssue(selectedStreetlightIssueValue, streetlightIssueOptions) && !note.trim()) {
     openNotice("⚠️", "Notes required", "Please add a brief note for “Other”.");
     return;
   }
+
+  const selectedStreetlightIssueLabel = resolveConfiguredDomainIssueLabel("streetlights", selectedStreetlightIssueValue, streetlightIssueOptions);
+  const storedStreetlightReportType = resolveStoredStreetlightReportType(selectedStreetlightIssueValue, streetlightIssueOptions);
 
   setSaving(true);
   const abuseGate = await registerAbuseEventWithServer({
@@ -27661,9 +29988,10 @@ async function insertReportWithFallback(payload) {
     const payload = {
       lat: ol.lat,
       lng: ol.lng,
-      report_type: reportType,
+      report_domain: "streetlights",
+      report_type: storedStreetlightReportType,
       report_quality: "bad",
-      note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo) || null,
+      note: composeStreetlightQaNote(note, streetlightAreaPowerOn, streetlightHazardYesNo, selectedStreetlightIssueLabel) || null,
       light_id: lightId,
 
       reporter_user_id: isAuthed ? session.user.id : null,
@@ -28518,6 +30846,42 @@ async function insertReportWithFallback(payload) {
     }
   }
 
+  function resumeFollowCameraFromLiveMotion({ syncState = false } = {}) {
+    const liveLat = Number(liveMotionRef.current?.lat);
+    const liveLng = Number(liveMotionRef.current?.lng);
+    let liveHeading = Number(liveMotionRef.current?.heading);
+    if (!Number.isFinite(liveLat) || !Number.isFinite(liveLng)) return false;
+    if (!followHeadingEnabledRef.current) liveHeading = NaN;
+    const queuedHeading = Number.isFinite(liveHeading) ? liveHeading : null;
+
+    lastFollowCameraRef.current = {
+      lat: liveLat,
+      lng: liveLng,
+      heading: queuedHeading,
+    };
+    followAnimatedCameraRef.current = {
+      lat: liveLat,
+      lng: liveLng,
+      heading: queuedHeading,
+    };
+
+    if (syncState) {
+      moveFollowCamera({
+        lat: liveLat,
+        lng: liveLng,
+        heading: queuedHeading,
+        syncState: true,
+      });
+    }
+
+    queueFollowCameraTarget({
+      lat: liveLat,
+      lng: liveLng,
+      heading: queuedHeading,
+    });
+    return true;
+  }
+
   function queueFollowCameraTarget({ lat, lng, heading }) {
     followTargetRef.current = { lat, lng, heading };
     if (followRafRef.current) return;
@@ -28541,11 +30905,21 @@ async function insertReportWithFallback(payload) {
       const currentHeading = Number.isFinite(animated?.heading) ? animated.heading : targetHeading;
       const remainingMeters = metersBetween({ lat: currentLat, lng: currentLng }, { lat: targetLat, lng: targetLng });
       const positionAlpha =
-        remainingMeters >= 35 ? 0.34 :
-        remainingMeters >= 18 ? 0.28 :
-        remainingMeters >= 8 ? 0.22 :
-        remainingMeters >= 3 ? 0.16 :
-        1;
+        travelFollowMode
+          ? (
+            remainingMeters >= 35 ? 0.48 :
+            remainingMeters >= 18 ? 0.38 :
+            remainingMeters >= 8 ? 0.30 :
+            remainingMeters >= 3 ? 0.22 :
+            1
+          )
+          : (
+            remainingMeters >= 35 ? 0.34 :
+            remainingMeters >= 18 ? 0.28 :
+            remainingMeters >= 8 ? 0.22 :
+            remainingMeters >= 3 ? 0.16 :
+            1
+          );
       const nextLat = remainingMeters <= 0.8 ? targetLat : currentLat + (targetLat - currentLat) * positionAlpha;
       const nextLng = remainingMeters <= 0.8 ? targetLng : currentLng + (targetLng - currentLng) * positionAlpha;
 
@@ -28556,15 +30930,15 @@ async function insertReportWithFallback(payload) {
         headingRemaining = Math.abs(delta);
         const headingAlpha =
           travelFollowMode
-            ? headingRemaining >= 45 ? 0.62
-              : headingRemaining >= 24 ? 0.52
-                : headingRemaining >= 10 ? 0.38
-                  : 0.24
+            ? headingRemaining >= 45 ? 0.88
+              : headingRemaining >= 24 ? 0.74
+                : headingRemaining >= 10 ? 0.56
+                  : 0.34
             : headingRemaining >= 40 ? 0.30
               : headingRemaining >= 18 ? 0.22
                 : headingRemaining >= 8 ? 0.16
                   : 1;
-        const snapDegrees = travelFollowMode ? 0.7 : 2;
+        const snapDegrees = travelFollowMode ? 0.45 : 2;
         nextHeading = headingRemaining <= snapDegrees ? targetHeading : (currentHeading + delta * headingAlpha + 360) % 360;
       } else if (Number.isFinite(targetHeading)) {
         nextHeading = targetHeading;
@@ -28630,26 +31004,7 @@ async function insertReportWithFallback(payload) {
         setAutoFollow(true);
         setFollowCamera(true);
         followHeadingEnabledRef.current = true;
-        const liveLat = Number(liveMotionRef.current?.lat);
-        const liveLng = Number(liveMotionRef.current?.lng);
-        const liveHeading = Number(liveMotionRef.current?.heading);
-        if (Number.isFinite(liveLat) && Number.isFinite(liveLng)) {
-          lastFollowCameraRef.current = {
-            lat: liveLat,
-            lng: liveLng,
-            heading: Number.isFinite(liveHeading) ? liveHeading : null,
-          };
-          followAnimatedCameraRef.current = {
-            lat: liveLat,
-            lng: liveLng,
-            heading: Number.isFinite(liveHeading) ? liveHeading : null,
-          };
-          queueFollowCameraTarget({
-            lat: liveLat,
-            lng: liveLng,
-            heading: Number.isFinite(liveHeading) ? liveHeading : null,
-          });
-        } else {
+        if (!resumeFollowCameraFromLiveMotion({ syncState: true })) {
           void findMyLocation(false);
         }
       }
@@ -28968,11 +31323,21 @@ async function insertReportWithFallback(payload) {
             const navDelta = ((heading - prevNavHeading + 540) % 360) - 180;
             const navDeltaAbs = Math.abs(navDelta);
             const navHeadingAlpha =
-              navDeltaAbs >= 50 ? 0.78 :
-              navDeltaAbs >= 28 ? 0.66 :
-              navDeltaAbs >= 14 ? 0.50 :
-              speedForHeading >= 8 ? 0.34 :
-              0.26;
+              travelFollowMode
+                ? (
+                  navDeltaAbs >= 50 ? 0.92 :
+                  navDeltaAbs >= 28 ? 0.82 :
+                  navDeltaAbs >= 14 ? 0.68 :
+                  speedForHeading >= 8 ? 0.52 :
+                  0.40
+                )
+                : (
+                  navDeltaAbs >= 50 ? 0.78 :
+                  navDeltaAbs >= 28 ? 0.66 :
+                  navDeltaAbs >= 14 ? 0.50 :
+                  speedForHeading >= 8 ? 0.34 :
+                  0.26
+                );
             navigationHeading = (prevNavHeading + navDelta * navHeadingAlpha + 360) % 360;
           }
           navigationHeadingRef.current = navigationHeading;
@@ -29031,6 +31396,7 @@ async function insertReportWithFallback(payload) {
         };
 
         if (followCamera) {
+          if (travelFollowMode && userDragPanRef.current) return;
           const speedForThresholds = Number.isFinite(speedMps) && speedMps > 0 ? speedMps : 0;
           const poorAccuracySmallMove =
             Number.isFinite(accuracyM) &&
@@ -29050,15 +31416,16 @@ async function insertReportWithFallback(payload) {
               : Infinity;
 
           const moveTriggerMeters =
-            travelFollowMode && speedForThresholds >= headingFreezeMps ? 0.9 :
+            travelFollowMode && speedForThresholds >= 12 ? 0.55 :
+            travelFollowMode && speedForThresholds >= headingFreezeMps ? 0.75 :
             Number.isFinite(accuracyM) && accuracyM > 40 ? 4 :
             Number.isFinite(accuracyM) && accuracyM > 20 ? 2.8 :
             speedForThresholds >= 12 ? 1.8 :
             speedForThresholds >= 6 ? 1.4 :
             speedForThresholds >= headingHeavyDampMps ? 2.4 : 3.4;
           const headingTriggerDeg =
-            travelFollowMode && speedForThresholds >= 12 ? 1.4 :
-            travelFollowMode && speedForThresholds >= headingFreezeMps ? 2.2 :
+            travelFollowMode && speedForThresholds >= 12 ? 0.55 :
+            travelFollowMode && speedForThresholds >= headingFreezeMps ? 1.0 :
             speedForThresholds >= 12 ? 4 :
             speedForThresholds >= 8 ? 6 :
             speedForThresholds >= headingHeavyDampMps ? 10 :
@@ -29122,7 +31489,7 @@ async function insertReportWithFallback(payload) {
     return () => {
       try { navigator.geolocation.clearWatch(id); } catch {}
     };
-  }, [autoFollow, followCamera]);
+  }, [autoFollow, followCamera, travelFollowMode]);
 
   useEffect(() => () => {
     cancelFlyAnimation();
@@ -29159,6 +31526,154 @@ async function insertReportWithFallback(payload) {
   });
 
   useEffect(() => {
+    if (!gmapsRef || !isTouchDevice) return;
+    const div = gmapsRef.getDiv?.();
+    if (!div) return;
+
+    const gestureState = {
+      lastEligibleTapTs: 0,
+      secondTapActive: false,
+      secondTapMoved: false,
+      secondTapDragZoomed: false,
+      secondTapStartY: 0,
+      secondTapStartZoom: null,
+      secondTapLastAppliedZoom: null,
+      activeTouchStartedSingle: false,
+      activeTouchMoved: false,
+    };
+    const captureTouchOptions = { passive: false, capture: true };
+    const passiveCaptureTouchOptions = { passive: true, capture: true };
+
+    const resetSecondTapGesture = () => {
+      gestureState.secondTapActive = false;
+      gestureState.secondTapMoved = false;
+      gestureState.secondTapDragZoomed = false;
+      gestureState.secondTapStartY = 0;
+      gestureState.secondTapStartZoom = null;
+      gestureState.secondTapLastAppliedZoom = null;
+      gestureState.activeTouchStartedSingle = false;
+      gestureState.activeTouchMoved = false;
+    };
+
+    const isUiTarget = (target) => {
+      if (!target?.closest) return false;
+      return Boolean(
+        target.closest(".gm-style-iw") ||
+          target.closest(".gm-style-iw-c") ||
+          target.closest(".gm-style-iw-d") ||
+          target.closest(".gm-control-active") ||
+          target.closest("button") ||
+          target.closest("a") ||
+          target.closest("input") ||
+          target.closest("textarea") ||
+          target.closest("select")
+      );
+    };
+
+    const cancelPendingMapTap = (suppressMs = 1100) => {
+      const ref = clickDelayRef.current;
+      if (ref?.timer) {
+        clearTimeout(ref.timer);
+        ref.timer = null;
+      }
+      if (ref) ref.lastLatLng = null;
+      suppressMapClickRef.current.until = Date.now() + suppressMs;
+    };
+
+    const onTouchStart = (event) => {
+      if ((event.touches?.length || 0) !== 1) {
+        gestureState.lastEligibleTapTs = 0;
+        resetSecondTapGesture();
+        return;
+      }
+      if (isUiTarget(event.target)) {
+        gestureState.lastEligibleTapTs = 0;
+        resetSecondTapGesture();
+        return;
+      }
+      const now = Date.now();
+      const dt = now - Number(gestureState.lastEligibleTapTs || 0);
+      gestureState.activeTouchStartedSingle = true;
+      gestureState.activeTouchMoved = false;
+      gestureState.secondTapActive = dt > 0 && dt < 420;
+      gestureState.secondTapMoved = false;
+      gestureState.secondTapDragZoomed = false;
+      if (gestureState.secondTapActive) {
+        const touch = event.touches?.[0];
+        const zoom = Number(gmapsRef.getZoom?.());
+        gestureState.secondTapStartY = Number(touch?.clientY || 0);
+        gestureState.secondTapStartZoom = Number.isFinite(zoom) ? zoom : 0;
+        gestureState.secondTapLastAppliedZoom = gestureState.secondTapStartZoom;
+        cancelPendingMapTap(1400);
+        if (event.cancelable) event.preventDefault();
+      }
+    };
+
+    const onTouchMove = (event) => {
+      if (!gestureState.activeTouchStartedSingle) return;
+      if (isUiTarget(event.target)) return;
+      gestureState.activeTouchMoved = true;
+      if (!gestureState.secondTapActive) return;
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      gestureState.secondTapMoved = true;
+      cancelPendingMapTap(1400);
+      const startZoom = Number(gestureState.secondTapStartZoom);
+      const startY = Number(gestureState.secondTapStartY);
+      if (!Number.isFinite(startZoom) || !Number.isFinite(startY)) {
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+      const deltaY = startY - Number(touch.clientY || 0);
+      const zoomSteps = deltaY >= 0
+        ? Math.floor(deltaY / 80)
+        : Math.ceil(deltaY / 80);
+      const minZoom = Number(gmapsRef.get?.("minZoom"));
+      const maxZoom = Number(gmapsRef.get?.("maxZoom"));
+      const nextZoom = clamp(
+        startZoom + zoomSteps,
+        Number.isFinite(minZoom) ? minZoom : 3,
+        Number.isFinite(maxZoom) ? maxZoom : 22,
+      );
+      if (Number.isFinite(nextZoom) && nextZoom !== gestureState.secondTapLastAppliedZoom) {
+        gmapsRef.setZoom?.(nextZoom);
+        gestureState.secondTapLastAppliedZoom = nextZoom;
+        gestureState.secondTapDragZoomed = true;
+      }
+      if (event.cancelable) event.preventDefault();
+    };
+
+    const onTouchEnd = () => {
+      const endedSecondTap = gestureState.secondTapActive;
+      const shouldKeepTapEligible =
+        gestureState.activeTouchStartedSingle &&
+        !gestureState.activeTouchMoved &&
+        !gestureState.secondTapMoved &&
+        !gestureState.secondTapDragZoomed;
+      if (gestureState.secondTapActive) {
+        cancelPendingMapTap(gestureState.secondTapDragZoomed || gestureState.secondTapMoved ? 1100 : 700);
+      }
+      gestureState.lastEligibleTapTs =
+        endedSecondTap || !shouldKeepTapEligible
+          ? 0
+          : Date.now();
+      resetSecondTapGesture();
+    };
+
+    div.addEventListener("touchstart", onTouchStart, captureTouchOptions);
+    div.addEventListener("touchmove", onTouchMove, captureTouchOptions);
+    div.addEventListener("touchend", onTouchEnd, passiveCaptureTouchOptions);
+    div.addEventListener("touchcancel", onTouchEnd, passiveCaptureTouchOptions);
+
+    return () => {
+      div.removeEventListener("touchstart", onTouchStart, captureTouchOptions);
+      div.removeEventListener("touchmove", onTouchMove, captureTouchOptions);
+      div.removeEventListener("touchend", onTouchEnd, passiveCaptureTouchOptions);
+      div.removeEventListener("touchcancel", onTouchEnd, passiveCaptureTouchOptions);
+    };
+  }, [gmapsRef, isTouchDevice]);
+
+  useEffect(() => {
     if (!isLoaded) {
       setMapTilesReady(false);
       return;
@@ -29180,7 +31695,7 @@ async function insertReportWithFallback(payload) {
       mapTypeId: mapType,
       mapId: useRasterCompatMode ? undefined : (GMAPS_MAP_ID || undefined),
       gestureHandling: "greedy",
-      disableDoubleClickZoom: isTouchDevice,
+      disableDoubleClickZoom: false,
       isFractionalZoomEnabled: false,
       fullscreenControl: false,
       streetViewControl: false,
@@ -29190,7 +31705,7 @@ async function insertReportWithFallback(payload) {
       headingInteractionEnabled: !useRasterCompatMode,
       tiltInteractionEnabled: false,
     };
-  }, [forceRasterMapCompat, isAppleTouchWeb, isTouchDevice, mapType]);
+  }, [forceRasterMapCompat, isAppleTouchWeb, mapType]);
 
   // -------------------------
   // Popup button styles (Google InfoWindow)
@@ -29392,7 +31907,7 @@ async function insertReportWithFallback(payload) {
   const canShowOfficialLightsByZoom = true;
   const showOfficialLights = canShowOfficialLightsByZoom;
   const adminDomainMeta =
-    visibleDomainOptions.find((d) => d.key === adminReportDomain) || visibleDomainOptions[0] || REPORT_DOMAIN_OPTIONS[0];
+    visibleDomainOptions.find((d) => d.key === adminReportDomain) || visibleDomainOptions[0] || builtInReportDomainOptions[0];
   const domainMarkerColor = defaultMarkerColorForDomain(adminReportDomain);
   const isSavedStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "saved";
   const isUtilityStreetlightFilterOn = isStreetlightsLayerActive && streetlightInViewFilterMode === "utility";
@@ -29545,6 +32060,149 @@ async function insertReportWithFallback(payload) {
     );
   }
 
+  const processGoogleMapTap = (lat, lng) => {
+    if (deleteCircleMode && isAdmin) {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      if (!deleteCircleDraft?.center) {
+        setDeleteCircleDraft({ center: { lat, lng }, radiusMeters: 0 });
+        openNotice("🟢", "Circle center set", "Tap a second point to set the radius.", { autoCloseMs: 1200, compact: true });
+        return;
+      }
+      const center = deleteCircleDraft.center;
+      const radiusMeters = metersBetween(
+        { lat: Number(center.lat), lng: Number(center.lng) },
+        { lat, lng }
+      );
+      if (!Number.isFinite(radiusMeters) || radiusMeters < 2) {
+        openNotice("⚠️", "Radius too small", "Tap farther from the center to define a larger circle.");
+        return;
+      }
+      setDeleteCircleDraft({ center, radiusMeters });
+      setDeleteCircleConfirmOpen(true);
+      return;
+    }
+
+    if (showOfficialLights && Number.isFinite(lat) && Number.isFinite(lng)) {
+      const hitOfficialId = officialCanvasOverlayRef.current?.hitTestByLatLng?.(lat, lng);
+      if (hitOfficialId) {
+        handleOfficialMarkerClick(hitOfficialId);
+        return;
+      }
+    }
+
+    if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker || selectedIncidentStackMarker) {
+      setSelectedOfficialId(null);
+      setSelectedQueuedTempId(null);
+      setSelectedDomainMarker(null);
+      setSelectedIncidentStackMarker(null);
+    }
+
+    if (
+      activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
+      && !isAdmin
+      && !visibleDomainOptions.some((d) => d.key === adminReportDomain)
+    ) {
+      openNotice("⚠️", "Domain unavailable", "This report domain is not enabled for public reporting.");
+      return;
+    }
+
+    if (mappingMode && isAdmin && adminReportDomain === "street_signs") {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      requestQueueOfficialSign(lat, lng);
+      return;
+    }
+
+    if (activeMapLayerKey !== "streetlights") {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      (async () => {
+        if (adminReportDomain === "street_signs") {
+          openNotice("🛑", "Street signs", "Tap a mapped street-sign marker to view details and report.");
+          return;
+        }
+        if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
+          openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before placing a report.`);
+          return;
+        }
+        const targetIncidentDomain = activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+          ? String(resolvedIncidentMapDomain || incidentLayerDomainOptions?.[0]?.key || "potholes")
+          : adminReportDomain;
+        if (!municipalBoundaryGate(targetIncidentDomain, lat, lng, { showNotice: true })) {
+          return;
+        }
+        const shouldPromptLegacyIncidentPicker =
+          !isAdmin &&
+          activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY &&
+          residentIncidentPickerOptions.length > 1;
+        if (shouldPromptLegacyIncidentPicker) {
+          setPendingIncidentTypeTarget({ lat, lng });
+          setIncidentTypePickerOpen(true);
+          return;
+        }
+        await startIncidentReportAtPoint(targetIncidentDomain, lat, lng);
+      })();
+      return;
+    }
+
+    if (!mappingMode) return;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    queueOfficialLight(lat, lng);
+  };
+
+  const handleGoogleMapClick = (e) => {
+    setAdminDomainMenuOpen(false);
+    setMobileIncidentDomainMenuOpen(false);
+    setAdminToolboxOpen(false);
+
+    if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
+
+    const lat = Number(e?.latLng?.lat?.());
+    const lng = Number(e?.latLng?.lng?.());
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    if (!isTouchDevice) {
+      processGoogleMapTap(lat, lng);
+      return;
+    }
+
+    const ref = clickDelayRef.current;
+    if (!ref) {
+      processGoogleMapTap(lat, lng);
+      return;
+    }
+
+    const now = Date.now();
+    const dt = now - (ref.lastTs || 0);
+    ref.lastTs = now;
+
+    if (dt < 350) {
+      if (ref.timer) clearTimeout(ref.timer);
+      ref.timer = null;
+      ref.lastLatLng = null;
+      suppressMapClickRef.current.until = Date.now() + 900;
+      return;
+    }
+
+    if (ref.timer) clearTimeout(ref.timer);
+    ref.lastLatLng = { lat, lng };
+    ref.timer = setTimeout(() => {
+      const pending = clickDelayRef.current;
+      if (pending?.timer) pending.timer = null;
+      const point = pending?.lastLatLng || { lat, lng };
+      if (pending) pending.lastLatLng = null;
+      processGoogleMapTap(Number(point?.lat), Number(point?.lng));
+    }, 360);
+  };
+
+  const handleGoogleMapDoubleClick = () => {
+    const ref = clickDelayRef.current;
+    if (ref?.timer) {
+      clearTimeout(ref.timer);
+      ref.timer = null;
+    }
+    if (ref) ref.lastLatLng = null;
+    suppressMapClickRef.current.until = Date.now() + 900;
+  };
+
   return (
     <div
       className="sl-root"
@@ -29580,74 +32238,171 @@ async function insertReportWithFallback(payload) {
           --sl-ui-brand-green-border: #2a7262;
           --sl-ui-brand-blue: #1a3153;
           --sl-ui-brand-blue-border: #1a3153;
-          --sl-ui-surface-bg: rgba(255,255,255,0.96);
-          --sl-ui-surface-border: rgba(0,0,0,0.10);
+          --sl-ui-surface-bg: ${UI_ICON_THEME.light.surface_bg};
+          --sl-ui-surface-border: ${UI_ICON_THEME.light.surface_border};
           --sl-ui-surface-shadow: 0 10px 22px rgba(0,0,0,0.18);
           --sl-ui-surface-shadow-bottom: 0 -10px 22px rgba(0,0,0,0.18);
-          --sl-ui-text: #111;
+          --sl-ui-text: ${UI_ICON_THEME.light.surface_text};
           --sl-ui-zoom-bg: rgba(255,255,255,0.96);
           --sl-ui-zoom-border: rgba(0,0,0,0.28);
           --sl-ui-zoom-shadow: inset 0 1px 0 rgba(255,255,255,0.75), 0 8px 18px rgba(0,0,0,0.22);
           --sl-ui-zoom-shadow-mobile: inset 0 1px 0 rgba(255,255,255,0.75), 0 6px 14px rgba(0,0,0,0.22);
-          --sl-ui-tool-btn-bg: rgba(255,255,255,0.96);
-          --sl-ui-tool-btn-border: rgba(0,0,0,0.34);
+          --sl-ui-header-bg-primary: ${UI_ICON_THEME.light.header_bg_primary};
+          --sl-ui-header-bg-secondary: ${UI_ICON_THEME.light.header_bg_secondary};
+          --sl-ui-header-bg: linear-gradient(112deg, var(--sl-ui-header-bg-primary), var(--sl-ui-header-bg-secondary));
+          --sl-ui-header-border: ${UI_ICON_THEME.light.header_border};
+          --sl-ui-header-text: ${UI_ICON_THEME.light.header_text};
+          --sl-ui-header-eyebrow: ${UI_ICON_THEME.light.header_eyebrow};
+          --sl-ui-header-menu-bg: ${UI_ICON_THEME.light.header_menu_bg};
+          --sl-ui-header-menu-border: ${UI_ICON_THEME.light.header_menu_border};
+          --sl-ui-header-menu-shadow: none;
+          --sl-ui-tool-btn-bg: ${UI_ICON_THEME.light.tool_button_bg};
+          --sl-ui-tool-btn-border: ${UI_ICON_THEME.light.tool_button_border};
+          --sl-ui-tool-btn-text: ${UI_ICON_THEME.light.tool_button_text};
           --sl-ui-tool-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.78), inset 0 -2px 0 rgba(0,0,0,0.10), 0 4px 10px rgba(0,0,0,0.22), 0 10px 18px rgba(0,0,0,0.14);
-          --sl-ui-modal-bg: rgba(255,255,255,0.98);
-          --sl-ui-modal-border: rgba(0,0,0,0.12);
+          --sl-ui-modal-bg: ${UI_ICON_THEME.light.modal_bg};
+          --sl-ui-modal-border: ${UI_ICON_THEME.light.modal_border};
           --sl-ui-modal-shadow: 0 10px 30px rgba(0,0,0,0.25);
-          --sl-ui-modal-input-bg: #fff;
-          --sl-ui-modal-input-border: #ddd;
-          --sl-ui-modal-btn-secondary-bg: #fff;
-          --sl-ui-modal-btn-secondary-border: rgba(0,0,0,0.18);
-          --sl-ui-modal-btn-secondary-text: #111;
-          --sl-ui-modal-btn-dark-bg: #111;
-          --sl-ui-modal-btn-dark-text: #fff;
-          --sl-ui-modal-subtle-bg: rgba(0,0,0,0.02);
+          --sl-ui-modal-input-bg: ${UI_ICON_THEME.light.modal_input_bg};
+          --sl-ui-modal-input-border: ${UI_ICON_THEME.light.modal_input_border};
+          --sl-ui-modal-btn-secondary-bg: ${UI_ICON_THEME.light.modal_secondary_bg};
+          --sl-ui-modal-btn-secondary-border: ${UI_ICON_THEME.light.modal_secondary_border};
+          --sl-ui-modal-btn-secondary-text: ${UI_ICON_THEME.light.modal_secondary_text};
+          --sl-ui-modal-btn-dark-bg: ${UI_ICON_THEME.light.modal_filled_bg};
+          --sl-ui-modal-btn-dark-text: ${UI_ICON_THEME.light.modal_filled_text};
+          --sl-ui-modal-subtle-bg: ${UI_ICON_THEME.light.modal_subtle_bg};
+          --sl-ui-feed-card-bg: ${UI_ICON_THEME.light.feed_card_bg};
+          --sl-ui-feed-card-border: ${UI_ICON_THEME.light.feed_card_border};
+          --sl-ui-feed-muted-text: ${UI_ICON_THEME.light.feed_muted_text};
+          --sl-ui-feed-badge-bg: ${UI_ICON_THEME.light.feed_badge_bg};
+          --sl-ui-feed-badge-border: ${UI_ICON_THEME.light.feed_badge_border};
+          --sl-ui-feed-badge-text: ${UI_ICON_THEME.light.feed_badge_text};
+          --sl-ui-feed-new-badge-bg: ${UI_ICON_THEME.light.feed_new_badge_bg};
+          --sl-ui-feed-new-badge-border: ${UI_ICON_THEME.light.feed_new_badge_border};
+          --sl-ui-feed-new-badge-text: ${UI_ICON_THEME.light.feed_new_badge_text};
+          --sl-ui-feed-alert-info-bg: ${UI_ICON_THEME.light.feed_alert_info_bg};
+          --sl-ui-feed-alert-info-border: ${UI_ICON_THEME.light.feed_alert_info_border};
+          --sl-ui-feed-alert-info-text: ${UI_ICON_THEME.light.feed_alert_info_text};
+          --sl-ui-feed-alert-advisory-bg: ${UI_ICON_THEME.light.feed_alert_advisory_bg};
+          --sl-ui-feed-alert-advisory-border: ${UI_ICON_THEME.light.feed_alert_advisory_border};
+          --sl-ui-feed-alert-advisory-text: ${UI_ICON_THEME.light.feed_alert_advisory_text};
+          --sl-ui-feed-alert-urgent-bg: ${UI_ICON_THEME.light.feed_alert_urgent_bg};
+          --sl-ui-feed-alert-urgent-border: ${UI_ICON_THEME.light.feed_alert_urgent_border};
+          --sl-ui-feed-alert-urgent-text: ${UI_ICON_THEME.light.feed_alert_urgent_text};
+          --sl-ui-feed-alert-emergency-bg: ${UI_ICON_THEME.light.feed_alert_emergency_bg};
+          --sl-ui-feed-alert-emergency-border: ${UI_ICON_THEME.light.feed_alert_emergency_border};
+          --sl-ui-feed-alert-emergency-text: ${UI_ICON_THEME.light.feed_alert_emergency_text};
+          --sl-ui-feed-status-published-bg: ${UI_ICON_THEME.light.feed_status_published_bg};
+          --sl-ui-feed-status-published-border: ${UI_ICON_THEME.light.feed_status_published_border};
+          --sl-ui-feed-status-published-text: ${UI_ICON_THEME.light.feed_status_published_text};
+          --sl-ui-feed-status-scheduled-bg: ${UI_ICON_THEME.light.feed_status_scheduled_bg};
+          --sl-ui-feed-status-scheduled-border: ${UI_ICON_THEME.light.feed_status_scheduled_border};
+          --sl-ui-feed-status-scheduled-text: ${UI_ICON_THEME.light.feed_status_scheduled_text};
+          --sl-ui-feed-status-archived-bg: ${UI_ICON_THEME.light.feed_status_archived_bg};
+          --sl-ui-feed-status-archived-border: ${UI_ICON_THEME.light.feed_status_archived_border};
+          --sl-ui-feed-status-archived-text: ${UI_ICON_THEME.light.feed_status_archived_text};
+          --sl-ui-feed-status-draft-bg: ${UI_ICON_THEME.light.feed_status_draft_bg};
+          --sl-ui-feed-status-draft-border: ${UI_ICON_THEME.light.feed_status_draft_border};
+          --sl-ui-feed-status-draft-text: ${UI_ICON_THEME.light.feed_status_draft_text};
+          --sl-ui-contact-tile-bg: ${UI_ICON_THEME.light.contact_tile_bg};
+          --sl-ui-contact-tile-border: ${UI_ICON_THEME.light.contact_tile_border};
           --sl-ui-alert-danger-bg: rgba(183,28,28,0.08);
           --sl-ui-alert-danger-border: rgba(183,28,28,0.35);
           --sl-ui-alert-danger-text: #b71c1c;
           --sl-ui-open-reports-item-border: rgba(0,0,0,0.10);
           --sl-ui-metrics-panel-border: rgba(0,0,0,0.22);
-          --sl-ui-tool-active-bg: var(--sl-ui-brand-green);
-          --sl-ui-tool-active-border: var(--sl-ui-brand-green-border);
-          --sl-ui-tool-active-text: #fff;
-          --mobile-header-background: linear-gradient(112deg, rgba(236, 245, 255, 0.93), rgba(221, 239, 233, 0.9));
-          --mobile-header-border: 1px solid rgba(23, 49, 79, 0.08);
-          --mobile-header-menu-background: rgba(255,255,255,0.92);
-          --mobile-header-menu-border: 1px solid rgba(26, 49, 83, 0.22);
+          --sl-ui-tool-active-bg: ${UI_ICON_THEME.light.tool_active_bg};
+          --sl-ui-tool-active-border: ${UI_ICON_THEME.light.tool_active_border};
+          --sl-ui-tool-active-text: ${UI_ICON_THEME.light.tool_active_text};
+          --mobile-header-background: var(--sl-ui-header-bg);
+          --mobile-header-border: 1px solid var(--sl-ui-header-border);
+          --mobile-header-menu-background: var(--sl-ui-header-menu-bg);
+          --mobile-header-menu-border: 1px solid var(--sl-ui-header-menu-border);
           --mobile-header-shadow: 0 12px 28px rgba(7, 25, 45, 0.18);
         }
 
         @media (prefers-color-scheme: dark) {
           :root {
-            --sl-ui-surface-bg: rgba(28,31,35,0.94);
-            --sl-ui-surface-border: rgba(255,255,255,0.12);
+            --sl-ui-surface-bg: ${UI_ICON_THEME.dark.surface_bg};
+            --sl-ui-surface-border: ${UI_ICON_THEME.dark.surface_border};
             --sl-ui-surface-shadow: 0 12px 28px rgba(0,0,0,0.45);
             --sl-ui-surface-shadow-bottom: 0 -12px 26px rgba(0,0,0,0.42);
-            --sl-ui-text: #f3f5f7;
+            --sl-ui-text: ${UI_ICON_THEME.dark.surface_text};
             --sl-ui-zoom-bg: rgba(28,31,35,0.94);
             --sl-ui-zoom-border: rgba(255,255,255,0.24);
             --sl-ui-zoom-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -2px 0 rgba(0,0,0,0.24), 0 10px 22px rgba(0,0,0,0.50), 0 2px 6px rgba(0,0,0,0.26);
             --sl-ui-zoom-shadow-mobile: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -2px 0 rgba(0,0,0,0.24), 0 8px 18px rgba(0,0,0,0.50), 0 2px 5px rgba(0,0,0,0.24);
-            --sl-ui-tool-btn-bg: rgba(28,31,35,0.94);
-            --sl-ui-tool-btn-border: rgba(255,255,255,0.22);
+            --sl-ui-header-bg-primary: ${UI_ICON_THEME.dark.header_bg_primary};
+            --sl-ui-header-bg-secondary: ${UI_ICON_THEME.dark.header_bg_secondary};
+            --sl-ui-header-bg: linear-gradient(112deg, var(--sl-ui-header-bg-primary), var(--sl-ui-header-bg-secondary));
+            --sl-ui-header-border: ${UI_ICON_THEME.dark.header_border};
+            --sl-ui-header-text: ${UI_ICON_THEME.dark.header_text};
+            --sl-ui-header-eyebrow: ${UI_ICON_THEME.dark.header_eyebrow};
+            --sl-ui-header-menu-bg: ${UI_ICON_THEME.dark.header_menu_bg};
+            --sl-ui-header-menu-border: ${UI_ICON_THEME.dark.header_menu_border};
+            --sl-ui-header-menu-shadow: 0 10px 24px rgba(0,0,0,0.22);
+            --sl-ui-tool-btn-bg: ${UI_ICON_THEME.dark.tool_button_bg};
+            --sl-ui-tool-btn-border: ${UI_ICON_THEME.dark.tool_button_border};
+            --sl-ui-tool-btn-text: ${UI_ICON_THEME.dark.tool_button_text};
             --sl-ui-tool-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -2px 0 rgba(0,0,0,0.24), 0 4px 10px rgba(0,0,0,0.42), 0 10px 18px rgba(0,0,0,0.34), 0 1px 3px rgba(0,0,0,0.22);
-            --sl-ui-modal-bg: rgba(28,31,35,0.96);
-            --sl-ui-modal-border: rgba(255,255,255,0.14);
+            --sl-ui-modal-bg: ${UI_ICON_THEME.dark.modal_bg};
+            --sl-ui-modal-border: ${UI_ICON_THEME.dark.modal_border};
             --sl-ui-modal-shadow: 0 14px 34px rgba(0,0,0,0.45);
-            --sl-ui-modal-input-bg: rgba(44,49,55,0.98);
-            --sl-ui-modal-input-border: rgba(255,255,255,0.14);
-            --sl-ui-modal-btn-secondary-bg: rgba(44,49,55,0.98);
-            --sl-ui-modal-btn-secondary-border: rgba(255,255,255,0.16);
-            --sl-ui-modal-btn-secondary-text: #f3f5f7;
-            --sl-ui-modal-btn-dark-bg: rgba(68,74,82,0.98);
-            --sl-ui-modal-btn-dark-text: #f3f5f7;
-            --sl-ui-modal-subtle-bg: rgba(255,255,255,0.03);
+            --sl-ui-modal-input-bg: ${UI_ICON_THEME.dark.modal_input_bg};
+            --sl-ui-modal-input-border: ${UI_ICON_THEME.dark.modal_input_border};
+            --sl-ui-modal-btn-secondary-bg: ${UI_ICON_THEME.dark.modal_secondary_bg};
+            --sl-ui-modal-btn-secondary-border: ${UI_ICON_THEME.dark.modal_secondary_border};
+            --sl-ui-modal-btn-secondary-text: ${UI_ICON_THEME.dark.modal_secondary_text};
+            --sl-ui-modal-btn-dark-bg: ${UI_ICON_THEME.dark.modal_filled_bg};
+            --sl-ui-modal-btn-dark-text: ${UI_ICON_THEME.dark.modal_filled_text};
+            --sl-ui-modal-subtle-bg: ${UI_ICON_THEME.dark.modal_subtle_bg};
+            --sl-ui-feed-card-bg: ${UI_ICON_THEME.dark.feed_card_bg};
+            --sl-ui-feed-card-border: ${UI_ICON_THEME.dark.feed_card_border};
+            --sl-ui-feed-muted-text: ${UI_ICON_THEME.dark.feed_muted_text};
+            --sl-ui-feed-badge-bg: ${UI_ICON_THEME.dark.feed_badge_bg};
+            --sl-ui-feed-badge-border: ${UI_ICON_THEME.dark.feed_badge_border};
+            --sl-ui-feed-badge-text: ${UI_ICON_THEME.dark.feed_badge_text};
+            --sl-ui-feed-new-badge-bg: ${UI_ICON_THEME.dark.feed_new_badge_bg};
+            --sl-ui-feed-new-badge-border: ${UI_ICON_THEME.dark.feed_new_badge_border};
+            --sl-ui-feed-new-badge-text: ${UI_ICON_THEME.dark.feed_new_badge_text};
+            --sl-ui-feed-alert-info-bg: ${UI_ICON_THEME.dark.feed_alert_info_bg};
+            --sl-ui-feed-alert-info-border: ${UI_ICON_THEME.dark.feed_alert_info_border};
+            --sl-ui-feed-alert-info-text: ${UI_ICON_THEME.dark.feed_alert_info_text};
+            --sl-ui-feed-alert-advisory-bg: ${UI_ICON_THEME.dark.feed_alert_advisory_bg};
+            --sl-ui-feed-alert-advisory-border: ${UI_ICON_THEME.dark.feed_alert_advisory_border};
+            --sl-ui-feed-alert-advisory-text: ${UI_ICON_THEME.dark.feed_alert_advisory_text};
+            --sl-ui-feed-alert-urgent-bg: ${UI_ICON_THEME.dark.feed_alert_urgent_bg};
+            --sl-ui-feed-alert-urgent-border: ${UI_ICON_THEME.dark.feed_alert_urgent_border};
+            --sl-ui-feed-alert-urgent-text: ${UI_ICON_THEME.dark.feed_alert_urgent_text};
+            --sl-ui-feed-alert-emergency-bg: ${UI_ICON_THEME.dark.feed_alert_emergency_bg};
+            --sl-ui-feed-alert-emergency-border: ${UI_ICON_THEME.dark.feed_alert_emergency_border};
+            --sl-ui-feed-alert-emergency-text: ${UI_ICON_THEME.dark.feed_alert_emergency_text};
+            --sl-ui-feed-status-published-bg: ${UI_ICON_THEME.dark.feed_status_published_bg};
+            --sl-ui-feed-status-published-border: ${UI_ICON_THEME.dark.feed_status_published_border};
+            --sl-ui-feed-status-published-text: ${UI_ICON_THEME.dark.feed_status_published_text};
+            --sl-ui-feed-status-scheduled-bg: ${UI_ICON_THEME.dark.feed_status_scheduled_bg};
+            --sl-ui-feed-status-scheduled-border: ${UI_ICON_THEME.dark.feed_status_scheduled_border};
+            --sl-ui-feed-status-scheduled-text: ${UI_ICON_THEME.dark.feed_status_scheduled_text};
+            --sl-ui-feed-status-archived-bg: ${UI_ICON_THEME.dark.feed_status_archived_bg};
+            --sl-ui-feed-status-archived-border: ${UI_ICON_THEME.dark.feed_status_archived_border};
+            --sl-ui-feed-status-archived-text: ${UI_ICON_THEME.dark.feed_status_archived_text};
+            --sl-ui-feed-status-draft-bg: ${UI_ICON_THEME.dark.feed_status_draft_bg};
+            --sl-ui-feed-status-draft-border: ${UI_ICON_THEME.dark.feed_status_draft_border};
+            --sl-ui-feed-status-draft-text: ${UI_ICON_THEME.dark.feed_status_draft_text};
+            --sl-ui-contact-tile-bg: ${UI_ICON_THEME.dark.contact_tile_bg};
+            --sl-ui-contact-tile-border: ${UI_ICON_THEME.dark.contact_tile_border};
             --sl-ui-alert-danger-bg: rgba(183,28,28,1);
             --sl-ui-alert-danger-border: rgba(183,28,28,0.455);
             --sl-ui-alert-danger-text: #fff;
             --sl-ui-open-reports-item-border: #ffffff;
             --sl-ui-metrics-panel-border: rgba(255,255,255,0.46);
+            --sl-ui-tool-active-bg: ${UI_ICON_THEME.dark.tool_active_bg};
+            --sl-ui-tool-active-border: ${UI_ICON_THEME.dark.tool_active_border};
+            --sl-ui-tool-active-text: ${UI_ICON_THEME.dark.tool_active_text};
+            --mobile-header-background: var(--sl-ui-header-bg);
+            --mobile-header-border: 1px solid var(--sl-ui-header-border);
+            --mobile-header-menu-background: var(--sl-ui-header-menu-bg);
+            --mobile-header-menu-border: 1px solid var(--sl-ui-header-menu-border);
           }
 
           .sl-map-tool .sl-map-tool-mini.is-on,
@@ -29727,6 +32482,7 @@ async function insertReportWithFallback(payload) {
           border-radius: 13px;
           border: 1px solid var(--sl-ui-tool-btn-border);
           background: var(--sl-ui-tool-btn-bg);
+          color: var(--sl-ui-tool-btn-text);
           box-shadow: var(--sl-ui-tool-btn-shadow);
           display: grid;
           place-items: center;
@@ -29741,9 +32497,9 @@ async function insertReportWithFallback(payload) {
         }
 
         .sl-map-tool-btn.is-on {
-          background: rgba(17,17,17,0.92);
-          color: white;
-          border: 1px solid rgba(0,0,0,0.35);
+          background: var(--sl-ui-tool-active-bg);
+          color: var(--sl-ui-tool-active-text);
+          border: 1px solid var(--sl-ui-tool-active-border);
         }
 
         .sl-map-tool-mini {
@@ -29752,6 +32508,7 @@ async function insertReportWithFallback(payload) {
           border-radius: 13px;
           border: 1px solid var(--sl-ui-tool-btn-border);
           background: var(--sl-ui-tool-btn-bg);
+          color: var(--sl-ui-tool-btn-text);
           box-shadow: var(--sl-ui-tool-btn-shadow);
           display: grid;
           place-items: center;
@@ -29766,9 +32523,9 @@ async function insertReportWithFallback(payload) {
         }
 
         .sl-map-tool-mini.is-on {
-          background: rgba(17,17,17,0.92);
-          color: white;
-          border: 1px solid rgba(0,0,0,0.35);
+          background: var(--sl-ui-tool-active-bg);
+          color: var(--sl-ui-tool-active-text);
+          border: 1px solid var(--sl-ui-tool-active-border);
         }
 
         .sl-map-tool-mini.sl-has-submenu {
@@ -30317,63 +33074,22 @@ async function insertReportWithFallback(payload) {
         </div>
       </ModalShell>
 
-      <ModalShell open={potholeAdvisoryOpen} zIndex={10013}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 950, fontSize: 16 }}>🚨 Pothole Reporting Notice</div>
-
-          <div style={{ fontSize: 15, opacity: 0.95, lineHeight: 1.45 }}>
-            If you need to report damage to your vehicle from a pothole, you will need to file a police report as soon as possible, then bring this information to the City Manager's Office.
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => {
-                const next = pendingPotholeDomainTarget;
-                setPotholeAdvisoryOpen(false);
-                setPendingPotholeDomainTarget(null);
-                if (!next) return;
-                if (!municipalBoundaryGate("potholes", next?.sourceLat ?? next?.lat, next?.sourceLng ?? next?.lng, { showNotice: true })) {
-                  return;
-                }
-                setDomainReportTarget(next);
-                setDomainReportNote("");
-              }}
-              style={{
-                padding: 12,
-                borderRadius: 12,
-                border: "none",
-                background: "var(--sl-ui-brand-blue)",
-                color: "white",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-              disabled={!pendingPotholeDomainTarget}
-            >
-              OK
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPotholeAdvisoryOpen(false);
-                setPendingPotholeDomainTarget(null);
-              }}
-              style={{
-                padding: 12,
-                borderRadius: 12,
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </ModalShell>
+      <DomainDisclosureGateModal
+        open={Boolean(domainDisclosureGateTarget)}
+        domainLabel={domainDisclosureGateTarget?.domainLabel || "this issue"}
+        disclosures={getDomainDisclosures(domainDisclosureGateTarget?.domain || "", "before_form")}
+        acknowledgements={domainDisclosureAcknowledgements}
+        setAcknowledgements={setDomainDisclosureAcknowledgements}
+        onCancel={() => {
+          setDomainDisclosureGateTarget(null);
+          setDomainDisclosureAcknowledgements({});
+          setDomainReportNote("");
+          setDomainReportImageFile(null);
+          setDomainReportImagePreviewUrl("");
+          setDomainReportIssue(defaultDomainIssueValue("", []));
+        }}
+        onContinue={continueDomainReportAfterDisclosureGate}
+      />
 
       <ConfirmReportModal
         open={Boolean(activeLight) || bulkConfirmOpen}
@@ -30395,6 +33111,7 @@ async function insertReportWithFallback(payload) {
           else submitReport();
         }}
         reportType={reportType}
+        issueOptions={streetlightIssueOptions}
         setReportType={setReportType}
         note={note}
         setNote={setNote}
@@ -30414,10 +33131,15 @@ async function insertReportWithFallback(payload) {
         locationLabel={domainReportTarget?.locationLabel || ""}
         note={domainReportNote}
         setNote={setDomainReportNote}
-        streetSignIssue={domainReportIssue}
-        setStreetSignIssue={setDomainReportIssue}
-        consentChecked={potholeConsentChecked}
-        setConsentChecked={setPotholeConsentChecked}
+        issueValue={domainReportIssue}
+        setIssueValue={setDomainReportIssue}
+        issueOptions={getDomainIssueOptions(domainReportTarget?.domain || "")}
+        typeSelections={domainReportTypeSelections}
+        setTypeSelections={setDomainReportTypeSelections}
+        typeOptionConfigs={getDomainTypeOptionConfigs(domainReportTarget?.domain || "")}
+        disclosures={getDomainDisclosures(domainReportTarget?.domain || "")}
+        acknowledgements={domainDisclosureAcknowledgements}
+        setAcknowledgements={setDomainDisclosureAcknowledgements}
         imageFile={domainReportImageFile}
         imagePreviewUrl={domainReportImagePreviewUrl}
         setImageFile={setDomainReportImageFile}
@@ -30425,11 +33147,13 @@ async function insertReportWithFallback(payload) {
         saving={saving}
         onCancel={() => {
           setDomainReportTarget(null);
+          setDomainDisclosureGateTarget(null);
           setDomainReportNote("");
           setDomainReportImageFile(null);
           setDomainReportImagePreviewUrl("");
-          setDomainReportIssue(defaultDomainIssueFor(""));
-          setPotholeConsentChecked(false);
+          setDomainReportIssue(defaultDomainIssueValue("", []));
+          setDomainReportTypeSelections({});
+          setDomainDisclosureAcknowledgements({});
         }}
         onSubmit={submitDomainReport}
       />
@@ -30442,7 +33166,7 @@ async function insertReportWithFallback(payload) {
           const target = pendingIncidentTypeTarget;
           closeIncidentTypePicker();
           if (!target) return;
-          startIncidentReportAtPoint(domainKey, target.lat, target.lng);
+          void startIncidentReportAtPoint(domainKey, target.lat, target.lng);
         }}
       />
 
@@ -30866,8 +33590,12 @@ async function insertReportWithFallback(payload) {
         onSelectDomain={(domainKey) => {
           setMyReportsDomain(domainKey);
           setAdminReportDomain(domainKey);
+          setMyReportsDomainFilters([domainKey]);
           setMyReportsExpanded(new Set());
         }}
+        selectedDomains={myReportsDomainFilters}
+        onToggleDomain={toggleMyReportsDomainFilter}
+        onSelectAllDomains={resetMyReportsDomainFilters}
         groups={myReportsModalGroups}
         expandedSet={myReportsExpanded}
         onToggleExpand={toggleMyReportsExpanded}
@@ -31204,7 +33932,6 @@ async function insertReportWithFallback(payload) {
         onSubmit={handleRecoveryPasswordUpdate}
       />
 
-
       {/* =========================
           Map (Google Maps)
          ========================= */}
@@ -31234,8 +33961,10 @@ async function insertReportWithFallback(payload) {
             userDragPanRef.current = true;
             if (followCamera) {
               stopFollowCameraAnimation();
-              setFollowCamera(false);
-              setTravelFollowMode(false);
+              if (!travelFollowMode) {
+                setFollowCamera(false);
+                setTravelFollowMode(false);
+              }
             }
           }}
           onZoomChanged={() => {
@@ -31249,6 +33978,7 @@ async function insertReportWithFallback(payload) {
           }}
           onIdle={() => {
             endMapInteractionSoon(750);
+            const shouldResumeTravelFollow = userDragPanRef.current && travelFollowMode && followCamera;
             userDragPanRef.current = false;
             const map = mapRef.current;
             if (!map) return;
@@ -31291,102 +34021,13 @@ async function insertReportWithFallback(payload) {
                 return { north, east, south, west };
               });
             }
+            if (shouldResumeTravelFollow) {
+              resumeFollowCameraFromLiveMotion({ syncState: true });
+            }
           }}
           options={mapOptions}
-          onClick={(e) => {
-            setAdminDomainMenuOpen(false);
-            setMobileIncidentDomainMenuOpen(false);
-            setAdminToolboxOpen(false);
-            if (Date.now() < (suppressMapClickRef.current?.until || 0)) return;
-            const lat = Number(e?.latLng?.lat?.());
-            const lng = Number(e?.latLng?.lng?.());
-            if (deleteCircleMode && isAdmin) {
-              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-              if (!deleteCircleDraft?.center) {
-                setDeleteCircleDraft({ center: { lat, lng }, radiusMeters: 0 });
-                openNotice("🟢", "Circle center set", "Tap a second point to set the radius.", { autoCloseMs: 1200, compact: true });
-                return;
-              }
-              const center = deleteCircleDraft.center;
-              const radiusMeters = metersBetween(
-                { lat: Number(center.lat), lng: Number(center.lng) },
-                { lat, lng }
-              );
-              if (!Number.isFinite(radiusMeters) || radiusMeters < 2) {
-                openNotice("⚠️", "Radius too small", "Tap farther from the center to define a larger circle.");
-                return;
-              }
-              setDeleteCircleDraft({ center, radiusMeters });
-              setDeleteCircleConfirmOpen(true);
-              return;
-            }
-            if (showOfficialLights && Number.isFinite(lat) && Number.isFinite(lng)) {
-              const hitOfficialId = officialCanvasOverlayRef.current?.hitTestByLatLng?.(lat, lng);
-              if (hitOfficialId) {
-                handleOfficialMarkerClick(hitOfficialId);
-                return;
-              }
-            }
-
-            // Clicking map background should close any open info windows.
-            if (selectedOfficialId || selectedQueuedTempId || selectedDomainMarker || selectedIncidentStackMarker) {
-              setSelectedOfficialId(null);
-              setSelectedQueuedTempId(null);
-              setSelectedDomainMarker(null);
-              setSelectedIncidentStackMarker(null);
-            }
-
-            if (
-              activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
-              && !isAdmin
-              && !visibleDomainOptions.some((d) => d.key === adminReportDomain)
-            ) {
-              openNotice("⚠️", "Domain unavailable", "This report domain is not enabled for public reporting.");
-              return;
-            }
-
-            if (mappingMode && isAdmin && adminReportDomain === "street_signs") {
-              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-              requestQueueOfficialSign(lat, lng);
-              return;
-            }
-
-          if (activeMapLayerKey !== "streetlights") {
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-            (async () => {
-              if (adminReportDomain === "street_signs") {
-                openNotice("🛑", "Street signs", "Tap a mapped street-sign marker to view details and report.");
-                return;
-              }
-              if (Number(mapZoomRef.current || mapZoom) < REPORTING_MIN_ZOOM) {
-                openNotice("🔎", "Zoom in to report", `Zoom in closer (level ${REPORTING_MIN_ZOOM}+) before placing a report.`);
-                return;
-              }
-              const targetIncidentDomain = activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
-                ? String(resolvedIncidentMapDomain || incidentLayerDomainOptions?.[0]?.key || "potholes")
-                : adminReportDomain;
-              if (!municipalBoundaryGate(targetIncidentDomain, lat, lng, { showNotice: true })) {
-                return;
-              }
-              const shouldPromptLegacyIncidentPicker =
-                !isAdmin &&
-                activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY &&
-                residentIncidentPickerOptions.length > 1;
-              if (shouldPromptLegacyIncidentPicker) {
-                setPendingIncidentTypeTarget({ lat, lng });
-                setIncidentTypePickerOpen(true);
-                return;
-              }
-              startIncidentReportAtPoint(targetIncidentDomain, lat, lng);
-            })();
-            return;
-          }
-
-            if (!mappingMode) return;
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-
-            queueOfficialLight(lat, lng);
-          }}
+          onClick={handleGoogleMapClick}
+          onDblClick={handleGoogleMapDoubleClick}
         >
         {showCityOutsideShade && cityOutsideMaskPaths.length > 0 && (
           <PolygonF
@@ -31459,14 +34100,45 @@ async function insertReportWithFallback(payload) {
                 ? gmapsCountBadgeIcon(m?.count, { fill: "#17314f", ring: "#ffffff", size: 36 })
                 : m?.kind === "incident_stack"
                   ? gmapsCountBadgeIcon(m?.count, { fill: "#2a7262", ring: "#ffffff", size: 34 })
-                : String(m?.domain || adminReportDomain) === "street_signs"
-                  ? gmapsImageIcon(m.glyphSrc || signMarkerIconSrcForType(m?.sign_type), STREET_SIGN_MARKER_SIZE)
-                  : gmapsDotIcon(
-                      m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor,
+                : (() => {
+                    const markerDomainKey =
+                      String(m?.domain || "") === "water_drain_issues"
+                        ? "water_drain_issues"
+                        : String(m?.domain || adminReportDomain);
+                    const resolvedMarkerColor =
+                      m.color || defaultMarkerColorForDomain(String(m?.domain || adminReportDomain).trim().toLowerCase()) || domainMarkerColor;
+                    const resolvedGlyphSrc =
+                      m.glyphSrc || resolveVisibleDomainIconSrc(
+                        markerDomainKey,
+                        String(m?.domain || "") === "potholes"
+                          ? UI_ICON_SRC.pothole
+                          : String(m?.domain || "") === "water_drain_issues"
+                            ? UI_ICON_SRC.waterMain
+                            : String(m?.domain || "") === "street_signs"
+                              ? UI_ICON_SRC.streetSign
+                              : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight)
+                      );
+                    const markerIconPresentation = resolveDomainMarkerIconPresentation(
+                      markerDomainKey,
+                      resolvedMarkerColor,
+                      resolvedGlyphSrc
+                    );
+                    return gmapsDotIcon(
+                      resolvedMarkerColor,
                       m.ringColor || "#fff",
-                      m.glyph || (String(m?.domain || "") === "potholes" ? "🕳️" : String(m?.domain || "") === "water_drain_issues" ? "💧" : (adminDomainMeta.icon || "💡")),
-                      m.glyphSrc || (String(m?.domain || "") === "potholes" ? UI_ICON_SRC.pothole : String(m?.domain || "") === "water_drain_issues" ? UI_ICON_SRC.waterMain : (adminDomainMeta.iconSrc || UI_ICON_SRC.streetlight))
-                    )
+                      m.glyph || (
+                        String(m?.domain || "") === "potholes"
+                          ? "🕳️"
+                          : String(m?.domain || "") === "water_drain_issues"
+                            ? "💧"
+                            : String(m?.domain || "") === "street_signs"
+                              ? signMarkerGlyphForType(m?.sign_type)
+                              : (adminDomainMeta.icon || "💡")
+                      ),
+                      resolvedGlyphSrc,
+                      markerIconPresentation
+                    );
+                  })()
             }
             onClick={() => {
               setSelectedQueuedTempId(null);
@@ -31523,7 +34195,7 @@ async function insertReportWithFallback(payload) {
           style={{
             position: "fixed",
             top: useAppShellLayout
-              ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + 14px)"
+              ? mobileTabPageTopInset
               : "calc(var(--desktop-header-height) + 14px)",
             left: "50%",
             transform: "translateX(-50%)",
@@ -31800,7 +34472,11 @@ async function insertReportWithFallback(payload) {
               Multiple incidents here
             </div>
             <div style={{ fontSize: 12, opacity: 0.88, lineHeight: 1.35 }}>
-              {Number(selectedIncidentStackMarker?.count || 0)} open report{Number(selectedIncidentStackMarker?.count || 0) === 1 ? "" : "s"} across {Number(selectedIncidentStackMarker?.markerCount || 0)} marker{Number(selectedIncidentStackMarker?.markerCount || 0) === 1 ? "" : "s"}.
+              {Number(selectedIncidentStackMarker?.incidentCount || selectedIncidentStackMarker?.markerCount || 0)} incident{Number(selectedIncidentStackMarker?.incidentCount || selectedIncidentStackMarker?.markerCount || 0) === 1 ? "" : "s"}
+              {Number(selectedIncidentStackMarker?.reportCount || 0) > 0
+                ? ` • ${Number(selectedIncidentStackMarker?.reportCount || 0)} open report${Number(selectedIncidentStackMarker?.reportCount || 0) === 1 ? "" : "s"}`
+                : ""}
+              .
             </div>
             <div style={{ display: "grid", gap: 8 }}>
               {(Array.isArray(selectedIncidentStackMarker?.markers) ? selectedIncidentStackMarker.markers : []).map((marker) => {
@@ -31814,11 +34490,9 @@ async function insertReportWithFallback(payload) {
                         ? `Street Sign${String(marker?.sign_type || "").trim() ? ` • ${formatStreetSignTypeLabel(marker.sign_type)}` : ""}`
                         : String(marker?.domainLabel || resolveReportDomainLabel(domainKey, "Incident")).trim() || "Incident";
                 const issueLabel =
-                  domainKey === "water_drain_issues"
-                    ? formatWaterDrainIssueLabel(String(marker?.rows?.[0]?.type || marker?.rows?.[0]?.report_type || "").trim())
-                    : domainKey === "potholes"
-                      ? ""
-                      : formatGenericDomainIssueLabel(marker?.rows?.[0]?.type || marker?.rows?.[0]?.report_type);
+                  domainKey === "potholes"
+                    ? ""
+                    : resolveReportIssueLabel(marker?.rows?.[0], domainKey, waterDrainIncidentsById);
                 return (
                   <button
                     key={`stack-item-${domainKey}-${String(marker?.id || "")}`}
@@ -32280,6 +34954,28 @@ async function insertReportWithFallback(payload) {
             <div style={{ fontSize: 12, opacity: 0.9 }}>
               <b>Sign type:</b> {formatStreetSignTypeLabel(selectedDomainMarker.sign_type)}
             </div>
+            <button
+              type="button"
+              onClick={() => copyTextToClipboard("Closest address", selectedStreetSignInfo?.locationPending
+                ? "Resolving nearest address..."
+                : (selectedStreetSignInfo?.nearestAddress || selectedStreetSignInfo?.coordsText || "Unavailable"))}
+              title="Click to copy location"
+              style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+            >
+              <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
+              <span style={markerPopupCopyValueStyle}>{selectedStreetSignInfo?.locationDisplay || "Unavailable"}</span>
+            </button>
+            {isPlatformAdmin && (
+              <button
+                type="button"
+                onClick={() => copyTextToClipboard("Coordinates", selectedStreetSignInfo?.coordsText || "Unavailable")}
+                title="Click to copy coordinates"
+                style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
+              >
+                <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Coordinates:</span>{" "}
+                <span style={markerPopupCopyValueStyle}>{selectedStreetSignInfo?.coordsText || "Unavailable"}</span>
+              </button>
+            )}
             {(() => {
               const signId = String(selectedDomainMarker.id || "").trim();
               const openCount = Number(openIncidentCountByOfficialId?.[signId] || 0);
@@ -32302,6 +34998,18 @@ async function insertReportWithFallback(payload) {
                         <> • <b>Last updated:</b> {formatTs(lifecycleChangedAt)}</>
                       )}
                     </div>
+                  )}
+                  {isReportsAdminView && (
+                    <>
+                      <div style={markerPopupCopyRowStyle}>
+                        <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
+                        <span>{selectedStreetSignInfo?.nearestLandmark || "No nearby landmark"}</span>
+                      </div>
+                      <div style={markerPopupCopyRowStyle}>
+                        <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest intersection:</span>{" "}
+                        <span>{selectedStreetSignInfo?.nearestIntersection || "No nearby intersection"}</span>
+                      </div>
+                    </>
                   )}
                   {isAdmin && (
                     <>
@@ -32358,20 +35066,20 @@ async function insertReportWithFallback(payload) {
                 const signType = formatStreetSignTypeLabel(selectedDomainMarker.sign_type);
                 const domainLabel =
                   visibleDomainOptions.find((d) => d.key === adminReportDomain)?.label || "Street signs";
-                setDomainReportTarget({
+                openDomainReportFlow({
                   domain: "street_signs",
                   domainLabel,
                   lat: Number(selectedDomainMarker.lat),
                   lng: Number(selectedDomainMarker.lng),
                   lightId: String(selectedDomainMarker.id || "").trim(),
-                  locationLabel: `${signType} • ${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`,
+                  locationLabel: selectedStreetSignInfo?.locationLabel || selectedStreetSignInfo?.coordsText || `${signType} • ${Number(selectedDomainMarker.lat).toFixed(5)}, ${Number(selectedDomainMarker.lng).toFixed(5)}`,
+                  typeValue: String(selectedDomainMarker.sign_type || "").trim().toLowerCase(),
                   signType,
-                  nearestAddress: "",
-                  nearestLandmark: "",
-                  nearestIntersection: "",
+                  nearestAddress: selectedStreetSignInfo?.nearestAddress || "",
+                  nearestLandmark: selectedStreetSignInfo?.nearestLandmark || "",
+                  nearestIntersection: selectedStreetSignInfo?.nearestIntersection || "",
+                  nearestCrossStreet: selectedStreetSignInfo?.nearestCrossStreet || "",
                 });
-                setDomainReportIssue(defaultDomainIssueFor("street_signs"));
-                setDomainReportNote("");
               }}
               style={{
                 ...markerPopupActionPrimary,
@@ -32433,12 +35141,14 @@ async function insertReportWithFallback(payload) {
             )}
             <button
               type="button"
-              onClick={() => copyTextToClipboard("Closest address", selectedGenericDomainInfo.nearestAddress || "Unavailable")}
+              onClick={() => copyTextToClipboard("Closest address", selectedGenericDomainInfo.locationPending
+                ? "Resolving nearest address..."
+                : (selectedGenericDomainInfo.nearestAddress || "Unavailable"))}
               title="Click to copy location"
               style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
             >
               <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Location:</span>{" "}
-              <span style={markerPopupCopyValueStyle}>{selectedGenericDomainInfo.nearestAddress || "Unavailable"}</span>
+              <span style={markerPopupCopyValueStyle}>{selectedGenericDomainInfo.locationDisplay || "Unavailable"}</span>
             </button>
             {isPlatformAdmin && (
               <button
@@ -32456,6 +35166,10 @@ async function insertReportWithFallback(payload) {
                 <div style={markerPopupCopyRowStyle}>
                   <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest landmark:</span>{" "}
                   <span>{selectedGenericDomainInfo.nearestLandmark || "No nearby landmark"}</span>
+                </div>
+                <div style={markerPopupCopyRowStyle}>
+                  <span style={{ fontWeight: 800, opacity: 0.9 }}>Nearest intersection:</span>{" "}
+                  <span>{selectedGenericDomainInfo.nearestIntersection || "No nearby intersection"}</span>
                 </div>
                 <div style={{ height: 4 }} />
                 <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
@@ -32523,7 +35237,7 @@ async function insertReportWithFallback(payload) {
                   onClick={() => {
                     const lat = Number(selectedDomainMarker?.lat);
                     const lng = Number(selectedDomainMarker?.lng);
-                    setDomainReportTarget({
+                    openDomainReportFlow({
                       domain: selectedGenericDomainInfo.domainKey,
                       domainLabel: selectedGenericDomainInfo.domainLabel,
                       lat,
@@ -32536,10 +35250,8 @@ async function insertReportWithFallback(payload) {
                       nearestAddress: selectedGenericDomainInfo.nearestAddress || "",
                       nearestLandmark: selectedGenericDomainInfo.nearestLandmark || "",
                       nearestCrossStreet: selectedGenericDomainInfo.nearestCrossStreet || "",
-                      nearestIntersection: "",
+                      nearestIntersection: selectedGenericDomainInfo.nearestIntersection || "",
                     });
-                    setDomainReportIssue(defaultDomainIssueFor(selectedGenericDomainInfo.domainKey));
-                    setDomainReportNote("");
                   }}
                   style={{
                     ...markerPopupActionPrimary,
@@ -32746,6 +35458,8 @@ async function insertReportWithFallback(payload) {
             >
               <AppIcon
                 src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite}
+                iconKey={mapType === "satellite" ? "streetMap" : "satellite"}
+                darkMode={prefersDarkMode}
                 size={38}
               />
             </button>
@@ -32777,7 +35491,7 @@ async function insertReportWithFallback(payload) {
               title="Reset heading"
               aria-label="Reset heading"
             >
-              <AppIcon src={UI_ICON_SRC.headingReset} size={38} />
+              <AppIcon src={UI_ICON_SRC.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={38} />
             </button>
 
             <button
@@ -32801,7 +35515,7 @@ async function insertReportWithFallback(payload) {
               title="Find my location"
               aria-label="Find my location"
             >
-              <AppIcon src={UI_ICON_SRC.location} size={38} />
+              <AppIcon src={UI_ICON_SRC.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={38} />
             </button>
 
             <button
@@ -32816,7 +35530,7 @@ async function insertReportWithFallback(payload) {
               title="Travel follow"
               aria-label="Toggle travel follow"
             >
-              <AppIcon src={UI_ICON_SRC.navigationArrow} size={34} />
+              <AppIcon src={UI_ICON_SRC.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={34} />
             </button>
 
             <button
@@ -32834,30 +35548,65 @@ async function insertReportWithFallback(payload) {
               title="City home"
               aria-label="Recenter to city"
             >
-              <AppIcon src={UI_ICON_SRC.homeRecenter} size={36} />
+              <AppIcon src={UI_ICON_SRC.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={36} />
             </button>
           </>
         )}
 
-        {!useAppShellLayout && (
+        {!useAppShellLayout && webStreetlightsPrimaryOption ? (
+          <button
+            type="button"
+            className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${activeMapLayerKey === "streetlights" ? "is-on" : ""}`}
+            title={webStreetlightsPrimaryOption.label || "Streetlights"}
+            aria-label={webStreetlightsPrimaryOption.label || "Streetlights"}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              requestMapLayerSwitch("streetlights", webStreetlightsPrimaryOption.label || "Streetlights");
+            }}
+          >
+            <DomainAppIcon
+              domainKey={webStreetlightsPrimaryOption.key}
+              src={webStreetlightsPrimaryOption.iconSrc || UI_ICON_SRC.streetlight}
+              size={34}
+            />
+          </button>
+        ) : null}
+
+        {!useAppShellLayout && incidentLayerButtonEnabled && incidentLayerDomainOptions.length ? (
           <div ref={domainMenuAnchorRef} style={{ position: "relative" }}>
             <button
               type="button"
-              className={`sl-map-tool-mini sl-has-submenu sl-mobile-hide-bottom-rail ${adminDomainMenuOpen ? "is-on" : ""}`}
-              title={`Map layer: ${activeLayerMeta?.label || adminDomainMeta.label}`}
-              aria-label="Select map layer"
+              className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${(adminDomainMenuOpen || activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) ? "is-on" : ""}`}
+              title={resolvedIncidentLayerOption?.label ? `Incident filter: ${resolvedIncidentLayerOption.label}` : "Incident filters"}
+              aria-label="Incident filters"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) {
+                  requestMapLayerSwitch(INCIDENT_REPORTING_LAYER_KEY, "Incident Reporting");
+                }
                 setAdminDomainMenuOpen((p) => {
                   const next = !p;
                   if (next) setAdminToolboxOpen(false);
                   return next;
                 });
-                showToolHint(`Layer: ${activeLayerMeta?.label || adminDomainMeta.label}`, 1000, 3);
+                showToolHint(
+                  hasExplicitIncidentMapFilter
+                    ? `Filter: ${activeIncidentMapFilterKeys.length === 1 ? (resolvedIncidentLayerOption?.label || activeIncidentMapFilterKeys[0]) : `${activeIncidentMapFilterKeys.length} domains`}`
+                    : "Filter: Incident reports",
+                  1000,
+                  3
+                );
               }}
             >
-              <AppIcon src={activeLayerMeta?.iconSrc || adminDomainMeta.iconSrc} size={38} />
+              <AppIcon
+                src={UI_ICON_SRC.incidentReportingLayer}
+                iconKey="incidentReportingLayer"
+                darkMode={prefersDarkMode}
+                active={adminDomainMenuOpen || activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY}
+                size={38}
+              />
             </button>
             {adminDomainMenuOpen && (
               <div
@@ -32880,122 +35629,78 @@ async function insertReportWithFallback(payload) {
                   minWidth: 170,
                 }}
               >
-                {layerOptions.map((d) => {
-                  const isOn = d.key === activeMapLayerKey;
-                  const isIncidentLayer = d.key === INCIDENT_REPORTING_LAYER_KEY;
+                {allIncidentReportsOptionEnabled ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetIncidentMapFilter();
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 9px",
+                      borderRadius: 8,
+                      border: !hasExplicitIncidentMapFilter
+                        ? "1px solid var(--sl-ui-tool-active-border)"
+                        : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                      background: !hasExplicitIncidentMapFilter
+                        ? "var(--sl-ui-tool-active-bg)"
+                        : "var(--sl-ui-surface-bg)",
+                      color: !hasExplicitIncidentMapFilter
+                        ? "var(--sl-ui-tool-active-text)"
+                        : "var(--sl-ui-text)",
+                      fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
+                      cursor: "pointer",
+                      justifyContent: "flex-start",
+                    }}
+                  >
+                    <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={prefersDarkMode} active={!hasExplicitIncidentMapFilter} size={18} />
+                    <span style={{ fontSize: 11.5 }}>All incident reports</span>
+                  </button>
+                ) : null}
+                {incidentLayerDomainOptions.map((option) => {
+                  const isSelected = activeIncidentMapFilterKeys.includes(option.key);
                   return (
-                    <div key={d.key} style={{ display: "grid", gap: 4 }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!d.enabled) return;
-                          setAdminDomainMenuOpen(false);
-                          requestMapLayerSwitch(d.key, d.label);
-                        }}
-                        disabled={!d.enabled}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          padding: "7px 9px",
-                          borderRadius: 9,
-                          border: isOn
-                            ? "1px solid var(--sl-ui-tool-active-border)"
-                            : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                          background: isOn
-                            ? "var(--sl-ui-tool-active-bg)"
-                            : "var(--sl-ui-modal-btn-secondary-bg)",
-                          color: isOn
-                            ? "var(--sl-ui-tool-active-text)"
-                            : "var(--sl-ui-modal-btn-secondary-text)",
-                          fontWeight: 900,
-                          cursor: d.enabled ? "pointer" : "not-allowed",
-                          opacity: d.enabled ? 1 : 0.6,
-                          justifyContent: "flex-start",
-                        }}
-                      >
-                        <AppIcon src={d.iconSrc} size={30} />
-                        <span style={{ fontSize: 12.5 }}>{d.label}</span>
-                      </button>
-                      {isIncidentLayer && incidentLayerDomainOptions.length > 0 ? (
-                        <div
-                          style={{
-                            display: "grid",
-                            gap: 4,
-                            paddingLeft: 14,
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              resetIncidentMapFilter();
-                            }}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "6px 9px",
-                              borderRadius: 8,
-                              border: !hasExplicitIncidentMapFilter
-                                ? "1px solid var(--sl-ui-tool-active-border)"
-                                : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                              background: !hasExplicitIncidentMapFilter
-                                ? "var(--sl-ui-tool-active-bg)"
-                                : "var(--sl-ui-surface-bg)",
-                              color: !hasExplicitIncidentMapFilter
-                                ? "var(--sl-ui-tool-active-text)"
-                                : "var(--sl-ui-text)",
-                              fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
-                              cursor: "pointer",
-                              justifyContent: "flex-start",
-                            }}
-                          >
-                            <AppIcon src={UI_ICON_SRC.incidentReportingLayer} size={18} />
-                            <span style={{ fontSize: 11.5 }}>All incident reports</span>
-                          </button>
-                          {incidentLayerDomainOptions.map((option) => {
-                            const isSelected = activeIncidentMapFilterKeys.includes(option.key);
-                            return (
-                              <button
-                                key={`${d.key}-${option.key}`}
-                                type="button"
-                                onClick={() => {
-                                  toggleIncidentMapDomainFilter(option.key, option.label);
-                                }}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  padding: "6px 9px",
-                                  borderRadius: 8,
-                                  border: isSelected
-                                    ? "1px solid var(--sl-ui-tool-active-border)"
-                                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                                  background: isSelected
-                                    ? "var(--sl-ui-tool-active-bg)"
-                                    : "var(--sl-ui-surface-bg)",
-                                  color: isSelected
-                                    ? "var(--sl-ui-tool-active-text)"
-                                    : "var(--sl-ui-text)",
-                                  fontWeight: isSelected ? 900 : 700,
-                                  cursor: "pointer",
-                                  justifyContent: "flex-start",
-                                }}
-                              >
-                                <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={18} />
-                                <span style={{ fontSize: 11.5 }}>{option.label}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </div>
+                    <button
+                      key={`web-incident-domain-${option.key}`}
+                      type="button"
+                      onClick={() => {
+                        toggleIncidentMapDomainFilter(option.key, option.label);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "6px 9px",
+                        borderRadius: 8,
+                        border: isSelected
+                          ? "1px solid var(--sl-ui-tool-active-border)"
+                          : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                        background: isSelected
+                          ? "var(--sl-ui-tool-active-bg)"
+                          : "var(--sl-ui-surface-bg)",
+                        color: isSelected
+                          ? "var(--sl-ui-tool-active-text)"
+                          : "var(--sl-ui-text)",
+                        fontWeight: isSelected ? 900 : 700,
+                        cursor: "pointer",
+                        justifyContent: "flex-start",
+                      }}
+                    >
+                      <DomainSelectorListIcon
+                        domainKey={option.key}
+                        src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer}
+                        size={18}
+                      />
+                      <span style={{ fontSize: 11.5 }}>{option.label}</span>
+                    </button>
                   );
                 })}
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
         {!useAppShellLayout && canOpenDomainReports && (
           <button
@@ -33016,7 +35721,7 @@ async function insertReportWithFallback(payload) {
               showToolHint("Reports", 1000, 5);
             }}
           >
-            <AppIcon src={UI_ICON_SRC.openReports} size={38} />
+            <AppIcon src={UI_ICON_SRC.openReports} iconKey="openReports" darkMode={prefersDarkMode} active={openReportsOpen} size={38} />
           </button>
         )}
 
@@ -33054,7 +35759,7 @@ async function insertReportWithFallback(payload) {
             title={bulkMode ? "Bulk selection ON" : "Bulk selection OFF"}
             aria-label="Toggle bulk selection"
           >
-            <AppIcon src={UI_ICON_SRC.bulk} size={38} />
+            <AppIcon src={UI_ICON_SRC.bulk} iconKey="bulk" darkMode={prefersDarkMode} active={bulkMode} size={38} />
           </button>
         )}
         {!useAppShellLayout && (isAdmin || showAdminTools) && (
@@ -33075,7 +35780,7 @@ async function insertReportWithFallback(payload) {
                 showToolHint("Admin tools", 1000, 5);
               }}
             >
-              <AppIcon src={UI_ICON_SRC.toolbox} size={38} />
+              <AppIcon src={UI_ICON_SRC.toolbox} iconKey="toolbox" darkMode={prefersDarkMode} active={adminToolboxOpen} size={38} />
             </button>
 
             {adminToolboxOpen && (
@@ -33183,7 +35888,7 @@ async function insertReportWithFallback(payload) {
                       justifyContent: "flex-start",
                     }}
                   >
-                    <AppIcon src={UI_ICON_SRC.location} size={30} />
+                    <AppIcon src={UI_ICON_SRC.location} iconKey="location" darkMode={prefersDarkMode} size={30} />
                     <span style={{ fontSize: 12.5 }}>Location Diagnostics</span>
                   </button>
                 )}
@@ -33237,7 +35942,7 @@ async function insertReportWithFallback(payload) {
                       justifyContent: "flex-start",
                     }}
                   >
-                      <AppIcon src={UI_ICON_SRC.mapping} size={30} />
+                      <AppIcon src={UI_ICON_SRC.mapping} iconKey="mapping" darkMode={prefersDarkMode} active={mappingMode} size={30} />
                       <span style={{ fontSize: 12.5 }}>{mappingMode ? "Mapping On" : "Mapping"}</span>
                     </button>
                 )}
@@ -33592,7 +36297,7 @@ async function insertReportWithFallback(payload) {
                       placeItems: "center",
                     }}
                   >
-                    <AppIcon src={UI_ICON_SRC.notification} size={22} />
+                    <AppIcon src={UI_ICON_SRC.notification} iconKey="notification" darkMode={prefersDarkMode} active={alertsWindowOpen} size={22} />
                     {mapAlertsUnreadCount > 0 ? (
                       <span
                         style={{
@@ -33651,7 +36356,7 @@ async function insertReportWithFallback(payload) {
                       placeItems: "center",
                     }}
                   >
-                    <AppIcon src={UI_ICON_SRC.calendar} size={22} />
+                    <AppIcon src={UI_ICON_SRC.calendar} iconKey="calendar" darkMode={prefersDarkMode} active={eventsWindowOpen} size={22} />
                     {mapEventsUnreadCount > 0 ? (
                       <span
                         style={{
@@ -33692,13 +36397,14 @@ async function insertReportWithFallback(payload) {
                 >
                   {isAggregatedReportingDomain && (
                     <div
-                      onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
-                      role="button"
-                      tabIndex={0}
+                      onClick={canOpenDomainReports ? () => openOpenReports({ inViewOnly: true }) : undefined}
+                      role={canOpenDomainReports ? "button" : undefined}
+                      tabIndex={canOpenDomainReports ? 0 : -1}
                       onKeyDown={(e) => {
+                        if (!canOpenDomainReports) return;
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                          openOpenReports({ inViewOnly: true });
                         }
                       }}
                       style={{
@@ -33715,7 +36421,7 @@ async function insertReportWithFallback(payload) {
                         boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                         backdropFilter: "blur(2px)",
                         WebkitBackdropFilter: "blur(2px)",
-                        cursor: "pointer",
+                        cursor: canOpenDomainReports ? "pointer" : "default",
                       }}
                     >
                       Reports in view: <b>{openReportsInViewCount}</b>
@@ -33976,7 +36682,7 @@ async function insertReportWithFallback(payload) {
                     suppressPopupsSafe(1600);
 
                     setNote("");
-                    setReportType("out");
+                    setReportType(defaultDomainIssueValue("streetlights", streetlightIssueOptions));
                     setStreetlightAreaPowerOn("");
                     setStreetlightHazardYesNo("");
                     setBulkConfirmOpen(true);
@@ -34147,9 +36853,14 @@ async function insertReportWithFallback(payload) {
                   width: "100%",
                   maxWidth: mobileHeaderCopyMaxWidth,
                   padding: mobileHeaderCopyPadding,
+                  paddingBottom: mobileHeaderCopyBottomPadding,
                   textAlign: "center",
                   display: "grid",
                   justifyItems: "center",
+                  alignSelf: "end",
+                  alignContent: "end",
+                  height: "auto",
+                  transform: mobileHeaderCopyTranslateY ? `translateY(${mobileHeaderCopyTranslateY}px)` : undefined,
                 }}
               >
                 <span className="app-header-eyebrow" style={{ color: mapHeaderTheme.eyebrowColor, fontSize: mobileHeaderEyebrowSize }}>Reporting Map</span>
@@ -34197,10 +36908,10 @@ async function insertReportWithFallback(payload) {
                   width: 42,
                   height: 42,
                   borderRadius: 14,
-                  border: "1px solid var(--sl-ui-tool-border)",
-                  background: "var(--sl-ui-tool-bg)",
-                  boxShadow: "var(--sl-ui-tool-shadow)",
-                  color: "var(--sl-ui-text)",
+                  border: mapHeaderTheme.mobileMenuBorder,
+                  background: mapHeaderTheme.mobileMenuBackground,
+                  boxShadow: "var(--sl-ui-header-menu-shadow)",
+                  color: mapHeaderTheme.textColor,
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -34349,7 +37060,7 @@ async function insertReportWithFallback(payload) {
                   }}
                   style={mobileMapToolButtonStyle}
                 >
-                  <AppIcon src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite} size={32} />
+                  <AppIcon src={mapType === "satellite" ? UI_ICON_SRC.streetMap : UI_ICON_SRC.satellite} iconKey={mapType === "satellite" ? "streetMap" : "satellite"} darkMode={prefersDarkMode} size={32} />
                 </div>
                 <div
                   role="button"
@@ -34374,7 +37085,7 @@ async function insertReportWithFallback(payload) {
                   }}
                   style={mobileMapToolButtonStyle}
                 >
-                  <AppIcon src={UI_ICON_SRC.headingReset} size={32} />
+                  <AppIcon src={UI_ICON_SRC.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={32} />
                 </div>
                 <div
                   role="button"
@@ -34398,7 +37109,7 @@ async function insertReportWithFallback(payload) {
                       : mobileMapToolButtonStyle.background,
                   }}
                 >
-                  <AppIcon src={UI_ICON_SRC.location} size={32} />
+                  <AppIcon src={UI_ICON_SRC.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={32} />
                 </div>
                 <div
                   role="button"
@@ -34420,7 +37131,7 @@ async function insertReportWithFallback(payload) {
                       : mobileMapToolButtonStyle.color,
                   }}
                 >
-                  <AppIcon src={UI_ICON_SRC.navigationArrow} size={28} />
+                  <AppIcon src={UI_ICON_SRC.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={28} />
                 </div>
                 <div
                   role="button"
@@ -34434,7 +37145,7 @@ async function insertReportWithFallback(payload) {
                   }}
                   style={mobileMapToolButtonStyle}
                 >
-                  <AppIcon src={UI_ICON_SRC.homeRecenter} size={30} />
+                  <AppIcon src={UI_ICON_SRC.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={30} />
                 </div>
                 {mobilePrimaryLayerOptions.length ? (
                   <>
@@ -34502,7 +37213,13 @@ async function insertReportWithFallback(payload) {
                               opacity: layer.enabled === false ? 0.55 : 1,
                             }}
                           >
-                            <AppIcon src={layer.iconSrc} size={index === 0 ? 30 : 32} />
+                            <AppIcon
+                              src={layer.iconSrc}
+                              iconKey={layer.key === INCIDENT_REPORTING_LAYER_KEY ? "incidentReportingLayer" : ""}
+                              darkMode={prefersDarkMode}
+                              active={isActive}
+                              size={index === 0 ? 30 : 32}
+                            />
                           </div>
                           {showIncidentSubcontrols ? (
                             <div
@@ -34524,36 +37241,38 @@ async function insertReportWithFallback(payload) {
                                 zIndex: 4,
                               }}
                             >
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  resetIncidentMapFilter();
-                                }}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  padding: "6px 9px",
-                                  borderRadius: 8,
-                                  border: !hasExplicitIncidentMapFilter
-                                    ? "1px solid var(--sl-ui-tool-active-border)"
-                                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                                  background: !hasExplicitIncidentMapFilter
-                                    ? "var(--sl-ui-tool-active-bg)"
-                                    : "var(--sl-ui-surface-bg)",
-                                  color: !hasExplicitIncidentMapFilter
-                                    ? "var(--sl-ui-tool-active-text)"
-                                    : "var(--sl-ui-text)",
-                                  fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
-                                  cursor: "pointer",
-                                  justifyContent: "flex-start",
-                                }}
-                              >
-                                <AppIcon src={UI_ICON_SRC.incidentReportingLayer} size={18} />
-                                <span style={{ fontSize: 11.5 }}>All incident reports</span>
-                              </button>
+                              {allIncidentReportsOptionEnabled ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    resetIncidentMapFilter();
+                                  }}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "6px 9px",
+                                    borderRadius: 8,
+                                    border: !hasExplicitIncidentMapFilter
+                                      ? "1px solid var(--sl-ui-tool-active-border)"
+                                      : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                                    background: !hasExplicitIncidentMapFilter
+                                      ? "var(--sl-ui-tool-active-bg)"
+                                      : "var(--sl-ui-surface-bg)",
+                                    color: !hasExplicitIncidentMapFilter
+                                      ? "var(--sl-ui-tool-active-text)"
+                                      : "var(--sl-ui-text)",
+                                    fontWeight: !hasExplicitIncidentMapFilter ? 900 : 700,
+                                    cursor: "pointer",
+                                    justifyContent: "flex-start",
+                                  }}
+                                >
+                                  <AppIcon src={UI_ICON_SRC.allIncidentReports} iconKey="allIncidentReports" darkMode={prefersDarkMode} active={!hasExplicitIncidentMapFilter} size={18} />
+                                  <span style={{ fontSize: 11.5 }}>All incident reports</span>
+                                </button>
+                              ) : null}
                               {incidentLayerDomainOptions.map((option) => {
                                 const isSelected = activeIncidentMapFilterKeys.includes(option.key);
                                 return (
@@ -34586,7 +37305,7 @@ async function insertReportWithFallback(payload) {
                                       textAlign: "left",
                                     }}
                                   >
-                                    <AppIcon src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={18} />
+                                    <DomainAppIcon domainKey={option.key} src={option.iconSrc || UI_ICON_SRC.incidentReportingLayer} size={18} />
                                     <span style={{ fontSize: 12 }}>{option.label}</span>
                                   </button>
                                 );
@@ -34655,7 +37374,7 @@ async function insertReportWithFallback(payload) {
                                   aria-label={bulkMode ? "Turn off bulk reporting" : "Turn on bulk reporting"}
                                   title={bulkMode ? "Bulk reporting on" : "Bulk reporting off"}
                                 >
-                                  <AppIcon src={UI_ICON_SRC.bulk} size={22} />
+                                  <AppIcon src={UI_ICON_SRC.bulk} iconKey="bulk" darkMode={prefersDarkMode} active={bulkMode} size={22} />
                                 </button>
                               ) : null}
                               {showAdminTools ? (
@@ -34702,7 +37421,7 @@ async function insertReportWithFallback(payload) {
                                   aria-label={mappingMode ? "Turn off light mapping" : "Turn on light mapping"}
                                   title={mappingMode ? "Light mapping on" : "Light mapping off"}
                                 >
-                                  <AppIcon src={UI_ICON_SRC.mapping} size={22} />
+                                  <AppIcon src={UI_ICON_SRC.mapping} iconKey="mapping" darkMode={prefersDarkMode} active={mappingMode} size={22} />
                                 </button>
                               ) : null}
                             </div>
@@ -34735,13 +37454,14 @@ async function insertReportWithFallback(payload) {
                 >
                   {isAggregatedReportingDomain && (
                     <div
-                      onClick={() => openMyReports({ domainKey: adminReportDomain, inViewOnly: true })}
-                      role="button"
-                      tabIndex={0}
+                      onClick={canOpenDomainReports ? () => openOpenReports({ inViewOnly: true }) : undefined}
+                      role={canOpenDomainReports ? "button" : undefined}
+                      tabIndex={canOpenDomainReports ? 0 : -1}
                       onKeyDown={(e) => {
+                        if (!canOpenDomainReports) return;
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          openMyReports({ domainKey: adminReportDomain, inViewOnly: true });
+                          openOpenReports({ inViewOnly: true });
                         }
                       }}
                       style={{
@@ -34759,7 +37479,7 @@ async function insertReportWithFallback(payload) {
                         boxShadow: "0 3px 10px rgba(0,0,0,0.20)",
                         backdropFilter: "blur(2px)",
                         WebkitBackdropFilter: "blur(2px)",
-                        cursor: "pointer",
+                        cursor: canOpenDomainReports ? "pointer" : "default",
                       }}
                     >
                       Reports in view: <b>{openReportsInViewCount}</b>
@@ -34966,7 +37686,7 @@ async function insertReportWithFallback(payload) {
                     suppressPopupsSafe(1600);
 
                     setNote("");
-                    setReportType("out");
+                    setReportType(defaultDomainIssueValue("streetlights", streetlightIssueOptions));
                     setStreetlightAreaPowerOn("");
                     setStreetlightHazardYesNo("");
                     setBulkConfirmOpen(true);
@@ -35110,7 +37830,9 @@ async function insertReportWithFallback(payload) {
               <MobileBottomRailButton
                 label="Map"
                 iconSrc={UI_ICON_SRC.mapTab}
+                iconKey="mapTab"
                 active={showMobileMapTabContent}
+                darkMode={prefersDarkMode}
                 wide={useWideAppShellHeader}
                 showDivider={true}
                 onClick={() => {
@@ -35129,7 +37851,9 @@ async function insertReportWithFallback(payload) {
               <MobileBottomRailButton
                 label="Reports"
                 iconSrc={UI_ICON_SRC.openReports}
+                iconKey="openReports"
                 active={myReportsOpen}
+                darkMode={prefersDarkMode}
                 wide={useWideAppShellHeader}
                 showDivider={showMapAlertIcon || showMapEventIcon || true}
                 onClick={() => {
@@ -35147,7 +37871,7 @@ async function insertReportWithFallback(payload) {
                     setAccountMenuOpen(true);
                     return;
                   }
-                  openMyReports({ domainKey: adminReportDomain, inViewOnly: false, reportedByMode: "me" });
+                  openMyReports({ inViewOnly: false, reportedByMode: "me" });
                 }}
               />
 
@@ -35155,7 +37879,9 @@ async function insertReportWithFallback(payload) {
                 <MobileBottomRailButton
                   label="Alerts"
                   iconSrc={UI_ICON_SRC.notification}
+                  iconKey="notification"
                   active={alertsWindowOpen}
+                  darkMode={prefersDarkMode}
                   wide={useWideAppShellHeader}
                   badgeCount={mapAlertsUnreadCount}
                   showDivider={showMapEventIcon || true}
@@ -35177,7 +37903,9 @@ async function insertReportWithFallback(payload) {
                 <MobileBottomRailButton
                   label="Events"
                   iconSrc={UI_ICON_SRC.calendar}
+                  iconKey="calendar"
                   active={eventsWindowOpen}
+                  darkMode={prefersDarkMode}
                   wide={useWideAppShellHeader}
                   badgeCount={mapEventsUnreadCount}
                   showDivider={true}
@@ -35198,7 +37926,9 @@ async function insertReportWithFallback(payload) {
               <MobileBottomRailButton
                 label="Account"
                 iconSrc={UI_ICON_SRC.account}
+                iconKey="account"
                 active={accountTabActive}
+                darkMode={prefersDarkMode}
                 wide={useWideAppShellHeader}
                 onClick={() => {
                   setMobileTabTransitionFor("account");

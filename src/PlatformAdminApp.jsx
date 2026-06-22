@@ -8,6 +8,33 @@ import {
 } from "./auth/loginFieldStandards";
 import { getAuthRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
+import {
+  MAP_UI_ICON_ACCEPT,
+  MAP_UI_ICON_BUCKET,
+  MAP_UI_ICON_CATALOG,
+  MAP_UI_ICON_DRAFT_CONFIG_KEY,
+  MAP_UI_ICON_MAX_BYTES,
+  MAP_UI_ICON_PUBLISHED_CONFIG_KEY,
+  MAP_UI_ICON_RENDER_MODE,
+  MAP_UI_ICON_RENDER_MODE_OPTIONS,
+  MAP_UI_ICON_THEME_DEFAULTS,
+  MAP_UI_THEME_FIELDS,
+  isMapUiBaseThemeEnabled,
+  mergeMapUiIconMeta,
+  mergeMapUiTheme,
+  resolveActiveMapUiThemeSchedule,
+  sanitizeMapUiIconManifest,
+  sanitizeMapUiTheme,
+  sanitizeMapUiThemeSchedules,
+} from "./mapUiIconCatalog";
+import {
+  DOMAIN_ICON_TINT_MODE,
+  DOMAIN_ICON_TINT_MODE_OPTIONS,
+  normalizeDomainIconRenderMode,
+  normalizeDomainIconTintColor,
+  normalizeDomainIconTintMode,
+  resolveDomainMarkerIconTintColor,
+} from "./domainIconRendering";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
@@ -66,6 +93,21 @@ const DOMAIN_BILLING_MODEL_OPTIONS = [
   { key: "add_on", label: "Add-On" },
   { key: "custom", label: "Custom" },
 ];
+
+function domainAssignmentVisibilityLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS.find((option) => option.key === key)?.label || "Enabled";
+}
+
+function domainBillingStatusLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return DOMAIN_BILLING_STATUS_OPTIONS.find((option) => option.key === key)?.label || "Not Applicable";
+}
+
+function domainBillingModelLabel(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return DOMAIN_BILLING_MODEL_OPTIONS.find((option) => option.key === key)?.label || "Included";
+}
 
 const DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS = [
   {
@@ -199,6 +241,8 @@ const CONTROL_PLANE_PAGES = [
   { key: "lead-detail", section: "organizations", label: "Lead Detail", hidden: true },
   { key: "account-info", section: "settings", label: "Account Info" },
   { key: "domain-registry", section: "settings", label: "Domain Registry" },
+  { key: "map-ui-icons", section: "settings", label: "Map UI Icons" },
+  { key: "map-ui-theme", section: "settings", label: "Map UI Theme" },
   { key: "manage-team", section: "settings", label: "Manage Team" },
   { key: "roles-permissions", section: "settings", label: "Roles & Permissions" },
   { key: "security-checks", section: "settings", label: "Security Checks" },
@@ -239,6 +283,8 @@ const CONTROL_PLANE_SETTINGS_NAV = [
     label: "Platform",
     items: [
       { key: "domain-registry", label: "Domain Registry" },
+      { key: "map-ui-icons", label: "Map UI Icons" },
+      { key: "map-ui-theme", label: "Map UI Theme" },
     ],
   },
   {
@@ -382,6 +428,8 @@ const CONTROL_PLANE_PAGE_PERMISSIONS = {
   "lead-detail": "leads.access",
   "account-info": "account.access",
   "domain-registry": "domains.access",
+  "map-ui-icons": "domains.access",
+  "map-ui-theme": "domains.access",
   "manage-team": "users.access",
   "roles-permissions": "roles.access",
   "security-checks": "security.access",
@@ -1079,6 +1127,18 @@ function defaultDomainType(domainKey) {
   return "incident_driven";
 }
 
+function isLegacyIncidentEnumDomain(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  return [
+    "streetlights",
+    "street_signs",
+    "potholes",
+    "water_drain_issues",
+    "power_outage",
+    "water_main",
+  ].includes(key);
+}
+
 function defaultDomainLabel(domainKey) {
   const key = String(domainKey || "").trim().toLowerCase();
   return DOMAIN_OPTIONS.find((entry) => entry.key === key)?.label || roleKeyToLabel(key || "domain");
@@ -1122,9 +1182,18 @@ function initialDomainConfigForm() {
       organization_monitored_repairs: true,
       public_visibility_min_reports: defaultDomainPublicVisibilityMinReports(d.key),
       high_confidence_min_reports: defaultDomainHighConfidenceMinReports(d.key),
+      icon_render_mode: MAP_UI_ICON_RENDER_MODE.RASTER,
+      icon_tint_mode: DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST,
+      icon_tint_color: "",
+      issue_types_input: "",
+      report_disclosures: defaultDomainDisclosures(d.key),
     };
   }
   return out;
+}
+
+function defaultTenantDomainIconRenderMode(domainKey = "", iconSrc = "") {
+  return normalizeDomainIconRenderMode("", String(iconSrc || "").trim());
 }
 
 function slugifyDomainKeyInput(value) {
@@ -1164,6 +1233,241 @@ function serializeDomainIssueTypeInput(issueTypes) {
     .join("\n");
 }
 
+function parseDomainTypeOptionChoicesInput(value) {
+  const seen = new Set();
+  const rows = [];
+  const chunks = String(value || "")
+    .split(/\r?\n|,/)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+  for (const chunk of chunks) {
+    const label = chunk.replace(/\s+/g, " ").trim();
+    if (!label) continue;
+    const key = slugifyDomainKeyInput(label);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      value: key,
+      label,
+    });
+  }
+  return rows;
+}
+
+function serializeDomainTypeOptionChoicesInput(choices) {
+  return (Array.isArray(choices) ? choices : [])
+    .map((row) => String(row?.label || "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function defaultDomainTypeOptionLabel(domainKey = "", index = 0) {
+  const domain = String(domainKey || "").trim().toLowerCase();
+  if (domain === "street_signs" && index === 0) return "Sign Type";
+  return `Type Option ${index + 1}`;
+}
+
+function normalizeDomainTypeOptionConfigs(value, domainKey = "") {
+  const rows = Array.isArray(value) ? value : [];
+  if (!rows.length) return [];
+  const looksLegacyFlat = rows.every((row) => (
+    row
+    && typeof row === "object"
+    && !Array.isArray(row?.choices)
+    && !Array.isArray(row?.options)
+    && !Array.isArray(row?.type_choices)
+    && !row?.option_key
+    && !row?.optionKey
+    && !row?.option_label
+    && !row?.optionLabel
+    && (row?.type_key || row?.type_label || row?.label || row?.value)
+  ));
+  if (looksLegacyFlat) {
+    const choices = rows
+      .map((row, index) => ({
+        value: String(row?.type_key || row?.value || "").trim().toLowerCase(),
+        label: String(row?.type_label || row?.label || "").trim(),
+        sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : (index + 1) * 10,
+      }))
+      .filter((row) => row.value && row.label);
+    return choices.length ? [{
+      id: `${String(domainKey || "domain").trim().toLowerCase() || "domain"}_type_option_1`,
+      option_key: domainKey === "street_signs" ? "sign_type" : "type_option_1",
+      option_label: defaultDomainTypeOptionLabel(domainKey, 0),
+      choices_input: serializeDomainTypeOptionChoicesInput(choices),
+    }] : [];
+  }
+
+  return rows.map((row, index) => {
+    const optionLabel = String(row?.optionLabel || row?.option_label || row?.label || "").replace(/\s+/g, " ").trim() || defaultDomainTypeOptionLabel(domainKey, index);
+    const optionKey = slugifyDomainKeyInput(row?.optionKey || row?.option_key || optionLabel || `type_option_${index + 1}`) || `type_option_${index + 1}`;
+    const existingChoicesInput = String(row?.choices_input || "").trim();
+    const rawChoices = Array.isArray(row?.choices)
+      ? row.choices
+      : Array.isArray(row?.options)
+        ? row.options
+        : Array.isArray(row?.type_choices)
+          ? row.type_choices
+          : [];
+    const parsedChoices = rawChoices.map((choice, choiceIndex) => ({
+      value: String(choice?.value || choice?.type_key || "").trim().toLowerCase(),
+      label: String(choice?.label || choice?.type_label || "").trim(),
+      sort_order: Number.isFinite(Number(choice?.sort_order)) ? Number(choice.sort_order) : (choiceIndex + 1) * 10,
+    })).filter((choice) => choice.value && choice.label);
+    return {
+      id: String(row?.id || "").trim() || createDomainDisclosureId("type_option"),
+      option_key: optionKey,
+      option_label: optionLabel,
+      choices_input: existingChoicesInput || serializeDomainTypeOptionChoicesInput(parsedChoices),
+    };
+  }).filter((row) => row.option_label || row.choices_input);
+}
+
+function buildStoredDomainTypeOptionConfigs(value, domainKey = "") {
+  return normalizeDomainTypeOptionConfigs(value, domainKey)
+    .map((row, index) => {
+      const optionLabel = String(row?.option_label || "").replace(/\s+/g, " ").trim() || defaultDomainTypeOptionLabel(domainKey, index);
+      const optionKey = slugifyDomainKeyInput(row?.option_key || optionLabel || `type_option_${index + 1}`) || `type_option_${index + 1}`;
+      const choices = parseDomainTypeOptionChoicesInput(row?.choices_input || "").map((choice, choiceIndex) => ({
+        value: choice.value,
+        label: choice.label,
+        sort_order: (choiceIndex + 1) * 10,
+      }));
+      if (!optionLabel && !choices.length) return null;
+      return {
+        id: String(row?.id || "").trim() || createDomainDisclosureId("type_option"),
+        option_key: optionKey,
+        option_label: optionLabel,
+        choices,
+      };
+    })
+    .filter(Boolean);
+}
+
+function domainTypeOptionMacroToken(optionKey = "") {
+  const key = slugifyDomainKeyInput(optionKey);
+  if (!key) return "";
+  return `{{type_option_${key}}}`;
+}
+
+function domainNotificationTemplateTokens(typeOptions = []) {
+  const tokens = [...DOMAIN_NOTIFICATION_TEMPLATE_TOKENS];
+  const normalized = buildStoredDomainTypeOptionConfigs(typeOptions);
+  if (normalized.length) {
+    tokens.push("{{type_options_summary}}");
+    for (const row of normalized) {
+      const token = domainTypeOptionMacroToken(row?.option_key);
+      if (token && !tokens.includes(token)) tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+function createDomainDisclosureId(prefix = "disclosure") {
+  const fallback = `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return fallback;
+}
+
+function defaultDomainSubmitDisclosureText(domainKey = "") {
+  const domain = String(domainKey || "").trim().toLowerCase();
+  if (domain === "water_drain_issues") {
+    return "Submitting a report through CityReport helps notify the city, but it does not guarantee receipt, review, response, or acceptance as legal notice. Sewer, storm, or drainage issues may require immediate direct contact with the city or utility. For emergencies, call 911.";
+  }
+  return "Submitting a report through CityReport helps notify the city, but it does not guarantee receipt, review, response, or acceptance as legal notice. For emergencies or immediate hazards, contact emergency services or the responsible agency directly.";
+}
+
+function defaultDomainConsentDisclosureText(domainKey = "") {
+  const domain = String(domainKey || "").trim().toLowerCase();
+  if (domain === "water_drain_issues") {
+    return "I agree to allow CityReport.io to submit this water or drainage issue and my provided contact information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.";
+  }
+  if (domain === "potholes") {
+    return "I agree to allow CityReport.io to submit this pothole report and my provided contact information to the city, utility, or other responsible agency on my behalf, and I confirm the submitted information is accurate to the best of my knowledge.";
+  }
+  return "";
+}
+
+function defaultDomainDisclosures(domainKey = "") {
+  const domain = String(domainKey || "").trim().toLowerCase();
+  const base = [
+    {
+      id: `${domain || "domain"}_submission_notice`,
+      title: "Submission notice",
+      body: defaultDomainSubmitDisclosureText(domain),
+      required_acknowledgement: false,
+      display_position: "inside_form",
+    },
+  ];
+  if (domain === "potholes") {
+    return [
+      {
+        id: "potholes_vehicle_damage_notice",
+        title: "Vehicle damage notice",
+        body: "If you need to report damage to your vehicle from a pothole, you will need to file a police report as soon as possible, then bring this information to the City Manager's Office.",
+        required_acknowledgement: false,
+        display_position: "before_form",
+      },
+      {
+        id: "potholes_submit_authorization",
+        title: "Authorization to submit",
+        body: defaultDomainConsentDisclosureText(domain),
+        required_acknowledgement: true,
+        display_position: "inside_form",
+      },
+      ...base,
+    ];
+  }
+  if (domain === "water_drain_issues") {
+    return [
+      {
+        id: "water_drain_submit_authorization",
+        title: "Authorization to submit",
+        body: defaultDomainConsentDisclosureText(domain),
+        required_acknowledgement: true,
+        display_position: "inside_form",
+      },
+      ...base,
+    ];
+  }
+  return base;
+}
+
+function normalizeDomainDisclosureRows(value, domainKey = "", options = {}) {
+  const { fallbackToDefaults = false } = options;
+  if (!Array.isArray(value)) {
+    return fallbackToDefaults ? defaultDomainDisclosures(domainKey) : [];
+  }
+  const rows = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const title = String(row?.title || "").trim();
+    const body = String(row?.body || "").trim();
+    if (!title && !body) continue;
+    rows.push({
+      id: String(row?.id || "").trim() || createDomainDisclosureId("disclosure"),
+      title: title || "Disclosure",
+      body,
+      required_acknowledgement: row?.required_acknowledgement === true || row?.required === true,
+      display_position: String(row?.display_position || "").trim().toLowerCase() === "before_form"
+        ? "before_form"
+        : "inside_form",
+    });
+  }
+  if (!rows.length && fallbackToDefaults) {
+    return defaultDomainDisclosures(domainKey);
+  }
+  return rows;
+}
+
+function domainDisclosurePositionLabel(value) {
+  return String(value || "").trim().toLowerCase() === "before_form" ? "Before form" : "Inside form";
+}
+
 function isUploadedDomainIcon(value) {
   return /\/storage\/v1\/object\/public\/domain-icons\//i.test(String(value || "").trim());
 }
@@ -1184,7 +1488,8 @@ function initialDomainRegistryForm() {
     ownership_model: "org_managed",
     report_prefix: "",
     allow_report_images: false,
-    issue_types_input: "",
+    road_required: false,
+    type_options: [],
   };
 }
 
@@ -1204,10 +1509,208 @@ function buildDomainRegistryForm(row) {
     custom_icon_src: isUploadedDomainIcon(fallbackIconSrc) ? "" : fallbackIconSrc,
     icon_file: null,
     ownership_model: String(row?.ownership_model || "org_managed"),
-    report_prefix: String(row?.report_prefix || ""),
+    report_prefix: String(row?.report_prefix || "").trim().toUpperCase(),
     allow_report_images: row?.allow_report_images === true,
-    issue_types_input: serializeDomainIssueTypeInput(row?.issue_types),
+    road_required: row?.road_required === true,
+    type_options: normalizeDomainTypeOptionConfigs(row?.type_options, row?.key),
   };
+}
+
+function isTintableSvgAsset(value, file = null) {
+  const src = String(value || "").trim();
+  if (/\.svg(?:[?#].*)?$/i.test(src)) return true;
+  const fileType = String(file?.type || "").trim().toLowerCase();
+  if (fileType === "image/svg+xml") return true;
+  const fileName = String(file?.name || "").trim();
+  return /\.svg$/i.test(fileName);
+}
+
+function buildMapUiIconDraftForm(raw) {
+  const merged = mergeMapUiIconMeta(raw);
+  const next = {};
+  for (const entry of MAP_UI_ICON_CATALOG) {
+    next[entry.key] = {
+      src: String(merged?.[entry.key]?.src || entry.defaultSrc || "").trim(),
+      render_mode: String(merged?.[entry.key]?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER).trim(),
+      light_tint_color: String(merged?.[entry.key]?.light_tint_color || "").trim(),
+      dark_tint_color: String(merged?.[entry.key]?.dark_tint_color || "").trim(),
+      enabled: merged?.[entry.key]?.enabled !== false,
+      file: null,
+      preview_url: "",
+    };
+  }
+  return next;
+}
+
+function extractMapUiIconManifestFromForm(form) {
+  const next = {};
+  for (const entry of MAP_UI_ICON_CATALOG) {
+    const value = String(form?.[entry.key]?.src || "").trim();
+    if (!value) continue;
+    next[entry.key] = {
+      src: value,
+      render_mode: String(form?.[entry.key]?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER).trim(),
+      light_tint_color: String(form?.[entry.key]?.light_tint_color || "").trim(),
+      dark_tint_color: String(form?.[entry.key]?.dark_tint_color || "").trim(),
+      enabled: form?.[entry.key]?.enabled !== false,
+    };
+  }
+  return next;
+}
+
+function buildMapUiThemeDraftForm(raw) {
+  const overrides = sanitizeMapUiTheme(raw);
+  const next = { light: {}, dark: {} };
+  for (const mode of ["light", "dark"]) {
+    for (const field of MAP_UI_THEME_FIELDS) {
+      next[mode][field.key] = String(overrides?.[mode]?.[field.key] || "").trim();
+    }
+  }
+  return next;
+}
+
+function extractMapUiThemeFromForm(form) {
+  return sanitizeMapUiTheme(form);
+}
+
+function createMapUiThemeScheduleDraft(seed = {}) {
+  const generatedId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `theme-schedule-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+  const id = String(seed?.id || generatedId).trim();
+  return {
+    id: id || generatedId,
+    label: String(seed?.label || "").trim(),
+    enabled: seed?.enabled !== false,
+    start_at: toLocalDateTimeInputValue(seed?.start_at),
+    end_at: toLocalDateTimeInputValue(seed?.end_at),
+    created_at: String(seed?.created_at || "").trim(),
+    updated_at: String(seed?.updated_at || "").trim(),
+    themeForm: buildMapUiThemeDraftForm(seed?.theme || seed),
+  };
+}
+
+function buildMapUiThemeScheduleDrafts(raw) {
+  return sanitizeMapUiThemeSchedules(raw).map((entry) => createMapUiThemeScheduleDraft(entry));
+}
+
+function validateAndExtractMapUiThemeScheduleDrafts(drafts) {
+  const next = [];
+  for (const entry of Array.isArray(drafts) ? drafts : []) {
+    const label = String(entry?.label || "").trim();
+    const startAt = fromLocalDateTimeInputValue(entry?.start_at);
+    const endAt = fromLocalDateTimeInputValue(entry?.end_at);
+    const theme = extractMapUiThemeFromForm(entry?.themeForm || {});
+    const hasAnyValue =
+      label
+      || String(entry?.start_at || "").trim()
+      || String(entry?.end_at || "").trim()
+      || Object.keys(theme).length;
+    if (!hasAnyValue) continue;
+    if (!label) {
+      return { schedules: [], error: "Add a label for each temporary theme before saving." };
+    }
+    if (!startAt || !endAt) {
+      return { schedules: [], error: `Choose both a start and end time for ${label}.` };
+    }
+    if (Date.parse(endAt) <= Date.parse(startAt)) {
+      return { schedules: [], error: `${label} must end after it starts.` };
+    }
+    if (!Object.keys(theme).length) {
+      return { schedules: [], error: `Set at least one theme color override for ${label}.` };
+    }
+    next.push({
+      id: String(entry?.id || "").trim() || `theme-schedule-${Date.now()}`,
+      label,
+      enabled: entry?.enabled !== false,
+      start_at: startAt,
+      end_at: endAt,
+      theme,
+      created_at: String(entry?.created_at || "").trim() || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
+  return {
+    schedules: sanitizeMapUiThemeSchedules(next),
+    error: "",
+  };
+}
+
+function getMapUiThemeScheduleStatus(entry, now = Date.now()) {
+  const targetTime = now instanceof Date ? now.getTime() : Number(now);
+  const startAt = Date.parse(String(entry?.start_at || ""));
+  const endAt = Date.parse(String(entry?.end_at || ""));
+  if (entry?.enabled === false) return "Disabled";
+  if (!Number.isFinite(startAt) || !Number.isFinite(endAt)) return "Incomplete";
+  if (targetTime < startAt) return "Scheduled";
+  if (targetTime >= endAt) return "Ended";
+  return "Active";
+}
+
+function clampToRange(value, min, max, fallback = min) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function hexToRgbParts(hex) {
+  const normalized = String(hex || "").trim().toLowerCase();
+  if (!/^#(?:[0-9a-f]{6})$/i.test(normalized)) return null;
+  return {
+    r: parseInt(normalized.slice(1, 3), 16),
+    g: parseInt(normalized.slice(3, 5), 16),
+    b: parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function rgbaStringFromHex(hex, alphaPercent = 100) {
+  const rgb = hexToRgbParts(hex);
+  if (!rgb) return "";
+  const normalizedAlpha = clampToRange(alphaPercent, 0, 100, 100);
+  if (normalizedAlpha >= 100) return hex.toLowerCase();
+  const alpha = Math.round((normalizedAlpha / 100) * 100) / 100;
+  const alphaText = Number.isInteger(alpha) ? String(alpha) : alpha.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},${alphaText})`;
+}
+
+function parseCssColorToPickerValue(value, fallback = "#111111") {
+  const source = String(value || fallback || "").trim();
+  if (!source) {
+    return { hex: "#111111", alphaPercent: 100 };
+  }
+  const hexMatch = source.match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  if (hexMatch) {
+    const token = hexMatch[1];
+    if (token.length === 3) {
+      return {
+        hex: `#${token[0]}${token[0]}${token[1]}${token[1]}${token[2]}${token[2]}`.toLowerCase(),
+        alphaPercent: 100,
+      };
+    }
+    if (token.length === 6) {
+      return { hex: `#${token}`.toLowerCase(), alphaPercent: 100 };
+    }
+    const alpha = parseInt(token.slice(6, 8), 16);
+    return {
+      hex: `#${token.slice(0, 6)}`.toLowerCase(),
+      alphaPercent: Math.round((alpha / 255) * 100),
+    };
+  }
+  const rgbaMatch = source.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+  if (rgbaMatch) {
+    const r = clampToRange(Math.round(Number(rgbaMatch[1])), 0, 255, 17);
+    const g = clampToRange(Math.round(Number(rgbaMatch[2])), 0, 255, 17);
+    const b = clampToRange(Math.round(Number(rgbaMatch[3])), 0, 255, 17);
+    const alpha = rgbaMatch[4] == null ? 1 : clampToRange(Number(rgbaMatch[4]), 0, 1, 1);
+    return {
+      hex: `#${[r, g, b].map((part) => String(part.toString(16)).padStart(2, "0")).join("")}`,
+      alphaPercent: Math.round(alpha * 100),
+    };
+  }
+  if (source.toLowerCase() === "transparent") {
+    return { hex: "#111111", alphaPercent: 0 };
+  }
+  return parseCssColorToPickerValue(fallback || "#111111", "#111111");
 }
 
 function initialTenantDomainAssignmentForm() {
@@ -1605,6 +2108,36 @@ function formatDateTimeDisplay(value) {
   }).format(parsed);
 }
 
+function padDateTimeInputPart(value) {
+  return String(value).padStart(2, "0");
+}
+
+function toLocalDateTimeInputValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return [
+    parsed.getFullYear(),
+    "-",
+    padDateTimeInputPart(parsed.getMonth() + 1),
+    "-",
+    padDateTimeInputPart(parsed.getDate()),
+    "T",
+    padDateTimeInputPart(parsed.getHours()),
+    ":",
+    padDateTimeInputPart(parsed.getMinutes()),
+  ].join("");
+}
+
+function fromLocalDateTimeInputValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString();
+}
+
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim().toUpperCase();
   const msg = String(error?.message || "").toLowerCase();
@@ -1757,14 +2290,26 @@ export default function PlatformAdminApp() {
   const [tenantProfilesByTenant, setTenantProfilesByTenant] = useState({});
   const [tenantVisibilityByTenant, setTenantVisibilityByTenant] = useState({});
   const [tenantDomainConfigsByTenant, setTenantDomainConfigsByTenant] = useState({});
+  const [tenantDomainIssueTypesByTenant, setTenantDomainIssueTypesByTenant] = useState({});
   const [tenantDomainAssignmentsByTenant, setTenantDomainAssignmentsByTenant] = useState({});
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
   const [domainRegistryRows, setDomainRegistryRows] = useState([]);
   const [domainRegistrySchemaReady, setDomainRegistrySchemaReady] = useState(true);
   const [domainRegistryEditorOpen, setDomainRegistryEditorOpen] = useState(false);
   const [editingDomainDefinitionKey, setEditingDomainDefinitionKey] = useState("");
+  const [expandedDomainRegistryCardKey, setExpandedDomainRegistryCardKey] = useState("");
   const [domainRegistryForm, setDomainRegistryForm] = useState(initialDomainRegistryForm);
   const [domainRegistrySaving, setDomainRegistrySaving] = useState(false);
+  const [mapUiIconDraftConfig, setMapUiIconDraftConfig] = useState({});
+  const [mapUiIconPublishedConfig, setMapUiIconPublishedConfig] = useState({});
+  const [mapUiIconDraftForm, setMapUiIconDraftForm] = useState(() => buildMapUiIconDraftForm({}));
+  const [mapUiThemeDraftForm, setMapUiThemeDraftForm] = useState(() => buildMapUiThemeDraftForm({}));
+  const [mapUiThemeBaseEnabled, setMapUiThemeBaseEnabled] = useState(false);
+  const [mapUiThemeSchedulesDraft, setMapUiThemeSchedulesDraft] = useState([]);
+  const [mapUiThemeSectionOpen, setMapUiThemeSectionOpen] = useState(false);
+  const [mapUiThemeExpandedScheduleId, setMapUiThemeExpandedScheduleId] = useState("");
+  const [mapUiIconSavingDraft, setMapUiIconSavingDraft] = useState(false);
+  const [mapUiIconPublishing, setMapUiIconPublishing] = useState(false);
   const domainRegistryUploadPreviewUrl = useMemo(() => {
     if (!domainRegistryForm?.icon_file) return "";
     return URL.createObjectURL(domainRegistryForm.icon_file);
@@ -1772,8 +2317,12 @@ export default function PlatformAdminApp() {
   const [tenantDomainAssignmentSchemaReady, setTenantDomainAssignmentSchemaReady] = useState(true);
   const [tenantDomainAssignmentEditorOpen, setTenantDomainAssignmentEditorOpen] = useState(false);
   const [editingTenantDomainAssignmentKey, setEditingTenantDomainAssignmentKey] = useState("");
+  const [expandedAssignedDomainCardKey, setExpandedAssignedDomainCardKey] = useState("");
   const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
   const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
+  const assignedDomainCardRefs = useRef({});
+  const pendingAssignedDomainFocusKeyRef = useRef("");
+  const mapUiIconPreviewUrlsRef = useRef({});
 
   const [selectedTenantKey, setSelectedTenantKey] = useState(initialControlPlaneRouteState.selectedTenantKey);
   const [entryStep, setEntryStep] = useState(initialControlPlaneRouteState.entryStep); // start | add | tenant
@@ -1787,9 +2336,6 @@ export default function PlatformAdminApp() {
   const [editingDomainKey, setEditingDomainKey] = useState("");
   const [editingOrganizationSection, setEditingOrganizationSection] = useState("");
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
-  const [compactDomainSettingsKey, setCompactDomainSettingsKey] = useState("");
-  const [compactDomainEnableKey, setCompactDomainEnableKey] = useState("");
-  const [domainAddModalOpen, setDomainAddModalOpen] = useState(false);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
   const [mapFeaturesEditMode, setMapFeaturesEditMode] = useState(false);
   const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
@@ -1799,6 +2345,38 @@ export default function PlatformAdminApp() {
   const [tenantAssetsManagementView, setTenantAssetsManagementView] = useState("list");
   const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
   const [userSearchQuery, setUserSearchQuery] = useState("");
+
+  useEffect(() => {
+    const nextPreviewUrls = {};
+    for (const [iconKey, row] of Object.entries(mapUiIconDraftForm || {})) {
+      const previewUrl = String(row?.preview_url || "").trim();
+      if (previewUrl.startsWith("blob:")) {
+        nextPreviewUrls[iconKey] = previewUrl;
+      }
+    }
+
+    const previousPreviewUrls = mapUiIconPreviewUrlsRef.current || {};
+    for (const [iconKey, previewUrl] of Object.entries(previousPreviewUrls)) {
+      if (nextPreviewUrls[iconKey] === previewUrl) continue;
+      try {
+        URL.revokeObjectURL(previewUrl);
+      } catch {
+        // Ignore preview cleanup failures while swapping draft previews.
+      }
+    }
+
+    mapUiIconPreviewUrlsRef.current = nextPreviewUrls;
+  }, [mapUiIconDraftForm]);
+
+  useEffect(() => () => {
+    for (const previewUrl of Object.values(mapUiIconPreviewUrlsRef.current || {})) {
+      try {
+        URL.revokeObjectURL(previewUrl);
+      } catch {
+        // Ignore preview cleanup failures on teardown.
+      }
+    }
+  }, []);
   const [userSearchResults, setUserSearchResults] = useState([]);
   const [assignmentUserSummariesById, setAssignmentUserSummariesById] = useState({});
   const [userSearchLoading, setUserSearchLoading] = useState(false);
@@ -1951,6 +2529,31 @@ export default function PlatformAdminApp() {
     () => domainRegistryRows.filter((row) => String(row?.status || "").trim().toLowerCase() === "archived"),
     [domainRegistryRows]
   );
+  const mapUiIconCatalogGroups = useMemo(() => {
+    const groups = new Map();
+    for (const entry of MAP_UI_ICON_CATALOG) {
+      const groupKey = String(entry?.group || "Map UI").trim() || "Map UI";
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(entry);
+    }
+    return Array.from(groups.entries()).map(([group, items]) => ({ group, items }));
+  }, []);
+  const publishedMapUiIconMeta = useMemo(
+    () => mergeMapUiIconMeta(mapUiIconPublishedConfig),
+    [mapUiIconPublishedConfig]
+  );
+  const previewMapUiTheme = useMemo(
+    () => mergeMapUiTheme({ theme: extractMapUiThemeFromForm(mapUiThemeDraftForm) }),
+    [mapUiThemeDraftForm]
+  );
+  const publishedMapUiTheme = useMemo(
+    () => mergeMapUiTheme(mapUiIconPublishedConfig),
+    [mapUiIconPublishedConfig]
+  );
+  const activePublishedMapUiThemeSchedule = useMemo(
+    () => resolveActiveMapUiThemeSchedule(mapUiIconPublishedConfig),
+    [mapUiIconPublishedConfig]
+  );
   const selectedTenantDomainAssignments = useMemo(
     () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
     [selectedTenantKey, tenantDomainAssignmentsByTenant]
@@ -1973,6 +2576,26 @@ export default function PlatformAdminApp() {
     });
     return rows;
   }, [selectedTenantDomainAssignments, visibleDomainRegistryRows]);
+  const scrollAssignedDomainCardIntoView = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key || typeof window === "undefined") return;
+    const node = assignedDomainCardRefs.current?.[key];
+    if (!node) return;
+    const targetTop = Math.max(window.scrollY + node.getBoundingClientRect().top - 96, 0);
+    window.scrollTo({ top: targetTop, behavior: "auto" });
+  }, []);
+  useEffect(() => {
+    const pendingKey = String(pendingAssignedDomainFocusKeyRef.current || "").trim().toLowerCase();
+    if (!pendingKey) return;
+    if (!selectedTenantAssignedDomainRows.some((row) => row?.domain?.key === pendingKey)) return;
+    pendingAssignedDomainFocusKeyRef.current = "";
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollAssignedDomainCardIntoView(pendingKey);
+      });
+    });
+  }, [selectedTenantAssignedDomainRows, expandedAssignedDomainCardKey, scrollAssignedDomainCardIntoView]);
   const manageableTenantDomainRows = useMemo(
     () => (visibleDomainRegistryRows.length ? visibleDomainRegistryRows : fallbackRegistryDomainRows()),
     [visibleDomainRegistryRows]
@@ -2098,6 +2721,19 @@ export default function PlatformAdminApp() {
     () => (tenants || []).filter((row) => Boolean(row?.is_pilot)).length,
     [tenants]
   );
+  const reportDomainRowsSource = useMemo(() => {
+    const registryRows = Array.isArray(domainRegistryRows)
+      ? domainRegistryRows
+        .filter((row) => String(row?.status || "active").trim().toLowerCase() === "active")
+        .map((row) => ({
+          key: String(row?.key || "").trim().toLowerCase(),
+          label: String(row?.label || "").trim() || defaultDomainLabel(row?.key),
+        }))
+        .filter((row) => row.key)
+      : [];
+    if (registryRows.length) return registryRows;
+    return DOMAIN_OPTIONS.map((domain) => ({ key: domain.key, label: domain.label }));
+  }, [domainRegistryRows]);
   const organizationReportRows = useMemo(() => {
     const assignmentCountsByTenant = {};
     for (const row of tenantAdmins || []) {
@@ -2114,10 +2750,12 @@ export default function PlatformAdminApp() {
     return [...(tenants || [])]
       .map((tenant) => {
         const tenantKey = sanitizeTenantKey(tenant?.tenant_key);
-        const visibilityConfig = tenantVisibilityByTenant?.[tenantKey] || {};
-        const enabledDomainCount = DOMAIN_OPTIONS.reduce((count, domain) => {
-          const visibility = String(visibilityConfig?.[domain.key] || "public").trim().toLowerCase();
-          if (["private", "disabled", "hidden", "internal_only"].includes(visibility)) return count;
+        const assignmentMap = tenantDomainAssignmentsByTenant?.[tenantKey] || {};
+        const assignedDomainCount = Object.keys(assignmentMap).length;
+        const enabledDomainCount = Object.values(assignmentMap).reduce((count, assignment) => {
+          const isActive = assignment?.active !== false;
+          const visibility = String(assignment?.visibility || "enabled").trim().toLowerCase();
+          if (!isActive || visibility === "disabled") return count;
           return count + 1;
         }, 0);
         const scheduledDeletionAt = String(tenant?.deletion_scheduled_for || "").trim();
@@ -2137,12 +2775,13 @@ export default function PlatformAdminApp() {
           is_active: tenant?.active !== false,
           deletion_scheduled_for: scheduledDeletionAt,
           status_label: statusLabel,
+          assigned_domain_count: assignedDomainCount,
           enabled_domain_count: enabledDomainCount,
           hub_enabled: Boolean(tenant?.resident_portal_enabled),
         };
       })
       .sort((left, right) => left.organization_name.localeCompare(right.organization_name));
-  }, [tenantAdmins, tenantProfilesByTenant, tenantVisibilityByTenant, tenants]);
+  }, [tenantAdmins, tenantDomainAssignmentsByTenant, tenantProfilesByTenant, tenants]);
   const filteredOrganizationReportRows = useMemo(() => {
     switch (organizationReportFilter) {
       case "active":
@@ -2211,13 +2850,18 @@ export default function PlatformAdminApp() {
     return counts;
   }, [leadRows]);
   const domainReportRows = useMemo(() => (
-    DOMAIN_OPTIONS.map((domain) => {
+    reportDomainRowsSource.map((domain) => {
       let publicCount = 0;
       let restrictedCount = 0;
-      for (const tenantKey of Object.keys(tenantVisibilityByTenant || {})) {
-        const visibility = String(tenantVisibilityByTenant?.[tenantKey]?.[domain.key] || "public").trim().toLowerCase();
-        if (visibility === "private" || visibility === "disabled" || visibility === "hidden") restrictedCount += 1;
-        else publicCount += 1;
+      for (const tenant of tenants || []) {
+        const tenantKey = sanitizeTenantKey(tenant?.tenant_key);
+        if (!tenantKey) continue;
+        const assignment = tenantDomainAssignmentsByTenant?.[tenantKey]?.[domain.key];
+        if (!assignment) continue;
+        const isActive = assignment?.active !== false;
+        const visibility = String(assignment?.visibility || "enabled").trim().toLowerCase();
+        if (isActive && visibility !== "disabled") publicCount += 1;
+        else restrictedCount += 1;
       }
       return {
         ...domain,
@@ -2225,7 +2869,7 @@ export default function PlatformAdminApp() {
         restrictedCount,
       };
     })
-  ), [tenantVisibilityByTenant]);
+  ), [reportDomainRowsSource, tenantDomainAssignmentsByTenant, tenants]);
 
   const tenantRoleAssignmentCounts = useMemo(() => {
     const counts = {};
@@ -3007,58 +3651,108 @@ export default function PlatformAdminApp() {
     setTenantDomainConfigsByTenant(next);
   }, [hasPlatformPermission]);
 
-  const loadDomainRegistryData = useCallback(async () => {
-    if (!canViewDomainRegistry) {
-      setDomainRegistryRows([]);
-      setDomainRegistrySchemaReady(true);
+  const loadTenantDomainIssueTypes = useCallback(async () => {
+    if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
+      setTenantDomainIssueTypesByTenant({});
       return;
     }
-    const [definitionsResult, issueTypesResult] = await Promise.all([
-      supabase
-        .from("domain_definitions")
-        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
-        .order("sort_order", { ascending: true })
-        .order("label", { ascending: true }),
-      supabase
-        .from("domain_issue_types")
-        .select("id,domain_key,issue_key,issue_label,sort_order,active")
-        .order("sort_order", { ascending: true })
-        .order("issue_label", { ascending: true }),
-    ]);
-    const firstError = definitionsResult.error || issueTypesResult.error;
-    if (firstError) {
-      if (isMissingRelationError(firstError)) {
-        setDomainRegistryRows([]);
-        setDomainRegistrySchemaReady(false);
+    const { data, error } = await supabase
+      .from("tenant_domain_issue_types")
+      .select("tenant_key,domain_key,issue_key,issue_label,sort_order,active")
+      .order("tenant_key", { ascending: true })
+      .order("domain_key", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("issue_label", { ascending: true });
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantDomainIssueTypesByTenant({});
         return;
       }
-      throw firstError;
+      throw error;
     }
-
-    const issueTypesByDomain = {};
-    for (const row of issueTypesResult.data || []) {
+    const next = {};
+    for (const row of data || []) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
       const domainKey = String(row?.domain_key || "").trim().toLowerCase();
-      if (!domainKey) continue;
-      if (!issueTypesByDomain[domainKey]) issueTypesByDomain[domainKey] = [];
-      issueTypesByDomain[domainKey].push({
-        id: row?.id || null,
+      if (!tenantKey || !domainKey) continue;
+      if (!next[tenantKey]) next[tenantKey] = {};
+      if (!next[tenantKey][domainKey]) next[tenantKey][domainKey] = [];
+      next[tenantKey][domainKey].push({
         issue_key: String(row?.issue_key || "").trim(),
         issue_label: String(row?.issue_label || "").trim(),
         sort_order: Number(row?.sort_order || 100),
         active: row?.active !== false,
       });
     }
+    setTenantDomainIssueTypesByTenant(next);
+  }, [hasPlatformPermission]);
 
-    const rows = (definitionsResult.data || []).map((row) => {
-      const key = String(row?.key || "").trim().toLowerCase();
-      return {
-        ...row,
-        key,
-        issue_types: issueTypesByDomain[key] || [],
-      };
-    });
+  const loadDomainRegistryData = useCallback(async () => {
+    if (!canViewDomainRegistry) {
+      setDomainRegistryRows([]);
+      setDomainRegistrySchemaReady(true);
+      return;
+    }
+    const definitionsResult = await supabase
+      .from("domain_definitions")
+      .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+      .order("sort_order", { ascending: true })
+      .order("label", { ascending: true });
+    if (definitionsResult.error) {
+      if (isMissingRelationError(definitionsResult.error)) {
+        setDomainRegistryRows([]);
+        setDomainRegistrySchemaReady(false);
+        return;
+      }
+      throw definitionsResult.error;
+    }
+    const rows = (definitionsResult.data || []).map((row) => ({
+      ...row,
+      key: String(row?.key || "").trim().toLowerCase(),
+      type_options: normalizeDomainTypeOptionConfigs(row?.type_options, row?.key),
+    }));
     setDomainRegistryRows(rows);
     setDomainRegistrySchemaReady(true);
+  }, [canViewDomainRegistry]);
+
+  const loadMapUiIconConfigs = useCallback(async () => {
+    if (!canViewDomainRegistry) {
+      setMapUiIconDraftConfig({});
+      setMapUiIconPublishedConfig({});
+      setMapUiIconDraftForm(buildMapUiIconDraftForm({}));
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm({}));
+      setMapUiThemeBaseEnabled(false);
+      setMapUiThemeSchedulesDraft([]);
+      setMapUiThemeExpandedScheduleId("");
+      return;
+    }
+    const { data, error } = await supabase
+      .from("app_config")
+      .select("key,value")
+      .in("key", [MAP_UI_ICON_DRAFT_CONFIG_KEY, MAP_UI_ICON_PUBLISHED_CONFIG_KEY]);
+    if (error) throw error;
+
+    const rows = Array.isArray(data) ? data : [];
+    const draftRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_DRAFT_CONFIG_KEY) || null;
+    const publishedRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
+    const draftConfig = draftRow?.value && typeof draftRow.value === "object" ? draftRow.value : {};
+    const publishedConfig = publishedRow?.value && typeof publishedRow.value === "object" ? publishedRow.value : {};
+    const hasDraftThemeConfig =
+      Object.keys(sanitizeMapUiTheme(draftConfig)).length > 0
+      || sanitizeMapUiThemeSchedules(draftConfig).length > 0
+      || draftConfig?.theme_enabled === false;
+    const baseIcons = Object.keys(sanitizeMapUiIconManifest(draftConfig)).length || hasDraftThemeConfig
+      ? draftConfig
+      : publishedConfig;
+
+    setMapUiIconDraftConfig(draftConfig);
+    setMapUiIconPublishedConfig(publishedConfig);
+    setMapUiIconDraftForm(buildMapUiIconDraftForm(baseIcons));
+    setMapUiThemeDraftForm(buildMapUiThemeDraftForm(baseIcons));
+    setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(baseIcons));
+    const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(baseIcons);
+    setMapUiThemeSchedulesDraft(nextScheduleDrafts);
+    setMapUiThemeExpandedScheduleId(nextScheduleDrafts[0]?.id || "");
   }, [canViewDomainRegistry]);
 
   const loadTenantDomainAssignments = useCallback(async () => {
@@ -3069,7 +3763,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -3238,7 +3932,9 @@ export default function PlatformAdminApp() {
         loadTenantProfiles(),
         loadTenantVisibility(),
         loadTenantDomainConfigs(),
+        loadTenantDomainIssueTypes(),
         loadDomainRegistryData(),
+        loadMapUiIconConfigs(),
         loadTenantDomainAssignments(),
         loadTenantMapFeatures(),
         loadAudit(),
@@ -3247,7 +3943,7 @@ export default function PlatformAdminApp() {
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadDomainRegistryData, loadTenantDomainAssignments, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadTenantDomainIssueTypes, loadDomainRegistryData, loadMapUiIconConfigs, loadTenantDomainAssignments, loadTenantMapFeatures, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canViewTenantUsers) {
@@ -4687,6 +5383,7 @@ export default function PlatformAdminApp() {
     setDomainVisibilityForm(nextVisibility);
 
     const configuredDomainSettings = tenantDomainConfigsByTenant?.[key] || {};
+    const tenantIssueTypes = tenantDomainIssueTypesByTenant?.[key] || {};
     const nextDomainConfig = initialDomainConfigForm();
     for (const d of manageableTenantDomainRows) {
       const configured = configuredDomainSettings?.[d.key] || null;
@@ -4697,10 +5394,20 @@ export default function PlatformAdminApp() {
           ? String(selectedTenant?.notification_email_water_drain || "")
           : "";
       const templatePreset = domainNotificationTemplateOption(assignment?.notification_template_key);
+      const hasAssignmentDisclosureConfig = Boolean(
+        assignment && Object.prototype.hasOwnProperty.call(assignment, "report_disclosures")
+      );
+      const domainIconSrc = String(d?.icon_src || d?.iconSrc || "").trim();
       nextDomainConfig[d.key] = {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
         display_label: String(assignment?.display_label || defaultDomainLabel(d.key)).trim() || defaultDomainLabel(d.key),
         marker_color: sanitizeHexColor(assignment?.marker_color, defaultDomainMarkerColor(d.key)),
+        icon_render_mode: normalizeDomainIconRenderMode(
+          assignment?.icon_render_mode,
+          domainIconSrc
+        ),
+        icon_tint_mode: normalizeDomainIconTintMode(assignment?.icon_tint_mode),
+        icon_tint_color: normalizeDomainIconTintColor(assignment?.icon_tint_color, ""),
         notification_email: String(assignment?.notification_email || configured?.notification_email || fallbackNotification).trim(),
         notification_template_key: templatePreset.key,
         notification_subject_template: String(assignment?.notification_subject_template || templatePreset.subject || ""),
@@ -4709,15 +5416,19 @@ export default function PlatformAdminApp() {
           ? assignment.organization_monitored_repairs
           : configured?.organization_monitored_repairs !== false,
         public_visibility_min_reports: sanitizePositiveIntegerSetting(
-          configured?.public_visibility_min_reports,
+          assignment?.public_visibility_min_reports ?? configured?.public_visibility_min_reports,
           defaultDomainPublicVisibilityMinReports(d.key),
           { min: 1, max: 25 }
         ),
         high_confidence_min_reports: sanitizePositiveIntegerSetting(
-          configured?.high_confidence_min_reports,
+          assignment?.high_confidence_min_reports ?? configured?.high_confidence_min_reports,
           defaultDomainHighConfidenceMinReports(d.key),
           { min: 1, max: 25 }
         ),
+        issue_types_input: serializeDomainIssueTypeInput(tenantIssueTypes?.[d.key] || []),
+        report_disclosures: hasAssignmentDisclosureConfig
+          ? normalizeDomainDisclosureRows(assignment?.report_disclosures, d.key)
+          : defaultDomainDisclosures(d.key),
       };
     }
     setDomainConfigForm(nextDomainConfig);
@@ -4736,7 +5447,7 @@ export default function PlatformAdminApp() {
     void loadAudit(key).catch((error) => {
       setStatus((prev) => ({ ...prev, audit: statusText(error, "") }));
     });
-  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantMapFeaturesByTenant, selectedTenantDomainAssignments, manageableTenantDomainRows, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
+  }, [selectedTenantKey, selectedTenant, tenantProfilesByTenant, tenantVisibilityByTenant, tenantDomainConfigsByTenant, tenantDomainIssueTypesByTenant, tenantMapFeaturesByTenant, selectedTenantDomainAssignments, manageableTenantDomainRows, loadTenantFiles, loadTenantRoleConfig, loadAudit]);
 
   useEffect(() => {
     if (!sortedTenantRoleDefinitions.length) {
@@ -4853,8 +5564,6 @@ export default function PlatformAdminApp() {
     if (activeTab !== "domains") {
       setEditingDomainKey("");
       setEditingDomainSnapshot(null);
-      setCompactDomainSettingsKey("");
-      setCompactDomainEnableKey("");
       setMapFeaturesEditMode(false);
       setMapFeaturesSnapshot(null);
     }
@@ -5270,6 +5979,7 @@ export default function PlatformAdminApp() {
   const beginCreateDomainDefinition = useCallback(() => {
     if (!canManageDomainRegistry) return;
     setEditingDomainDefinitionKey("");
+    setExpandedDomainRegistryCardKey("");
     setDomainRegistryForm(initialDomainRegistryForm());
     setDomainRegistryEditorOpen(true);
     setStatus((prev) => ({ ...prev, domainRegistry: "" }));
@@ -5281,6 +5991,7 @@ export default function PlatformAdminApp() {
     const row = domainRegistryRows.find((entry) => entry.key === key);
     if (!row) return;
     setEditingDomainDefinitionKey(key);
+    setExpandedDomainRegistryCardKey(key);
     setDomainRegistryForm(buildDomainRegistryForm(row));
     setDomainRegistryEditorOpen(true);
     setStatus((prev) => ({ ...prev, domainRegistry: "" }));
@@ -5292,6 +6003,354 @@ export default function PlatformAdminApp() {
     setDomainRegistryEditorOpen(false);
     setStatus((prev) => ({ ...prev, domainRegistry: "" }));
   }, []);
+
+  const updateMapUiIconDraftSrc = useCallback((iconKey, value) => {
+    const key = String(iconKey || "").trim();
+    if (!key) return;
+    setMapUiIconDraftForm((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev?.[key] || {}),
+        src: value,
+      },
+    }));
+  }, []);
+
+  const updateMapUiIconDraftRenderMode = useCallback((iconKey, value) => {
+    const key = String(iconKey || "").trim();
+    if (!key) return;
+    setMapUiIconDraftForm((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev?.[key] || {}),
+        render_mode: String(value || MAP_UI_ICON_RENDER_MODE.RASTER).trim(),
+      },
+    }));
+  }, []);
+
+  const updateMapUiIconDraftTintColor = useCallback((iconKey, tintKey, value) => {
+    const key = String(iconKey || "").trim();
+    const tintField = String(tintKey || "").trim();
+    if (!key || !["light_tint_color", "dark_tint_color"].includes(tintField)) return;
+    setMapUiIconDraftForm((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev?.[key] || {}),
+        [tintField]: value,
+      },
+    }));
+  }, []);
+
+  const updateMapUiIconDraftEnabled = useCallback((iconKey, enabled) => {
+    const key = String(iconKey || "").trim();
+    if (!key) return;
+    setMapUiIconDraftForm((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev?.[key] || {}),
+        enabled: enabled !== false,
+      },
+    }));
+  }, []);
+
+  const updateMapUiThemeDraftValue = useCallback((mode, fieldKey, value) => {
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    setMapUiThemeDraftForm((prev) => ({
+      ...prev,
+      [modeKey]: {
+        ...(prev?.[modeKey] || {}),
+        [resolvedFieldKey]: value,
+      },
+    }));
+  }, []);
+
+  const updateMapUiThemeDraftPicker = useCallback((mode, fieldKey, nextHex, nextAlphaPercent) => {
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    const fallback = MAP_UI_ICON_THEME_DEFAULTS?.[modeKey]?.[resolvedFieldKey] || "#111111";
+    const currentValue = String(mapUiThemeDraftForm?.[modeKey]?.[resolvedFieldKey] || fallback).trim();
+    const currentPicker = parseCssColorToPickerValue(currentValue, fallback);
+    const safeHex = String(nextHex || currentPicker.hex || "#111111").trim() || "#111111";
+    const safeAlpha = clampToRange(nextAlphaPercent, 0, 100, currentPicker.alphaPercent);
+    updateMapUiThemeDraftValue(modeKey, resolvedFieldKey, rgbaStringFromHex(safeHex, safeAlpha));
+  }, [mapUiThemeDraftForm, updateMapUiThemeDraftValue]);
+
+  const addMapUiThemeScheduleDraft = useCallback(() => {
+    const nextEntry = createMapUiThemeScheduleDraft({});
+    setMapUiThemeSchedulesDraft((prev) => [...prev, nextEntry]);
+    setMapUiThemeExpandedScheduleId(nextEntry.id);
+  }, []);
+
+  const removeMapUiThemeScheduleDraft = useCallback((scheduleId) => {
+    const targetId = String(scheduleId || "").trim();
+    if (!targetId) return;
+    setMapUiThemeSchedulesDraft((prev) => prev.filter((entry) => entry.id !== targetId));
+    setMapUiThemeExpandedScheduleId((prev) => (prev === targetId ? "" : prev));
+  }, []);
+
+  const updateMapUiThemeScheduleDraftMeta = useCallback((scheduleId, fieldKey, value) => {
+    const targetId = String(scheduleId || "").trim();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!targetId) return;
+    if (!["label", "start_at", "end_at", "enabled"].includes(resolvedFieldKey)) return;
+    setMapUiThemeSchedulesDraft((prev) => prev.map((entry) => (
+      entry.id !== targetId
+        ? entry
+        : {
+            ...entry,
+            [resolvedFieldKey]: resolvedFieldKey === "enabled" ? value !== false : value,
+          }
+    )));
+  }, []);
+
+  const updateMapUiThemeScheduleDraftValue = useCallback((scheduleId, mode, fieldKey, value) => {
+    const targetId = String(scheduleId || "").trim();
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!targetId) return;
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    setMapUiThemeSchedulesDraft((prev) => prev.map((entry) => (
+      entry.id !== targetId
+        ? entry
+        : {
+            ...entry,
+            themeForm: {
+              ...(entry?.themeForm || {}),
+              [modeKey]: {
+                ...(entry?.themeForm?.[modeKey] || {}),
+                [resolvedFieldKey]: value,
+              },
+            },
+          }
+    )));
+  }, []);
+
+  const updateMapUiThemeScheduleDraftPicker = useCallback((scheduleId, mode, fieldKey, nextHex, nextAlphaPercent) => {
+    const targetId = String(scheduleId || "").trim();
+    const modeKey = String(mode || "").trim().toLowerCase();
+    const resolvedFieldKey = String(fieldKey || "").trim();
+    if (!targetId) return;
+    if (!["light", "dark"].includes(modeKey)) return;
+    if (!MAP_UI_THEME_FIELDS.some((field) => field.key === resolvedFieldKey)) return;
+    const scheduleEntry = (mapUiThemeSchedulesDraft || []).find((entry) => entry.id === targetId);
+    const fallback = MAP_UI_ICON_THEME_DEFAULTS?.[modeKey]?.[resolvedFieldKey] || "#111111";
+    const currentValue = String(scheduleEntry?.themeForm?.[modeKey]?.[resolvedFieldKey] || fallback).trim();
+    const currentPicker = parseCssColorToPickerValue(currentValue, fallback);
+    const safeHex = String(nextHex || currentPicker.hex || "#111111").trim() || "#111111";
+    const safeAlpha = clampToRange(nextAlphaPercent, 0, 100, currentPicker.alphaPercent);
+    updateMapUiThemeScheduleDraftValue(targetId, modeKey, resolvedFieldKey, rgbaStringFromHex(safeHex, safeAlpha));
+  }, [mapUiThemeSchedulesDraft, updateMapUiThemeScheduleDraftValue]);
+
+  const updateMapUiIconDraftFile = useCallback((iconKey, file) => {
+    const key = String(iconKey || "").trim();
+    if (!key) return;
+    setMapUiIconDraftForm((prev) => {
+      const previousPreviewUrl = String(prev?.[key]?.preview_url || "").trim();
+      if (previousPreviewUrl.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(previousPreviewUrl);
+        } catch {
+          // Ignore preview cleanup failures.
+        }
+      }
+      return {
+        ...prev,
+        [key]: {
+          ...(prev?.[key] || {}),
+          file: file || null,
+          preview_url: file ? URL.createObjectURL(file) : "",
+        },
+      };
+    });
+  }, []);
+
+  const persistMapUiIconDraft = useCallback(async ({ publish = false } = {}) => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiIcons: "You need the Domains edit permission to manage map UI icons." }));
+      return { ok: false };
+    }
+
+    if (publish) {
+      setMapUiIconPublishing(true);
+    } else {
+      setMapUiIconSavingDraft(true);
+    }
+    setStatus((prev) => ({ ...prev, mapUiIcons: "" }));
+
+    try {
+      const nextDraftForm = { ...mapUiIconDraftForm };
+      const resolvedIcons = {};
+
+      for (const entry of MAP_UI_ICON_CATALOG) {
+        const row = nextDraftForm?.[entry.key] || {};
+        const uploadFile = row?.file || null;
+        let resolvedSrc = String(row?.src || entry.defaultSrc || "").trim();
+        const resolvedRenderMode = String(
+          row?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER
+        ).trim();
+
+        if (uploadFile) {
+          const mimeType = String(uploadFile.type || "").trim().toLowerCase();
+          const fileName = String(uploadFile.name || `${entry.key}-icon`).trim();
+          const acceptedType = /^image\/(svg\+xml|png|webp)$/i.test(mimeType) || /\.(svg|png|webp)$/i.test(fileName);
+          if (!acceptedType) {
+            setStatus((prev) => ({ ...prev, mapUiIcons: `Use an SVG, PNG, or WebP file for ${entry.label}.` }));
+            return { ok: false };
+          }
+          if (Number(uploadFile.size || 0) > MAP_UI_ICON_MAX_BYTES) {
+            setStatus((prev) => ({ ...prev, mapUiIcons: `${entry.label} must be 2 MB or smaller.` }));
+            return { ok: false };
+          }
+
+          const uploadPath = [
+            "global",
+            "map-ui-icons",
+            entry.key,
+            toDatePath(new Date()),
+            `${Date.now()}_${sanitizeFileNameSegment(fileName)}`,
+          ].join("/");
+          const { error: uploadError } = await supabase
+            .storage
+            .from(MAP_UI_ICON_BUCKET)
+            .upload(uploadPath, uploadFile, {
+              upsert: false,
+              contentType: String(uploadFile.type || "application/octet-stream"),
+            });
+          if (uploadError) {
+            setStatus((prev) => ({ ...prev, mapUiIcons: statusText(uploadError, "") }));
+            return { ok: false };
+          }
+
+          const { data: publicUrlData } = supabase.storage.from(MAP_UI_ICON_BUCKET).getPublicUrl(uploadPath);
+          resolvedSrc = String(publicUrlData?.publicUrl || "").trim();
+          nextDraftForm[entry.key] = {
+            src: resolvedSrc,
+            render_mode: resolvedRenderMode,
+            light_tint_color: String(row?.light_tint_color || "").trim(),
+            dark_tint_color: String(row?.dark_tint_color || "").trim(),
+            enabled: row?.enabled !== false,
+            file: null,
+            preview_url: "",
+          };
+        }
+
+        if (resolvedSrc) {
+          resolvedIcons[entry.key] = {
+            src: resolvedSrc,
+            render_mode: resolvedRenderMode,
+            light_tint_color: String(row?.light_tint_color || "").trim(),
+            dark_tint_color: String(row?.dark_tint_color || "").trim(),
+            enabled: row?.enabled !== false,
+          };
+        }
+      }
+
+      const resolvedTheme = extractMapUiThemeFromForm(mapUiThemeDraftForm);
+      const { schedules: resolvedScheduledThemes, error: scheduledThemeError } = validateAndExtractMapUiThemeScheduleDrafts(
+        mapUiThemeSchedulesDraft
+      );
+      if (scheduledThemeError) {
+        setStatus((prev) => ({ ...prev, mapUiIcons: scheduledThemeError }));
+        return { ok: false };
+      }
+
+      const draftValue = {
+        icons: sanitizeMapUiIconManifest(resolvedIcons),
+        ...(Object.keys(resolvedTheme).length ? { theme: resolvedTheme } : {}),
+        theme_enabled: mapUiThemeBaseEnabled,
+        scheduled_themes: resolvedScheduledThemes,
+        saved_at: new Date().toISOString(),
+        saved_by: sessionUserId || null,
+      };
+      const draftResult = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_ICON_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (draftResult.error) {
+        setStatus((prev) => ({ ...prev, mapUiIcons: statusText(draftResult.error, "") }));
+        return { ok: false };
+      }
+
+      setMapUiIconDraftConfig(draftValue);
+      setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
+      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
+      setMapUiThemeSchedulesDraft(buildMapUiThemeScheduleDrafts(draftValue));
+
+      if (publish) {
+        const publishedValue = {
+          icons: draftValue.icons,
+          ...(Object.keys(resolvedTheme).length ? { theme: resolvedTheme } : {}),
+          theme_enabled: mapUiThemeBaseEnabled,
+          scheduled_themes: resolvedScheduledThemes,
+          published_at: new Date().toISOString(),
+          published_by: sessionUserId || null,
+          source_saved_at: draftValue.saved_at,
+        };
+        const publishResult = await supabase
+          .from("app_config")
+          .upsert([{ key: MAP_UI_ICON_PUBLISHED_CONFIG_KEY, value: publishedValue }], { onConflict: "key" });
+        if (publishResult.error) {
+          setStatus((prev) => ({ ...prev, mapUiIcons: statusText(publishResult.error, "") }));
+          return { ok: false };
+        }
+        setMapUiIconPublishedConfig(publishedValue);
+        setStatus((prev) => ({ ...prev, mapUiIcons: "Saved the draft and published the full map UI icon set live." }));
+      } else {
+        setStatus((prev) => ({ ...prev, mapUiIcons: "Saved the map UI icon draft." }));
+      }
+
+      return { ok: true };
+    } finally {
+      setMapUiIconSavingDraft(false);
+      setMapUiIconPublishing(false);
+    }
+  }, [canManageDomainRegistry, mapUiIconDraftForm, mapUiThemeBaseEnabled, mapUiThemeDraftForm, mapUiThemeSchedulesDraft, sessionUserId]);
+
+  const resetMapUiIconDraftToPublished = useCallback(async () => {
+    if (!canManageDomainRegistry) {
+      setStatus((prev) => ({ ...prev, mapUiIcons: "You need the Domains edit permission to manage map UI icons." }));
+      return;
+    }
+    setMapUiIconSavingDraft(true);
+    setStatus((prev) => ({ ...prev, mapUiIcons: "" }));
+    try {
+      const publishedIcons = sanitizeMapUiIconManifest(mapUiIconPublishedConfig);
+      const publishedTheme = sanitizeMapUiTheme(mapUiIconPublishedConfig);
+      const publishedThemeSchedules = sanitizeMapUiThemeSchedules(mapUiIconPublishedConfig);
+      const draftValue = {
+        icons: publishedIcons,
+        ...(Object.keys(publishedTheme).length ? { theme: publishedTheme } : {}),
+        theme_enabled: isMapUiBaseThemeEnabled(mapUiIconPublishedConfig),
+        scheduled_themes: publishedThemeSchedules,
+        saved_at: new Date().toISOString(),
+        saved_by: sessionUserId || null,
+        reset_to_published: true,
+      };
+      const { error } = await supabase
+        .from("app_config")
+        .upsert([{ key: MAP_UI_ICON_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
+      if (error) {
+        setStatus((prev) => ({ ...prev, mapUiIcons: statusText(error, "") }));
+        return;
+      }
+      const nextScheduleDrafts = buildMapUiThemeScheduleDrafts(draftValue);
+      setMapUiIconDraftConfig(draftValue);
+      setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
+      setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftValue));
+      setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(draftValue));
+      setMapUiThemeSchedulesDraft(nextScheduleDrafts);
+      setMapUiThemeExpandedScheduleId(nextScheduleDrafts[0]?.id || "");
+      setStatus((prev) => ({ ...prev, mapUiIcons: "Reset the draft icon set back to the currently published version." }));
+    } finally {
+      setMapUiIconSavingDraft(false);
+    }
+  }, [canManageDomainRegistry, mapUiIconPublishedConfig, sessionUserId]);
 
   const saveDomainDefinition = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -5311,7 +6370,6 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const issueTypes = parseDomainIssueTypeInput(domainRegistryForm?.issue_types_input || "");
     const selectedIconMode = String(domainRegistryForm?.icon_selection || "").trim();
     const customIconSrc = String(domainRegistryForm?.custom_icon_src || "").trim();
     const existingIconSrc = String(domainRegistryForm?.icon_src || "").trim();
@@ -5363,8 +6421,32 @@ export default function PlatformAdminApp() {
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
       allow_report_images: domainRegistryForm?.allow_report_images === true,
+      road_required: domainRegistryForm?.road_required === true,
+      type_options: buildStoredDomainTypeOptionConfigs(domainRegistryForm?.type_options, key),
       updated_by: sessionUserId || null,
     };
+
+    if (!payload.report_prefix) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "Report Prefix is required. Report numbers use the format R-<PREFIX><7 digits>." }));
+      return;
+    }
+    if (!/^[A-Z0-9]{1,10}$/.test(String(payload.report_prefix))) {
+      setStatus((prev) => ({ ...prev, domainRegistry: "Report Prefix must be 1-10 uppercase letters or numbers with no spaces or punctuation." }));
+      return;
+    }
+
+    const invalidTypeOption = (Array.isArray(payload.type_options) ? payload.type_options : []).find((row) => {
+      const optionLabel = String(row?.option_label || "").trim();
+      const choices = Array.isArray(row?.choices) ? row.choices : [];
+      return optionLabel && !choices.length;
+    });
+    if (invalidTypeOption) {
+      setStatus((prev) => ({
+        ...prev,
+        domainRegistry: `${String(invalidTypeOption.option_label || "Type Option").trim()} must include at least one choice before saving.`,
+      }));
+      return;
+    }
 
     if (!editingDomainDefinitionKey) {
       payload.created_by = sessionUserId || null;
@@ -5381,33 +6463,6 @@ export default function PlatformAdminApp() {
       setDomainRegistrySaving(false);
       setStatus((prev) => ({ ...prev, domainRegistry: statusText(saveResult.error, "") }));
       return;
-    }
-
-    const { error: deleteIssueTypesError } = await supabase
-      .from("domain_issue_types")
-      .delete()
-      .eq("domain_key", key);
-
-    if (deleteIssueTypesError) {
-      setDomainRegistrySaving(false);
-      setStatus((prev) => ({ ...prev, domainRegistry: statusText(deleteIssueTypesError, "") }));
-      return;
-    }
-
-    if (issueTypes.length) {
-      const { error: issueTypesError } = await supabase
-        .from("domain_issue_types")
-        .insert(issueTypes.map((row, index) => ({
-          domain_key: key,
-          issue_key: row.issue_key,
-          issue_label: row.issue_label,
-          sort_order: (index + 1) * 10,
-        })));
-      if (issueTypesError) {
-        setDomainRegistrySaving(false);
-        setStatus((prev) => ({ ...prev, domainRegistry: statusText(issueTypesError, "") }));
-        return;
-      }
     }
 
     setDomainRegistrySaving(false);
@@ -5455,6 +6510,7 @@ export default function PlatformAdminApp() {
       return;
     }
     setEditingTenantDomainAssignmentKey("");
+    setExpandedAssignedDomainCardKey("");
     setTenantDomainAssignmentForm({
       ...initialTenantDomainAssignmentForm(),
       domain_key: assignableDomainRegistryRows[0].key,
@@ -5469,8 +6525,9 @@ export default function PlatformAdminApp() {
     const row = selectedTenantDomainAssignments?.[key];
     if (!row) return;
     setEditingTenantDomainAssignmentKey(key);
+    setExpandedAssignedDomainCardKey(key);
     setTenantDomainAssignmentForm(buildTenantDomainAssignmentForm(row));
-    setTenantDomainAssignmentEditorOpen(true);
+    setTenantDomainAssignmentEditorOpen(false);
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
   }, [canManageDomainRegistry, selectedTenantDomainAssignments]);
 
@@ -5551,6 +6608,8 @@ export default function PlatformAdminApp() {
 
     const domainLabel = domainDefinition?.label || domainKey;
     cancelTenantDomainAssignmentEditor();
+    pendingAssignedDomainFocusKeyRef.current = domainKey;
+    setExpandedAssignedDomainCardKey((prev) => (prev === domainKey ? "" : prev));
     setStatus((prev) => ({
       ...prev,
       domainAssignments: `${editingTenantDomainAssignmentKey ? "Updated" : "Assigned"} ${domainLabel} for ${selectedTenantPublicDisplayName || selectedTenantOrganizationName || tenantKey}.`,
@@ -5601,14 +6660,15 @@ export default function PlatformAdminApp() {
       || String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled"
       || editingDomainKey === d.key
     ));
-    const visibilityRows = persistedDomainRows.map((d) => ({
+    const legacyPersistedDomainRows = persistedDomainRows.filter((d) => isLegacyIncidentEnumDomain(d.key));
+    const visibilityRows = legacyPersistedDomainRows.map((d) => ({
       tenant_key: key,
       domain: d.key,
       visibility: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled"
         ? "internal_only"
         : "public",
     }));
-    const domainConfigRows = persistedDomainRows.map((d) => ({
+    const domainConfigRows = legacyPersistedDomainRows.map((d) => ({
       tenant_key: key,
       domain: d.key,
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
@@ -5633,13 +6693,41 @@ export default function PlatformAdminApp() {
       visibility: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled" ? "disabled" : "enabled",
       display_label: cleanOptional(domainConfigForm?.[d.key]?.display_label),
       marker_color: sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key)),
+      icon_render_mode: normalizeDomainIconRenderMode(
+        domainConfigForm?.[d.key]?.icon_render_mode,
+        String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+      ),
+      icon_tint_mode: normalizeDomainIconTintMode(domainConfigForm?.[d.key]?.icon_tint_mode),
+      icon_tint_color: cleanOptional(normalizeDomainIconTintColor(domainConfigForm?.[d.key]?.icon_tint_color, "")),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
       notification_template_key: String(domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
       notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
       notification_body_template: cleanOptional(domainConfigForm?.[d.key]?.notification_body_template),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      public_visibility_min_reports: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_visibility_min_reports,
+        defaultDomainPublicVisibilityMinReports(d.key),
+        { min: 1, max: 25 }
+      ),
+      high_confidence_min_reports: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.high_confidence_min_reports,
+        defaultDomainHighConfidenceMinReports(d.key),
+        { min: 1, max: 25 }
+      ),
+      report_disclosures: normalizeDomainDisclosureRows(domainConfigForm?.[d.key]?.report_disclosures, d.key),
       updated_by: cleanOptional(sessionUserId),
     }));
+    const tenantIssueTypeRows = persistedDomainRows.flatMap((d) => (
+      parseDomainIssueTypeInput(domainConfigForm?.[d.key]?.issue_types_input || "").map((row, index) => ({
+        tenant_key: key,
+        domain_key: d.key,
+        issue_key: row.issue_key,
+        issue_label: row.issue_label,
+        sort_order: (index + 1) * 10,
+        active: true,
+      }))
+    ));
+    const manageableDomainKeys = activeManageableTenantDomainRows.map((d) => d.key).filter(Boolean);
 
     const tenantPayload = {
       notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
@@ -5674,6 +6762,27 @@ export default function PlatformAdminApp() {
       return;
     }
 
+    if (manageableDomainKeys.length) {
+      const { error: deleteTenantIssueTypesError } = await supabase
+        .from("tenant_domain_issue_types")
+        .delete()
+        .eq("tenant_key", key)
+        .in("domain_key", manageableDomainKeys);
+      if (deleteTenantIssueTypesError && !isMissingRelationError(deleteTenantIssueTypesError)) {
+        setStatus((prev) => ({ ...prev, domains: statusText(deleteTenantIssueTypesError, "") }));
+        return;
+      }
+      if (!deleteTenantIssueTypesError && tenantIssueTypeRows.length) {
+        const { error: insertTenantIssueTypesError } = await supabase
+          .from("tenant_domain_issue_types")
+          .insert(tenantIssueTypeRows);
+        if (insertTenantIssueTypesError) {
+          setStatus((prev) => ({ ...prev, domains: statusText(insertTenantIssueTypesError, "") }));
+          return;
+        }
+      }
+    }
+
     await logAudit({
       tenant_key: key,
       action: "tenant_domain_settings_upsert",
@@ -5683,21 +6792,66 @@ export default function PlatformAdminApp() {
         visibility: visibilityRows,
         domain_configurations: domainConfigRows,
         domain_assignments: assignmentRows,
+        tenant_domain_issue_types: tenantIssueTypeRows,
         notification_emails: tenantPayload,
       },
     });
 
     setStatus((prev) => ({ ...prev, domains: `Saved domain settings, notification routing, and email templates for ${key}.` }));
     if (closingDomainKey) {
+      pendingAssignedDomainFocusKeyRef.current = closingDomainKey;
+      const savedAssignment = assignmentRows.find((row) => row.domain_key === closingDomainKey) || null;
+      const savedConfig = domainConfigRows.find((row) => row.domain === closingDomainKey) || null;
+      if (savedAssignment) {
+        setDomainVisibilityForm((prev) => ({
+          ...prev,
+          [closingDomainKey]: savedAssignment.visibility === "disabled" ? "disabled" : "enabled",
+        }));
+      }
+      if (savedConfig || savedAssignment) {
+        setDomainConfigForm((prev) => ({
+          ...prev,
+          [closingDomainKey]: {
+            ...(prev?.[closingDomainKey] || {}),
+            ...(savedConfig ? {
+              domain_type: savedConfig.domain_type,
+              notification_email: savedConfig.notification_email || "",
+              organization_monitored_repairs: savedConfig.organization_monitored_repairs !== false,
+              public_visibility_min_reports: savedConfig.public_visibility_min_reports,
+              high_confidence_min_reports: savedConfig.high_confidence_min_reports,
+            } : {}),
+            ...(savedAssignment ? {
+              display_label: savedAssignment.display_label || "",
+              marker_color: savedAssignment.marker_color || defaultDomainMarkerColor(closingDomainKey),
+              icon_render_mode: normalizeDomainIconRenderMode(
+                savedAssignment.icon_render_mode,
+                String(manageableTenantDomainRowByKey?.[closingDomainKey]?.icon_src || "").trim()
+              ),
+              icon_tint_mode: normalizeDomainIconTintMode(savedAssignment.icon_tint_mode),
+              icon_tint_color: normalizeDomainIconTintColor(savedAssignment.icon_tint_color, ""),
+              notification_email: savedAssignment.notification_email || (savedConfig?.notification_email || ""),
+              notification_template_key: savedAssignment.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key,
+              notification_subject_template: savedAssignment.notification_subject_template || "",
+              notification_body_template: savedAssignment.notification_body_template || "",
+              organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
+              report_disclosures: normalizeDomainDisclosureRows(savedAssignment.report_disclosures, closingDomainKey),
+            } : {}),
+            issue_types_input: serializeDomainIssueTypeInput(
+              tenantIssueTypeRows
+                .filter((row) => row.domain_key === closingDomainKey)
+                .map((row) => ({
+                  issue_key: row.issue_key,
+                  issue_label: row.issue_label,
+                  sort_order: row.sort_order,
+                  active: row.active !== false,
+                }))
+            ),
+          },
+        }));
+      }
       setEditingDomainKey("");
       setEditingDomainSnapshot(null);
-      if (currentVisibility === "disabled") {
-        const nextEnabledDomainKey = activeManageableTenantDomainRows.find((domain) => (
-          domain.key !== closingDomainKey
-          && String(domainVisibilityForm?.[domain.key] || "disabled").trim().toLowerCase() !== "disabled"
-        ))?.key || "";
-        setCompactDomainSettingsKey(nextEnabledDomainKey);
-      }
+      setExpandedAssignedDomainCardKey((prev) => (prev === closingDomainKey ? "" : prev));
     }
     await refreshControlPlaneData();
   }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot, activeManageableTenantDomainRows, selectedTenantDomainAssignments, editingDomainKey, manageableTenantDomainRowByKey]);
@@ -6267,6 +7421,7 @@ export default function PlatformAdminApp() {
   const beginDomainEdit = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
+    setExpandedAssignedDomainCardKey(key);
     setEditingDomainKey(key);
     setEditingDomainSnapshot({
       key,
@@ -6299,15 +7454,17 @@ export default function PlatformAdminApp() {
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
 
-  const enableDomainFromCompactPicker = useCallback(() => {
-    const key = String(compactDomainEnableKey || "").trim().toLowerCase();
+  const toggleDomainRegistryCard = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
-    beginDomainEdit(key);
-    setDomainVisibilityForm((prev) => ({ ...prev, [key]: "enabled" }));
-    setCompactDomainSettingsKey(key);
-    setDomainAddModalOpen(false);
-    setStatus((prev) => ({ ...prev, domains: "" }));
-  }, [beginDomainEdit, compactDomainEnableKey]);
+    setExpandedDomainRegistryCardKey((prev) => (prev === key ? "" : key));
+  }, []);
+
+  const toggleAssignedDomainCard = useCallback((domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key) return;
+    setExpandedAssignedDomainCardKey((prev) => (prev === key ? "" : key));
+  }, []);
 
   const beginMapFeaturesEdit = useCallback(() => {
     if (!canEditTenantDomains) return;
@@ -6430,27 +7587,6 @@ export default function PlatformAdminApp() {
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const isCompactViewport = viewportWidth <= 760;
-  const activeCompactDomainOptions = useMemo(
-    () => activeManageableTenantDomainRows.filter((d) => String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled"),
-    [activeManageableTenantDomainRows, domainVisibilityForm]
-  );
-  const inactiveCompactDomainOptions = useMemo(
-    () => activeManageableTenantDomainRows.filter((d) => String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled"),
-    [activeManageableTenantDomainRows, domainVisibilityForm]
-  );
-  const domainEnablementCards = useMemo(
-    () => activeManageableTenantDomainRows.filter((d) => {
-      const visibility = String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase();
-      return visibility !== "disabled" || editingDomainKey === d.key;
-    }),
-    [activeManageableTenantDomainRows, domainVisibilityForm, editingDomainKey]
-  );
-  const compactVisibleDomainCards = useMemo(() => {
-    if (!isCompactViewport) return domainEnablementCards;
-    const selectedKey = String(compactDomainSettingsKey || "").trim();
-    const selected = domainEnablementCards.find((d) => d.key === selectedKey);
-    return selected ? [selected] : [];
-  }, [isCompactViewport, compactDomainSettingsKey, domainEnablementCards]);
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
@@ -6494,30 +7630,541 @@ export default function PlatformAdminApp() {
     [editingOrganizationSection, inTenantWorkspace]
   );
 
-  useEffect(() => {
-    if (!isCompactViewport) return;
-    if (!activeCompactDomainOptions.length) {
-      setCompactDomainSettingsKey("");
-      return;
-    }
-    setCompactDomainSettingsKey((prev) => {
-      const current = String(prev || "").trim();
-      if (current && activeCompactDomainOptions.some((domain) => domain.key === current)) return current;
-      return activeCompactDomainOptions[0].key;
-    });
-  }, [isCompactViewport, activeCompactDomainOptions]);
+  const renderDomainRegistryEditor = () => (
+    <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 900, color: palette.navy900 }}>
+          {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
+        </div>
+        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+          {editingDomainDefinitionKey ? "Domain key remains stable after creation." : "Keys become the stable identifier across PCP, reports, and the public app."}
+        </div>
+      </div>
+      <div style={responsiveActionGrid}>
+        <label style={modalField}>
+          <span>Domain Label</span>
+          <input
+            value={domainRegistryForm.label}
+            onChange={(e) => {
+              const nextLabel = e.target.value;
+              setDomainRegistryForm((prev) => ({
+                ...prev,
+                label: nextLabel,
+                key: !editingDomainDefinitionKey && prev.key_autofill ? slugifyDomainKeyInput(nextLabel) : prev.key,
+              }));
+            }}
+            placeholder="Catch Basins"
+            style={modalInput}
+          />
+        </label>
+        <label style={modalField}>
+          <span>Domain Key</span>
+          <input
+            value={domainRegistryForm.key}
+            onChange={(e) => setDomainRegistryForm((prev) => ({
+              ...prev,
+              key: slugifyDomainKeyInput(e.target.value),
+              key_autofill: false,
+            }))}
+            placeholder="catch_basins"
+            readOnly={Boolean(editingDomainDefinitionKey)}
+            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
+          />
+          {!editingDomainDefinitionKey ? (
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Auto-generated from the label until you manually edit it.
+            </div>
+          ) : null}
+        </label>
+        <label style={modalField}>
+          <span>Domain Class</span>
+          <select
+            value={domainRegistryForm.domain_class}
+            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
+            disabled={Boolean(editingDomainDefinitionKey)}
+            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
+          >
+            {DOMAIN_TYPE_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+          {editingDomainDefinitionKey ? (
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Domain class is locked after creation so registry behavior stays stable across tenants and reports.
+            </div>
+          ) : null}
+        </label>
+        <label style={modalField}>
+          <span>Status</span>
+          <select
+            value={domainRegistryForm.status}
+            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
+            style={modalInput}
+          >
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Ownership Model</span>
+          <select
+            value={domainRegistryForm.ownership_model}
+            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
+            style={modalInput}
+          >
+            <option value="org_managed">Organization Managed</option>
+            <option value="utility_managed">Utility Managed</option>
+            <option value="third_party">Third Party</option>
+          </select>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            Utility managed means the work is typically owned by a public or regulated utility. Third party means the work is owned by an outside contractor, vendor, or private operator rather than the organization or utility.
+          </div>
+        </label>
+        <label style={modalField}>
+          <span>Report Prefix</span>
+          <input
+            value={domainRegistryForm.report_prefix}
+            onChange={(e) => setDomainRegistryForm((prev) => ({
+              ...prev,
+              report_prefix: String(e.target.value || "").toUpperCase(),
+            }))}
+            placeholder="EC"
+            readOnly={Boolean(editingDomainDefinitionKey)}
+            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
+          />
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            {editingDomainDefinitionKey
+              ? "Report prefix is locked after creation so existing report numbers remain consistent everywhere."
+              : <>Required. Report numbers are standardized as <b>{"R-<PREFIX><7 digits>"}</b>, for example <b>R-EC0000999</b>.</>}
+          </div>
+        </label>
+        <label style={{ ...modalField, justifyContent: "start" }}>
+          <span>Report Photos</span>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={domainRegistryForm.allow_report_images === true}
+              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
+            />
+            <span>Allow residents to capture or upload a photo with this domain’s reports</span>
+          </label>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            This controls whether the public reporting modal shows the photo picker for this domain.
+          </div>
+        </label>
+        <label style={{ ...modalField, justifyContent: "start" }}>
+          <span>Road Required</span>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={domainRegistryForm.road_required === true}
+              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
+            />
+            <span>Require the public report pin to land on a road before submission</span>
+          </label>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            When enabled, the app snaps the report to the nearest road and blocks submissions placed off-road.
+          </div>
+        </label>
+      </div>
+      <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 3 }}>
+            <div style={{ fontWeight: 900, color: palette.navy900 }}>Type Options</div>
+            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+              Optional domain-level types that appear in the public report modal. Use this for domains like street signs where the reporter should choose what kind of asset or item is affected.
+            </div>
+          </div>
+          <button
+            type="button"
+            style={buttonAlt}
+            onClick={() => setDomainRegistryForm((prev) => ({
+              ...prev,
+              type_options: [
+                ...(Array.isArray(prev?.type_options) ? prev.type_options : []),
+                {
+                  id: createDomainDisclosureId("type_option"),
+                  option_key: "",
+                  option_label: defaultDomainTypeOptionLabel(prev?.key || editingDomainDefinitionKey || "", Array.isArray(prev?.type_options) ? prev.type_options.length : 0),
+                  choices_input: "",
+                },
+              ],
+            }))}
+          >
+            Add Type Option
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {(Array.isArray(domainRegistryForm?.type_options) ? domainRegistryForm.type_options : []).length ? (
+            (Array.isArray(domainRegistryForm?.type_options) ? domainRegistryForm.type_options : []).map((typeOption, typeIndex) => (
+              <div
+                key={typeOption.id || `${typeOption.type_key || "type"}:${typeIndex}`}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid rgba(17,36,69,0.12)",
+                  background: "rgba(255,255,255,0.92)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                      Type Option {typeIndex + 1}
+                    </span>
+                    {typeOption.option_key ? (
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                        {domainTypeOptionMacroToken(typeOption.option_key)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    style={buttonAlt}
+                    onClick={() => setDomainRegistryForm((prev) => ({
+                      ...prev,
+                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : [])
+                        .filter((_, rowIndex) => rowIndex !== typeIndex),
+                    }))}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <label style={modalField}>
+                  <span>Type Option Name</span>
+                  <input
+                    value={typeOption.option_label || ""}
+                    onChange={(e) => setDomainRegistryForm((prev) => ({
+                      ...prev,
+                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : []).map((row, rowIndex) => (
+                        rowIndex === typeIndex
+                          ? {
+                              ...row,
+                              option_label: e.target.value,
+                              option_key: slugifyDomainKeyInput(e.target.value),
+                            }
+                          : row
+                      )),
+                    }))}
+                    placeholder="Sign Type"
+                    style={modalInput}
+                  />
+                </label>
+                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                  <span>Type Option Choices</span>
+                  <textarea
+                    value={typeOption.choices_input || ""}
+                    onChange={(e) => setDomainRegistryForm((prev) => ({
+                      ...prev,
+                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : []).map((row, rowIndex) => (
+                        rowIndex === typeIndex
+                          ? { ...row, choices_input: e.target.value }
+                          : row
+                      )),
+                    }))}
+                    rows={5}
+                    placeholder={"Stop\nYield\nSpeed Limit"}
+                    style={{ ...modalInput, minHeight: 120, resize: "vertical" }}
+                  />
+                  <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
+                    One choice per line. These choices appear in the report modal under this type option.
+                  </div>
+                </label>
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+              No type options configured for this domain.
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontWeight: 800, color: palette.navy900 }}>Domain Icon</div>
+          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+            Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
+          </div>
+        </div>
+        <div style={responsiveActionGrid}>
+          <label style={modalField}>
+            <span>Icon Source</span>
+            <select
+              value={domainRegistryForm.icon_selection}
+              onChange={(e) => setDomainRegistryForm((prev) => ({
+                ...prev,
+                icon_selection: e.target.value,
+                custom_icon_src: e.target.value === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
+                icon_file: e.target.value === UPLOAD_DOMAIN_ICON_SELECTION ? prev.icon_file : null,
+              }))}
+              style={modalInput}
+            >
+              <option value={UPLOAD_DOMAIN_ICON_SELECTION}>Upload icon file (recommended)</option>
+              <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
+              <option value="">No icon</option>
+            </select>
+          </label>
+          <label style={modalField}>
+            <span>Current Icon Source</span>
+            <input
+              value={
+                domainRegistryForm.icon_file?.name
+                  || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION
+                    ? domainRegistryForm.custom_icon_src
+                    : domainRegistryForm.icon_src)
+              }
+              readOnly
+              placeholder="No icon selected yet"
+              style={{ ...modalInput, background: "#eef4fb" }}
+            />
+          </label>
+        </div>
+        {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
+          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+            <span>Choose Icon File</span>
+            <input
+              type="file"
+              accept={DOMAIN_ICON_ACCEPT}
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] || null;
+                setDomainRegistryForm((prev) => ({
+                  ...prev,
+                  icon_file: nextFile,
+                }));
+              }}
+              style={modalInput}
+            />
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Preferred: SVG. Also accepted: PNG or WebP. Max size: 2 MB.
+            </div>
+          </label>
+        ) : null}
+        {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
+          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+            <span>Custom Icon Public Path (advanced)</span>
+            <input
+              value={domainRegistryForm.custom_icon_src}
+              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
+              placeholder="https://... or /public/path/icon.svg"
+              style={modalInput}
+            />
+          </label>
+        ) : null}
+        {(domainRegistryUploadPreviewUrl || domainRegistryForm.icon_src || domainRegistryForm.custom_icon_src) ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
+              <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                <img
+                  src={domainRegistryUploadPreviewUrl || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : domainRegistryForm.icon_src)}
+                  alt={`${domainRegistryForm.label || "Domain"} icon preview`}
+                  style={{ width: 44, height: 44, objectFit: "contain" }}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
+              Upload-first is now the standard flow. The advanced public-path option is only here for legacy or externally hosted icons when you intentionally need it.
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+        <span>Description</span>
+        <textarea
+          value={domainRegistryForm.description}
+          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, description: e.target.value }))}
+          rows={3}
+          placeholder="Describe when residents or staff should use this domain."
+          style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
+        />
+      </label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="submit"
+          style={{ ...buttonBase, opacity: domainRegistrySaving ? 0.65 : 1 }}
+          disabled={domainRegistrySaving}
+        >
+          {domainRegistrySaving ? "Saving..." : editingDomainDefinitionKey ? "Save Domain" : "Create Domain"}
+        </button>
+        <button
+          type="button"
+          style={buttonAlt}
+          disabled={domainRegistrySaving}
+          onClick={cancelDomainDefinitionEditor}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
 
-  useEffect(() => {
-    if (!inactiveCompactDomainOptions.length) {
-      setCompactDomainEnableKey("");
-      return;
-    }
-    setCompactDomainEnableKey((prev) => {
-      const current = String(prev || "").trim();
-      if (current && inactiveCompactDomainOptions.some((domain) => domain.key === current)) return current;
-      return inactiveCompactDomainOptions[0].key;
-    });
-  }, [inactiveCompactDomainOptions]);
+  const renderTenantDomainAssignmentEditor = () => (
+    <form onSubmit={(event) => void saveTenantDomainAssignment(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(46,98,143,0.08)", borderColor: "rgba(46,98,143,0.22)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 900, color: palette.navy900 }}>
+          {editingTenantDomainAssignmentKey ? `Edit ${tenantDomainAssignmentForm.domain_key} assignment` : "Assign Active Global Domain"}
+        </div>
+        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+          Billing metadata is informational only in v1 and does not gate activation.
+        </div>
+      </div>
+      <div style={responsiveActionGrid}>
+        <label style={modalField}>
+          <span>Global Domain</span>
+          <select
+            value={tenantDomainAssignmentForm.domain_key}
+            disabled={Boolean(editingTenantDomainAssignmentKey)}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, domain_key: e.target.value }))}
+            style={{ ...modalInput, background: editingTenantDomainAssignmentKey ? "#eef4fb" : modalInput.background }}
+          >
+            {editingTenantDomainAssignmentKey ? (
+              <option value={tenantDomainAssignmentForm.domain_key}>{domainRegistryRows.find((row) => row.key === tenantDomainAssignmentForm.domain_key)?.label || tenantDomainAssignmentForm.domain_key}</option>
+            ) : assignableDomainRegistryRows.length ? (
+              assignableDomainRegistryRows.map((domain) => (
+                <option key={domain.key} value={domain.key}>{domain.label}</option>
+              ))
+            ) : (
+              <option value="">No active unassigned domains available</option>
+            )}
+          </select>
+          {!editingTenantDomainAssignmentKey && !assignableDomainRegistryRows.length ? (
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Draft domains stay in the registry until you promote them to Active.
+            </div>
+          ) : null}
+        </label>
+        <label style={modalField}>
+          <span>Assignment Active</span>
+          <select
+            value={tenantDomainAssignmentForm.active ? "active" : "inactive"}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, active: e.target.value === "active" }))}
+            style={modalInput}
+          >
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Visibility</span>
+          <select
+            value={tenantDomainAssignmentForm.visibility}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, visibility: e.target.value }))}
+            style={modalInput}
+          >
+            {DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Notification Email</span>
+          <input
+            value={tenantDomainAssignmentForm.notification_email}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
+            placeholder="notifications@examplecity.gov"
+            style={modalInput}
+          />
+        </label>
+        <label style={modalField}>
+          <span>Billing Status</span>
+          <select
+            value={tenantDomainAssignmentForm.billing_status}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_status: e.target.value }))}
+            style={modalInput}
+          >
+            {DOMAIN_BILLING_STATUS_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Billing Model</span>
+          <select
+            value={tenantDomainAssignmentForm.billing_model}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_model: e.target.value }))}
+            style={modalInput}
+          >
+            {DOMAIN_BILLING_MODEL_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Billing Amount</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={tenantDomainAssignmentForm.billing_amount}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_amount: e.target.value }))}
+            placeholder="0.00"
+            style={modalInput}
+          />
+        </label>
+        <div style={{ ...modalField, justifyContent: "center" }}>
+          <span>Repair Monitoring</span>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minHeight: 48,
+              padding: "0 14px",
+              borderRadius: 14,
+              border: "1px solid rgba(17, 36, 69, 0.14)",
+              background: "rgba(255,255,255,0.92)",
+              color: palette.navy900,
+              fontWeight: 700,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
+              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
+            />
+            <span style={{ display: "grid", gap: 2 }}>
+              <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+              <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                {tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "Yes" : "No"}
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: palette.textMuted }}>
+        Report email templates are configured from <b>Manage Organizations → Domains</b> after the domain is enabled.
+      </div>
+      <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+        <span>Billing Notes</span>
+        <textarea
+          value={tenantDomainAssignmentForm.billing_notes}
+          onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_notes: e.target.value }))}
+          rows={3}
+          placeholder="Optional notes about pricing, review status, or future billing triggers."
+          style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
+        />
+      </label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="submit"
+          style={{ ...buttonBase, opacity: tenantDomainAssignmentSaving ? 0.65 : 1 }}
+          disabled={tenantDomainAssignmentSaving || (!editingTenantDomainAssignmentKey && !tenantDomainAssignmentForm.domain_key)}
+        >
+          {tenantDomainAssignmentSaving ? "Saving..." : editingTenantDomainAssignmentKey ? "Save Assignment" : "Create Assignment"}
+        </button>
+        <button
+          type="button"
+          style={buttonAlt}
+          disabled={tenantDomainAssignmentSaving}
+          onClick={cancelTenantDomainAssignmentEditor}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
 
   const fixedBanner = (
     <div style={bannerStyle}>
@@ -7150,64 +8797,6 @@ export default function PlatformAdminApp() {
     <main style={shellStyle}>
       {fixedBanner}
       {helpModal}
-      {domainAddModalOpen ? (
-        <div style={authModalBackdrop} onClick={() => setDomainAddModalOpen(false)}>
-          <div style={{ ...authModalCard, width: "min(560px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <h2 style={{ margin: 0, fontSize: 22, color: palette.navy900 }}>Add Domain</h2>
-                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.35, color: palette.textMuted }}>
-                  Select a new domain to enable it and open its settings.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDomainAddModalOpen(false)}
-                style={{ ...buttonAlt, minWidth: 0, width: 34, height: 34, padding: 0, borderRadius: 10, fontSize: 18, lineHeight: 1 }}
-                aria-label="Close add domain dialog"
-              >
-                ×
-              </button>
-            </div>
-            <div style={{ display: "grid", gap: 12 }}>
-              <label style={modalField}>
-                <span>Disabled Domains</span>
-                <select
-                  value={compactDomainEnableKey}
-                  onChange={(event) => setCompactDomainEnableKey(event.target.value)}
-                  style={modalInput}
-                  disabled={!inactiveCompactDomainOptions.length}
-                >
-                  {inactiveCompactDomainOptions.length ? (
-                    inactiveCompactDomainOptions.map((domain) => (
-                      <option key={domain.key} value={domain.key}>{domain.label}</option>
-                    ))
-                  ) : (
-                    <option value="">All domains are already enabled</option>
-                  )}
-                </select>
-              </label>
-              <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                Future pricing and confirmation can slot into this flow before the domain is enabled.
-              </p>
-              <div style={modalFooterActions}>
-                <button
-                  type="button"
-                  style={{ ...modalPrimaryButton, opacity: canEditTenantDomains && !editingDomainKey ? 1 : 0.55 }}
-                  disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !compactDomainEnableKey}
-                  onClick={enableDomainFromCompactPicker}
-                  title={editingDomainKey ? "Finish the current domain edit before enabling another domain." : "Enable selected domain"}
-                >
-                  Add Domain
-                </button>
-                <button type="button" style={modalSecondaryButton} onClick={() => setDomainAddModalOpen(false)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
       {contactAddModalOpen ? (
         <div style={authModalBackdrop} onClick={() => setContactAddModalOpen(false)}>
           <div style={{ ...authModalCard, width: "min(720px, calc(100vw - 24px))" }} onClick={(event) => event.stopPropagation()}>
@@ -8209,6 +9798,7 @@ export default function PlatformAdminApp() {
                     <th style={tableHeadCell}>Employees</th>
                     <th style={tableHeadCell}>Pilot</th>
                     <th style={tableHeadCell}>Status</th>
+                    <th style={tableHeadCell}>Assigned Domains</th>
                     <th style={tableHeadCell}>Enabled Domains</th>
                     <th style={tableHeadCell}>Hub Enabled</th>
                   </tr>
@@ -8228,13 +9818,14 @@ export default function PlatformAdminApp() {
                       <td style={{ padding: "10px 0" }}>{row.employee_count}</td>
                       <td style={{ padding: "10px 0" }}>{row.is_pilot ? "Yes" : "No"}</td>
                       <td style={{ padding: "10px 0" }}>{row.status_label}</td>
+                      <td style={{ padding: "10px 0" }}>{row.assigned_domain_count}</td>
                       <td style={{ padding: "10px 0" }}>{row.enabled_domain_count}</td>
                       <td style={{ padding: "10px 0" }}>{row.hub_enabled ? "Yes" : "No"}</td>
                     </tr>
                   ))}
                   {!filteredOrganizationReportRows.length ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: "10px 0", color: palette.textMuted }}>
+                      <td colSpan={8} style={{ padding: "10px 0", color: palette.textMuted }}>
                         No organizations match this report category yet.
                       </td>
                     </tr>
@@ -8672,245 +10263,11 @@ export default function PlatformAdminApp() {
                     Domain registry tables are not available yet in this environment. Run the latest Supabase migration locally before using this page.
                   </div>
                 ) : null}
-                {domainRegistryEditorOpen ? (
-                  <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900, color: palette.navy900 }}>
-                        {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
-                      </div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        {editingDomainDefinitionKey ? "Domain key remains stable after creation." : "Keys become the stable identifier across PCP, reports, and the public app."}
-                      </div>
-                    </div>
-                    <div style={responsiveActionGrid}>
-                      <label style={modalField}>
-                        <span>Domain Label</span>
-                        <input
-                          value={domainRegistryForm.label}
-                          onChange={(e) => {
-                            const nextLabel = e.target.value;
-                            setDomainRegistryForm((prev) => ({
-                              ...prev,
-                              label: nextLabel,
-                              key: !editingDomainDefinitionKey && prev.key_autofill ? slugifyDomainKeyInput(nextLabel) : prev.key,
-                            }));
-                          }}
-                          placeholder="Catch Basins"
-                          style={modalInput}
-                        />
-                      </label>
-                      <label style={modalField}>
-                        <span>Domain Key</span>
-                        <input
-                          value={domainRegistryForm.key}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({
-                            ...prev,
-                            key: slugifyDomainKeyInput(e.target.value),
-                            key_autofill: false,
-                          }))}
-                          placeholder="catch_basins"
-                          readOnly={Boolean(editingDomainDefinitionKey)}
-                          style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
-                        />
-                        {!editingDomainDefinitionKey ? (
-                          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-                            Auto-generated from the label until you manually edit it.
-                          </div>
-                        ) : null}
-                      </label>
-                      <label style={modalField}>
-                        <span>Domain Class</span>
-                        <select
-                          value={domainRegistryForm.domain_class}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
-                          style={modalInput}
-                        >
-                          {DOMAIN_TYPE_OPTIONS.map((option) => (
-                            <option key={option.key} value={option.key}>{option.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label style={modalField}>
-                        <span>Status</span>
-                        <select
-                          value={domainRegistryForm.status}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
-                          style={modalInput}
-                        >
-                          <option value="draft">Draft</option>
-                          <option value="active">Active</option>
-                          <option value="archived">Archived</option>
-                        </select>
-                      </label>
-                      <label style={modalField}>
-                        <span>Ownership Model</span>
-                        <select
-                          value={domainRegistryForm.ownership_model}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
-                          style={modalInput}
-                        >
-                          <option value="org_managed">Organization Managed</option>
-                          <option value="utility_managed">Utility Managed</option>
-                          <option value="third_party">Third Party</option>
-                        </select>
-                        <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-                          Utility managed means the work is typically owned by a public or regulated utility. Third party means the work is owned by an outside contractor, vendor, or private operator rather than the organization or utility.
-                        </div>
-                      </label>
-                      <label style={modalField}>
-                        <span>Report Prefix</span>
-                        <input
-                          value={domainRegistryForm.report_prefix}
-                          onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, report_prefix: String(e.target.value || "").toUpperCase() }))}
-                          placeholder="CB"
-                          style={modalInput}
-                        />
-                      </label>
-                      <label style={{ ...modalField, justifyContent: "start" }}>
-                        <span>Report Photos</span>
-                        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
-                          <input
-                            type="checkbox"
-                            checked={domainRegistryForm.allow_report_images === true}
-                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
-                          />
-                          <span>Allow residents to capture or upload a photo with this domain’s reports</span>
-                        </label>
-                        <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-                          This controls whether the public reporting modal shows the photo picker for this domain.
-                        </div>
-                      </label>
-                    </div>
-                    <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
-                      <div style={{ display: "grid", gap: 4 }}>
-                        <div style={{ fontWeight: 800, color: palette.navy900 }}>Domain Icon</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
-                        </div>
-                      </div>
-                      <div style={responsiveActionGrid}>
-                        <label style={modalField}>
-                          <span>Icon Source</span>
-                          <select
-                            value={domainRegistryForm.icon_selection}
-                            onChange={(e) => setDomainRegistryForm((prev) => ({
-                              ...prev,
-                              icon_selection: e.target.value,
-                              custom_icon_src: e.target.value === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
-                              icon_file: e.target.value === UPLOAD_DOMAIN_ICON_SELECTION ? prev.icon_file : null,
-                            }))}
-                            style={modalInput}
-                          >
-                            <option value={UPLOAD_DOMAIN_ICON_SELECTION}>Upload icon file (recommended)</option>
-                            <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
-                            <option value="">No icon</option>
-                          </select>
-                        </label>
-                        <label style={modalField}>
-                          <span>Current Icon Source</span>
-                          <input
-                            value={
-                              domainRegistryForm.icon_file?.name
-                                || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION
-                                  ? domainRegistryForm.custom_icon_src
-                                  : domainRegistryForm.icon_src)
-                            }
-                            readOnly
-                            placeholder="No icon selected yet"
-                            style={{ ...modalInput, background: "#eef4fb" }}
-                          />
-                        </label>
-                      </div>
-                      {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
-                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Choose Icon File</span>
-                          <input
-                            type="file"
-                            accept={DOMAIN_ICON_ACCEPT}
-                            onChange={(e) => {
-                              const nextFile = e.target.files?.[0] || null;
-                              setDomainRegistryForm((prev) => ({
-                                ...prev,
-                                icon_file: nextFile,
-                              }));
-                            }}
-                            style={modalInput}
-                          />
-                          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-                            Preferred: SVG. Also accepted: PNG or WebP. Max size: 2 MB.
-                          </div>
-                        </label>
-                      ) : null}
-                      {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
-                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Custom Icon Public Path (advanced)</span>
-                          <input
-                            value={domainRegistryForm.custom_icon_src}
-                            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
-                            placeholder="https://... or /public/path/icon.svg"
-                            style={modalInput}
-                          />
-                        </label>
-                      ) : null}
-                      {(domainRegistryUploadPreviewUrl || domainRegistryForm.icon_src || domainRegistryForm.custom_icon_src) ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
-                            <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                              <img
-                                src={domainRegistryUploadPreviewUrl || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : domainRegistryForm.icon_src)}
-                                alt={`${domainRegistryForm.label || "Domain"} icon preview`}
-                                style={{ width: 44, height: 44, objectFit: "contain" }}
-                              />
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
-                            Upload-first is now the standard flow. The advanced public-path option is only here for legacy or externally hosted icons when you intentionally need it.
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                      <span>Description</span>
-                      <textarea
-                        value={domainRegistryForm.description}
-                        onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, description: e.target.value }))}
-                        rows={3}
-                        placeholder="Describe when residents or staff should use this domain."
-                        style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
-                      />
-                    </label>
-                    <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                      <span>Issue Types (optional)</span>
-                      <textarea
-                        value={domainRegistryForm.issue_types_input}
-                        onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, issue_types_input: e.target.value }))}
-                        rows={4}
-                        placeholder={"Clogged\nDamaged\nMissing Grate"}
-                        style={{ ...modalInput, minHeight: 110, resize: "vertical" }}
-                      />
-                    </label>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button
-                        type="submit"
-                        style={{ ...buttonBase, opacity: domainRegistrySaving ? 0.65 : 1 }}
-                        disabled={domainRegistrySaving}
-                      >
-                        {domainRegistrySaving ? "Saving..." : editingDomainDefinitionKey ? "Save Domain" : "Create Domain"}
-                      </button>
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        disabled={domainRegistrySaving}
-                        onClick={cancelDomainDefinitionEditor}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                ) : null}
+                {domainRegistryEditorOpen && !editingDomainDefinitionKey ? renderDomainRegistryEditor() : null}
                 <div style={{ display: "grid", gap: 10 }}>
-                  {visibleDomainRegistryRows.length ? visibleDomainRegistryRows.map((domain) => (
+                  {visibleDomainRegistryRows.length ? visibleDomainRegistryRows.map((domain) => {
+                    const isExpanded = editingDomainDefinitionKey === domain.key && domainRegistryEditorOpen;
+                    return (
                     <div
                       key={domain.key}
                       style={{
@@ -8946,31 +10303,26 @@ export default function PlatformAdminApp() {
                               <code>{domain.key}</code>
                               {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
                               {domain.allow_report_images ? " • Photos enabled" : ""}
+                              {domain.road_required ? " • Road required" : ""}
+                              {Array.isArray(domain.type_options) && domain.type_options.length ? ` • ${domain.type_options.length} type option${domain.type_options.length === 1 ? "" : "s"}` : ""}
                               {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
                             {domain.description ? (
                               <div style={{ fontSize: 12.5, color: palette.textMuted }}>{domain.description}</div>
                             ) : null}
-                            {domain.issue_types?.length ? (
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                Issue types: {domain.issue_types.map((issue) => issue.issue_label).join(", ")}
-                              </div>
-                            ) : (
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                No issue types configured yet.
-                              </div>
-                            )}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            style={{ ...buttonAlt, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
-                            disabled={!canManageDomainRegistry || domainRegistrySaving}
-                            onClick={() => beginEditDomainDefinition(domain.key)}
-                          >
-                            Edit
-                          </button>
+                          {isExpanded ? null : (
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                              disabled={!canManageDomainRegistry}
+                              onClick={() => beginEditDomainDefinition(domain.key)}
+                            >
+                              Edit
+                            </button>
+                          )}
                           {domain.status !== "archived" ? (
                             <button
                               type="button"
@@ -8983,8 +10335,20 @@ export default function PlatformAdminApp() {
                           ) : null}
                         </div>
                       </div>
+                      {isExpanded ? (
+                        editingDomainDefinitionKey === domain.key && domainRegistryEditorOpen ? (
+                          renderDomainRegistryEditor()
+                        ) : (
+                          <div style={{ display: "grid", gap: 10 }}>
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              Issue types are configured per tenant after this domain is assigned.
+                            </div>
+                          </div>
+                        )
+                      ) : null}
                     </div>
-                  )) : (
+                  );
+                  }) : (
                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                       No global domains have been defined yet in the new registry.
                     </div>
@@ -8994,6 +10358,939 @@ export default function PlatformAdminApp() {
                       Archived domains: {archivedDomainRegistryRows.map((domain) => domain.label).join(", ")}
                     </div>
                   ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "map-ui-theme" ? (
+        <section style={controlPlaneSettingsSectionStyle}>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
+              <div style={{ ...card, display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Map UI Theme</h2>
+                  <p style={{ margin: 0, color: palette.textMuted }}>
+                    Manage shared theme colors for the map shell, including indefinite branding and temporary scheduled overrides for holidays or major events.
+                  </p>
+                </div>
+                <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <strong style={{ color: palette.navy900 }}>Draft + Publish Flow</strong>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                        Save theme work into the draft first. Publish when you want the base theme and any scheduled overrides to go live together.
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void resetMapUiIconDraftToPublished()}
+                      >
+                        Reset Draft
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void persistMapUiIconDraft({ publish: false })}
+                      >
+                        {mapUiIconSavingDraft ? "Saving Draft..." : "Save Draft"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void persistMapUiIconDraft({ publish: true })}
+                      >
+                        {mapUiIconPublishing ? "Publishing..." : "Publish Live"}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: palette.textMuted }}>
+                    <span>
+                      Draft saved:
+                      {" "}
+                      {mapUiIconDraftConfig?.saved_at ? new Date(mapUiIconDraftConfig.saved_at).toLocaleString() : "Not yet"}
+                    </span>
+                    <span>
+                      Published live:
+                      {" "}
+                      {mapUiIconPublishedConfig?.published_at ? new Date(mapUiIconPublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
+                    </span>
+                  </div>
+                </div>
+                {status.mapUiIcons ? (
+                  <div style={{ fontSize: 12.5, color: status.mapUiIcons.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                    {status.mapUiIcons}
+                  </div>
+                ) : null}
+                <div style={{ ...subPanel, display: "grid", gap: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 3 }}>
+                      <strong style={{ color: palette.navy900 }}>Map UI Theme</strong>
+                      <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Theme colors for the shared map shell, including the header, menus, modals, bottom tabs, and tool buttons. Scheduled themes temporarily override the indefinite theme and then fall back to the indefinite theme or CityReport defaults automatically.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMapUiThemeSectionOpen((prev) => !prev)}
+                      style={{ ...buttonAlt, padding: "8px 12px" }}
+                    >
+                      {mapUiThemeSectionOpen ? "Collapse" : "Open Theme"}
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {["light", "dark"].map((mode) => {
+                      const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                      const label = mode === "dark" ? "Dark Preview" : "Light Preview";
+                      return (
+                        <div
+                          key={`theme-summary-${mode}`}
+                          style={{
+                            ...subPanel,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            background: mode === "dark" ? "#102445" : "#f8fbff",
+                            border: `1px solid ${mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)"}`,
+                            minWidth: 190,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 42,
+                              height: 42,
+                              borderRadius: 12,
+                              border: `1px solid ${theme.tool_button_border}`,
+                              background: theme.tool_button_bg,
+                              color: theme.tool_button_text,
+                              display: "grid",
+                              placeItems: "center",
+                              boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <span style={{ fontSize: 15, fontWeight: 900 }}>Aa</span>
+                          </div>
+                          <div style={{ display: "grid", gap: 2 }}>
+                            <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900, fontSize: 12.5 }}>{label}</strong>
+                            <span style={{ fontSize: 11.5, color: mode === "dark" ? "rgba(245,251,255,0.72)" : palette.textMuted }}>
+                              Header, menus, resident feeds, modals, tabs, and tool buttons
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: palette.textMuted }}>
+                    <span>
+                      Base theme:
+                      {" "}
+                      {mapUiThemeBaseEnabled ? "Enabled" : "Using default colors"}
+                    </span>
+                    <span>
+                      Temporary themes:
+                      {" "}
+                      {mapUiThemeSchedulesDraft.length}
+                    </span>
+                    <span>
+                      Live now:
+                      {" "}
+                      {activePublishedMapUiThemeSchedule?.label
+                        ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
+                        : isMapUiBaseThemeEnabled(mapUiIconPublishedConfig)
+                          ? "Indefinite theme"
+                          : "Default CityReport theme"}
+                    </span>
+                  </div>
+                  {mapUiThemeSectionOpen ? (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <strong style={{ color: palette.navy900 }}>Indefinite Theme</strong>
+                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              This is the always-on theme that stays live until you disable it or replace it. Temporary schedules revert back here when they end.
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                              onClick={() => setMapUiThemeBaseEnabled((prev) => !prev)}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                            >
+                              {mapUiThemeBaseEnabled ? "Disable Base Theme" : "Enable Base Theme"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                              onClick={() => setMapUiThemeBaseEnabled(false)}
+                              style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                            >
+                              Use Default Theme Live
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 800, color: mapUiThemeBaseEnabled ? palette.mint700 : palette.navy700, background: mapUiThemeBaseEnabled ? "rgba(18,128,106,0.12)" : "rgba(17,36,69,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                            {mapUiThemeBaseEnabled ? "Enabled live after publish" : "Disabled after publish"}
+                          </span>
+                          {!mapUiThemeBaseEnabled ? (
+                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                              Saved colors stay here even while the live app falls back to defaults.
+                            </span>
+                          ) : null}
+                        </div>
+                        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
+                          {["light", "dark"].map((mode) => {
+                            const theme = previewMapUiTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                            const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
+                            const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
+                            const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
+                            const themeForm = mapUiThemeDraftForm?.[mode] || {};
+                            return (
+                              <div key={mode} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
+                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                    <div
+                                      style={{
+                                        width: 52,
+                                        height: 52,
+                                        borderRadius: 14,
+                                        border: `1px solid ${theme.tool_button_border}`,
+                                        background: theme.tool_button_bg,
+                                        color: theme.tool_button_text,
+                                        display: "grid",
+                                        placeItems: "center",
+                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
+                                    </div>
+                                    <div
+                                      style={{
+                                        width: 52,
+                                        height: 52,
+                                        borderRadius: 14,
+                                        border: `1px solid ${theme.tool_active_border}`,
+                                        background: theme.tool_active_bg,
+                                        color: theme.tool_active_text,
+                                        display: "grid",
+                                        placeItems: "center",
+                                        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                  {MAP_UI_THEME_FIELDS.map((field) => {
+                                    const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
+                                    const draftValue = String(themeForm?.[field.key] || "").trim();
+                                    const usingDefault = !draftValue;
+                                    const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
+                                    const controlsDisabled = !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing;
+                                    return (
+                                      <div key={`${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
+                                          <button
+                                            type="button"
+                                            disabled={controlsDisabled}
+                                            onClick={() => updateMapUiThemeDraftValue(mode, field.key, "")}
+                                            style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
+                                          >
+                                            {usingDefault ? "Using Default" : "Use Default"}
+                                          </button>
+                                        </div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
+                                          <input
+                                            type="color"
+                                            value={pickerValue.hex}
+                                            disabled={controlsDisabled}
+                                            onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, event.target.value, pickerValue.alphaPercent)}
+                                            style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                          />
+                                          <div style={{ display: "grid", gap: 6 }}>
+                                            <input
+                                              type="range"
+                                              min="0"
+                                              max="100"
+                                              step="1"
+                                              value={pickerValue.alphaPercent}
+                                              disabled={controlsDisabled}
+                                              onChange={(event) => updateMapUiThemeDraftPicker(mode, field.key, pickerValue.hex, Number(event.target.value))}
+                                            />
+                                            <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                              <span>Opacity {pickerValue.alphaPercent}%</span>
+                                              <span>{usingDefault ? "Default palette" : draftValue}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(248,251,255,0.84)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <strong style={{ color: palette.navy900 }}>Temporary Scheduled Themes</strong>
+                            <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              Use these for holidays, launches, or event windows. An active scheduled theme overrides the indefinite theme until its end time.
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                            onClick={addMapUiThemeScheduleDraft}
+                            style={{ ...buttonBase, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                          >
+                            Add Temporary Theme
+                          </button>
+                        </div>
+                        {mapUiThemeSchedulesDraft.length ? (
+                          <div style={{ display: "grid", gap: 10 }}>
+                            {mapUiThemeSchedulesDraft.map((schedule) => {
+                              const scheduleTheme = mergeMapUiTheme({ theme: extractMapUiThemeFromForm(schedule.themeForm) });
+                              const isExpanded = mapUiThemeExpandedScheduleId === schedule.id;
+                              const statusLabel = getMapUiThemeScheduleStatus(schedule);
+                              const statusBackground = statusLabel === "Active"
+                                ? "rgba(18,128,106,0.12)"
+                                : statusLabel === "Scheduled"
+                                  ? "rgba(37,99,235,0.10)"
+                                  : statusLabel === "Ended"
+                                    ? "rgba(107,114,128,0.12)"
+                                    : "rgba(17,36,69,0.10)";
+                              const statusColor = statusLabel === "Active"
+                                ? palette.mint700
+                                : statusLabel === "Scheduled"
+                                  ? "#1d4ed8"
+                                  : statusLabel === "Ended"
+                                    ? "#4b5563"
+                                    : palette.navy700;
+                              return (
+                                <div key={schedule.id} style={{ ...subPanel, display: "grid", gap: 10, background: "#ffffff" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                        <strong style={{ color: palette.navy900 }}>{schedule.label || "Untitled temporary theme"}</strong>
+                                        <span style={{ fontSize: 11.5, fontWeight: 800, color: statusColor, background: statusBackground, borderRadius: 999, padding: "4px 10px" }}>
+                                          {statusLabel}
+                                        </span>
+                                        {schedule.enabled === false ? (
+                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.red600, background: "rgba(209,67,67,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                                            Disabled
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                        {schedule.start_at && schedule.end_at
+                                          ? `${formatDateTimeDisplay(fromLocalDateTimeInputValue(schedule.start_at))} to ${formatDateTimeDisplay(fromLocalDateTimeInputValue(schedule.end_at))}`
+                                          : "Choose a start and end window"}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                      <button
+                                        type="button"
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onClick={() => setMapUiThemeExpandedScheduleId((prev) => (prev === schedule.id ? "" : schedule.id))}
+                                        style={{ ...buttonAlt, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                                      >
+                                        {isExpanded ? "Collapse" : "Edit Theme"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onClick={() => removeMapUiThemeScheduleDraft(schedule.id)}
+                                        style={{ ...buttonAlt, borderColor: "rgba(209,67,67,0.26)", color: palette.red600, opacity: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? 0.55 : 1 }}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                                    <label style={{ display: "grid", gap: 6 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Theme Label</span>
+                                      <input
+                                        type="text"
+                                        value={schedule.label}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "label", event.target.value)}
+                                        style={modalInput}
+                                        placeholder="Fourth of July"
+                                      />
+                                    </label>
+                                    <label style={{ display: "grid", gap: 6 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Start</span>
+                                      <input
+                                        type="datetime-local"
+                                        value={schedule.start_at}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "start_at", event.target.value)}
+                                        style={modalInput}
+                                      />
+                                    </label>
+                                    <label style={{ display: "grid", gap: 6 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>End</span>
+                                      <input
+                                        type="datetime-local"
+                                        value={schedule.end_at}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "end_at", event.target.value)}
+                                        style={modalInput}
+                                      />
+                                    </label>
+                                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: palette.navy900 }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={schedule.enabled !== false}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiThemeScheduleDraftMeta(schedule.id, "enabled", event.target.checked)}
+                                      />
+                                      Enable this temporary theme
+                                    </label>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                    {["light", "dark"].map((mode) => {
+                                      const theme = scheduleTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                                      const label = mode === "dark" ? "Dark Preview" : "Light Preview";
+                                      return (
+                                        <div
+                                          key={`${schedule.id}-${mode}-summary`}
+                                          style={{
+                                            ...subPanel,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 10,
+                                            background: mode === "dark" ? "#102445" : "#f8fbff",
+                                            border: `1px solid ${mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)"}`,
+                                            minWidth: 190,
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              width: 42,
+                                              height: 42,
+                                              borderRadius: 12,
+                                              border: `1px solid ${theme.tool_button_border}`,
+                                              background: theme.tool_button_bg,
+                                              color: theme.tool_button_text,
+                                              display: "grid",
+                                              placeItems: "center",
+                                              boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            <span style={{ fontSize: 15, fontWeight: 900 }}>Aa</span>
+                                          </div>
+                                          <div style={{ display: "grid", gap: 2 }}>
+                                            <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900, fontSize: 12.5 }}>{label}</strong>
+                                            <span style={{ fontSize: 11.5, color: mode === "dark" ? "rgba(245,251,255,0.72)" : palette.textMuted }}>
+                                              Scheduled override preview
+                                            </span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {isExpanded ? (
+                                    <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))" }}>
+                                      {["light", "dark"].map((mode) => {
+                                        const theme = scheduleTheme?.[mode] || MAP_UI_ICON_THEME_DEFAULTS[mode];
+                                        const modeLabel = mode === "dark" ? "Dark Mode" : "Light Mode";
+                                        const modeBackground = mode === "dark" ? "#102445" : "#f8fbff";
+                                        const modeBorder = mode === "dark" ? "rgba(255,255,255,0.14)" : "rgba(17,36,69,0.12)";
+                                        const themeForm = schedule?.themeForm?.[mode] || {};
+                                        return (
+                                          <div key={`${schedule.id}-${mode}`} style={{ ...subPanel, display: "grid", gap: 10, background: modeBackground, border: `1px solid ${modeBorder}` }}>
+                                            <div style={{ display: "grid", gap: 4 }}>
+                                              <strong style={{ color: mode === "dark" ? "#f5fbff" : palette.navy900 }}>{modeLabel}</strong>
+                                              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                                <div
+                                                  style={{
+                                                    width: 52,
+                                                    height: 52,
+                                                    borderRadius: 14,
+                                                    border: `1px solid ${theme.tool_button_border}`,
+                                                    background: theme.tool_button_bg,
+                                                    color: theme.tool_button_text,
+                                                    display: "grid",
+                                                    placeItems: "center",
+                                                    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                                  }}
+                                                >
+                                                  <span style={{ fontSize: 18, fontWeight: 900 }}>Aa</span>
+                                                </div>
+                                                <div
+                                                  style={{
+                                                    width: 52,
+                                                    height: 52,
+                                                    borderRadius: 14,
+                                                    border: `1px solid ${theme.tool_active_border}`,
+                                                    background: theme.tool_active_bg,
+                                                    color: theme.tool_active_text,
+                                                    display: "grid",
+                                                    placeItems: "center",
+                                                    boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+                                                  }}
+                                                >
+                                                  <span style={{ fontSize: 18, fontWeight: 900 }}>On</span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <div style={{ display: "grid", gap: 10 }}>
+                                              {MAP_UI_THEME_FIELDS.map((field) => {
+                                                const defaultValue = MAP_UI_ICON_THEME_DEFAULTS?.[mode]?.[field.key] || "#111111";
+                                                const draftValue = String(themeForm?.[field.key] || "").trim();
+                                                const usingDefault = !draftValue;
+                                                const pickerValue = parseCssColorToPickerValue(draftValue || defaultValue, defaultValue);
+                                                const controlsDisabled = !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing;
+                                                return (
+                                                  <div key={`${schedule.id}-${mode}-${field.key}`} style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                                      <span style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>{field.label}</span>
+                                                      <button
+                                                        type="button"
+                                                        disabled={controlsDisabled}
+                                                        onClick={() => updateMapUiThemeScheduleDraftValue(schedule.id, mode, field.key, "")}
+                                                        style={{ ...buttonAlt, padding: "6px 10px", fontSize: 11.5, opacity: controlsDisabled ? 0.55 : 1 }}
+                                                      >
+                                                        {usingDefault ? "Using Default" : "Use Default"}
+                                                      </button>
+                                                    </div>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 10, alignItems: "center" }}>
+                                                      <input
+                                                        type="color"
+                                                        value={pickerValue.hex}
+                                                        disabled={controlsDisabled}
+                                                        onChange={(event) => updateMapUiThemeScheduleDraftPicker(schedule.id, mode, field.key, event.target.value, pickerValue.alphaPercent)}
+                                                        style={{ ...modalInput, background: controlsDisabled ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                                      />
+                                                      <div style={{ display: "grid", gap: 6 }}>
+                                                        <input
+                                                          type="range"
+                                                          min="0"
+                                                          max="100"
+                                                          step="1"
+                                                          value={pickerValue.alphaPercent}
+                                                          disabled={controlsDisabled}
+                                                          onChange={(event) => updateMapUiThemeScheduleDraftPicker(schedule.id, mode, field.key, pickerValue.hex, Number(event.target.value))}
+                                                        />
+                                                        <div style={{ fontSize: 11.5, color: palette.textMuted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                                          <span>Opacity {pickerValue.alphaPercent}%</span>
+                                                          <span>{usingDefault ? "Default palette" : draftValue}</span>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            No temporary themes scheduled yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {controlPlanePage === "map-ui-icons" ? (
+        <section style={controlPlaneSettingsSectionStyle}>
+          <div style={controlPlaneSettingsLayoutStyle}>
+            {controlPlaneSettingsSidebarContent}
+            <div style={controlPlaneSettingsContentPaneStyle}>
+              {controlPlaneSettingsActions}
+              <div style={{ ...card, display: "grid", gap: 14 }}>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <h2 style={{ margin: 0, color: palette.navy900 }}>Map UI Icons</h2>
+                  <p style={{ margin: 0, color: palette.textMuted }}>
+                    Edit the shared app and map control icons here, save them as a draft, and publish the full set at once when you are ready. Theme colors now live on the separate Map UI Theme page.
+                  </p>
+                </div>
+                <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <strong style={{ color: palette.navy900 }}>Draft + Publish Flow</strong>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                        Upload everything into the draft first. When you publish, the app switches to the full draft manifest in one pass, so users do not watch icons change one by one.
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void resetMapUiIconDraftToPublished()}
+                      >
+                        Reset Draft
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void persistMapUiIconDraft({ publish: false })}
+                      >
+                        {mapUiIconSavingDraft ? "Saving Draft..." : "Save Draft"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                        onClick={() => void persistMapUiIconDraft({ publish: true })}
+                      >
+                        {mapUiIconPublishing ? "Publishing..." : "Publish Live"}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12.5, color: palette.textMuted }}>
+                    <span>
+                      Draft saved:
+                      {" "}
+                      {mapUiIconDraftConfig?.saved_at ? new Date(mapUiIconDraftConfig.saved_at).toLocaleString() : "Not yet"}
+                    </span>
+                    <span>
+                      Published live:
+                      {" "}
+                      {mapUiIconPublishedConfig?.published_at ? new Date(mapUiIconPublishedConfig.published_at).toLocaleString() : "Using bundled defaults"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                    Each icon can now choose its own render mode. Use tintable SVG for monochrome icons, full-color SVG for multi-color vectors, or raster/as-is for PNG and WebP assets. Leave color override fields blank to keep the current CityReport defaults.
+                  </div>
+                </div>
+                {status.mapUiIcons ? (
+                  <div style={{ fontSize: 12.5, color: status.mapUiIcons.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
+                    {status.mapUiIcons}
+                  </div>
+                ) : null}
+                <div style={{ display: "grid", gap: 12 }}>
+                  {mapUiIconCatalogGroups.map(({ group, items }) => (
+                    <div key={group} style={{ ...subPanel, display: "grid", gap: 12 }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <strong style={{ color: palette.navy900 }}>{group}</strong>
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          These icons are published together as one live set.
+                        </span>
+                      </div>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        {items.map((entry) => {
+                          const row = mapUiIconDraftForm?.[entry.key] || {};
+                          const previewSrc = String(row?.preview_url || row?.src || entry.defaultSrc || "").trim();
+                          const previewRenderMode = String(row?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER).trim();
+                          const publishedSrc = String(publishedMapUiIconMeta?.[entry.key]?.src || entry.defaultSrc || "").trim();
+                          const publishedRenderMode = String(
+                            publishedMapUiIconMeta?.[entry.key]?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER
+                          ).trim();
+                          const previewUsesTint = previewRenderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG && isTintableSvgAsset(previewSrc, row?.file);
+                          const publishedUsesTint = publishedRenderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG && isTintableSvgAsset(publishedSrc);
+                          const previewLightTint = String(row?.light_tint_color || previewMapUiTheme?.light?.tool_button_text || "#17324d").trim();
+                          const previewDarkTint = String(row?.dark_tint_color || previewMapUiTheme?.dark?.tool_button_text || "#f5fbff").trim();
+                          const publishedLightTint = String(
+                            publishedMapUiIconMeta?.[entry.key]?.light_tint_color
+                            || publishedMapUiTheme?.light?.tool_button_text
+                            || "#17324d"
+                          ).trim();
+                          const publishedDarkTint = String(
+                            publishedMapUiIconMeta?.[entry.key]?.dark_tint_color
+                            || publishedMapUiTheme?.dark?.tool_button_text
+                            || "#f5fbff"
+                          ).trim();
+                          return (
+                            <div key={entry.key} style={{ ...subPanel, display: "grid", gap: 10, background: "#f8fbff" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: palette.navy900 }}>{entry.label}</strong>
+                                  <span style={{ fontSize: 12.5, color: palette.textMuted }}>{entry.description}</span>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                    Key: <code>{entry.key}</code>
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                                  disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                  onClick={() => {
+                                    updateMapUiIconDraftFile(entry.key, null);
+                                    updateMapUiIconDraftSrc(entry.key, entry.defaultSrc || "");
+                                    updateMapUiIconDraftRenderMode(entry.key, entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER);
+                                    updateMapUiIconDraftTintColor(entry.key, "light_tint_color", "");
+                                    updateMapUiIconDraftTintColor(entry.key, "dark_tint_color", "");
+                                    updateMapUiIconDraftEnabled(entry.key, true);
+                                  }}
+                                >
+                                  Use Default
+                                </button>
+                              </div>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 12,
+                                  padding: "10px 12px",
+                                  borderRadius: 12,
+                                  border: "1px solid rgba(17,36,69,0.10)",
+                                  background: row?.enabled === false ? "rgba(255, 244, 244, 0.72)" : "rgba(223, 247, 239, 0.72)",
+                                }}
+                              >
+                                <div style={{ display: "grid", gap: 2 }}>
+                                  <strong style={{ color: palette.navy900, fontSize: 12.5 }}>Show In Live UI</strong>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                    Turn this off if you want the related map control or option hidden after publish.
+                                  </span>
+                                </div>
+                                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={row?.enabled !== false}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiIconDraftEnabled(entry.key, event.target.checked)}
+                                  />
+                                  {row?.enabled === false ? "Hidden" : "Visible"}
+                                </label>
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>Draft Preview</span>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {[
+                                      {
+                                        label: "Light",
+                                        background: previewMapUiTheme?.light?.tool_button_bg || "#ffffff",
+                                        border: previewMapUiTheme?.light?.tool_button_border || "rgba(17,36,69,0.12)",
+                                      },
+                                      {
+                                        label: "Dark",
+                                        background: previewMapUiTheme?.dark?.tool_button_bg || "#102445",
+                                        border: previewMapUiTheme?.dark?.tool_button_border || "rgba(255,255,255,0.16)",
+                                      },
+                                    ].map((surface) => (
+                                      <div key={surface.label} style={{ display: "grid", gap: 5, justifyItems: "center" }}>
+                                        <div
+                                          style={{
+                                            width: 68,
+                                            height: 68,
+                                            borderRadius: 18,
+                                            border: `1px solid ${surface.border}`,
+                                            background: surface.background,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            boxShadow: "0 8px 18px rgba(15, 23, 42, 0.08)",
+                                          }}
+                                        >
+                                          {previewUsesTint ? (
+                                            <span
+                                              style={{
+                                                width: 34,
+                                                height: 34,
+                                                display: "block",
+                                                backgroundColor: surface.label === "Dark" ? previewDarkTint : previewLightTint,
+                                                WebkitMaskImage: `url("${previewSrc}")`,
+                                                maskImage: `url("${previewSrc}")`,
+                                                WebkitMaskRepeat: "no-repeat",
+                                                maskRepeat: "no-repeat",
+                                                WebkitMaskPosition: "center",
+                                                maskPosition: "center",
+                                                WebkitMaskSize: "contain",
+                                                maskSize: "contain",
+                                              }}
+                                            />
+                                          ) : previewSrc ? (
+                                            <img src={previewSrc} alt={`${entry.label} preview`} style={{ width: 34, height: 34, objectFit: "contain" }} />
+                                          ) : (
+                                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>None</span>
+                                          )}
+                                        </div>
+                                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>{surface.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>Published Preview</span>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {[
+                                      {
+                                        label: "Light",
+                                        background: publishedMapUiTheme?.light?.tool_button_bg || "#ffffff",
+                                        border: publishedMapUiTheme?.light?.tool_button_border || "rgba(17,36,69,0.12)",
+                                        tint: publishedLightTint,
+                                      },
+                                      {
+                                        label: "Dark",
+                                        background: publishedMapUiTheme?.dark?.tool_button_bg || "#102445",
+                                        border: publishedMapUiTheme?.dark?.tool_button_border || "rgba(255,255,255,0.16)",
+                                        tint: publishedDarkTint,
+                                      },
+                                    ].map((surface) => (
+                                      <div key={`published-${surface.label}`} style={{ display: "grid", gap: 5, justifyItems: "center" }}>
+                                        <div
+                                          style={{
+                                            width: 68,
+                                            height: 68,
+                                            borderRadius: 18,
+                                            border: `1px solid ${surface.border}`,
+                                            background: surface.background,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            boxShadow: "0 8px 18px rgba(15, 23, 42, 0.08)",
+                                          }}
+                                        >
+                                          {publishedUsesTint ? (
+                                            <span
+                                              style={{
+                                                width: 34,
+                                                height: 34,
+                                                display: "block",
+                                                backgroundColor: surface.tint,
+                                                WebkitMaskImage: `url("${publishedSrc}")`,
+                                                maskImage: `url("${publishedSrc}")`,
+                                                WebkitMaskRepeat: "no-repeat",
+                                                maskRepeat: "no-repeat",
+                                                WebkitMaskPosition: "center",
+                                                maskPosition: "center",
+                                                WebkitMaskSize: "contain",
+                                                maskSize: "contain",
+                                              }}
+                                            />
+                                          ) : publishedSrc ? (
+                                            <img src={publishedSrc} alt={`${entry.label} published`} style={{ width: 34, height: 34, objectFit: "contain" }} />
+                                          ) : (
+                                            <span style={{ fontSize: 11.5, color: palette.textMuted }}>None</span>
+                                          )}
+                                        </div>
+                                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>{surface.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={responsiveTwoColGrid}>
+                                <label style={modalField}>
+                                  <span>Render Mode</span>
+                                  <select
+                                    value={previewRenderMode}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiIconDraftRenderMode(entry.key, event.target.value)}
+                                    style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {MAP_UI_ICON_RENDER_MODE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Icon Source URL</span>
+                                  <input
+                                    value={row?.src || ""}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiIconDraftSrc(entry.key, event.target.value)}
+                                    placeholder={entry.defaultSrc}
+                                    style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={modalField}>
+                                  <span>Replace with File</span>
+                                  <input
+                                    type="file"
+                                    accept={MAP_UI_ICON_ACCEPT}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiIconDraftFile(entry.key, event.target.files?.[0] || null)}
+                                    style={{ ...modalInput, padding: "10px 12px", background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <div style={{ ...modalField, justifyContent: "end" }}>
+                                  <span>Current Draft File</span>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted, minHeight: 48, display: "flex", alignItems: "center" }}>
+                                    {row?.file?.name || "Using the source URL above"}
+                                  </div>
+                                </div>
+                                <div style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Visibility Status</span>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                                    {row?.enabled === false
+                                      ? "This icon's related UI control or option will be hidden after the next publish."
+                                      : "This icon is currently set to appear in the live UI after publish."}
+                                  </div>
+                                </div>
+                                {previewRenderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG ? (
+                                  <>
+                                    <label style={modalField}>
+                                      <span>Light Mode Tint</span>
+                                      <input
+                                        type="color"
+                                        value={row?.light_tint_color || "#17324d"}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiIconDraftTintColor(entry.key, "light_tint_color", event.target.value)}
+                                        style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                      />
+                                    </label>
+                                    <label style={modalField}>
+                                      <span>Dark Mode Tint</span>
+                                      <input
+                                        type="color"
+                                        value={row?.dark_tint_color || "#f5fbff"}
+                                        disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                        onChange={(event) => updateMapUiIconDraftTintColor(entry.key, "dark_tint_color", event.target.value)}
+                                        style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                      />
+                                    </label>
+                                  </>
+                                ) : null}
+                                <div style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Render Mode Guidance</span>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                                    {MAP_UI_ICON_RENDER_MODE_OPTIONS.find((option) => option.key === previewRenderMode)?.description || "Choose how the app should render this icon."}
+                                  </div>
+                                </div>
+                                {previewRenderMode === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG ? (
+                                  <div style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                    <span>Tint Guidance</span>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                                      These tints are used when the icon is idle in light mode or dark mode. Active buttons still use the shared active tool colors so the selected state stays readable.
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -10835,7 +13132,7 @@ export default function PlatformAdminApp() {
               <div style={{ display: "grid", gap: 3 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Assets</h2>
                 <p style={{ margin: 0, color: palette.textMuted }}>
-                  Assign platform-defined domains to this organization, then capture tenant-specific notification routing, billing metadata, and supporting assets here.
+                  Assign platform-defined domains to this organization, then manage each assigned domain's routing, visibility, confidence, and supporting assets here.
                 </p>
               </div>
               <div style={{ display: "grid", gap: 12 }}>
@@ -10843,9 +13140,9 @@ export default function PlatformAdminApp() {
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
                       <div style={{ display: "grid", gap: 3 }}>
-                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Registry-Based Tenant Assignments</div>
+                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Assigned Domains</div>
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}, then capture tenant-specific routing, billing, and operational settings here. This is additive groundwork and does not replace the live public-app domain behavior yet.
+                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}. Once assigned, each enabled domain appears below for full tenant-specific setup.
                         </div>
                       </div>
                       <button
@@ -10867,717 +13164,912 @@ export default function PlatformAdminApp() {
                         Tenant domain assignment tables are not available yet in this environment. Run the latest migration locally to enable assignment management.
                       </div>
                     ) : null}
-                    {tenantDomainAssignmentEditorOpen ? (
-                      <form onSubmit={(event) => void saveTenantDomainAssignment(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(46,98,143,0.08)", borderColor: "rgba(46,98,143,0.22)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <div style={{ fontWeight: 900, color: palette.navy900 }}>
-                            {editingTenantDomainAssignmentKey ? `Edit ${tenantDomainAssignmentForm.domain_key} assignment` : "Assign Active Global Domain"}
-                          </div>
-                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            Billing metadata is informational only in v1 and does not gate activation.
-                          </div>
-                        </div>
-                        <div style={responsiveActionGrid}>
-                          <label style={modalField}>
-                            <span>Global Domain</span>
-                            <select
-                              value={tenantDomainAssignmentForm.domain_key}
-                              disabled={Boolean(editingTenantDomainAssignmentKey)}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, domain_key: e.target.value }))}
-                              style={{ ...modalInput, background: editingTenantDomainAssignmentKey ? "#eef4fb" : modalInput.background }}
-                            >
-                              {editingTenantDomainAssignmentKey ? (
-                                <option value={tenantDomainAssignmentForm.domain_key}>{domainRegistryRows.find((row) => row.key === tenantDomainAssignmentForm.domain_key)?.label || tenantDomainAssignmentForm.domain_key}</option>
-                              ) : assignableDomainRegistryRows.length ? (
-                                assignableDomainRegistryRows.map((domain) => (
-                                  <option key={domain.key} value={domain.key}>{domain.label}</option>
-                                ))
-                              ) : (
-                                <option value="">No active unassigned domains available</option>
-                              )}
-                            </select>
-                            {!editingTenantDomainAssignmentKey && !assignableDomainRegistryRows.length ? (
-                              <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-                                Draft domains stay in the registry until you promote them to Active.
+                    {tenantDomainAssignmentEditorOpen && !editingTenantDomainAssignmentKey ? renderTenantDomainAssignmentEditor() : null}
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {selectedTenantAssignedDomainRows.length ? selectedTenantAssignedDomainRows.map((assignment) => {
+                        const d = assignment.domain;
+                        const isExpanded =
+                          expandedAssignedDomainCardKey === d.key
+                          || editingTenantDomainAssignmentKey === d.key
+                          || editingDomainKey === d.key;
+                        const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
+                        const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
+                        const isAssetBacked = domainType === "asset_backed";
+                        const isEditingAssignment = editingTenantDomainAssignmentKey === d.key;
+                        const isEditingDomain = editingDomainKey === d.key;
+                        const domainFieldsReadOnly = !canEditTenantDomains || !isEditingDomain;
+                        const assignmentFieldsReadOnly = !canManageDomainRegistry || !isEditingAssignment;
+                        const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
+                        const assignmentEditLockedByOtherDomain = Boolean(editingTenantDomainAssignmentKey) && !isEditingAssignment;
+                        const domainDisclosureRows = Array.isArray(domainConfigForm?.[d.key]?.report_disclosures)
+                          ? domainConfigForm[d.key].report_disclosures
+                          : defaultDomainDisclosures(d.key);
+                        return (
+                          <div
+                            key={`${assignment.tenant_key}:${assignment.domain_key}`}
+                            ref={(node) => {
+                              if (node) assignedDomainCardRefs.current[d.key] = node;
+                              else delete assignedDomainCardRefs.current[d.key];
+                            }}
+                            style={{
+                              ...subPanel,
+                              display: "grid",
+                              gap: 10,
+                              background: "rgba(255,255,255,0.7)",
+                              borderColor: "rgba(17,36,69,0.12)",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                              <div style={{ display: "grid", gap: 4 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <strong style={{ color: palette.navy900 }}>{d.label}</strong>
+                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: assignment.active ? palette.mint700 : palette.red600, background: assignment.active ? "rgba(18,128,106,0.12)" : "rgba(209,67,67,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                    {assignment.active ? "Assignment Active" : "Assignment Inactive"}
+                                  </span>
+                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                    {d.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
+                                  </span>
+                                  <span style={{
+                                    borderRadius: 999,
+                                    padding: "4px 10px",
+                                    fontSize: 11.5,
+                                    fontWeight: 800,
+                                    color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : palette.navy500,
+                                    background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(46,98,143,0.12)",
+                                  }}>
+                                    {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                  <code>{assignment.domain_key}</code>
+                                  {assignment.visibility ? ` • Visibility ${assignment.visibility}` : ""}
+                                  {assignment.billing_model ? ` • Billing ${assignment.billing_model}` : ""}
+                                </div>
+                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                  Assignment controls and tenant-specific domain settings are managed together in this card.
+                                </div>
+                                {assignment.billing_notes ? (
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
+                                ) : null}
                               </div>
-                            ) : null}
-                          </label>
-                          <label style={modalField}>
-                            <span>Assignment Active</span>
-                            <select
-                              value={tenantDomainAssignmentForm.active ? "active" : "inactive"}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, active: e.target.value === "active" }))}
-                              style={modalInput}
-                            >
-                              <option value="active">Active</option>
-                              <option value="inactive">Inactive</option>
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Visibility</span>
-                            <select
-                              value={tenantDomainAssignmentForm.visibility}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, visibility: e.target.value }))}
-                              style={modalInput}
-                            >
-                              {DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS.map((option) => (
-                                <option key={option.key} value={option.key}>{option.label}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Notification Email</span>
-                            <input
-                              value={tenantDomainAssignmentForm.notification_email}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
-                              placeholder="notifications@examplecity.gov"
-                              style={modalInput}
-                            />
-                          </label>
-                          <label style={modalField}>
-                            <span>Billing Status</span>
-                            <select
-                              value={tenantDomainAssignmentForm.billing_status}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_status: e.target.value }))}
-                              style={modalInput}
-                            >
-                              {DOMAIN_BILLING_STATUS_OPTIONS.map((option) => (
-                                <option key={option.key} value={option.key}>{option.label}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Billing Model</span>
-                            <select
-                              value={tenantDomainAssignmentForm.billing_model}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_model: e.target.value }))}
-                              style={modalInput}
-                            >
-                              {DOMAIN_BILLING_MODEL_OPTIONS.map((option) => (
-                                <option key={option.key} value={option.key}>{option.label}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label style={modalField}>
-                            <span>Billing Amount</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={tenantDomainAssignmentForm.billing_amount}
-                              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_amount: e.target.value }))}
-                              placeholder="0.00"
-                              style={modalInput}
-                            />
-                          </label>
-                          <div style={{ ...modalField, justifyContent: "center" }}>
-                            <span>Repair Monitoring</span>
-                            <label
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button
+                                  type="button"
+                                  style={buttonAlt}
+                                  onClick={() => toggleAssignedDomainCard(d.key)}
+                                >
+                                  {isExpanded ? "Collapse" : "View"}
+                                </button>
+                              </div>
+                            </div>
+                            {isExpanded ? (
+                              <>
+                                <div
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                minHeight: 48,
-                                padding: "0 14px",
-                                borderRadius: 14,
-                                border: "1px solid rgba(17, 36, 69, 0.14)",
-                                background: "rgba(255,255,255,0.92)",
-                                color: palette.navy900,
-                                fontWeight: 700,
+                                ...subPanel,
+                                display: "grid",
+                                gap: 10,
+                                background: "rgba(46,98,143,0.08)",
+                                borderColor: "rgba(46,98,143,0.2)",
                               }}
                             >
-                              <input
-                                type="checkbox"
-                                checked={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
-                                onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
-                              />
-                              <span style={{ display: "grid", gap: 2 }}>
-                                <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
-                                <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                  {tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "Yes" : "No"}
-                                </span>
-                              </span>
-                            </label>
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 12, color: palette.textMuted }}>
-                          Report email templates are configured from <b>Manage Organizations → Domains</b> after the domain is enabled.
-                        </div>
-                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                          <span>Billing Notes</span>
-                          <textarea
-                            value={tenantDomainAssignmentForm.billing_notes}
-                            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_notes: e.target.value }))}
-                            rows={3}
-                            placeholder="Optional notes about pricing, review status, or future billing triggers."
-                            style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
-                          />
-                        </label>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button
-                            type="submit"
-                            style={{ ...buttonBase, opacity: tenantDomainAssignmentSaving ? 0.65 : 1 }}
-                            disabled={tenantDomainAssignmentSaving || (!editingTenantDomainAssignmentKey && !tenantDomainAssignmentForm.domain_key)}
-                          >
-                            {tenantDomainAssignmentSaving ? "Saving..." : editingTenantDomainAssignmentKey ? "Save Assignment" : "Create Assignment"}
-                          </button>
-                          <button
-                            type="button"
-                            style={buttonAlt}
-                            disabled={tenantDomainAssignmentSaving}
-                            onClick={cancelTenantDomainAssignmentEditor}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {selectedTenantAssignedDomainRows.length ? selectedTenantAssignedDomainRows.map((assignment) => (
-                        <div
-                          key={`${assignment.tenant_key}:${assignment.domain_key}`}
-                          style={{
-                            ...subPanel,
-                            display: "grid",
-                            gap: 8,
-                            background: "rgba(255,255,255,0.7)",
-                            borderColor: "rgba(17,36,69,0.12)",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                            <div style={{ display: "grid", gap: 4 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                <strong style={{ color: palette.navy900 }}>{assignment.domain.label}</strong>
-                                <span style={{ fontSize: 11.5, fontWeight: 800, color: assignment.active ? palette.mint700 : palette.red600, background: assignment.active ? "rgba(18,128,106,0.12)" : "rgba(209,67,67,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                  {assignment.active ? "Assignment Active" : "Assignment Inactive"}
-                                </span>
-                                <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                  {assignment.domain.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
-                                </span>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Assignment</div>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    Activation, routing, billing, and operational ownership for this tenant/domain assignment.
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {!isEditingAssignment ? (
+                                    <button
+                                      type="button"
+                                      style={{ ...buttonAlt, opacity: canManageDomainRegistry && !tenantDomainAssignmentSaving && !isEditingDomain && !editLockedByOtherDomain ? 1 : 0.55 }}
+                                      disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving || isEditingDomain || editLockedByOtherDomain || assignmentEditLockedByOtherDomain}
+                                      onClick={() => beginEditTenantDomainAssignment(assignment.domain_key)}
+                                      title={
+                                        assignmentEditLockedByOtherDomain
+                                          ? "Finish the current assignment edit before opening another one."
+                                          : isEditingDomain
+                                            ? "Finish editing settings before editing assignment."
+                                            : canManageDomainRegistry
+                                              ? `Edit ${d.label} assignment`
+                                              : "You need the Domains edit permission"
+                                      }
+                                    >
+                                      Edit Assignment
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        style={{ ...buttonBase, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                                        disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving}
+                                        onClick={() => void saveTenantDomainAssignment()}
+                                      >
+                                        Save Assignment
+                                      </button>
+                                      <button
+                                        type="button"
+                                        style={buttonAlt}
+                                        disabled={tenantDomainAssignmentSaving}
+                                        onClick={cancelTenantDomainAssignmentEditor}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                <code>{assignment.domain_key}</code>
-                                {assignment.visibility ? ` • Visibility ${assignment.visibility}` : ""}
-                                {assignment.billing_model ? ` • Billing ${assignment.billing_model}` : ""}
+                              <div style={responsiveActionGrid}>
+                                <label style={modalField}>
+                                  <span>Assignment Active</span>
+                                  <select
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.active ? "active" : "inactive") : (assignment.active ? "active" : "inactive")}
+                                    disabled={assignmentFieldsReadOnly}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, active: e.target.value === "active" }))}
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Visibility</span>
+                                  <select
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.visibility || "enabled") : (assignment.visibility || "enabled")}
+                                    disabled={assignmentFieldsReadOnly}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, visibility: e.target.value }))}
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_ASSIGNMENT_VISIBILITY_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Notification Email</span>
+                                  <input
+                                    readOnly={assignmentFieldsReadOnly}
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.notification_email || "") : (assignment.notification_email || "")}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
+                                    placeholder="notifications@examplecity.gov"
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={modalField}>
+                                  <span>Billing Status</span>
+                                  <select
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.billing_status || "not_applicable") : (assignment.billing_status || "not_applicable")}
+                                    disabled={assignmentFieldsReadOnly}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_status: e.target.value }))}
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_BILLING_STATUS_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Billing Model</span>
+                                  <select
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.billing_model || "included") : (assignment.billing_model || "included")}
+                                    disabled={assignmentFieldsReadOnly}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_model: e.target.value }))}
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_BILLING_MODEL_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Billing Amount</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    readOnly={assignmentFieldsReadOnly}
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.billing_amount ?? "0") : String(assignment.billing_amount ?? "0")}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_amount: e.target.value }))}
+                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <div style={{ ...modalField, justifyContent: "center" }}>
+                                  <span>Repair Monitoring</span>
+                                  <label
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      minHeight: 48,
+                                      padding: "0 14px",
+                                      borderRadius: 14,
+                                      border: "1px solid rgba(17, 36, 69, 0.14)",
+                                      background: "#eef4fb",
+                                      color: palette.navy900,
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false}
+                                      disabled={assignmentFieldsReadOnly}
+                                      onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
+                                    />
+                                    <span style={{ display: "grid", gap: 2 }}>
+                                      <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+                                      <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                        {(isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false) ? "Yes" : "No"}
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Billing Notes</span>
+                                  <textarea
+                                    readOnly={assignmentFieldsReadOnly}
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.billing_notes || "") : (assignment.billing_notes || "No billing notes.")}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, billing_notes: e.target.value }))}
+                                    rows={3}
+                                    placeholder="Optional notes about pricing, review status, or future billing triggers."
+                                    style={{ ...modalInput, minHeight: 86, resize: "vertical", background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
                               </div>
-                              {assignment.notification_email ? (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Notification email: {assignment.notification_email}</div>
-                              ) : null}
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                Template preset: {domainNotificationTemplateOption(assignment.notification_template_key).label}
+                            </div>
+                            <div
+                              style={{
+                                ...subPanel,
+                                display: "grid",
+                                gap: 10,
+                                background: "linear-gradient(180deg, rgba(18,128,106,0.14) 0%, rgba(18,128,106,0.09) 100%)",
+                                borderColor: "rgba(18,128,106,0.26)",
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Assigned Settings</div>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    {isAssetBacked
+                                      ? "Persistent mapped assets can be seeded with coordinates and also route notifications."
+                                      : "Resident and staff reports create incidents in this domain and route to the selected notification inbox."}
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {!isEditingDomain ? (
+                                    <button
+                                      type="button"
+                                      style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
+                                      disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment}
+                                      onClick={() => beginDomainEdit(d.key)}
+                                      title={
+                                        editLockedByOtherDomain
+                                          ? "Finish the current domain edit before opening another domain."
+                                          : isEditingAssignment
+                                            ? "Finish editing assignment before editing settings."
+                                            : canEditTenantDomains
+                                              ? `Edit ${d.label}`
+                                              : "You need the Domains edit permission"
+                                      }
+                                    >
+                                      Edit Settings
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                        disabled={!canEditTenantDomains}
+                                        onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
+                                      >
+                                        Save Settings
+                                      </button>
+                                      <button
+                                        type="button"
+                                        style={buttonAlt}
+                                        onClick={() => cancelDomainEdit(d.key)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                              {assignment.notification_subject_template ? (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                  Subject template: {assignment.notification_subject_template}
+                              <div style={responsiveActionGrid}>
+                                <label style={modalField}>
+                                  <span>Display Label</span>
+                                  <input
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.display_label || ""}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        display_label: e.target.value,
+                                      },
+                                    }))}
+                                    placeholder={defaultDomainLabel(d.key)}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={modalField}>
+                                  <span>Marker Color</span>
+                                  <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                                    <input
+                                      type="color"
+                                      value={sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key))}
+                                      disabled={domainFieldsReadOnly}
+                                      onChange={(e) => setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          marker_color: e.target.value,
+                                        },
+                                      }))}
+                                      style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                    />
+                                    <input
+                                      readOnly={domainFieldsReadOnly}
+                                      value={domainConfigForm?.[d.key]?.marker_color || ""}
+                                      onChange={(e) => setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          marker_color: e.target.value,
+                                        },
+                                      }))}
+                                      onBlur={(e) => setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          marker_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev?.[d.key]?.marker_color), defaultDomainMarkerColor(d.key)),
+                                        },
+                                      }))}
+                                      placeholder={defaultDomainMarkerColor(d.key)}
+                                      style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                    />
+                                  </div>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Icon Render Mode</span>
+                                  <select
+                                    value={domainConfigForm?.[d.key]?.icon_render_mode || defaultTenantDomainIconRenderMode(d.key, String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim())}
+                                    disabled={domainFieldsReadOnly}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        icon_render_mode: normalizeDomainIconRenderMode(
+                                          e.target.value,
+                                          String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+                                        ),
+                                      },
+                                    }))}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {MAP_UI_ICON_RENDER_MODE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Marker Icon Tint</span>
+                                  <select
+                                    value={domainConfigForm?.[d.key]?.icon_tint_mode || DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST}
+                                    disabled={
+                                      domainFieldsReadOnly
+                                      || normalizeDomainIconRenderMode(
+                                        domainConfigForm?.[d.key]?.icon_render_mode,
+                                        String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+                                      ) !== MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG
+                                    }
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        icon_tint_mode: normalizeDomainIconTintMode(e.target.value),
+                                      },
+                                    }))}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_ICON_TINT_MODE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                {normalizeDomainIconRenderMode(
+                                  domainConfigForm?.[d.key]?.icon_render_mode,
+                                  String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+                                ) === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG
+                                && normalizeDomainIconTintMode(domainConfigForm?.[d.key]?.icon_tint_mode) === DOMAIN_ICON_TINT_MODE.CUSTOM ? (
+                                  <label style={modalField}>
+                                    <span>Custom Icon Tint</span>
+                                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                                      <input
+                                        type="color"
+                                        value={normalizeDomainIconTintColor(
+                                          domainConfigForm?.[d.key]?.icon_tint_color,
+                                          resolveDomainMarkerIconTintColor({
+                                            renderMode: domainConfigForm?.[d.key]?.icon_render_mode,
+                                            tintMode: DOMAIN_ICON_TINT_MODE.CUSTOM,
+                                            tintColor: domainConfigForm?.[d.key]?.icon_tint_color,
+                                            markerColor: domainConfigForm?.[d.key]?.marker_color,
+                                          })
+                                        )}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            icon_tint_color: e.target.value,
+                                          },
+                                        }))}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                      />
+                                      <input
+                                        readOnly={domainFieldsReadOnly}
+                                        value={domainConfigForm?.[d.key]?.icon_tint_color || ""}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            icon_tint_color: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            icon_tint_color: normalizeDomainIconTintColor(e.target.value, prev?.[d.key]?.icon_tint_color || "#111111"),
+                                          },
+                                        }))}
+                                        placeholder="#ffffff"
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                      />
+                                    </div>
+                                  </label>
+                                ) : null}
+                                {!isAssetBacked ? (
+                                  <>
+                                    <label style={modalField}>
+                                      <span>Public Visibility Threshold</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        readOnly={domainFieldsReadOnly}
+                                        value={domainConfigForm?.[d.key]?.public_visibility_min_reports ?? defaultDomainPublicVisibilityMinReports(d.key)}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            public_visibility_min_reports: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            public_visibility_min_reports: sanitizePositiveIntegerSetting(
+                                              e.target.value,
+                                              defaultDomainPublicVisibilityMinReports(d.key),
+                                              { min: 1, max: 25 }
+                                            ),
+                                          },
+                                        }))}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                      />
+                                    </label>
+                                    <label style={modalField}>
+                                      <span>High Confidence Threshold</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        readOnly={domainFieldsReadOnly}
+                                        value={domainConfigForm?.[d.key]?.high_confidence_min_reports ?? defaultDomainHighConfidenceMinReports(d.key)}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_min_reports: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => {
+                                          const publicMin = sanitizePositiveIntegerSetting(
+                                            prev?.[d.key]?.public_visibility_min_reports,
+                                            defaultDomainPublicVisibilityMinReports(d.key),
+                                            { min: 1, max: 25 }
+                                          );
+                                          return {
+                                            ...prev,
+                                            [d.key]: {
+                                              ...(prev?.[d.key] || {}),
+                                              public_visibility_min_reports: publicMin,
+                                              high_confidence_min_reports: sanitizePositiveIntegerSetting(
+                                                e.target.value,
+                                                Math.max(publicMin, defaultDomainHighConfidenceMinReports(d.key)),
+                                                { min: publicMin, max: 25 }
+                                              ),
+                                            },
+                                          };
+                                        })}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                      />
+                                    </label>
+                                  </>
+                                ) : null}
+                                <label style={modalField}>
+                                  <span>Email Template Preset</span>
+                                  <select
+                                    value={domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key}
+                                    disabled={domainFieldsReadOnly}
+                                    onChange={(e) => {
+                                      const nextTemplate = domainNotificationTemplateOption(e.target.value);
+                                      setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          notification_template_key: nextTemplate.key,
+                                          notification_subject_template: nextTemplate.subject,
+                                          notification_body_template: nextTemplate.body,
+                                        },
+                                      }));
+                                    }}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </div>
+                              <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                <span>Issue Types</span>
+                                <textarea
+                                  readOnly={domainFieldsReadOnly}
+                                  value={domainConfigForm?.[d.key]?.issue_types_input || ""}
+                                  onChange={(e) => setDomainConfigForm((prev) => ({
+                                    ...prev,
+                                    [d.key]: {
+                                      ...(prev?.[d.key] || {}),
+                                      issue_types_input: e.target.value,
+                                    },
+                                  }))}
+                                  rows={4}
+                                  placeholder={"Broken Swing\nDamaged Slide\nLoose Surface Material"}
+                                  style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                />
+                                <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
+                                  One issue type per line. These options appear to the reporter for this tenant and domain only.
+                                </div>
+                              </label>
+                              <div
+                                style={{
+                                  ...subPanel,
+                                  display: "grid",
+                                  gap: 10,
+                                  background: "rgba(255,255,255,0.78)",
+                                  borderColor: "rgba(17,36,69,0.12)",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                                  <div style={{ display: "grid", gap: 3 }}>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Disclosures</div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Add informational notices or required acknowledgements for this tenant and domain. Disclosures can appear before the form opens or inside the form before submission.
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
+                                    disabled={domainFieldsReadOnly}
+                                    onClick={() => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        report_disclosures: [
+                                          ...(Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []),
+                                          {
+                                            id: createDomainDisclosureId("report_disclosure"),
+                                            title: "",
+                                            body: "",
+                                            required_acknowledgement: false,
+                                            display_position: "inside_form",
+                                          },
+                                        ],
+                                      },
+                                    }))}
+                                  >
+                                    Add Disclosure
+                                  </button>
+                                </div>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                  {domainDisclosureRows.length ? domainDisclosureRows.map((disclosure, disclosureIndex) => (
+                                    <div
+                                      key={disclosure.id || `${d.key}:disclosure:${disclosureIndex}`}
+                                      style={{
+                                        display: "grid",
+                                        gap: 10,
+                                        padding: 12,
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(17,36,69,0.12)",
+                                        background: "rgba(255,255,255,0.92)",
+                                      }}
+                                    >
+                                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                                            Disclosure {disclosureIndex + 1}
+                                          </span>
+                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                            {domainDisclosurePositionLabel(disclosure.display_position)}
+                                          </span>
+                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: disclosure.required_acknowledgement ? palette.red600 : palette.mint700, background: disclosure.required_acknowledgement ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                            {disclosure.required_acknowledgement ? "Required acknowledgment" : "Informational"}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
+                                          disabled={domainFieldsReadOnly}
+                                          onClick={() => setDomainConfigForm((prev) => ({
+                                            ...prev,
+                                            [d.key]: {
+                                              ...(prev?.[d.key] || {}),
+                                              report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : [])
+                                                .filter((row, rowIndex) => rowIndex !== disclosureIndex),
+                                            },
+                                          }))}
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                      <div style={responsiveActionGrid}>
+                                        <label style={modalField}>
+                                          <span>Title</span>
+                                          <input
+                                            readOnly={domainFieldsReadOnly}
+                                            value={disclosure.title || ""}
+                                            onChange={(e) => setDomainConfigForm((prev) => ({
+                                              ...prev,
+                                              [d.key]: {
+                                                ...(prev?.[d.key] || {}),
+                                                report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []).map((row, rowIndex) => (
+                                                  rowIndex === disclosureIndex
+                                                    ? { ...row, title: e.target.value }
+                                                    : row
+                                                )),
+                                              },
+                                            }))}
+                                            placeholder="Disclosure title"
+                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                          />
+                                        </label>
+                                        <label style={modalField}>
+                                          <span>Display Position</span>
+                                          <select
+                                            value={disclosure.display_position || "inside_form"}
+                                            disabled={domainFieldsReadOnly}
+                                            onChange={(e) => setDomainConfigForm((prev) => ({
+                                              ...prev,
+                                              [d.key]: {
+                                                ...(prev?.[d.key] || {}),
+                                                report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []).map((row, rowIndex) => (
+                                                  rowIndex === disclosureIndex
+                                                    ? { ...row, display_position: e.target.value === "before_form" ? "before_form" : "inside_form" }
+                                                    : row
+                                                )),
+                                              },
+                                            }))}
+                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                          >
+                                            <option value="inside_form">Inside form</option>
+                                            <option value="before_form">Before form</option>
+                                          </select>
+                                        </label>
+                                        <div style={{ ...modalField, justifyContent: "center" }}>
+                                          <span>Acknowledgement</span>
+                                          <label
+                                            style={{
+                                              display: "flex",
+                                              alignItems: "center",
+                                              gap: 8,
+                                              minHeight: 48,
+                                              padding: "0 14px",
+                                              borderRadius: 14,
+                                              border: "1px solid rgba(17, 36, 69, 0.14)",
+                                              background: "#eef4fb",
+                                              color: palette.navy900,
+                                              fontWeight: 700,
+                                            }}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={disclosure.required_acknowledgement === true}
+                                              disabled={domainFieldsReadOnly}
+                                              onChange={(e) => setDomainConfigForm((prev) => ({
+                                                ...prev,
+                                                [d.key]: {
+                                                  ...(prev?.[d.key] || {}),
+                                                  report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []).map((row, rowIndex) => (
+                                                    rowIndex === disclosureIndex
+                                                      ? { ...row, required_acknowledgement: e.target.checked }
+                                                      : row
+                                                  )),
+                                                },
+                                              }))}
+                                            />
+                                            <span style={{ display: "grid", gap: 2 }}>
+                                              <span style={{ fontWeight: 800 }}>Require acknowledgement?</span>
+                                              <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                                {disclosure.required_acknowledgement ? "Reporter must confirm this before continuing." : "Shown as informational text only."}
+                                              </span>
+                                            </span>
+                                          </label>
+                                        </div>
+                                      </div>
+                                      <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                        <span>Body Text</span>
+                                        <textarea
+                                          readOnly={domainFieldsReadOnly}
+                                          value={disclosure.body || ""}
+                                          onChange={(e) => setDomainConfigForm((prev) => ({
+                                            ...prev,
+                                            [d.key]: {
+                                              ...(prev?.[d.key] || {}),
+                                              report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []).map((row, rowIndex) => (
+                                                rowIndex === disclosureIndex
+                                                  ? { ...row, body: e.target.value }
+                                                  : row
+                                              )),
+                                            },
+                                          }))}
+                                          rows={4}
+                                          placeholder="Disclosure text shown to the reporter."
+                                          style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                        />
+                                      </label>
+                                    </div>
+                                  )) : (
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      No disclosures configured for this domain.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                                {isAssetBacked
+                                  ? "Asset-backed domains do not use public incident confidence thresholds."
+                                  : "Confidence rules: the public visibility threshold controls when an incident becomes visible to everyone on the map. The high confidence threshold is stored per tenant/domain so future scoring, alerting, and operations workflows can follow local reporting patterns."}
+                              </div>
+                              <div
+                                style={{
+                                  ...subPanel,
+                                  display: "grid",
+                                  gap: 10,
+                                  background: "rgba(255,255,255,0.78)",
+                                  borderColor: "rgba(17,36,69,0.12)",
+                                }}
+                              >
+                                <div style={{ display: "grid", gap: 3 }}>
+                                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
+                                  </div>
+                                  <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                    Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
+                                    {" • "}
+                                    {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
+                                  </div>
+                                </div>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Email Subject Template</span>
+                                  <input
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.notification_subject_template || ""}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        notification_subject_template: e.target.value,
+                                      },
+                                    }))}
+                                    placeholder="{{domain_label}} report ({{report_number}})"
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Email Body Template</span>
+                                  <textarea
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.notification_body_template || ""}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        notification_body_template: e.target.value,
+                                      },
+                                    }))}
+                                    rows={11}
+                                    placeholder="Use the preset template or write your own body with macros."
+                                    style={{
+                                      ...modalInput,
+                                      minHeight: 220,
+                                      resize: "vertical",
+                                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                                      lineHeight: 1.45,
+                                      background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background,
+                                    }}
+                                  />
+                                </label>
+                                <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                  Available macros: {domainNotificationTemplateTokens(manageableTenantDomainRowByKey?.[d.key]?.type_options || []).join(", ")}
+                                </div>
+                              </div>
+                              {isAssetBacked ? (
+                                <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                    <div style={{ display: "grid", gap: 3 }}>
+                                      <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
+                                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                        {coordinateFiles.length
+                                          ? `${coordinateFiles.length} coordinate file${coordinateFiles.length === 1 ? "" : "s"} linked to ${d.label}.`
+                                          : `No coordinate files are linked to ${d.label} yet.`}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
+                                      disabled={!canEditTenantFiles || !isEditingDomain}
+                                      onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
+                                      title={
+                                        !isEditingDomain
+                                          ? `Open edit mode to manage ${d.label} coordinates`
+                                          : canEditTenantFiles
+                                            ? `Add coordinate file for ${d.label}`
+                                            : "You need the Files edit permission"
+                                      }
+                                    >
+                                      Add Coordinates
+                                    </button>
+                                  </div>
+                                  {coordinateFiles.length ? (
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      {coordinateFiles.slice(0, 3).map((row) => (
+                                        <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <div style={{ display: "grid", gap: 2 }}>
+                                            <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed coordinate file"}</strong>
+                                            <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                              {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
+                                            </span>
+                                          </div>
+                                          <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
+                                        </div>
+                                      ))}
+                                      {coordinateFiles.length > 3 ? (
+                                        <div style={{ fontSize: 12, color: palette.textMuted }}>
+                                          {coordinateFiles.length - 3} more coordinate file{coordinateFiles.length - 3 === 1 ? "" : "s"} available in the asset library below.
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               ) : null}
-                              {assignment.billing_notes ? (
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
-                              ) : null}
-                            </div>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                                disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving}
-                                onClick={() => beginEditTenantDomainAssignment(assignment.domain_key)}
-                              >
-                                Edit
-                              </button>
-                            </div>
+                                </div>
+                              </>
+                            ) : null}
                           </div>
-                        </div>
-                      )) : (
+                        );
+                      }) : (
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          No registry-based assignments are configured yet for this organization.
+                          No domains are assigned yet for this organization.
                         </div>
                       )}
                     </div>
                   </div>
                 ) : null}
-
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
-                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Enablement</div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Control which reporting domains are enabled, how each domain is classified, and where notifications should route for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      style={{ ...buttonAlt, opacity: canEditTenantDomains && !editingDomainKey && inactiveCompactDomainOptions.length ? 1 : 0.55 }}
-                      disabled={!canEditTenantDomains || Boolean(editingDomainKey) || !inactiveCompactDomainOptions.length}
-                      onClick={() => setDomainAddModalOpen(true)}
-                      title={
-                        !inactiveCompactDomainOptions.length
-                          ? "All domains are already enabled."
-                          : editingDomainKey
-                            ? "Finish the current domain edit before enabling another domain."
-                            : "Add a new enabled domain"
-                      }
-                    >
-                      Add Domain
-                    </button>
-                  </div>
-                  {isCompactViewport ? (
-                    <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
-                      <label style={{ display: "grid", gap: 6, fontSize: 12.5 }}>
-                        <span style={{ color: palette.textMuted }}>Enabled Domains</span>
-                        <select
-                          value={compactDomainSettingsKey}
-                          onChange={(event) => setCompactDomainSettingsKey(event.target.value)}
-                          style={inputBase}
-                          disabled={!activeCompactDomainOptions.length}
-                        >
-                          {activeCompactDomainOptions.length ? (
-                            activeCompactDomainOptions.map((domain) => (
-                              <option key={domain.key} value={domain.key}>{domain.label}</option>
-                            ))
-                          ) : (
-                            <option value="">No enabled domains</option>
-                          )}
-                        </select>
-                      </label>
-                    </div>
-                  ) : null}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))", gap: 10, alignItems: "start" }}>
-                    {(isCompactViewport ? compactVisibleDomainCards : domainEnablementCards).map((d) => {
-                      const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
-                      const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
-                      const isAssetBacked = domainType === "asset_backed";
-                      const isEditingDomain = editingDomainKey === d.key;
-                      const domainFieldsReadOnly = !canEditTenantDomains || !isEditingDomain;
-                      const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
-                      return (
-                        <div
-                          key={d.key}
-                          style={{
-                            ...subPanel,
-                            display: "grid",
-                            gap: 10,
-                            background: "linear-gradient(180deg, rgba(18,128,106,0.14) 0%, rgba(18,128,106,0.09) 100%)",
-                            borderColor: "rgba(18,128,106,0.26)",
-                          }}
-                        >
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                            <div style={{ display: "grid", gap: 4 }}>
-                              <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>{d.label}</div>
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                {isAssetBacked
-                                  ? "Persistent mapped assets can be seeded with coordinates and also route notifications."
-                                  : "Resident and staff reports create incidents in this domain and route to the selected notification inbox."}
-                              </div>
-                            </div>
-                            <span style={{
-                              borderRadius: 999,
-                              padding: "4px 10px",
-                              fontSize: 11.5,
-                              fontWeight: 800,
-                              color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : palette.navy500,
-                              background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(46,98,143,0.12)",
-                            }}>
-                              {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
-                            </span>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {!isEditingDomain ? (
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain ? 1 : 0.55 }}
-                                disabled={!canEditTenantDomains || editLockedByOtherDomain}
-                                onClick={() => beginDomainEdit(d.key)}
-                                title={
-                                  editLockedByOtherDomain
-                                    ? "Finish the current domain edit before opening another domain."
-                                    : canEditTenantDomains
-                                      ? `Edit ${d.label}`
-                                      : "You need the Domains edit permission"
-                                }
-                              >
-                                Edit
-                              </button>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
-                                  disabled={!canEditTenantDomains}
-                                  onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  type="button"
-                                  style={buttonAlt}
-                                  onClick={() => cancelDomainEdit(d.key)}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            )}
-                          </div>
-                          <div style={responsiveActionGrid}>
-                            <label style={modalField}>
-                              <span>Enablement</span>
-                              <select
-                                value={domainVisibilityForm[d.key] || "enabled"}
-                                disabled={domainFieldsReadOnly}
-                                onChange={(e) => setDomainVisibilityForm((prev) => ({ ...prev, [d.key]: e.target.value }))}
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              >
-                                <option value="enabled">Enabled</option>
-                                <option value="disabled">Disabled</option>
-                              </select>
-                            </label>
-                            <label style={modalField}>
-                              <span>Domain Type</span>
-                              <select
-                                value={domainType}
-                                disabled={domainFieldsReadOnly}
-                                onChange={(e) => setDomainConfigForm((prev) => ({
-                                  ...prev,
-                                  [d.key]: {
-                                    ...(prev?.[d.key] || {}),
-                                    domain_type: e.target.value,
-                                  },
-                                }))}
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              >
-                                {DOMAIN_TYPE_OPTIONS.map((option) => (
-                                  <option key={option.key} value={option.key}>{option.label}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label style={modalField}>
-                              <span>Display Label</span>
-                              <input
-                                readOnly={domainFieldsReadOnly}
-                                value={domainConfigForm?.[d.key]?.display_label || ""}
-                                onChange={(e) => setDomainConfigForm((prev) => ({
-                                  ...prev,
-                                  [d.key]: {
-                                    ...(prev?.[d.key] || {}),
-                                    display_label: e.target.value,
-                                  },
-                                }))}
-                                placeholder={defaultDomainLabel(d.key)}
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              />
-                            </label>
-                            <label style={modalField}>
-                              <span>Marker Color</span>
-                              <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
-                                <input
-                                  type="color"
-                                  value={sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key))}
-                                  disabled={domainFieldsReadOnly}
-                                  onChange={(e) => setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      marker_color: e.target.value,
-                                    },
-                                  }))}
-                                  style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
-                                />
-                                <input
-                                  readOnly={domainFieldsReadOnly}
-                                  value={domainConfigForm?.[d.key]?.marker_color || ""}
-                                  onChange={(e) => setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      marker_color: e.target.value,
-                                    },
-                                  }))}
-                                  onBlur={(e) => setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      marker_color: sanitizeHexColor(normalizeHexDraft(e.target.value, prev?.[d.key]?.marker_color), defaultDomainMarkerColor(d.key)),
-                                    },
-                                  }))}
-                                  placeholder={defaultDomainMarkerColor(d.key)}
-                                  style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                />
-                              </div>
-                            </label>
-                            <label style={modalField}>
-                              <span>Notification Email</span>
-                              <input
-                                readOnly={domainFieldsReadOnly}
-                                value={domainConfigForm?.[d.key]?.notification_email || ""}
-                                onChange={(e) => setDomainConfigForm((prev) => ({
-                                  ...prev,
-                                  [d.key]: {
-                                    ...(prev?.[d.key] || {}),
-                                    notification_email: e.target.value,
-                                  },
-                                }))}
-                                placeholder={`notifications+${d.key}@examplemunicipality.gov`}
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              />
-                            </label>
-                            {!isAssetBacked ? (
-                              <>
-                                <label style={modalField}>
-                                  <span>Public Visibility Threshold</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    readOnly={domainFieldsReadOnly}
-                                    value={domainConfigForm?.[d.key]?.public_visibility_min_reports ?? defaultDomainPublicVisibilityMinReports(d.key)}
-                                    onChange={(e) => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        public_visibility_min_reports: e.target.value,
-                                      },
-                                    }))}
-                                    onBlur={(e) => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        public_visibility_min_reports: sanitizePositiveIntegerSetting(
-                                          e.target.value,
-                                          defaultDomainPublicVisibilityMinReports(d.key),
-                                          { min: 1, max: 25 }
-                                        ),
-                                      },
-                                    }))}
-                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                  />
-                                </label>
-                                <label style={modalField}>
-                                  <span>High Confidence Threshold</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    readOnly={domainFieldsReadOnly}
-                                    value={domainConfigForm?.[d.key]?.high_confidence_min_reports ?? defaultDomainHighConfidenceMinReports(d.key)}
-                                    onChange={(e) => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        high_confidence_min_reports: e.target.value,
-                                      },
-                                    }))}
-                                    onBlur={(e) => setDomainConfigForm((prev) => {
-                                      const publicMin = sanitizePositiveIntegerSetting(
-                                        prev?.[d.key]?.public_visibility_min_reports,
-                                        defaultDomainPublicVisibilityMinReports(d.key),
-                                        { min: 1, max: 25 }
-                                      );
-                                      return {
-                                        ...prev,
-                                        [d.key]: {
-                                          ...(prev?.[d.key] || {}),
-                                          public_visibility_min_reports: publicMin,
-                                          high_confidence_min_reports: sanitizePositiveIntegerSetting(
-                                            e.target.value,
-                                            Math.max(publicMin, defaultDomainHighConfidenceMinReports(d.key)),
-                                            { min: publicMin, max: 25 }
-                                          ),
-                                        },
-                                      };
-                                    })}
-                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                  />
-                                </label>
-                              </>
-                            ) : null}
-                            <label style={modalField}>
-                              <span>Email Template Preset</span>
-                              <select
-                                value={domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key}
-                                disabled={domainFieldsReadOnly}
-                                onChange={(e) => {
-                                  const nextTemplate = domainNotificationTemplateOption(e.target.value);
-                                  setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      notification_template_key: nextTemplate.key,
-                                      notification_subject_template: nextTemplate.subject,
-                                      notification_body_template: nextTemplate.body,
-                                    },
-                                  }));
-                                }}
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              >
-                                {DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.map((option) => (
-                                  <option key={option.key} value={option.key}>{option.label}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <div style={{ ...modalField, justifyContent: "center" }}>
-                              <span>Repair Verification</span>
-                              <label
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  minHeight: 48,
-                                  padding: "0 14px",
-                                  borderRadius: 14,
-                                  border: "1px solid rgba(17, 36, 69, 0.14)",
-                                  background: domainFieldsReadOnly ? "#eef4fb" : "rgba(255,255,255,0.92)",
-                                  color: palette.navy900,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
-                                  disabled={domainFieldsReadOnly}
-                                  onChange={(e) => setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      organization_monitored_repairs: e.target.checked,
-                                    },
-                                  }))}
-                                />
-                                <span style={{ display: "grid", gap: 2 }}>
-                                  <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
-                                  <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                    {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false ? "Yes" : "No"}
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
-                            {isAssetBacked
-                              ? "Asset-backed domains do not use public incident confidence thresholds."
-                              : "Confidence rules: the public visibility threshold controls when an incident becomes visible to everyone on the map. The high confidence threshold is stored per tenant/domain so future scoring, alerting, and operations workflows can follow local reporting patterns."}
-                          </div>
-                          <div
-                            style={{
-                              ...subPanel,
-                              display: "grid",
-                              gap: 10,
-                              background: "rgba(255,255,255,0.78)",
-                              borderColor: "rgba(17,36,69,0.12)",
-                            }}
-                          >
-                            <div style={{ display: "grid", gap: 3 }}>
-                              <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
-                              <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
-                              </div>
-                              <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                                Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
-                                {" • "}
-                                {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
-                              </div>
-                            </div>
-                            <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                              <span>Email Subject Template</span>
-                              <input
-                                readOnly={domainFieldsReadOnly}
-                                value={domainConfigForm?.[d.key]?.notification_subject_template || ""}
-                                onChange={(e) => setDomainConfigForm((prev) => ({
-                                  ...prev,
-                                  [d.key]: {
-                                    ...(prev?.[d.key] || {}),
-                                    notification_subject_template: e.target.value,
-                                  },
-                                }))}
-                                placeholder="{{domain_label}} report ({{report_number}})"
-                                style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                              />
-                            </label>
-                            <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                              <span>Email Body Template</span>
-                              <textarea
-                                readOnly={domainFieldsReadOnly}
-                                value={domainConfigForm?.[d.key]?.notification_body_template || ""}
-                                onChange={(e) => setDomainConfigForm((prev) => ({
-                                  ...prev,
-                                  [d.key]: {
-                                    ...(prev?.[d.key] || {}),
-                                    notification_body_template: e.target.value,
-                                  },
-                                }))}
-                                rows={11}
-                                placeholder="Use the preset template or write your own body with macros."
-                                style={{
-                                  ...modalInput,
-                                  minHeight: 220,
-                                  resize: "vertical",
-                                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                                  lineHeight: 1.45,
-                                  background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background,
-                                }}
-                              />
-                            </label>
-                            <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                              Available macros: {DOMAIN_NOTIFICATION_TEMPLATE_TOKENS.join(", ")}
-                            </div>
-                          </div>
-                          {isAssetBacked ? (
-                            <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                <div style={{ display: "grid", gap: 3 }}>
-                                  <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    {coordinateFiles.length
-                                      ? `${coordinateFiles.length} coordinate file${coordinateFiles.length === 1 ? "" : "s"} linked to ${d.label}.`
-                                      : `No coordinate files are linked to ${d.label} yet.`}
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
-                                  disabled={!canEditTenantFiles || !isEditingDomain}
-                                  onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
-                                  title={
-                                    !isEditingDomain
-                                      ? `Open edit mode to manage ${d.label} coordinates`
-                                      : canEditTenantFiles
-                                        ? `Add coordinate file for ${d.label}`
-                                        : "You need the Files edit permission"
-                                  }
-                                >
-                                  Add Coordinates
-                                </button>
-                              </div>
-                              {coordinateFiles.length ? (
-                                <div style={{ display: "grid", gap: 6 }}>
-                                  {coordinateFiles.slice(0, 3).map((row) => (
-                                    <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                      <div style={{ display: "grid", gap: 2 }}>
-                                        <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed coordinate file"}</strong>
-                                        <span style={{ fontSize: 12, color: palette.textMuted }}>
-                                          {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
-                                        </span>
-                                      </div>
-                                      <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
-                                    </div>
-                                  ))}
-                                  {coordinateFiles.length > 3 ? (
-                                    <div style={{ fontSize: 12, color: palette.textMuted }}>
-                                      {coordinateFiles.length - 3} more coordinate file{coordinateFiles.length - 3 === 1 ? "" : "s"} available in the asset library below.
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {!domainEnablementCards.length ? (
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      No enabled domains yet. Use <b>Add Domain</b> above to enable the first one.
-                    </div>
-                  ) : null}
-                </div>
 
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
