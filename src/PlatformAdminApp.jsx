@@ -2319,7 +2319,7 @@ export default function PlatformAdminApp() {
   const [mapUiThemeDraftForm, setMapUiThemeDraftForm] = useState(() => buildMapUiThemeDraftForm({}));
   const [mapUiThemeBaseEnabled, setMapUiThemeBaseEnabled] = useState(false);
   const [mapUiThemeSchedulesDraft, setMapUiThemeSchedulesDraft] = useState([]);
-  const [mapUiThemeSectionOpen, setMapUiThemeSectionOpen] = useState(false);
+  const [mapUiThemeSectionOpen, setMapUiThemeSectionOpen] = useState(true);
   const [mapUiThemeExpandedScheduleId, setMapUiThemeExpandedScheduleId] = useState("");
   const [selectedMapUiIconKeysByGroup, setSelectedMapUiIconKeysByGroup] = useState({});
   const [mapUiIconSavingDraft, setMapUiIconSavingDraft] = useState(false);
