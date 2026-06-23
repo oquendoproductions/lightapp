@@ -5,15 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-/tmp/npm-cache}"
 export npm_config_cache="${NPM_CONFIG_CACHE}"
 
+if [[ -f "${ROOT_DIR}/.env.local" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env.local"
+  set +a
+fi
+
 if [[ -f "${ROOT_DIR}/.env.cloudflare.local" ]]; then
   set -a
   # shellcheck disable=SC1091
   source "${ROOT_DIR}/.env.cloudflare.local"
-  set +a
-elif [[ -f "${ROOT_DIR}/.env.local" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${ROOT_DIR}/.env.local"
   set +a
 fi
 
