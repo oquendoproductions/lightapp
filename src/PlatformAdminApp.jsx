@@ -8560,8 +8560,8 @@ export default function PlatformAdminApp() {
           </label>
         ) : null}
         <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span>Allow Photos</span>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "nowrap" }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: palette.navy900, lineHeight: 1.2 }}>Allow Photos</span>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
               <input
                 type="checkbox"
@@ -8576,8 +8576,8 @@ export default function PlatformAdminApp() {
           </div>
         </div>
         <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span>Road Required</span>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "nowrap" }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: palette.navy900, lineHeight: 1.2 }}>Road Required</span>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
               <input
                 type="checkbox"
@@ -11275,6 +11275,8 @@ export default function PlatformAdminApp() {
                     type="button"
                     style={{
                       ...buttonBase,
+                      marginLeft: "auto",
+                      alignSelf: "flex-start",
                       opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55,
                       background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
                       border: `1px solid ${palette.mint700}`,
