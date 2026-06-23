@@ -9199,7 +9199,27 @@ export default function PlatformAdminApp() {
                   New
                 </span>
                 <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_alert_info_bg, border: `1px solid ${theme.feed_alert_info_border}`, color: theme.feed_alert_info_text, fontSize: 11, fontWeight: 800 }}>
-                  Alert
+                  Info
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_alert_advisory_bg, border: `1px solid ${theme.feed_alert_advisory_border}`, color: theme.feed_alert_advisory_text, fontSize: 11, fontWeight: 800 }}>
+                  Advisory
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_alert_urgent_bg, border: `1px solid ${theme.feed_alert_urgent_border}`, color: theme.feed_alert_urgent_text, fontSize: 11, fontWeight: 800 }}>
+                  Urgent
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_alert_emergency_bg, border: `1px solid ${theme.feed_alert_emergency_border}`, color: theme.feed_alert_emergency_text, fontSize: 11, fontWeight: 800 }}>
+                  Emergency
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_status_published_bg, border: `1px solid ${theme.feed_status_published_border}`, color: theme.feed_status_published_text, fontSize: 11, fontWeight: 800 }}>
+                  Published
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_status_draft_bg, border: `1px solid ${theme.feed_status_draft_border}`, color: theme.feed_status_draft_text, fontSize: 11, fontWeight: 800 }}>
+                  Draft
+                </span>
+                <span style={{ borderRadius: 999, padding: "4px 10px", background: theme.feed_status_archived_bg, border: `1px solid ${theme.feed_status_archived_border}`, color: theme.feed_status_archived_text, fontSize: 11, fontWeight: 800 }}>
+                  Archived
                 </span>
               </div>
             </div>
@@ -9222,6 +9242,9 @@ export default function PlatformAdminApp() {
               <div style={{ display: "grid", gap: 4 }}>
                 <strong style={{ fontSize: 14 }}>Quick Actions</strong>
                 <div style={{ fontSize: 12, color: theme.feed_muted_text }}>Modal, inputs, and primary/secondary buttons.</div>
+              </div>
+              <div style={{ borderRadius: 14, background: theme.modal_subtle_bg, padding: "10px 12px", fontSize: 12, color: theme.surface_text }}>
+                Subtle surface preview
               </div>
               <div style={{ borderRadius: 14, border: `1px solid ${theme.modal_input_border}`, background: theme.modal_input_bg, padding: "10px 12px", fontSize: 12.5, color: theme.surface_text }}>
                 Search address or report number

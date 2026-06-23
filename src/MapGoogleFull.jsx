@@ -18373,57 +18373,68 @@ export default function App({ onBackToHub = null }) {
   const [mapCenter, setMapCenter] = useState({ lat: USA_OVERVIEW[0], lng: USA_OVERVIEW[1] });
   const [mapBounds, setMapBounds] = useState(null);
 
+  const loadPublishedMapUiBundle = useCallback(async ({ preferCacheOnError = true } = {}) => {
+    try {
+      const { data, error } = await supabase
+        .from("app_config")
+        .select("key,value")
+        .in("key", [MAP_UI_ICON_PUBLISHED_CONFIG_KEY, MAP_UI_THEME_PUBLISHED_CONFIG_KEY]);
+      if (error) {
+        clearCachedRuntimeUiIconManifest();
+        setRuntimeUiIconManifest({}, {});
+        setDomainIconRenderTick((tick) => tick + 1);
+        return;
+      }
+      const rows = Array.isArray(data) ? data : [];
+      const iconRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
+      const themeRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_THEME_PUBLISHED_CONFIG_KEY) || null;
+      const iconValue = iconRow?.value && typeof iconRow.value === "object" ? iconRow.value : {};
+      const themeValue = themeRow?.value && typeof themeRow.value === "object" ? themeRow.value : iconValue;
+      if (!Object.keys(iconValue || {}).length && !Object.keys(themeValue || {}).length) {
+        clearCachedRuntimeUiIconManifest();
+        setRuntimeUiIconManifest({}, {});
+        setDomainIconRenderTick((tick) => tick + 1);
+        return;
+      }
+      const normalizedValue = await normalizePublishedMapUiIconManifest(iconValue);
+      const runtimeBundle = {
+        icons: normalizedValue,
+        theme_bundle: themeValue,
+      };
+      writeCachedRuntimeUiIconManifest(runtimeBundle);
+      setRuntimeUiIconManifest(runtimeBundle.icons, runtimeBundle.theme_bundle);
+      setDomainIconRenderTick((tick) => tick + 1);
+      setMapUiThemeRenderTick((tick) => tick + 1);
+    } catch {
+      if (!preferCacheOnError) {
+        setRuntimeUiIconManifest({}, {});
+        setDomainIconRenderTick((tick) => tick + 1);
+        setMapUiThemeRenderTick((tick) => tick + 1);
+        return;
+      }
+      const cachedValue = readCachedRuntimeUiIconManifest();
+      if (cachedValue) {
+        setRuntimeUiIconManifest(cachedValue?.icons || cachedValue, cachedValue?.theme_bundle || cachedValue);
+        setDomainIconRenderTick((tick) => tick + 1);
+        setMapUiThemeRenderTick((tick) => tick + 1);
+        return;
+      }
+      setRuntimeUiIconManifest({}, {});
+      setDomainIconRenderTick((tick) => tick + 1);
+      setMapUiThemeRenderTick((tick) => tick + 1);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("app_config")
-          .select("key,value")
-          .in("key", [MAP_UI_ICON_PUBLISHED_CONFIG_KEY, MAP_UI_THEME_PUBLISHED_CONFIG_KEY]);
         if (cancelled) return;
-        if (error) {
-          clearCachedRuntimeUiIconManifest();
-          setRuntimeUiIconManifest({}, {});
-          setDomainIconRenderTick((tick) => tick + 1);
-          return;
-        }
-        const rows = Array.isArray(data) ? data : [];
-        const iconRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_ICON_PUBLISHED_CONFIG_KEY) || null;
-        const themeRow = rows.find((row) => String(row?.key || "").trim() === MAP_UI_THEME_PUBLISHED_CONFIG_KEY) || null;
-        const iconValue = iconRow?.value && typeof iconRow.value === "object" ? iconRow.value : {};
-        const themeValue = themeRow?.value && typeof themeRow.value === "object" ? themeRow.value : iconValue;
-        if (!Object.keys(iconValue || {}).length && !Object.keys(themeValue || {}).length) {
-          clearCachedRuntimeUiIconManifest();
-          setRuntimeUiIconManifest({}, {});
-          setDomainIconRenderTick((tick) => tick + 1);
-          return;
-        }
-        const normalizedValue = await normalizePublishedMapUiIconManifest(iconValue);
-        if (cancelled) return;
-        const runtimeBundle = {
-          icons: normalizedValue,
-          theme_bundle: themeValue,
-        };
-        writeCachedRuntimeUiIconManifest(runtimeBundle);
-        setRuntimeUiIconManifest(runtimeBundle.icons, runtimeBundle.theme_bundle);
-        setDomainIconRenderTick((tick) => tick + 1);
-      } catch {
-        if (cancelled) return;
-        const cachedValue = readCachedRuntimeUiIconManifest();
-        if (cachedValue) {
-          setRuntimeUiIconManifest(cachedValue?.icons || cachedValue, cachedValue?.theme_bundle || cachedValue);
-          setDomainIconRenderTick((tick) => tick + 1);
-          return;
-        }
-        setRuntimeUiIconManifest({}, {});
-        setDomainIconRenderTick((tick) => tick + 1);
-      }
+      await loadPublishedMapUiBundle({ preferCacheOnError: true });
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadPublishedMapUiBundle]);
 
   const builtInReportDomainOptions = useMemo(
     () => REPORT_DOMAIN_OPTIONS.map((option) => ({
@@ -18441,6 +18452,7 @@ export default function App({ onBackToHub = null }) {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     let timerId = null;
+    let pollId = null;
     const scheduleRefresh = () => {
       const now = Date.now();
       const nextBoundary = sanitizeMapUiThemeSchedules(UI_ICON_THEME_SOURCE)
@@ -18455,11 +18467,31 @@ export default function App({ onBackToHub = null }) {
         scheduleRefresh();
       }, delay);
     };
+    const softRefresh = () => {
+      UI_ICON_THEME = mergeMapUiTheme(UI_ICON_THEME_SOURCE);
+      setMapUiThemeRenderTick((tick) => tick + 1);
+    };
+    const syncOnVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void loadPublishedMapUiBundle({ preferCacheOnError: true });
+    };
     scheduleRefresh();
+    pollId = window.setInterval(() => {
+      softRefresh();
+    }, 15000);
+    window.addEventListener("focus", syncOnVisibility);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", syncOnVisibility);
+    }
     return () => {
       if (timerId != null) window.clearTimeout(timerId);
+      if (pollId != null) window.clearInterval(pollId);
+      window.removeEventListener("focus", syncOnVisibility);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", syncOnVisibility);
+      }
     };
-  }, [domainIconRenderTick]);
+  }, [domainIconRenderTick, loadPublishedMapUiBundle]);
 
   const [reports, setReports] = useState([]);
   const [picked, setPicked] = useState(null);
