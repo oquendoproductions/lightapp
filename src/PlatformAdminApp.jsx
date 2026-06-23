@@ -8450,8 +8450,14 @@ export default function PlatformAdminApp() {
     [editingOrganizationSection, inTenantWorkspace]
   );
 
-  const renderDomainRegistryEditor = () => (
-    <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
+  const renderDomainRegistryEditor = () => {
+    const ownershipModelDescription = ({
+      org_managed: "Organization managed means the work is typically owned and fulfilled by the organization running PCP.",
+      utility_managed: "Utility managed means the work is typically owned by a public or regulated utility.",
+      third_party: "Third party means the work is owned by an outside contractor, vendor, or private operator rather than the organization or utility.",
+    }[String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase()] || "Organization managed means the work is typically owned and fulfilled by the organization running PCP.");
+    return (
+      <form onSubmit={(event) => void saveDomainDefinition(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(18,128,106,0.08)", borderColor: "rgba(18,128,106,0.22)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ fontWeight: 900, color: palette.navy900 }}>
           {editingDomainDefinitionKey ? `Edit ${domainRegistryForm.label || editingDomainDefinitionKey}` : "Create Global Domain"}
@@ -8477,43 +8483,38 @@ export default function PlatformAdminApp() {
             style={modalInput}
           />
         </label>
-        <label style={modalField}>
-          <span>Domain Key</span>
-          <input
-            value={domainRegistryForm.key}
-            onChange={(e) => setDomainRegistryForm((prev) => ({
-              ...prev,
-              key: slugifyDomainKeyInput(e.target.value),
-              key_autofill: false,
-            }))}
-            placeholder="catch_basins"
-            readOnly={Boolean(editingDomainDefinitionKey)}
-            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
-          />
-          {!editingDomainDefinitionKey ? (
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Auto-generated from the label until you manually edit it.
-            </div>
-          ) : null}
-        </label>
-        <label style={modalField}>
-          <span>Domain Class</span>
-          <select
-            value={domainRegistryForm.domain_class}
-            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
-            disabled={Boolean(editingDomainDefinitionKey)}
-            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
-          >
-            {DOMAIN_TYPE_OPTIONS.map((option) => (
-              <option key={option.key} value={option.key}>{option.label}</option>
-            ))}
-          </select>
-          {editingDomainDefinitionKey ? (
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Domain class is locked after creation so registry behavior stays stable across tenants and reports.
-            </div>
-          ) : null}
-        </label>
+        {!editingDomainDefinitionKey ? (
+          <>
+            <label style={modalField}>
+              <span>Domain Key</span>
+              <input
+                value={domainRegistryForm.key}
+                onChange={(e) => setDomainRegistryForm((prev) => ({
+                  ...prev,
+                  key: slugifyDomainKeyInput(e.target.value),
+                  key_autofill: false,
+                }))}
+                placeholder="catch_basins"
+                style={modalInput}
+              />
+              <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                Auto-generated from the label until you manually edit it.
+              </div>
+            </label>
+            <label style={modalField}>
+              <span>Domain Class</span>
+              <select
+                value={domainRegistryForm.domain_class}
+                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, domain_class: e.target.value }))}
+                style={modalInput}
+              >
+                {DOMAIN_TYPE_OPTIONS.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
         <label style={modalField}>
           <span>Status</span>
           <select
@@ -8538,174 +8539,66 @@ export default function PlatformAdminApp() {
             <option value="third_party">Third Party</option>
           </select>
           <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            Utility managed means the work is typically owned by a public or regulated utility. Third party means the work is owned by an outside contractor, vendor, or private operator rather than the organization or utility.
+            {ownershipModelDescription}
           </div>
         </label>
-        <label style={modalField}>
-          <span>Report Prefix</span>
-          <input
-            value={domainRegistryForm.report_prefix}
-            onChange={(e) => setDomainRegistryForm((prev) => ({
-              ...prev,
-              report_prefix: String(e.target.value || "").toUpperCase(),
-            }))}
-            placeholder="EC"
-            readOnly={Boolean(editingDomainDefinitionKey)}
-            style={{ ...modalInput, background: editingDomainDefinitionKey ? "#eef4fb" : modalInput.background }}
-          />
-          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            {editingDomainDefinitionKey
-              ? "Report prefix is locked after creation so existing report numbers remain consistent everywhere."
-              : <>Required. Report numbers are standardized as <b>{"R-<PREFIX><7 digits>"}</b>, for example <b>R-EC0000999</b>.</>}
-          </div>
-        </label>
-        <label style={{ ...modalField, justifyContent: "start" }}>
-          <span>Report Photos</span>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
+        {!editingDomainDefinitionKey ? (
+          <label style={modalField}>
+            <span>Report Prefix</span>
             <input
-              type="checkbox"
-              checked={domainRegistryForm.allow_report_images === true}
-              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
+              value={domainRegistryForm.report_prefix}
+              onChange={(e) => setDomainRegistryForm((prev) => ({
+                ...prev,
+                report_prefix: String(e.target.value || "").toUpperCase(),
+              }))}
+              placeholder="EC"
+              style={modalInput}
             />
-            <span>Allow residents to capture or upload a photo with this domain’s reports</span>
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Required. Report numbers are standardized as <b>{"<PREFIX>-R<8 digits>"}</b>, for example <b>EC-R00000999</b>.
+            </div>
           </label>
-          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            This controls whether the public reporting modal shows the photo picker for this domain.
+        ) : null}
+        <div style={{ ...modalField, justifyContent: "start" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span>Allow Photos</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
+              <input
+                type="checkbox"
+                checked={domainRegistryForm.allow_report_images === true}
+                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
+              />
+              <span>{domainRegistryForm.allow_report_images === true ? "Enabled" : "Disabled"}</span>
+            </label>
           </div>
-        </label>
-        <label style={{ ...modalField, justifyContent: "start" }}>
-          <span>Road Required</span>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, marginTop: 4 }}>
-            <input
-              type="checkbox"
-              checked={domainRegistryForm.road_required === true}
-              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
-            />
-            <span>Require the public report pin to land on a road before submission</span>
-          </label>
           <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            When enabled, the app snaps the report to the nearest road and blocks submissions placed off-road.
+            Allow residents to capture or upload a photo with this domain's report.
           </div>
-        </label>
+        </div>
+        <div style={{ ...modalField, justifyContent: "start" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span>Road Required</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
+              <input
+                type="checkbox"
+                checked={domainRegistryForm.road_required === true}
+                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
+              />
+              <span>{domainRegistryForm.road_required === true ? "Enabled" : "Disabled"}</span>
+            </label>
+          </div>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            Require the public reporting modal pin to land on a road before submission.
+          </div>
+        </div>
       </div>
       <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ display: "grid", gap: 3 }}>
-            <div style={{ fontWeight: 900, color: palette.navy900 }}>Type Options</div>
+            <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Icon</div>
             <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-              Optional domain-level types that appear in the public report modal. Use this for domains like street signs where the reporter should choose what kind of asset or item is affected.
+              Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
             </div>
-          </div>
-          <button
-            type="button"
-            style={buttonAlt}
-            onClick={() => setDomainRegistryForm((prev) => ({
-              ...prev,
-              type_options: [
-                ...(Array.isArray(prev?.type_options) ? prev.type_options : []),
-                {
-                  id: createDomainDisclosureId("type_option"),
-                  option_key: "",
-                  option_label: defaultDomainTypeOptionLabel(prev?.key || editingDomainDefinitionKey || "", Array.isArray(prev?.type_options) ? prev.type_options.length : 0),
-                  choices_input: "",
-                },
-              ],
-            }))}
-          >
-            Add Type Option
-          </button>
-        </div>
-        <div style={{ display: "grid", gap: 10 }}>
-          {(Array.isArray(domainRegistryForm?.type_options) ? domainRegistryForm.type_options : []).length ? (
-            (Array.isArray(domainRegistryForm?.type_options) ? domainRegistryForm.type_options : []).map((typeOption, typeIndex) => (
-              <div
-                key={typeOption.id || `${typeOption.type_key || "type"}:${typeIndex}`}
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  padding: 12,
-                  borderRadius: 14,
-                  border: "1px solid rgba(17,36,69,0.12)",
-                  background: "rgba(255,255,255,0.92)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
-                      Type Option {typeIndex + 1}
-                    </span>
-                    {typeOption.option_key ? (
-                      <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                        {domainTypeOptionMacroToken(typeOption.option_key)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    style={buttonAlt}
-                    onClick={() => setDomainRegistryForm((prev) => ({
-                      ...prev,
-                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : [])
-                        .filter((_, rowIndex) => rowIndex !== typeIndex),
-                    }))}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <label style={modalField}>
-                  <span>Type Option Name</span>
-                  <input
-                    value={typeOption.option_label || ""}
-                    onChange={(e) => setDomainRegistryForm((prev) => ({
-                      ...prev,
-                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : []).map((row, rowIndex) => (
-                        rowIndex === typeIndex
-                          ? {
-                              ...row,
-                              option_label: e.target.value,
-                              option_key: slugifyDomainKeyInput(e.target.value),
-                            }
-                          : row
-                      )),
-                    }))}
-                    placeholder="Sign Type"
-                    style={modalInput}
-                  />
-                </label>
-                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                  <span>Type Option Choices</span>
-                  <textarea
-                    value={typeOption.choices_input || ""}
-                    onChange={(e) => setDomainRegistryForm((prev) => ({
-                      ...prev,
-                      type_options: (Array.isArray(prev?.type_options) ? prev.type_options : []).map((row, rowIndex) => (
-                        rowIndex === typeIndex
-                          ? { ...row, choices_input: e.target.value }
-                          : row
-                      )),
-                    }))}
-                    rows={5}
-                    placeholder={"Stop\nYield\nSpeed Limit"}
-                    style={{ ...modalInput, minHeight: 120, resize: "vertical" }}
-                  />
-                  <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
-                    One choice per line. These choices appear in the report modal under this type option.
-                  </div>
-                </label>
-              </div>
-            ))
-          ) : (
-            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-              No type options configured for this domain.
-            </div>
-          )}
-        </div>
-      </div>
-      <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
-        <div style={{ display: "grid", gap: 4 }}>
-          <div style={{ fontWeight: 800, color: palette.navy900 }}>Domain Icon</div>
-          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-            Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
           </div>
         </div>
         <div style={responsiveActionGrid}>
@@ -8725,20 +8618,6 @@ export default function PlatformAdminApp() {
               <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
               <option value="">No icon</option>
             </select>
-          </label>
-          <label style={modalField}>
-            <span>Current Icon Source</span>
-            <input
-              value={
-                domainRegistryForm.icon_file?.name
-                  || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION
-                    ? domainRegistryForm.custom_icon_src
-                    : domainRegistryForm.icon_src)
-              }
-              readOnly
-              placeholder="No icon selected yet"
-              style={{ ...modalInput, background: "#eef4fb" }}
-            />
           </label>
         </div>
         {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
@@ -8817,8 +8696,9 @@ export default function PlatformAdminApp() {
           Cancel
         </button>
       </div>
-    </form>
-  );
+      </form>
+    );
+  };
 
   const renderTenantDomainAssignmentEditor = () => (
     <form onSubmit={(event) => void saveTenantDomainAssignment(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(46,98,143,0.08)", borderColor: "rgba(46,98,143,0.22)" }}>
@@ -9498,17 +9378,8 @@ export default function PlatformAdminApp() {
         Add Organization
       </button>
     </div>
-  ) : controlPlanePage === "domain-registry" ? (
-    <button
-      type="button"
-      style={{ ...headerActionButton, opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55 }}
-      onClick={beginCreateDomainDefinition}
-      disabled={!canManageDomainRegistry || domainRegistrySaving}
-      title={canManageDomainRegistry ? "Create a global domain" : "You need the Domains edit permission"}
-    >
-      New Global Domain
-    </button>
-  ) : controlPlanePage === "map-ui-theme" ? (
+  ) : controlPlanePage === "domain-registry" ? null : controlPlanePage === "map-ui-theme" ? (
+    mapUiThemeEditorOpen ? (
     mapUiThemeEditorOpen ? (
       <button type="button" style={headerActionButton} onClick={closeMapUiThemeEditor}>
         Back to Themes
@@ -11392,11 +11263,28 @@ export default function PlatformAdminApp() {
             <div style={controlPlaneSettingsContentPaneStyle}>
               {controlPlaneSettingsActions}
               <div style={{ ...card, display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 4 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>Global Domain Registry</h2>
-                  <p style={{ margin: 0, color: palette.textMuted }}>
-                    Create reusable reportable domains once at the platform level, then assign them to organizations later with tenant-specific routing, billing, and operational settings.
-                  </p>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Global Domain Registry</h2>
+                    <p style={{ margin: 0, color: palette.textMuted }}>
+                      Create reusable reportable domains once at the platform level, then assign them to organizations later with tenant-specific routing, billing, and operational settings.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    style={{
+                      ...buttonBase,
+                      opacity: canManageDomainRegistry && !domainRegistrySaving ? 1 : 0.55,
+                      background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
+                      border: `1px solid ${palette.mint700}`,
+                      boxShadow: "0 10px 20px rgba(15,110,92,0.24)",
+                    }}
+                    onClick={beginCreateDomainDefinition}
+                    disabled={!canManageDomainRegistry || domainRegistrySaving}
+                    title={canManageDomainRegistry ? "Create a global domain" : "You need the Domains edit permission"}
+                  >
+                    New Global Domain
+                  </button>
                 </div>
                 {status.domainRegistry ? (
                   <div style={{ fontSize: 12.5, color: status.domainRegistry.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
