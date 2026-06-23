@@ -9378,34 +9378,35 @@ export default function PlatformAdminApp() {
         Add Organization
       </button>
     </div>
-  ) : controlPlanePage === "domain-registry" ? null : controlPlanePage === "map-ui-theme" ? (
-    mapUiThemeEditorOpen ? (
-    mapUiThemeEditorOpen ? (
-      <button type="button" style={headerActionButton} onClick={closeMapUiThemeEditor}>
-        Back to Themes
-      </button>
-    ) : (
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          style={{ ...headerActionButton, opacity: canManageDomainRegistry ? 1 : 0.55 }}
-          onClick={openNewMapUiThemeEditor}
-          disabled={!canManageDomainRegistry}
-          title={canManageDomainRegistry ? "Create a map UI theme" : "You need the Domains edit permission"}
-        >
-          New Theme
+  ) : controlPlanePage === "domain-registry" ? null : (
+    controlPlanePage === "map-ui-theme" ? (
+      mapUiThemeEditorOpen ? (
+        <button type="button" style={headerActionButton} onClick={closeMapUiThemeEditor}>
+          Back to Themes
         </button>
-        <button
-          type="button"
-          style={{ ...headerActionButton, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft ? 1 : 0.55 }}
-          onClick={() => void resetMapUiThemeLibraryToPublished()}
-          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft}
-        >
-          Reset Drafts
-        </button>
-      </div>
-    )
-  ) : null;
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            style={{ ...headerActionButton, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+            onClick={openNewMapUiThemeEditor}
+            disabled={!canManageDomainRegistry}
+            title={canManageDomainRegistry ? "Create a map UI theme" : "You need the Domains edit permission"}
+          >
+            New Theme
+          </button>
+          <button
+            type="button"
+            style={{ ...headerActionButton, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft ? 1 : 0.55 }}
+            onClick={() => void resetMapUiThemeLibraryToPublished()}
+            disabled={!canManageDomainRegistry || mapUiThemeSavingDraft}
+          >
+            Reset Drafts
+          </button>
+        </div>
+      )
+    ) : null
+  );
   const controlPlaneSettingsActions = settingsPageActive && currentPageActions ? (
     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
       {currentPageActions}
