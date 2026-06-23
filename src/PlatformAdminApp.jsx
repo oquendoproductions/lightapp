@@ -228,7 +228,9 @@ const TAB_OPTIONS = [
   { key: "contacts", label: "Points of Contact" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
-  { key: "domains", label: "Domains + Assets" },
+  { key: "domains", label: "Domains" },
+  { key: "map-features", label: "Map Features" },
+  { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
 ];
 
@@ -345,8 +347,7 @@ function readInitialControlPlaneRouteState() {
   const entryStep = ["start", "add", "tenant"].includes(requestedEntryStep) ? requestedEntryStep : defaultState.entryStep;
   const tenantKey = sanitizeTenantKey(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant) || "") || defaultState.selectedTenantKey;
   const requestedTab = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab) || "").trim();
-  const normalizedTab = requestedTab === "files" ? "domains" : requestedTab;
-  const activeTab = TAB_OPTIONS.some((tab) => tab.key === normalizedTab) ? normalizedTab : defaultState.activeTab;
+  const activeTab = TAB_OPTIONS.some((tab) => tab.key === requestedTab) ? requestedTab : defaultState.activeTab;
   const requestedAddStep = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.addStep) || "").trim();
   const addTenantStep = ADD_TENANT_STEPS.some((step) => step.key === requestedAddStep) ? requestedAddStep : defaultState.addTenantStep;
   const selectedLeadId = String(params.get(CONTROL_PLANE_ROUTE_QUERY_KEYS.lead) || "").trim();
@@ -377,7 +378,7 @@ const PLATFORM_PERMISSION_MODULES = [
   { key: "security", label: "Security" },
   { key: "reports", label: "Reports" },
   { key: "finance", label: "Finance" },
-  { key: "domains", label: "Domains + Assets" },
+  { key: "domains", label: "Domains" },
   { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
 ];
@@ -391,10 +392,17 @@ const TENANT_PERMISSION_ACTIONS = [
 const TENANT_PERMISSION_MODULES = [
   { key: "reports", label: "Reports" },
   { key: "users", label: "Users" },
-  { key: "domains", label: "Domains + Assets" },
+  { key: "domains", label: "Domains" },
   { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
   { key: "roles", label: "Roles" },
+];
+
+const ASSIGNED_DOMAIN_SECTION_OPTIONS = [
+  { key: "tenant-assignment", label: "Tenant Assignment" },
+  { key: "marker-icon", label: "Marker and Icon Settings" },
+  { key: "reporting", label: "Reporting" },
+  { key: "report-email-template", label: "Report Email Template" },
 ];
 
 const DEFAULT_PLATFORM_PERMISSION_KEYS = PLATFORM_PERMISSION_MODULES.flatMap((module) =>
@@ -450,6 +458,7 @@ const TENANT_WORKSPACE_TAB_PERMISSIONS = {
   users: "users.access",
   roles: "roles.access",
   domains: "domains.access",
+  "map-features": "domains.access",
   files: "files.access",
   audit: "audit.access",
 };
@@ -1190,7 +1199,7 @@ function initialDomainConfigForm() {
       icon_render_mode: MAP_UI_ICON_RENDER_MODE.RASTER,
       icon_tint_mode: DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST,
       icon_tint_color: "",
-      issue_types_input: "",
+      type_options: [],
       report_disclosures: defaultDomainDisclosures(d.key),
     };
   }
@@ -1270,6 +1279,51 @@ function defaultDomainTypeOptionLabel(domainKey = "", index = 0) {
   const domain = String(domainKey || "").trim().toLowerCase();
   if (domain === "street_signs" && index === 0) return "Sign Type";
   return `Type Option ${index + 1}`;
+}
+
+function isIssueTypeOptionConfig(option) {
+  const optionKey = slugifyDomainKeyInput(option?.option_key || option?.optionKey || "");
+  const optionLabel = slugifyDomainKeyInput(option?.option_label || option?.optionLabel || option?.label || "");
+  return optionKey === "issue_type" || optionLabel === "issue_type";
+}
+
+function buildIssueTypeOptionConfigFromLegacy(issueTypes = [], domainKey = "") {
+  const choices = (Array.isArray(issueTypes) ? issueTypes : [])
+    .map((row, index) => {
+      const issueLabel = String(row?.issue_label || row?.label || "").replace(/\s+/g, " ").trim();
+      const issueKey = slugifyDomainKeyInput(row?.issue_key || row?.value || issueLabel);
+      if (!issueLabel || !issueKey) return null;
+      return {
+        value: issueKey,
+        label: issueLabel,
+        sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : (index + 1) * 10,
+      };
+    })
+    .filter(Boolean);
+  if (!choices.length) return null;
+  return {
+    id: `${String(domainKey || "domain").trim().toLowerCase() || "domain"}_issue_type`,
+    option_key: "issue_type",
+    option_label: "Issue Type",
+    choices_input: serializeDomainTypeOptionChoicesInput(choices),
+  };
+}
+
+function mergeTenantDomainTypeOptions({
+  domainKey = "",
+  assignmentTypeOptions = [],
+  registryTypeOptions = [],
+  legacyIssueTypes = [],
+} = {}) {
+  const assignmentOptions = normalizeDomainTypeOptionConfigs(assignmentTypeOptions, domainKey);
+  const registryOptions = normalizeDomainTypeOptionConfigs(registryTypeOptions, domainKey);
+  const baseOptions = assignmentOptions.length ? assignmentOptions : registryOptions;
+  const nextOptions = Array.isArray(baseOptions) ? [...baseOptions] : [];
+  const legacyIssueOption = buildIssueTypeOptionConfigFromLegacy(legacyIssueTypes, domainKey);
+  if (legacyIssueOption && !nextOptions.some((row) => isIssueTypeOptionConfig(row))) {
+    nextOptions.push(legacyIssueOption);
+  }
+  return nextOptions;
 }
 
 function normalizeDomainTypeOptionConfigs(value, domainKey = "") {
@@ -2629,6 +2683,8 @@ export default function PlatformAdminApp() {
   const [tenantDomainAssignmentEditorOpen, setTenantDomainAssignmentEditorOpen] = useState(false);
   const [editingTenantDomainAssignmentKey, setEditingTenantDomainAssignmentKey] = useState("");
   const [expandedAssignedDomainCardKey, setExpandedAssignedDomainCardKey] = useState("");
+  const [selectedAssignedDomainKey, setSelectedAssignedDomainKey] = useState("");
+  const [selectedAssignedDomainSectionKey, setSelectedAssignedDomainSectionKey] = useState(ASSIGNED_DOMAIN_SECTION_OPTIONS[0].key);
   const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
   const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
   const assignedDomainCardRefs = useRef({});
@@ -2961,6 +3017,19 @@ export default function PlatformAdminApp() {
     });
     return rows;
   }, [selectedTenantDomainAssignments, visibleDomainRegistryRows]);
+  useEffect(() => {
+    setSelectedAssignedDomainKey((prev) => {
+      const availableKeys = selectedTenantAssignedDomainRows
+        .map((row) => String(row?.domain?.key || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!availableKeys.length) return "";
+      return availableKeys.includes(prev) ? prev : availableKeys[0];
+    });
+  }, [selectedTenantAssignedDomainRows]);
+  const selectedAssignedDomainRow = useMemo(() => {
+    const selectedKey = String(selectedAssignedDomainKey || "").trim().toLowerCase();
+    return selectedTenantAssignedDomainRows.find((row) => row?.domain?.key === selectedKey) || selectedTenantAssignedDomainRows[0] || null;
+  }, [selectedAssignedDomainKey, selectedTenantAssignedDomainRows]);
   const scrollAssignedDomainCardIntoView = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key || typeof window === "undefined") return;
@@ -2974,6 +3043,7 @@ export default function PlatformAdminApp() {
     if (!pendingKey) return;
     if (!selectedTenantAssignedDomainRows.some((row) => row?.domain?.key === pendingKey)) return;
     pendingAssignedDomainFocusKeyRef.current = "";
+    setSelectedAssignedDomainKey(pendingKey);
     if (typeof window === "undefined") return;
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -3411,15 +3481,7 @@ export default function PlatformAdminApp() {
     [activeSettingsGroupKey, filteredControlPlaneSettingsNav, mobileSettingsGroupKey]
   );
   const availableTenantWorkspaceTabs = useMemo(
-    () => TAB_OPTIONS.filter((tab) => {
-      if (tab.key === "domains") {
-        return hasPlatformPermission("domains.access")
-          || hasPlatformPermission("domains.edit")
-          || hasPlatformPermission("files.access")
-          || hasPlatformPermission("files.edit");
-      }
-      return hasPlatformPermission(TENANT_WORKSPACE_TAB_PERMISSIONS[tab.key] || "");
-    }),
+    () => TAB_OPTIONS.filter((tab) => hasPlatformPermission(TENANT_WORKSPACE_TAB_PERMISSIONS[tab.key] || "")),
     [hasPlatformPermission]
   );
   const visibleControlPlanePagesBySection = useMemo(
@@ -4182,7 +4244,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -5669,10 +5731,6 @@ export default function PlatformAdminApp() {
 
   useEffect(() => {
     if (!availableTenantWorkspaceTabs.length) return;
-    if (activeTab === "files") {
-      setActiveTab("domains");
-      return;
-    }
     if (!availableTenantWorkspaceTabs.some((tab) => tab.key === activeTab)) {
       setActiveTab(availableTenantWorkspaceTabs[0].key);
     }
@@ -5699,7 +5757,7 @@ export default function PlatformAdminApp() {
       } else {
         params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant);
       }
-      params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab, activeTab === "files" ? "domains" : activeTab);
+      params.set(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab, activeTab);
     } else {
       params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tenant);
       params.delete(CONTROL_PLANE_ROUTE_QUERY_KEYS.tab);
@@ -5817,7 +5875,7 @@ export default function PlatformAdminApp() {
         assignment && Object.prototype.hasOwnProperty.call(assignment, "report_disclosures")
       );
       const domainIconSrc = String(d?.icon_src || d?.iconSrc || "").trim();
-      nextDomainConfig[d.key] = {
+        nextDomainConfig[d.key] = {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
         display_label: String(assignment?.display_label || defaultDomainLabel(d.key)).trim() || defaultDomainLabel(d.key),
         marker_color: sanitizeHexColor(assignment?.marker_color, defaultDomainMarkerColor(d.key)),
@@ -5839,12 +5897,17 @@ export default function PlatformAdminApp() {
           defaultDomainPublicVisibilityMinReports(d.key),
           { min: 1, max: 25 }
         ),
-        high_confidence_min_reports: sanitizePositiveIntegerSetting(
-          assignment?.high_confidence_min_reports ?? configured?.high_confidence_min_reports,
-          defaultDomainHighConfidenceMinReports(d.key),
-          { min: 1, max: 25 }
-        ),
-        issue_types_input: serializeDomainIssueTypeInput(tenantIssueTypes?.[d.key] || []),
+          high_confidence_min_reports: sanitizePositiveIntegerSetting(
+            assignment?.high_confidence_min_reports ?? configured?.high_confidence_min_reports,
+            defaultDomainHighConfidenceMinReports(d.key),
+            { min: 1, max: 25 }
+          ),
+        type_options: mergeTenantDomainTypeOptions({
+          domainKey: d.key,
+          assignmentTypeOptions: assignment?.type_options,
+          registryTypeOptions: d?.type_options,
+          legacyIssueTypes: tenantIssueTypes?.[d.key] || [],
+        }),
         report_disclosures: hasAssignmentDisclosureConfig
           ? normalizeDomainDisclosureRows(assignment?.report_disclosures, d.key)
           : defaultDomainDisclosures(d.key),
@@ -7273,7 +7336,7 @@ export default function PlatformAdminApp() {
     };
 
     if (!payload.report_prefix) {
-      setStatus((prev) => ({ ...prev, domainRegistry: "Report Prefix is required. Report numbers use the format R-<PREFIX><7 digits>." }));
+      setStatus((prev) => ({ ...prev, domainRegistry: "Report Prefix is required. Report numbers use the format <PREFIX>-R<8 digits>." }));
       return;
     }
     if (!/^[A-Z0-9]{1,10}$/.test(String(payload.report_prefix))) {
@@ -7361,6 +7424,7 @@ export default function PlatformAdminApp() {
       ...initialTenantDomainAssignmentForm(),
       domain_key: assignableDomainRegistryRows[0].key,
     });
+    setSelectedAssignedDomainSectionKey("tenant-assignment");
     setTenantDomainAssignmentEditorOpen(true);
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
   }, [assignableDomainRegistryRows, canManageDomainRegistry]);
@@ -7372,6 +7436,8 @@ export default function PlatformAdminApp() {
     if (!row) return;
     setEditingTenantDomainAssignmentKey(key);
     setExpandedAssignedDomainCardKey(key);
+    setSelectedAssignedDomainKey(key);
+    setSelectedAssignedDomainSectionKey("tenant-assignment");
     setTenantDomainAssignmentForm(buildTenantDomainAssignmentForm(row));
     setTenantDomainAssignmentEditorOpen(false);
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
@@ -7557,23 +7623,27 @@ export default function PlatformAdminApp() {
       ),
       high_confidence_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.high_confidence_min_reports,
-        defaultDomainHighConfidenceMinReports(d.key),
-        { min: 1, max: 25 }
-      ),
+          defaultDomainHighConfidenceMinReports(d.key),
+          { min: 1, max: 25 }
+        ),
+      type_options: buildStoredDomainTypeOptionConfigs(domainConfigForm?.[d.key]?.type_options, d.key),
       report_disclosures: normalizeDomainDisclosureRows(domainConfigForm?.[d.key]?.report_disclosures, d.key),
       updated_by: cleanOptional(sessionUserId),
     }));
-    const tenantIssueTypeRows = persistedDomainRows.flatMap((d) => (
-      parseDomainIssueTypeInput(domainConfigForm?.[d.key]?.issue_types_input || "").map((row, index) => ({
-        tenant_key: key,
-        domain_key: d.key,
-        issue_key: row.issue_key,
-        issue_label: row.issue_label,
-        sort_order: (index + 1) * 10,
-        active: true,
-      }))
-    ));
-    const manageableDomainKeys = activeManageableTenantDomainRows.map((d) => d.key).filter(Boolean);
+    const invalidTypeOption = assignmentRows
+      .flatMap((row) => (Array.isArray(row?.type_options) ? row.type_options : []))
+      .find((row) => {
+        const optionLabel = String(row?.option_label || "").trim();
+        const choices = Array.isArray(row?.choices) ? row.choices : [];
+        return optionLabel && !choices.length;
+      });
+    if (invalidTypeOption) {
+      setStatus((prev) => ({
+        ...prev,
+        domains: `${String(invalidTypeOption.option_label || "Type Option").trim()} must include at least one choice before saving.`,
+      }));
+      return;
+    }
 
     const tenantPayload = {
       notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
@@ -7608,27 +7678,6 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    if (manageableDomainKeys.length) {
-      const { error: deleteTenantIssueTypesError } = await supabase
-        .from("tenant_domain_issue_types")
-        .delete()
-        .eq("tenant_key", key)
-        .in("domain_key", manageableDomainKeys);
-      if (deleteTenantIssueTypesError && !isMissingRelationError(deleteTenantIssueTypesError)) {
-        setStatus((prev) => ({ ...prev, domains: statusText(deleteTenantIssueTypesError, "") }));
-        return;
-      }
-      if (!deleteTenantIssueTypesError && tenantIssueTypeRows.length) {
-        const { error: insertTenantIssueTypesError } = await supabase
-          .from("tenant_domain_issue_types")
-          .insert(tenantIssueTypeRows);
-        if (insertTenantIssueTypesError) {
-          setStatus((prev) => ({ ...prev, domains: statusText(insertTenantIssueTypesError, "") }));
-          return;
-        }
-      }
-    }
-
     await logAudit({
       tenant_key: key,
       action: "tenant_domain_settings_upsert",
@@ -7638,7 +7687,6 @@ export default function PlatformAdminApp() {
         visibility: visibilityRows,
         domain_configurations: domainConfigRows,
         domain_assignments: assignmentRows,
-        tenant_domain_issue_types: tenantIssueTypeRows,
         notification_emails: tenantPayload,
       },
     });
@@ -7680,18 +7728,9 @@ export default function PlatformAdminApp() {
               notification_subject_template: savedAssignment.notification_subject_template || "",
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
+              type_options: normalizeDomainTypeOptionConfigs(savedAssignment.type_options, closingDomainKey),
               report_disclosures: normalizeDomainDisclosureRows(savedAssignment.report_disclosures, closingDomainKey),
             } : {}),
-            issue_types_input: serializeDomainIssueTypeInput(
-              tenantIssueTypeRows
-                .filter((row) => row.domain_key === closingDomainKey)
-                .map((row) => ({
-                  issue_key: row.issue_key,
-                  issue_label: row.issue_label,
-                  sort_order: row.sort_order,
-                  active: row.active !== false,
-                }))
-            ),
           },
         }));
       }
@@ -8268,6 +8307,7 @@ export default function PlatformAdminApp() {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
     setExpandedAssignedDomainCardKey(key);
+    setSelectedAssignedDomainKey(key);
     setEditingDomainKey(key);
     setEditingDomainSnapshot({
       key,
@@ -8309,7 +8349,8 @@ export default function PlatformAdminApp() {
   const toggleAssignedDomainCard = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
-    setExpandedAssignedDomainCardKey((prev) => (prev === key ? "" : key));
+    setSelectedAssignedDomainKey(key);
+    setExpandedAssignedDomainCardKey(key);
   }, []);
 
   const beginMapFeaturesEdit = useCallback(() => {
@@ -8614,6 +8655,83 @@ export default function PlatformAdminApp() {
               </div>
             </label>
           </>
+        ) : null}
+      </div>
+      <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 3 }}>
+            <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Icon</div>
+            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+              Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
+            </div>
+          </div>
+        </div>
+        <div style={responsiveActionGrid}>
+          <label style={modalField}>
+            <span>Icon Source</span>
+            <select
+              value={domainRegistryForm.icon_selection}
+              onChange={(e) => setDomainRegistryForm((prev) => ({
+                ...prev,
+                icon_selection: e.target.value,
+                custom_icon_src: e.target.value === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
+                icon_file: e.target.value === UPLOAD_DOMAIN_ICON_SELECTION ? prev.icon_file : null,
+              }))}
+              style={modalInput}
+            >
+              <option value={UPLOAD_DOMAIN_ICON_SELECTION}>Upload icon file (recommended)</option>
+              <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
+              <option value="">No icon</option>
+            </select>
+          </label>
+        </div>
+        {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
+          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+            <span>Choose Icon File</span>
+            <input
+              type="file"
+              accept={DOMAIN_ICON_ACCEPT}
+              onChange={(e) => {
+                const nextFile = e.target.files?.[0] || null;
+                setDomainRegistryForm((prev) => ({
+                  ...prev,
+                  icon_file: nextFile,
+                }));
+              }}
+              style={modalInput}
+            />
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Preferred: SVG. Also accepted: PNG or WebP. Max size: 2 MB.
+            </div>
+          </label>
+        ) : null}
+        {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
+          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+            <span>Custom Icon Public Path (advanced)</span>
+            <input
+              value={domainRegistryForm.custom_icon_src}
+              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
+              placeholder="https://... or /public/path/icon.svg"
+              style={modalInput}
+            />
+          </label>
+        ) : null}
+        {(domainRegistryUploadPreviewUrl || domainRegistryForm.icon_src || domainRegistryForm.custom_icon_src) ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
+              <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                <img
+                  src={domainRegistryUploadPreviewUrl || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : domainRegistryForm.icon_src)}
+                  alt={`${domainRegistryForm.label || "Domain"} icon preview`}
+                  style={{ width: 44, height: 44, objectFit: "contain" }}
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
+              Upload-first is now the standard flow. The advanced public-path option is only here for legacy or externally hosted icons when you intentionally need it.
+            </div>
+          </div>
         ) : null}
       </div>
       <label style={{ ...modalField, gridColumn: "1 / -1" }}>
@@ -11287,7 +11405,6 @@ export default function PlatformAdminApp() {
                               {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
                               {domain.allow_report_images ? " • Photos enabled" : ""}
                               {domain.road_required ? " • Road required" : ""}
-                              {Array.isArray(domain.type_options) && domain.type_options.length ? ` • ${domain.type_options.length} type option${domain.type_options.length === 1 ? "" : "s"}` : ""}
                               {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
                             {domain.description ? (
@@ -12924,7 +13041,7 @@ export default function PlatformAdminApp() {
                           style={{ ...inputBase, background: "#eef4fb", cursor: "not-allowed" }}
                         />
                         <span style={{ fontSize: 11.5, color: palette.textMuted }}>
-                          Upload a boundary asset in Domains + Assets, then set it as the organization boundary.
+                          Upload a boundary asset in Assets, then set it as the organization boundary.
                         </span>
                       </label>
                     </div>
@@ -13502,12 +13619,11 @@ export default function PlatformAdminApp() {
                 <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
                 {Array.isArray(profileForm.additional_contacts) && profileForm.additional_contacts.length ? (
                   <div style={{ display: "grid", gap: 10 }}>
-                    {profileForm.additional_contacts.map((contact, index) => (
+                    {profileForm.additional_contacts.map((contact, index) => {
+                      const isEditingContact = editingAdditionalContactIndex === index;
+                      return (
                       <div key={`contact-${index}`} style={{ ...subPanel, display: "grid", gap: 8 }}>
-                        {(() => {
-                          const isEditingContact = editingAdditionalContactIndex === index;
-                          return (
-                            <>
+                        <div style={{ display: "grid", gap: 10 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                           <strong style={{ color: palette.navy900 }}>Contact {index + 1}</strong>
                           {isEditingContact ? (
@@ -13592,11 +13708,10 @@ export default function PlatformAdminApp() {
                             />
                           </label>
                         </div>
-                            </>
-                          );
-                        })()}
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
@@ -13672,7 +13787,7 @@ export default function PlatformAdminApp() {
                         <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {isEditingRole ? (
-                            <>
+                            <div style={{ display: "grid", gap: 10 }}>
                               <button
                                 type="button"
                                 style={{ ...buttonAlt, opacity: canManageTenantUsers ? 1 : 0.55 }}
@@ -13692,7 +13807,7 @@ export default function PlatformAdminApp() {
                               >
                                 Cancel
                               </button>
-                            </>
+                            </div>
                           ) : (
                             <>
                               <button
@@ -13888,33 +14003,44 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
-        {inTenantWorkspace && activeTab === "domains" ? (
+        {inTenantWorkspace && ["domains", "map-features", "files"].includes(activeTab) ? (
           <section style={{ display: "grid", gap: 14 }}>
+            {activeTab === "domains" ? (
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 3 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Domains + Assets</h2>
+                <h2 style={{ margin: 0, color: palette.navy900 }}>Domains</h2>
                 <p style={{ margin: 0, color: palette.textMuted }}>
-                  Assign platform-defined domains to this organization, then manage each assigned domain's routing, visibility, confidence, and supporting assets here.
+                  Assign platform-defined domains to this organization, then manage each assigned domain&apos;s routing, reporting, notification, and marker settings here.
                 </p>
               </div>
               <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    style={{
+                      ...buttonBase,
+                      marginLeft: "auto",
+                      alignSelf: "flex-start",
+                      opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55,
+                      background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
+                      border: `1px solid ${palette.mint700}`,
+                      boxShadow: "0 10px 20px rgba(15,110,92,0.24)",
+                    }}
+                    disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                    onClick={beginCreateTenantDomainAssignment}
+                  >
+                    Assign Global Domain
+                  </button>
+                </div>
                 {canViewDomainRegistry && inTenantWorkspace ? (
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
                       <div style={{ display: "grid", gap: 3 }}>
                         <div style={{ fontWeight: 900, color: palette.navy900 }}>Assigned Domains</div>
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Assign active global domains to {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}. Once assigned, each enabled domain appears below for full tenant-specific setup.
+                          Select an assigned domain and the section you want to review or edit.
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        style={{ ...buttonBase, opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                        onClick={beginCreateTenantDomainAssignment}
-                      >
-                        Assign Global Domain
-                      </button>
                     </div>
                     {status.domainAssignments ? (
                       <div style={{ fontSize: 12.5, color: status.domainAssignments.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
@@ -13928,10 +14054,41 @@ export default function PlatformAdminApp() {
                     ) : null}
                     {tenantDomainAssignmentEditorOpen && !editingTenantDomainAssignmentKey ? renderTenantDomainAssignmentEditor() : null}
                     <div style={{ display: "grid", gap: 10 }}>
-                      {selectedTenantAssignedDomainRows.length ? selectedTenantAssignedDomainRows.map((assignment) => {
+                      {selectedTenantAssignedDomainRows.length ? (
+                        <>
+                          <div style={{ display: "grid", gap: 10 }}>
+                            <label style={{ ...modalField, maxWidth: 360 }}>
+                              <span>Assigned Domain</span>
+                              <select
+                                value={selectedAssignedDomainRow?.domain?.key || ""}
+                                onChange={(event) => toggleAssignedDomainCard(event.target.value)}
+                                style={modalInput}
+                              >
+                                {selectedTenantAssignedDomainRows.map((row) => (
+                                  <option key={row.domain.key} value={row.domain.key}>{row.domain.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label style={{ ...modalField, maxWidth: 360 }}>
+                              <span>Domain Section</span>
+                              <select
+                                value={selectedAssignedDomainSectionKey}
+                                onChange={(event) => setSelectedAssignedDomainSectionKey(event.target.value)}
+                                style={modalInput}
+                              >
+                                {ASSIGNED_DOMAIN_SECTION_OPTIONS.map((option) => (
+                                  <option key={option.key} value={option.key}>{option.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          {(() => {
+                        const assignment = selectedAssignedDomainRow;
+                        if (!assignment) return null;
                         const d = assignment.domain;
                         const isExpanded =
-                          expandedAssignedDomainCardKey === d.key
+                          selectedAssignedDomainKey === d.key
+                          || expandedAssignedDomainCardKey === d.key
                           || editingTenantDomainAssignmentKey === d.key
                           || editingDomainKey === d.key;
                         const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
@@ -13943,6 +14100,7 @@ export default function PlatformAdminApp() {
                         const assignmentFieldsReadOnly = !canManageDomainRegistry || !isEditingAssignment;
                         const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
                         const assignmentEditLockedByOtherDomain = Boolean(editingTenantDomainAssignmentKey) && !isEditingAssignment;
+                        const domainTypeOptionRows = normalizeDomainTypeOptionConfigs(domainConfigForm?.[d.key]?.type_options, d.key);
                         const domainDisclosureRows = Array.isArray(domainConfigForm?.[d.key]?.report_disclosures)
                           ? domainConfigForm[d.key].report_disclosures
                           : defaultDomainDisclosures(d.key);
@@ -13981,31 +14139,24 @@ export default function PlatformAdminApp() {
                                   }}>
                                     {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
                                   </span>
+                                  {assignment.organization_monitored_repairs !== false ? (
+                                    <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                      Managed by Organization
+                                    </span>
+                                  ) : null}
                                 </div>
                                 <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                                   <code>{assignment.domain_key}</code>
-                                  {assignment.visibility ? ` • Visibility ${assignment.visibility}` : ""}
+                                  {assignment.notification_email ? ` • ${assignment.notification_email}` : ""}
+                                  {assignment.billing_status ? ` • Billing Status ${assignment.billing_status}` : ""}
                                   {assignment.billing_model ? ` • Billing ${assignment.billing_model}` : ""}
-                                </div>
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                  Assignment controls and tenant-specific domain settings are managed together in this card.
                                 </div>
                                 {assignment.billing_notes ? (
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
                                 ) : null}
                               </div>
-                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                <button
-                                  type="button"
-                                  style={buttonAlt}
-                                  onClick={() => toggleAssignedDomainCard(d.key)}
-                                >
-                                  {isExpanded ? "Collapse" : "View"}
-                                </button>
-                              </div>
                             </div>
-                            {isExpanded ? (
-                              <>
+                                {selectedAssignedDomainSectionKey === "tenant-assignment" ? (
                                 <div
                               style={{
                                 ...subPanel,
@@ -14017,7 +14168,7 @@ export default function PlatformAdminApp() {
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Assignment</div>
+                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Tenant Assignment</div>
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                                     Activation, routing, billing, and operational ownership for this tenant/domain assignment.
                                   </div>
@@ -14180,6 +14331,8 @@ export default function PlatformAdminApp() {
                                 </label>
                               </div>
                             </div>
+                                ) : null}
+                                {selectedAssignedDomainSectionKey === "marker-icon" ? (
                             <div
                               style={{
                                 ...subPanel,
@@ -14191,7 +14344,7 @@ export default function PlatformAdminApp() {
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Assigned Settings</div>
+                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Marker and Icon Settings</div>
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                                     {isAssetBacked
                                       ? "Persistent mapped assets can be seeded with coordinates and also route notifications."
@@ -14392,8 +14545,62 @@ export default function PlatformAdminApp() {
                                     </div>
                                   </label>
                                 ) : null}
+                              </div>
+                              {isAssetBacked ? (
+                                <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                    <div style={{ display: "grid", gap: 3 }}>
+                                      <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
+                                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                        {coordinateFiles.length
+                                          ? `${coordinateFiles.length} coordinate file${coordinateFiles.length === 1 ? "" : "s"} linked to ${d.label}.`
+                                          : `No coordinate files are linked to ${d.label} yet.`}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
+                                      disabled={!canEditTenantFiles || !isEditingDomain}
+                                      onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
+                                      title={
+                                        !isEditingDomain
+                                          ? `Open edit mode to manage ${d.label} coordinates`
+                                          : canEditTenantFiles
+                                            ? `Add coordinate file for ${d.label}`
+                                            : "You need the Files edit permission"
+                                      }
+                                    >
+                                      Add Coordinates
+                                    </button>
+                                  </div>
+                                  {coordinateFiles.length ? (
+                                    <div style={{ display: "grid", gap: 6 }}>
+                                      {coordinateFiles.slice(0, 3).map((row) => (
+                                        <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <div style={{ display: "grid", gap: 2 }}>
+                                            <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed coordinate file"}</strong>
+                                            <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                              {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
+                                            </span>
+                                          </div>
+                                          <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
+                                        </div>
+                                      ))}
+                                      {coordinateFiles.length > 3 ? (
+                                        <div style={{ fontSize: 12, color: palette.textMuted }}>
+                                          {coordinateFiles.length - 3} more coordinate file{coordinateFiles.length - 3 === 1 ? "" : "s"} available in the asset library.
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                                ) : null}
+                                {selectedAssignedDomainSectionKey === "reporting" ? (
+                              <div style={{ display: "grid", gap: 10 }}>
                                 {!isAssetBacked ? (
-                                  <>
+                                  <div style={responsiveActionGrid}>
                                     <label style={modalField}>
                                       <span>Public Visibility Threshold</span>
                                       <input
@@ -14460,53 +14667,179 @@ export default function PlatformAdminApp() {
                                         style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                                       />
                                     </label>
-                                  </>
+                                  </div>
                                 ) : null}
-                                <label style={modalField}>
-                                  <span>Email Template Preset</span>
-                                  <select
-                                    value={domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key}
+                              <div
+                                style={{
+                                  ...subPanel,
+                                  display: "grid",
+                                  gap: 10,
+                                  background: "rgba(255,255,255,0.78)",
+                                  borderColor: "rgba(17,36,69,0.12)",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                                  <div style={{ display: "grid", gap: 3 }}>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Issue Types</div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Configure tenant-specific issue type groups and choices for this domain. These options render everywhere in this saved order across the report flow, info windows, reports, and email macros.
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
                                     disabled={domainFieldsReadOnly}
-                                    onChange={(e) => {
-                                      const nextTemplate = domainNotificationTemplateOption(e.target.value);
-                                      setDomainConfigForm((prev) => ({
-                                        ...prev,
-                                        [d.key]: {
-                                          ...(prev?.[d.key] || {}),
-                                          notification_template_key: nextTemplate.key,
-                                          notification_subject_template: nextTemplate.subject,
-                                          notification_body_template: nextTemplate.body,
-                                        },
-                                      }));
-                                    }}
-                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                    onClick={() => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        type_options: [
+                                          ...(Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []),
+                                          {
+                                            id: createDomainDisclosureId("type_option"),
+                                            option_key: "",
+                                            option_label: defaultDomainTypeOptionLabel(d.key, Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options.length : 0),
+                                            choices_input: "",
+                                          },
+                                        ],
+                                      },
+                                    }))}
                                   >
-                                    {DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.map((option) => (
-                                      <option key={option.key} value={option.key}>{option.label}</option>
-                                    ))}
-                                  </select>
-                                </label>
-                              </div>
-                              <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                                <span>Issue Types</span>
-                                <textarea
-                                  readOnly={domainFieldsReadOnly}
-                                  value={domainConfigForm?.[d.key]?.issue_types_input || ""}
-                                  onChange={(e) => setDomainConfigForm((prev) => ({
-                                    ...prev,
-                                    [d.key]: {
-                                      ...(prev?.[d.key] || {}),
-                                      issue_types_input: e.target.value,
-                                    },
-                                  }))}
-                                  rows={4}
-                                  placeholder={"Broken Swing\nDamaged Slide\nLoose Surface Material"}
-                                  style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                />
-                                <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
-                                  One issue type per line. These options appear to the reporter for this tenant and domain only.
+                                    Add Issue Type
+                                  </button>
                                 </div>
-                              </label>
+                                {domainTypeOptionRows.length ? (
+                                  <div style={{ display: "grid", gap: 10 }}>
+                                    {domainTypeOptionRows.map((typeOption, typeIndex) => (
+                                      <div
+                                        key={typeOption.id || `${d.key}:type-option:${typeIndex}`}
+                                        style={{
+                                          display: "grid",
+                                          gap: 10,
+                                          padding: 12,
+                                          borderRadius: 14,
+                                          border: "1px solid rgba(17,36,69,0.12)",
+                                          background: "rgba(255,255,255,0.92)",
+                                        }}
+                                      >
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                                              Issue Type {typeIndex + 1}
+                                            </span>
+                                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                              {domainTypeOptionMacroToken(typeOption.option_key || typeOption.option_label || `type_option_${typeIndex + 1}`)}
+                                            </span>
+                                          </div>
+                                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                            <button
+                                              type="button"
+                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly || typeIndex === 0 ? 0.55 : 1 }}
+                                              disabled={domainFieldsReadOnly || typeIndex === 0}
+                                              onClick={() => setDomainConfigForm((prev) => {
+                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
+                                                if (!(typeIndex > 0) || !rows[typeIndex]) return prev;
+                                                [rows[typeIndex - 1], rows[typeIndex]] = [rows[typeIndex], rows[typeIndex - 1]];
+                                                return {
+                                                  ...prev,
+                                                  [d.key]: {
+                                                    ...(prev?.[d.key] || {}),
+                                                    type_options: rows,
+                                                  },
+                                                };
+                                              })}
+                                            >
+                                              Move Up
+                                            </button>
+                                            <button
+                                              type="button"
+                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly || typeIndex >= domainTypeOptionRows.length - 1 ? 0.55 : 1 }}
+                                              disabled={domainFieldsReadOnly || typeIndex >= domainTypeOptionRows.length - 1}
+                                              onClick={() => setDomainConfigForm((prev) => {
+                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
+                                                if (typeIndex >= rows.length - 1 || !rows[typeIndex]) return prev;
+                                                [rows[typeIndex], rows[typeIndex + 1]] = [rows[typeIndex + 1], rows[typeIndex]];
+                                                return {
+                                                  ...prev,
+                                                  [d.key]: {
+                                                    ...(prev?.[d.key] || {}),
+                                                    type_options: rows,
+                                                  },
+                                                };
+                                              })}
+                                            >
+                                              Move Down
+                                            </button>
+                                            <button
+                                              type="button"
+                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
+                                              disabled={domainFieldsReadOnly}
+                                              onClick={() => setDomainConfigForm((prev) => ({
+                                                ...prev,
+                                                [d.key]: {
+                                                  ...(prev?.[d.key] || {}),
+                                                  type_options: (Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : [])
+                                                    .filter((row, rowIndex) => rowIndex !== typeIndex),
+                                                },
+                                              }))}
+                                            >
+                                              Remove
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <label style={modalField}>
+                                          <span>Issue Type Name</span>
+                                          <input
+                                            readOnly={domainFieldsReadOnly}
+                                            value={typeOption.option_label || ""}
+                                            onChange={(e) => setDomainConfigForm((prev) => ({
+                                              ...prev,
+                                              [d.key]: {
+                                                ...(prev?.[d.key] || {}),
+                                                type_options: (Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []).map((row, rowIndex) => (
+                                                  rowIndex === typeIndex
+                                                    ? { ...row, option_label: e.target.value }
+                                                    : row
+                                                )),
+                                              },
+                                            }))}
+                                            placeholder={defaultDomainTypeOptionLabel(d.key, typeIndex)}
+                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                          />
+                                        </label>
+                                        <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                          <span>Issue Type Choices</span>
+                                          <textarea
+                                            readOnly={domainFieldsReadOnly}
+                                            value={typeOption.choices_input || ""}
+                                            onChange={(e) => setDomainConfigForm((prev) => ({
+                                              ...prev,
+                                              [d.key]: {
+                                                ...(prev?.[d.key] || {}),
+                                                type_options: (Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []).map((row, rowIndex) => (
+                                                  rowIndex === typeIndex
+                                                    ? { ...row, choices_input: e.target.value }
+                                                    : row
+                                                )),
+                                              },
+                                            }))}
+                                            rows={4}
+                                            placeholder={"Choice 1\nChoice 2\nChoice 3"}
+                                            style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                          />
+                                          <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
+                                            One choice per line. These choices appear in the report modal under this type option.
+                                          </div>
+                                        </label>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    No issue types configured for this domain yet.
+                                  </div>
+                                )}
+                              </div>
                               <div
                                 style={{
                                   ...subPanel,
@@ -14706,6 +15039,9 @@ export default function PlatformAdminApp() {
                                   ? "Asset-backed domains do not use public incident confidence thresholds."
                                   : "Confidence rules: the public visibility threshold controls when an incident becomes visible to everyone on the map. The high confidence threshold is stored per tenant/domain so future scoring, alerting, and operations workflows can follow local reporting patterns."}
                               </div>
+                              </div>
+                                ) : null}
+                                {selectedAssignedDomainSectionKey === "report-email-template" ? (
                               <div
                                 style={{
                                   ...subPanel,
@@ -14726,6 +15062,30 @@ export default function PlatformAdminApp() {
                                     {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
                                   </div>
                                 </div>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Email Template Preset</span>
+                                  <select
+                                    value={domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key}
+                                    disabled={domainFieldsReadOnly}
+                                    onChange={(e) => {
+                                      const nextTemplate = domainNotificationTemplateOption(e.target.value);
+                                      setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          notification_template_key: nextTemplate.key,
+                                          notification_subject_template: nextTemplate.subject,
+                                          notification_body_template: nextTemplate.body,
+                                        },
+                                      }));
+                                    }}
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                   <span>Email Subject Template</span>
                                   <input
@@ -14767,64 +15127,15 @@ export default function PlatformAdminApp() {
                                   />
                                 </label>
                                 <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                                  Available macros: {domainNotificationTemplateTokens(manageableTenantDomainRowByKey?.[d.key]?.type_options || []).join(", ")}
+                                  Available macros: {domainNotificationTemplateTokens(domainConfigForm?.[d.key]?.type_options || []).join(", ")}
                                 </div>
                               </div>
-                              {isAssetBacked ? (
-                                <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                    <div style={{ display: "grid", gap: 3 }}>
-                                      <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
-                                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                        {coordinateFiles.length
-                                          ? `${coordinateFiles.length} coordinate file${coordinateFiles.length === 1 ? "" : "s"} linked to ${d.label}.`
-                                          : `No coordinate files are linked to ${d.label} yet.`}
-                                      </div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
-                                      disabled={!canEditTenantFiles || !isEditingDomain}
-                                      onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
-                                      title={
-                                        !isEditingDomain
-                                          ? `Open edit mode to manage ${d.label} coordinates`
-                                          : canEditTenantFiles
-                                            ? `Add coordinate file for ${d.label}`
-                                            : "You need the Files edit permission"
-                                      }
-                                    >
-                                      Add Coordinates
-                                    </button>
-                                  </div>
-                                  {coordinateFiles.length ? (
-                                    <div style={{ display: "grid", gap: 6 }}>
-                                      {coordinateFiles.slice(0, 3).map((row) => (
-                                        <div key={row.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                          <div style={{ display: "grid", gap: 2 }}>
-                                            <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed coordinate file"}</strong>
-                                            <span style={{ fontSize: 12, color: palette.textMuted }}>
-                                              {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
-                                            </span>
-                                          </div>
-                                          <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
-                                        </div>
-                                      ))}
-                                      {coordinateFiles.length > 3 ? (
-                                        <div style={{ fontSize: 12, color: palette.textMuted }}>
-                                          {coordinateFiles.length - 3} more coordinate file{coordinateFiles.length - 3 === 1 ? "" : "s"} available in the asset library below.
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                                </div>
-                              </>
-                            ) : null}
+                                ) : null}
                           </div>
                         );
-                      }) : (
+                      })()}
+                        </>
+                      ) : (
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                           No domains are assigned yet for this organization.
                         </div>
@@ -14832,7 +15143,13 @@ export default function PlatformAdminApp() {
                     </div>
                   </div>
                 ) : null}
+                {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.domains)}</div> : null}
+              </div>
+            </div>
+            ) : null}
 
+            {activeTab === "map-features" ? (
+            <div style={{ ...card, display: "grid", gap: 10 }}>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: 3 }}>
@@ -15007,10 +15324,11 @@ export default function PlatformAdminApp() {
                     );
                   })()}
                 </div>
-              </div>
               {status.domains ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.domains)}</div> : null}
             </div>
+            ) : null}
 
+            {activeTab === "files" ? (
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                 <div style={{ display: "grid", gap: 3 }}>
@@ -15095,6 +15413,7 @@ export default function PlatformAdminApp() {
                 <div style={{ ...subPanel, color: palette.textMuted }}>No uploaded assets are attached to this organization yet.</div>
               ) : null}
             </div>
+            ) : null}
           </section>
         ) : null}
 
