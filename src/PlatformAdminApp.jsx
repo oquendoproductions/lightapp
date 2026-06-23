@@ -8520,7 +8520,6 @@ export default function PlatformAdminApp() {
                   checked={domainRegistryForm.allow_report_images === true}
                   onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
                 />
-                <span>{domainRegistryForm.allow_report_images === true ? "Enabled" : "Disabled"}</span>
               </label>
             </div>
             <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
@@ -8536,7 +8535,6 @@ export default function PlatformAdminApp() {
                   checked={domainRegistryForm.road_required === true}
                   onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
                 />
-                <span>{domainRegistryForm.road_required === true ? "Enabled" : "Disabled"}</span>
               </label>
             </div>
             <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
