@@ -8512,8 +8512,8 @@ export default function PlatformAdminApp() {
         </label>
         <div style={{ ...responsiveActionGrid, gridColumn: "1 / -1" }}>
           <div style={{ ...modalField, justifyContent: "start" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ flex: "1 1 auto" }}>Allow Photos</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content" }}>
+              <span>Allow Photos</span>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
                 <input
                   type="checkbox"
@@ -8528,8 +8528,8 @@ export default function PlatformAdminApp() {
             </div>
           </div>
           <div style={{ ...modalField, justifyContent: "start" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ flex: "1 1 auto" }}>Road Required</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content" }}>
+              <span>Road Required</span>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
                 <input
                   type="checkbox"
