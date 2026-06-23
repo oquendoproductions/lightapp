@@ -8560,9 +8560,9 @@ export default function PlatformAdminApp() {
           </label>
         ) : null}
         <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "nowrap" }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: palette.navy900, lineHeight: 1.2 }}>Allow Photos</span>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ flex: "1 1 auto" }}>Allow Photos</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
               <input
                 type="checkbox"
                 checked={domainRegistryForm.allow_report_images === true}
@@ -8576,9 +8576,9 @@ export default function PlatformAdminApp() {
           </div>
         </div>
         <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "nowrap" }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: palette.navy900, lineHeight: 1.2 }}>Road Required</span>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ flex: "1 1 auto" }}>Road Required</span>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
               <input
                 type="checkbox"
                 checked={domainRegistryForm.road_required === true}
