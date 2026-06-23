@@ -1826,31 +1826,49 @@ function createUniqueMapUiThemeName(sourceName, themes, excludeThemeId = "") {
   return candidate;
 }
 
+function getMapUiThemeDateWindowInfo(theme) {
+  if (!theme || theme?.is_default) {
+    return {
+      startAtRaw: "",
+      endAtRaw: "",
+      startAt: Number.NaN,
+      endAt: Number.NaN,
+      hasBothDates: false,
+      hasInvalidWindow: false,
+    };
+  }
+  const startAtRaw = String(theme?.start_at || "").trim();
+  const endAtRaw = String(theme?.end_at || "").trim();
+  const hasBothDates = Boolean(startAtRaw && endAtRaw);
+  const startAt = hasBothDates ? Date.parse(fromLocalDateTimeInputValue(startAtRaw)) : Number.NaN;
+  const endAt = hasBothDates ? Date.parse(fromLocalDateTimeInputValue(endAtRaw)) : Number.NaN;
+  const hasInvalidWindow = hasBothDates && Number.isFinite(startAt) && Number.isFinite(endAt) && endAt <= startAt;
+  return {
+    startAtRaw,
+    endAtRaw,
+    startAt,
+    endAt,
+    hasBothDates,
+    hasInvalidWindow,
+  };
+}
+
 function findMapUiThemeDateConflicts(theme, themes = []) {
   if (!theme || theme?.is_default) return [];
   const currentId = String(theme?.id || "").trim();
-  const currentStart = Date.parse(fromLocalDateTimeInputValue(theme?.start_at));
-  const currentEnd = Date.parse(fromLocalDateTimeInputValue(theme?.end_at));
-  if (!Number.isFinite(currentStart) || !Number.isFinite(currentEnd) || currentEnd <= currentStart) return [];
+  const { startAt: currentStart, endAt: currentEnd, hasInvalidWindow } = getMapUiThemeDateWindowInfo(theme);
+  if (!Number.isFinite(currentStart) || !Number.isFinite(currentEnd) || hasInvalidWindow) return [];
   return (Array.isArray(themes) ? themes : []).filter((entry) => {
     if (!entry || entry?.is_default) return false;
     if (String(entry?.id || "").trim() === currentId) return false;
-    const otherStart = Date.parse(fromLocalDateTimeInputValue(entry?.start_at));
-    const otherEnd = Date.parse(fromLocalDateTimeInputValue(entry?.end_at));
-    if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd) || otherEnd <= otherStart) return false;
+    const { startAt: otherStart, endAt: otherEnd, hasInvalidWindow: otherHasInvalidWindow } = getMapUiThemeDateWindowInfo(entry);
+    if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd) || otherHasInvalidWindow) return false;
     return currentStart < otherEnd && currentEnd > otherStart;
   });
 }
 
 function hasInvalidMapUiThemeDateWindow(theme) {
-  if (!theme || theme?.is_default) return false;
-  const startAtRaw = String(theme?.start_at || "").trim();
-  const endAtRaw = String(theme?.end_at || "").trim();
-  if (!startAtRaw || !endAtRaw) return false;
-  const startAt = Date.parse(fromLocalDateTimeInputValue(startAtRaw));
-  const endAt = Date.parse(fromLocalDateTimeInputValue(endAtRaw));
-  if (!Number.isFinite(startAt) || !Number.isFinite(endAt)) return false;
-  return endAt <= startAt;
+  return getMapUiThemeDateWindowInfo(theme).hasInvalidWindow;
 }
 
 function clampToRange(value, min, max, fallback = min) {
@@ -2889,6 +2907,10 @@ export default function PlatformAdminApp() {
   );
   const mapUiThemeEditorHasInvalidDateWindow = useMemo(
     () => hasInvalidMapUiThemeDateWindow(mapUiThemeEditorDraft),
+    [mapUiThemeEditorDraft]
+  );
+  const mapUiThemeEditorDateWindow = useMemo(
+    () => getMapUiThemeDateWindowInfo(mapUiThemeEditorDraft),
     [mapUiThemeEditorDraft]
   );
   const selectedTenantDomainAssignments = useMemo(
@@ -11602,6 +11624,7 @@ export default function PlatformAdminApp() {
                             <input
                               type="datetime-local"
                               value={mapUiThemeEditorDraft.start_at}
+                              max={mapUiThemeEditorDateWindow.endAtRaw || undefined}
                               disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                               onChange={(event) => updateMapUiThemeEditorMeta("start_at", event.target.value)}
                               style={modalInput}
@@ -11612,6 +11635,7 @@ export default function PlatformAdminApp() {
                             <input
                               type="datetime-local"
                               value={mapUiThemeEditorDraft.end_at}
+                              min={mapUiThemeEditorDateWindow.startAtRaw || undefined}
                               disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
                               onChange={(event) => updateMapUiThemeEditorMeta("end_at", event.target.value)}
                               style={modalInput}
@@ -11633,6 +11657,11 @@ export default function PlatformAdminApp() {
                         <span style={{ fontSize: 12, color: palette.red600 }}>
                           The end time must be after the start time before this temporary theme can be saved or published.
                         </span>
+                      </div>
+                    ) : null}
+                    {!mapUiThemeEditorDraft.is_default && !mapUiThemeEditorHasInvalidDateWindow && mapUiThemeEditorDateWindow.startAtRaw ? (
+                      <div style={{ fontSize: 12, color: palette.textMuted }}>
+                        End time must be after the selected start time.
                       </div>
                     ) : null}
                     {!mapUiThemeEditorDraft.is_default && !mapUiThemeEditorHasInvalidDateWindow && mapUiThemeEditorConflicts.length ? (
