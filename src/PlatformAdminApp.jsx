@@ -2275,6 +2275,60 @@ function statusText(error, okText) {
   return `Error: ${String(error?.message || error || "unknown error")}`;
 }
 
+const MAP_UI_THEME_TIME_ZONE = "America/New_York";
+const MAP_UI_THEME_TIME_ZONE_LABEL = "Eastern Time";
+
+function mapUiThemeDateTimePartsForZone(value) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: MAP_UI_THEME_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(parsed);
+  const next = {};
+  parts.forEach((part) => {
+    if (part.type !== "literal") next[part.type] = part.value;
+  });
+  const year = Number(next.year);
+  const month = Number(next.month);
+  const day = Number(next.day);
+  const hour = Number(next.hour);
+  const minute = Number(next.minute);
+  const second = Number(next.second);
+  if (![year, month, day, hour, minute, second].every(Number.isFinite)) return null;
+  return { year, month, day, hour, minute, second };
+}
+
+function mapUiThemeTimeZoneOffsetMs(value) {
+  const parts = mapUiThemeDateTimePartsForZone(value);
+  if (!parts) return 0;
+  const utcFromParts = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  const instant = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (!Number.isFinite(instant)) return 0;
+  return utcFromParts - instant;
+}
+
+function parseMapUiThemeDateTimeInputValue(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+  return { year, month, day, hour, minute };
+}
+
 function formatDateTimeDisplay(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -2295,25 +2349,48 @@ function toLocalDateTimeInputValue(value) {
   if (!raw) return "";
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return "";
+  const parts = mapUiThemeDateTimePartsForZone(parsed);
+  if (!parts) return "";
   return [
-    parsed.getFullYear(),
+    parts.year,
     "-",
-    padDateTimeInputPart(parsed.getMonth() + 1),
+    padDateTimeInputPart(parts.month),
     "-",
-    padDateTimeInputPart(parsed.getDate()),
+    padDateTimeInputPart(parts.day),
     "T",
-    padDateTimeInputPart(parsed.getHours()),
+    padDateTimeInputPart(parts.hour),
     ":",
-    padDateTimeInputPart(parsed.getMinutes()),
+    padDateTimeInputPart(parts.minute),
   ].join("");
 }
 
 function fromLocalDateTimeInputValue(value) {
+  const parts = parseMapUiThemeDateTimeInputValue(value);
+  if (!parts) return "";
+  const guessUtcMs = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0);
+  let resolvedUtcMs = guessUtcMs - mapUiThemeTimeZoneOffsetMs(new Date(guessUtcMs));
+  const refinedOffset = mapUiThemeTimeZoneOffsetMs(new Date(resolvedUtcMs));
+  resolvedUtcMs = guessUtcMs - refinedOffset;
+  const parsed = new Date(resolvedUtcMs);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString();
+}
+
+function formatMapUiThemeDateTimeDisplay(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString();
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: MAP_UI_THEME_TIME_ZONE,
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(parsed);
 }
 
 function isMissingRelationError(error) {
@@ -11404,6 +11481,9 @@ export default function PlatformAdminApp() {
                   <p style={{ margin: 0, color: palette.textMuted }}>
                     Build a saved library of default and temporary map UI themes. Draft themes stay in PCP until they are published, and scheduled themes become active only during their effective dates.
                   </p>
+                  <p style={{ margin: 0, color: palette.textMuted, fontSize: 12.5 }}>
+                    All theme scheduling uses {MAP_UI_THEME_TIME_ZONE_LABEL} ({MAP_UI_THEME_TIME_ZONE}).
+                  </p>
                 </div>
                 <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.72)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
@@ -11432,7 +11512,7 @@ export default function PlatformAdminApp() {
                       Live now:
                       {" "}
                       {activePublishedMapUiThemeSchedule?.label
-                        ? `${activePublishedMapUiThemeSchedule.label} until ${formatDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
+                        ? `${activePublishedMapUiThemeSchedule.label} until ${formatMapUiThemeDateTimeDisplay(activePublishedMapUiThemeSchedule.end_at)}`
                         : "Default theme"}
                     </span>
                   </div>
@@ -11452,6 +11532,11 @@ export default function PlatformAdminApp() {
                             ? "Edit the default fallback theme here. Only PCP super users can publish changes to the default theme."
                             : "Configure a temporary theme, save it as a draft, or publish it to schedule deployment during its effective dates."}
                         </span>
+                        {!mapUiThemeEditorDraft.is_default ? (
+                          <span style={{ fontSize: 12, color: palette.textMuted }}>
+                            Effective dates below are interpreted in {MAP_UI_THEME_TIME_ZONE_LABEL} ({MAP_UI_THEME_TIME_ZONE}).
+                          </span>
+                        ) : null}
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <button
@@ -11495,7 +11580,7 @@ export default function PlatformAdminApp() {
                       {!mapUiThemeEditorDraft.is_default ? (
                         <>
                           <label style={{ display: "grid", gap: 6 }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective Start</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective Start ({MAP_UI_THEME_TIME_ZONE_LABEL})</span>
                             <input
                               type="datetime-local"
                               value={mapUiThemeEditorDraft.start_at}
@@ -11505,7 +11590,7 @@ export default function PlatformAdminApp() {
                             />
                           </label>
                           <label style={{ display: "grid", gap: 6 }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective End</span>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Effective End ({MAP_UI_THEME_TIME_ZONE_LABEL})</span>
                             <input
                               type="datetime-local"
                               value={mapUiThemeEditorDraft.end_at}
@@ -11601,8 +11686,8 @@ export default function PlatformAdminApp() {
                                 {themeEntry.is_default
                                   ? "Permanent fallback theme used whenever no active temporary theme is live."
                                   : themeEntry.start_at && themeEntry.end_at
-                                    ? `${formatDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.start_at))} to ${formatDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.end_at))}`
-                                    : "Draft theme with no effective dates yet."}
+                                    ? `${formatMapUiThemeDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.start_at))} to ${formatMapUiThemeDateTimeDisplay(fromLocalDateTimeInputValue(themeEntry.end_at))}`
+                                    : `Draft theme with no effective ${MAP_UI_THEME_TIME_ZONE_LABEL.toLowerCase()} dates yet.`}
                               </span>
                             </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
