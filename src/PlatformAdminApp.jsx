@@ -2616,6 +2616,7 @@ export default function PlatformAdminApp() {
   const [mapUiThemeSectionOpen, setMapUiThemeSectionOpen] = useState(true);
   const [mapUiThemeExpandedScheduleId, setMapUiThemeExpandedScheduleId] = useState("");
   const [selectedMapUiIconKeysByGroup, setSelectedMapUiIconKeysByGroup] = useState({});
+  const [selectedMapUiIconGroup, setSelectedMapUiIconGroup] = useState("");
   const [mapUiIconSavingDraft, setMapUiIconSavingDraft] = useState(false);
   const [mapUiIconPublishing, setMapUiIconPublishing] = useState(false);
   const [mapUiThemeSavingDraft, setMapUiThemeSavingDraft] = useState(false);
@@ -2867,6 +2868,31 @@ export default function PlatformAdminApp() {
       return next;
     });
   }, [mapUiIconCatalogGroups]);
+  useEffect(() => {
+    setSelectedMapUiIconGroup((prev) => {
+      const availableGroups = mapUiIconCatalogGroups.map(({ group }) => String(group || "").trim()).filter(Boolean);
+      if (!availableGroups.length) return "";
+      return availableGroups.includes(prev) ? prev : availableGroups[0];
+    });
+  }, [mapUiIconCatalogGroups]);
+  const activeMapUiIconGroup = useMemo(() => {
+    const selectedGroup = String(selectedMapUiIconGroup || "").trim();
+    if (mapUiIconCatalogGroups.some(({ group }) => group === selectedGroup)) return selectedGroup;
+    return String(mapUiIconCatalogGroups?.[0]?.group || "").trim();
+  }, [mapUiIconCatalogGroups, selectedMapUiIconGroup]);
+  const activeMapUiIconItems = useMemo(
+    () => mapUiIconCatalogGroups.find(({ group }) => group === activeMapUiIconGroup)?.items || [],
+    [activeMapUiIconGroup, mapUiIconCatalogGroups]
+  );
+  const activeMapUiIconSelectedKey = useMemo(() => {
+    const selectedKey = String(selectedMapUiIconKeysByGroup?.[activeMapUiIconGroup] || "").trim();
+    if (activeMapUiIconItems.some((entry) => entry.key === selectedKey)) return selectedKey;
+    return String(activeMapUiIconItems?.[0]?.key || "").trim();
+  }, [activeMapUiIconGroup, activeMapUiIconItems, selectedMapUiIconKeysByGroup]);
+  const activeMapUiIconEntry = useMemo(
+    () => activeMapUiIconItems.find((entry) => entry.key === activeMapUiIconSelectedKey) || activeMapUiIconItems[0] || null,
+    [activeMapUiIconItems, activeMapUiIconSelectedKey]
+  );
   const publishedMapUiIconMeta = useMemo(
     () => mergeMapUiIconMeta(mapUiIconPublishedConfig),
     [mapUiIconPublishedConfig]
@@ -11705,33 +11731,43 @@ export default function PlatformAdminApp() {
                   </div>
                 ) : null}
                 <div style={{ display: "grid", gap: 12 }}>
-                  {mapUiIconCatalogGroups.map(({ group, items }) => {
-                    const selectedEntryKey = String(selectedMapUiIconKeysByGroup?.[group] || items?.[0]?.key || "").trim();
-                    const selectedEntry = items.find((entry) => entry.key === selectedEntryKey) || items[0] || null;
-                    return (
-                    <div key={group} style={{ ...subPanel, display: "grid", gap: 12 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
-                        <div style={{ display: "grid", gap: 3 }}>
-                          <strong style={{ color: palette.navy900 }}>{group}</strong>
-                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>
-                            Choose one icon from this category to edit. Only the selected icon is shown below.
-                          </span>
-                        </div>
+                  <div style={{ ...subPanel, display: "grid", gap: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <strong style={{ color: palette.navy900 }}>Icon Catalog</strong>
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Choose a category first, then select the icon you want to edit from that category.
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <label style={{ display: "grid", gap: 6, minWidth: 220 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Icon Category</span>
+                          <select
+                            value={activeMapUiIconGroup}
+                            onChange={(event) => setSelectedMapUiIconGroup(event.target.value)}
+                            style={modalInput}
+                          >
+                            {mapUiIconCatalogGroups.map(({ group }) => (
+                              <option key={group} value={group}>{group}</option>
+                            ))}
+                          </select>
+                        </label>
                         <label style={{ display: "grid", gap: 6, minWidth: 240 }}>
                           <span style={{ fontSize: 12, fontWeight: 700, color: palette.navy900 }}>Select Icon</span>
                           <select
-                            value={selectedEntryKey}
-                            onChange={(event) => setSelectedMapUiIconKeysByGroup((prev) => ({ ...prev, [group]: event.target.value }))}
+                            value={activeMapUiIconSelectedKey}
+                            onChange={(event) => setSelectedMapUiIconKeysByGroup((prev) => ({ ...prev, [activeMapUiIconGroup]: event.target.value }))}
                             style={modalInput}
                           >
-                            {items.map((entry) => (
+                            {activeMapUiIconItems.map((entry) => (
                               <option key={entry.key} value={entry.key}>{entry.label}</option>
                             ))}
                           </select>
                         </label>
                       </div>
-                      <div style={{ display: "grid", gap: 10 }}>
-                        {[selectedEntry].filter(Boolean).map((entry) => {
+                    </div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {[activeMapUiIconEntry].filter(Boolean).map((entry) => {
                           const row = mapUiIconDraftForm?.[entry.key] || {};
                           const previewSrc = String(row?.preview_url || row?.src || entry.defaultSrc || "").trim();
                           const previewRenderMode = String(row?.render_mode || entry.defaultRenderMode || MAP_UI_ICON_RENDER_MODE.RASTER).trim();
@@ -12014,11 +12050,9 @@ export default function PlatformAdminApp() {
                               </div>
                             </div>
                           );
-                        })}
-                      </div>
+                      })}
                     </div>
-                  );
-                  })}
+                  </div>
                 </div>
               </div>
             </div>
