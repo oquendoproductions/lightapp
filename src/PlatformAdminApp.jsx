@@ -8483,6 +8483,67 @@ export default function PlatformAdminApp() {
             style={modalInput}
           />
         </label>
+        <label style={modalField}>
+          <span>Status</span>
+          <select
+            value={domainRegistryForm.status}
+            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
+            style={modalInput}
+          >
+            <option value="draft">Draft</option>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+        <label style={modalField}>
+          <span>Ownership Model</span>
+          <select
+            value={domainRegistryForm.ownership_model}
+            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
+            style={modalInput}
+          >
+            <option value="org_managed">Organization Managed</option>
+            <option value="utility_managed">Utility Managed</option>
+            <option value="third_party">Third Party</option>
+          </select>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+            {ownershipModelDescription}
+          </div>
+        </label>
+        <div style={{ ...responsiveActionGrid, gridColumn: "1 / -1" }}>
+          <div style={{ ...modalField, justifyContent: "start" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ flex: "1 1 auto" }}>Allow Photos</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={domainRegistryForm.allow_report_images === true}
+                  onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
+                />
+                <span>{domainRegistryForm.allow_report_images === true ? "Enabled" : "Disabled"}</span>
+              </label>
+            </div>
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Allow residents to capture or upload a photo with this domain's report.
+            </div>
+          </div>
+          <div style={{ ...modalField, justifyContent: "start" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ flex: "1 1 auto" }}>Road Required</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={domainRegistryForm.road_required === true}
+                  onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
+                />
+                <span>{domainRegistryForm.road_required === true ? "Enabled" : "Disabled"}</span>
+              </label>
+            </div>
+            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+              Require the public reporting modal pin to land on a road before submission.
+            </div>
+          </div>
+        </div>
         {!editingDomainDefinitionKey ? (
           <>
             <label style={modalField}>
@@ -8513,160 +8574,22 @@ export default function PlatformAdminApp() {
                 ))}
               </select>
             </label>
-          </>
-        ) : null}
-        <label style={modalField}>
-          <span>Status</span>
-          <select
-            value={domainRegistryForm.status}
-            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, status: e.target.value }))}
-            style={modalInput}
-          >
-            <option value="draft">Draft</option>
-            <option value="active">Active</option>
-            <option value="archived">Archived</option>
-          </select>
-        </label>
-        <label style={modalField}>
-          <span>Ownership Model</span>
-          <select
-            value={domainRegistryForm.ownership_model}
-            onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, ownership_model: e.target.value }))}
-            style={modalInput}
-          >
-            <option value="org_managed">Organization Managed</option>
-            <option value="utility_managed">Utility Managed</option>
-            <option value="third_party">Third Party</option>
-          </select>
-          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            {ownershipModelDescription}
-          </div>
-        </label>
-        {!editingDomainDefinitionKey ? (
-          <label style={modalField}>
-            <span>Report Prefix</span>
-            <input
-              value={domainRegistryForm.report_prefix}
-              onChange={(e) => setDomainRegistryForm((prev) => ({
-                ...prev,
-                report_prefix: String(e.target.value || "").toUpperCase(),
-              }))}
-              placeholder="EC"
-              style={modalInput}
-            />
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Required. Report numbers are standardized as <b>{"<PREFIX>-R<8 digits>"}</b>, for example <b>EC-R00000999</b>.
-            </div>
-          </label>
-        ) : null}
-        <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ flex: "1 1 auto" }}>Allow Photos</span>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
+            <label style={modalField}>
+              <span>Report Prefix</span>
               <input
-                type="checkbox"
-                checked={domainRegistryForm.allow_report_images === true}
-                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
-              />
-              <span>{domainRegistryForm.allow_report_images === true ? "Enabled" : "Disabled"}</span>
-            </label>
-          </div>
-          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            Allow residents to capture or upload a photo with this domain's report.
-          </div>
-        </div>
-        <div style={{ ...modalField, justifyContent: "start" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ flex: "1 1 auto" }}>Road Required</span>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
-              <input
-                type="checkbox"
-                checked={domainRegistryForm.road_required === true}
-                onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
-              />
-              <span>{domainRegistryForm.road_required === true ? "Enabled" : "Disabled"}</span>
-            </label>
-          </div>
-          <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-            Require the public reporting modal pin to land on a road before submission.
-          </div>
-        </div>
-      </div>
-      <div style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(255,255,255,0.82)", borderColor: "rgba(17,36,69,0.1)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div style={{ display: "grid", gap: 3 }}>
-            <div style={{ fontWeight: 900, color: palette.navy900 }}>Domain Icon</div>
-            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-              Preferred spec: SVG with a square artboard, transparent background, and a simple single-icon composition. Best fit is a 64px to 256px square source. Uploads save into the platform domain icon library automatically. PNG and WebP are accepted when needed.
-            </div>
-          </div>
-        </div>
-        <div style={responsiveActionGrid}>
-          <label style={modalField}>
-            <span>Icon Source</span>
-            <select
-              value={domainRegistryForm.icon_selection}
-              onChange={(e) => setDomainRegistryForm((prev) => ({
-                ...prev,
-                icon_selection: e.target.value,
-                custom_icon_src: e.target.value === CUSTOM_DOMAIN_ICON_SELECTION ? prev.custom_icon_src : "",
-                icon_file: e.target.value === UPLOAD_DOMAIN_ICON_SELECTION ? prev.icon_file : null,
-              }))}
-              style={modalInput}
-            >
-              <option value={UPLOAD_DOMAIN_ICON_SELECTION}>Upload icon file (recommended)</option>
-              <option value={CUSTOM_DOMAIN_ICON_SELECTION}>Advanced: public path</option>
-              <option value="">No icon</option>
-            </select>
-          </label>
-        </div>
-        {domainRegistryForm.icon_selection === UPLOAD_DOMAIN_ICON_SELECTION ? (
-          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-            <span>Choose Icon File</span>
-            <input
-              type="file"
-              accept={DOMAIN_ICON_ACCEPT}
-              onChange={(e) => {
-                const nextFile = e.target.files?.[0] || null;
-                setDomainRegistryForm((prev) => ({
+                value={domainRegistryForm.report_prefix}
+                onChange={(e) => setDomainRegistryForm((prev) => ({
                   ...prev,
-                  icon_file: nextFile,
-                }));
-              }}
-              style={modalInput}
-            />
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Preferred: SVG. Also accepted: PNG or WebP. Max size: 2 MB.
-            </div>
-          </label>
-        ) : null}
-        {domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? (
-          <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-            <span>Custom Icon Public Path (advanced)</span>
-            <input
-              value={domainRegistryForm.custom_icon_src}
-              onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, custom_icon_src: e.target.value, icon_src: e.target.value }))}
-              placeholder="https://... or /public/path/icon.svg"
-              style={modalInput}
-            />
-          </label>
-        ) : null}
-        {(domainRegistryUploadPreviewUrl || domainRegistryForm.icon_src || domainRegistryForm.custom_icon_src) ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 12.5, color: palette.textMuted }}>Preview</div>
-              <div style={{ width: 68, height: 68, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: "rgba(255,255,255,0.92)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                <img
-                  src={domainRegistryUploadPreviewUrl || (domainRegistryForm.icon_selection === CUSTOM_DOMAIN_ICON_SELECTION ? domainRegistryForm.custom_icon_src : domainRegistryForm.icon_src)}
-                  alt={`${domainRegistryForm.label || "Domain"} icon preview`}
-                  style={{ width: 44, height: 44, objectFit: "contain" }}
-                />
+                  report_prefix: String(e.target.value || "").toUpperCase(),
+                }))}
+                placeholder="EC"
+                style={modalInput}
+              />
+              <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
+                Required. Report numbers are standardized as <b>{"<PREFIX>-R<8 digits>"}</b>, for example <b>EC-R00000999</b>.
               </div>
-            </div>
-            <div style={{ fontSize: 12.5, color: palette.textMuted, maxWidth: 420 }}>
-              Upload-first is now the standard flow. The advanced public-path option is only here for legacy or externally hosted icons when you intentionally need it.
-            </div>
-          </div>
+            </label>
+          </>
         ) : null}
       </div>
       <label style={{ ...modalField, gridColumn: "1 / -1" }}>
