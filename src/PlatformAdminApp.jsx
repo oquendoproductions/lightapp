@@ -1842,6 +1842,17 @@ function findMapUiThemeDateConflicts(theme, themes = []) {
   });
 }
 
+function hasInvalidMapUiThemeDateWindow(theme) {
+  if (!theme || theme?.is_default) return false;
+  const startAtRaw = String(theme?.start_at || "").trim();
+  const endAtRaw = String(theme?.end_at || "").trim();
+  if (!startAtRaw || !endAtRaw) return false;
+  const startAt = Date.parse(fromLocalDateTimeInputValue(startAtRaw));
+  const endAt = Date.parse(fromLocalDateTimeInputValue(endAtRaw));
+  if (!Number.isFinite(startAt) || !Number.isFinite(endAt)) return false;
+  return endAt <= startAt;
+}
+
 function clampToRange(value, min, max, fallback = min) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -2875,6 +2886,10 @@ export default function PlatformAdminApp() {
   const mapUiThemeEditorConflicts = useMemo(
     () => findMapUiThemeDateConflicts(mapUiThemeEditorDraft, mapUiThemeDraftThemes),
     [mapUiThemeEditorDraft, mapUiThemeDraftThemes]
+  );
+  const mapUiThemeEditorHasInvalidDateWindow = useMemo(
+    () => hasInvalidMapUiThemeDateWindow(mapUiThemeEditorDraft),
+    [mapUiThemeEditorDraft]
   );
   const selectedTenantDomainAssignments = useMemo(
     () => tenantDomainAssignmentsByTenant?.[sanitizeTenantKey(selectedTenantKey)] || {},
@@ -6582,6 +6597,10 @@ export default function PlatformAdminApp() {
         created_at: String(mapUiThemeEditorDraft?.created_at || nowIso).trim() || nowIso,
         updated_at: nowIso,
       });
+      if (hasInvalidMapUiThemeDateWindow(nextTheme)) {
+        setStatus((prev) => ({ ...prev, mapUiTheme: `${trimmedName} must end after it starts.` }));
+        return { ok: false };
+      }
       const themeOverride = extractMapUiThemeFromForm(nextTheme.themeForm || {});
       const nextThemes = (() => {
         const replaced = mapUiThemeDraftThemes.map((entry) => (
@@ -6600,10 +6619,6 @@ export default function PlatformAdminApp() {
         const endAt = fromLocalDateTimeInputValue(nextTheme.end_at);
         if (!startAt || !endAt) {
           setStatus((prev) => ({ ...prev, mapUiTheme: `Choose both a start and end date for ${trimmedName} before publishing.` }));
-          return { ok: false };
-        }
-        if (Date.parse(endAt) <= Date.parse(startAt)) {
-          setStatus((prev) => ({ ...prev, mapUiTheme: `${trimmedName} must end after it starts.` }));
           return { ok: false };
         }
         if (!Object.keys(themeOverride).length) {
@@ -11552,16 +11567,16 @@ export default function PlatformAdminApp() {
                         </button>
                         <button
                           type="button"
-                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing && !mapUiThemeEditorHasInvalidDateWindow ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing || mapUiThemeEditorHasInvalidDateWindow}
                           onClick={() => void saveMapUiThemeEditor({ publish: false })}
                         >
                           {mapUiThemeSavingDraft ? "Saving Draft..." : "Save Draft"}
                         </button>
                         <button
                           type="button"
-                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing ? 1 : 0.55 }}
-                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing}
+                          style={{ ...buttonBase, opacity: canManageDomainRegistry && !mapUiThemeSavingDraft && !mapUiThemePublishing && !mapUiThemeEditorHasInvalidDateWindow ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || mapUiThemeSavingDraft || mapUiThemePublishing || mapUiThemeEditorHasInvalidDateWindow}
                           onClick={() => void saveMapUiThemeEditor({ publish: true })}
                         >
                           {mapUiThemePublishing ? "Publishing..." : mapUiThemeEditorDraft.is_default ? "Publish Default Theme" : "Publish + Schedule"}
@@ -11612,7 +11627,15 @@ export default function PlatformAdminApp() {
                         </div>
                       )}
                     </div>
-                    {!mapUiThemeEditorDraft.is_default && mapUiThemeEditorConflicts.length ? (
+                    {!mapUiThemeEditorDraft.is_default && mapUiThemeEditorHasInvalidDateWindow ? (
+                      <div style={{ ...subPanel, display: "grid", gap: 4, background: "rgba(209,67,67,0.08)", borderColor: "rgba(209,67,67,0.2)" }}>
+                        <strong style={{ color: palette.red600, fontSize: 12.5 }}>Invalid Date Window</strong>
+                        <span style={{ fontSize: 12, color: palette.red600 }}>
+                          The end time must be after the start time before this temporary theme can be saved or published.
+                        </span>
+                      </div>
+                    ) : null}
+                    {!mapUiThemeEditorDraft.is_default && !mapUiThemeEditorHasInvalidDateWindow && mapUiThemeEditorConflicts.length ? (
                       <div style={{ ...subPanel, display: "grid", gap: 4, background: "rgba(209,67,67,0.08)", borderColor: "rgba(209,67,67,0.2)" }}>
                         <strong style={{ color: palette.red600, fontSize: 12.5 }}>Date Conflict</strong>
                         <span style={{ fontSize: 12, color: palette.red600 }}>
