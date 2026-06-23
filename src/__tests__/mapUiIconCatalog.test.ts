@@ -175,4 +175,48 @@ describe("mapUiIconCatalog theme scheduling", () => {
     expect(resolveActiveMapUiThemeSchedule(raw, "2026-12-25T12:00:00.000Z")?.id).toBe("holiday-theme");
     expect(mergeMapUiTheme(raw, "2026-12-20T12:00:00.000Z").light.tool_button_bg).toBe("#112233");
   });
+
+  it("layers an active temporary theme on top of the published default theme", () => {
+    const raw = {
+      themes: [
+        {
+          id: "default-theme",
+          is_default: true,
+          name: "Default Theme",
+          deployment_state: "published",
+          theme: {
+            light: {
+              surface_bg: "#f0f0f0",
+              tool_button_bg: "#112233",
+            },
+          },
+        },
+        {
+          id: "holiday-theme",
+          name: "Holiday Theme",
+          deployment_state: "published",
+          start_at: "2026-12-24T00:00:00.000Z",
+          end_at: "2026-12-26T00:00:00.000Z",
+          theme: {
+            light: {
+              header_bg_primary: "#cc0000",
+              header_bg_secondary: "#ffffff",
+            },
+          },
+        },
+      ],
+    };
+
+    expect(resolveMapUiThemeOverride(raw, "2026-12-25T12:00:00.000Z")).toEqual({
+      light: {
+        surface_bg: "#f0f0f0",
+        tool_button_bg: "#112233",
+        header_bg_primary: "#cc0000",
+        header_bg_secondary: "#ffffff",
+      },
+    });
+    expect(mergeMapUiTheme(raw, "2026-12-25T12:00:00.000Z").light.surface_bg).toBe("#f0f0f0");
+    expect(mergeMapUiTheme(raw, "2026-12-25T12:00:00.000Z").light.header_bg_primary).toBe("#cc0000");
+    expect(mergeMapUiTheme(raw, "2026-12-25T12:00:00.000Z").light.tool_button_bg).toBe("#112233");
+  });
 });

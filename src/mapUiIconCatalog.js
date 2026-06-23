@@ -687,15 +687,30 @@ export function resolveActiveMapUiThemeSchedule(raw, at = Date.now()) {
   }) || null;
 }
 
-export function resolveMapUiThemeOverride(raw, at = Date.now()) {
-  const activeSchedule = resolveActiveMapUiThemeSchedule(raw, at);
-  if (activeSchedule?.theme) return activeSchedule.theme;
-  if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
-    const defaultTheme = sanitizeMapUiThemes(raw).find((entry) => entry?.is_default);
-    return defaultTheme?.theme || {};
+function mergeMapUiThemeOverrideValues(baseTheme = {}, overrideTheme = {}) {
+  const next = {};
+  for (const mode of ["light", "dark"]) {
+    const mergedMode = {
+      ...((baseTheme && typeof baseTheme === "object" && baseTheme[mode] && typeof baseTheme[mode] === "object") ? baseTheme[mode] : {}),
+      ...((overrideTheme && typeof overrideTheme === "object" && overrideTheme[mode] && typeof overrideTheme[mode] === "object") ? overrideTheme[mode] : {}),
+    };
+    if (Object.keys(mergedMode).length) next[mode] = mergedMode;
   }
-  if (isMapUiBaseThemeEnabled(raw)) return sanitizeMapUiTheme(raw);
-  return {};
+  return next;
+}
+
+export function resolveMapUiThemeOverride(raw, at = Date.now()) {
+  const baseTheme = (() => {
+    if (raw && typeof raw === "object" && Array.isArray(raw.themes)) {
+      const defaultTheme = sanitizeMapUiThemes(raw).find((entry) => entry?.is_default);
+      return defaultTheme?.theme || {};
+    }
+    if (isMapUiBaseThemeEnabled(raw)) return sanitizeMapUiTheme(raw);
+    return {};
+  })();
+  const activeSchedule = resolveActiveMapUiThemeSchedule(raw, at);
+  if (activeSchedule?.theme) return mergeMapUiThemeOverrideValues(baseTheme, activeSchedule.theme);
+  return baseTheme;
 }
 
 export function mergeMapUiTheme(raw, at = Date.now()) {

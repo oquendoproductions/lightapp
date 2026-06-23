@@ -1578,6 +1578,23 @@ function extractMapUiThemeFromForm(form) {
   return sanitizeMapUiTheme(form);
 }
 
+function buildMapUiThemePreview(themeForm = {}, baseThemeForm = {}) {
+  const baseTheme = sanitizeMapUiTheme(baseThemeForm);
+  const previewTheme = sanitizeMapUiTheme(themeForm);
+  return {
+    light: {
+      ...MAP_UI_ICON_THEME_DEFAULTS.light,
+      ...(baseTheme.light || {}),
+      ...(previewTheme.light || {}),
+    },
+    dark: {
+      ...MAP_UI_ICON_THEME_DEFAULTS.dark,
+      ...(baseTheme.dark || {}),
+      ...(previewTheme.dark || {}),
+    },
+  };
+}
+
 function createMapUiThemeScheduleDraft(seed = {}) {
   const generatedId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -2830,16 +2847,7 @@ export default function PlatformAdminApp() {
     [mapUiThemeDraftThemes]
   );
   const previewMapUiTheme = useMemo(
-    () => mergeMapUiTheme({
-      themes: [
-        {
-          id: MAP_UI_THEME_DEFAULT_THEME_ID,
-          is_default: true,
-          deployment_state: "published",
-          theme: extractMapUiThemeFromForm(draftDefaultMapUiThemeEntry?.themeForm || {}),
-        },
-      ],
-    }),
+    () => buildMapUiThemePreview(draftDefaultMapUiThemeEntry?.themeForm || {}),
     [draftDefaultMapUiThemeEntry]
   );
   const publishedMapUiTheme = useMemo(
@@ -2855,20 +2863,15 @@ export default function PlatformAdminApp() {
     [mapUiThemeDraftThemes]
   );
   const mapUiThemeEditorPreview = useMemo(() => {
-    if (!mapUiThemeEditorDraft) return mergeMapUiTheme({});
-    return mergeMapUiTheme({
-      themes: [
-        {
-          id: mapUiThemeEditorDraft.id || MAP_UI_THEME_DEFAULT_THEME_ID,
-          is_default: mapUiThemeEditorDraft.is_default === true,
-          deployment_state: "published",
-          start_at: fromLocalDateTimeInputValue(mapUiThemeEditorDraft.start_at),
-          end_at: fromLocalDateTimeInputValue(mapUiThemeEditorDraft.end_at),
-          theme: extractMapUiThemeFromForm(mapUiThemeEditorDraft.themeForm || {}),
-        },
-      ],
-    });
-  }, [mapUiThemeEditorDraft]);
+    if (!mapUiThemeEditorDraft) return buildMapUiThemePreview({});
+    if (mapUiThemeEditorDraft.is_default) {
+      return buildMapUiThemePreview(mapUiThemeEditorDraft.themeForm || {});
+    }
+    return buildMapUiThemePreview(
+      mapUiThemeEditorDraft.themeForm || {},
+      draftDefaultMapUiThemeEntry?.themeForm || {}
+    );
+  }, [draftDefaultMapUiThemeEntry, mapUiThemeEditorDraft]);
   const mapUiThemeEditorConflicts = useMemo(
     () => findMapUiThemeDateConflicts(mapUiThemeEditorDraft, mapUiThemeDraftThemes),
     [mapUiThemeEditorDraft, mapUiThemeDraftThemes]
@@ -11655,18 +11658,10 @@ export default function PlatformAdminApp() {
                             : statusLabel === "Ended"
                               ? "#4b5563"
                               : palette.navy700;
-                      const themePreview = mergeMapUiTheme({
-                        themes: [
-                          {
-                            id: themeEntry.id,
-                            is_default: themeEntry.is_default,
-                            deployment_state: "published",
-                            start_at: fromLocalDateTimeInputValue(themeEntry.start_at),
-                            end_at: fromLocalDateTimeInputValue(themeEntry.end_at),
-                            theme: extractMapUiThemeFromForm(themeEntry.themeForm || {}),
-                          },
-                        ],
-                      });
+                      const themePreview = buildMapUiThemePreview(
+                        themeEntry.themeForm || {},
+                        themeEntry.is_default ? {} : draftDefaultMapUiThemeEntry?.themeForm || {}
+                      );
                       return (
                         <div key={themeEntry.id} style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.72)" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
