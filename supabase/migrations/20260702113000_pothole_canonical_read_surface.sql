@@ -48,7 +48,7 @@ legacy_pothole_reports as (
     'Pothole'::text as report_type,
     'bad'::text as report_quality,
     p.note,
-    public.canonical_legacy_pothole_incident_id(p.pothole_id) as light_id,
+    public.canonical_legacy_pothole_incident_id(p.pothole_id::text) as light_id,
     'potholes'::text as report_domain,
     p.report_number,
     p.reporter_user_id,
@@ -56,7 +56,7 @@ legacy_pothole_reports as (
     p.reporter_phone,
     p.reporter_email,
     p.pothole_id::text as legacy_pothole_id,
-    public.canonical_legacy_pothole_incident_id(p.pothole_id) as canonical_incident_id
+    public.canonical_legacy_pothole_incident_id(p.pothole_id::text) as canonical_incident_id
   from public.pothole_reports p
   left join public.potholes ph
     on ph.id = p.pothole_id
