@@ -639,6 +639,10 @@
   font-size: 17px;
 }
 
+.municipality-topic-card--section {
+  gap: 16px;
+}
+
 .municipality-auth-login-fields {
   display: grid;
   gap: 8px;

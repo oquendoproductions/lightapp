@@ -5,7 +5,7 @@ import "./index.css";
 import AppLaunchScreen from "./AppLaunchScreen.jsx";
 import { supabase } from "./supabaseClient";
 import { getCurrentLocationSnapshot, getNativeAppScope, getPlatformName, isNativeAppRuntime } from "./platform/runtime.js";
-import { TenantGate, TenantProvider } from "./tenant/TenantContext";
+import { TenantProvider } from "./tenant/TenantContext";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
 
@@ -15,6 +15,7 @@ const MunicipalityApp = lazy(() => import("./MunicipalityApp.jsx"));
 const PlatformAdminApp = lazy(() => import("./PlatformAdminApp.jsx"));
 const TenantNotFoundApp = lazy(() => import("./TenantNotFoundApp.jsx"));
 const RedirectingApp = lazy(() => import("./RedirectingApp.jsx"));
+const TenantGate = lazy(() => import("./tenant/TenantGate.jsx"));
 
 const location = getCurrentLocationSnapshot();
 const nativeAppScope = getNativeAppScope();

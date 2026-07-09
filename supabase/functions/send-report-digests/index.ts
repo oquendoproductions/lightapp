@@ -204,7 +204,9 @@ function stripSystemMetadataFromNote(note: unknown): string {
     .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Water issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Type:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign type:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    .replace(/(?:^|\s)Type Option\s+[^:|]+:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/gi, "")
     .replace(/\s*\|\s*\|\s*/g, " | ")
     .replace(/^\s*\|\s*/, "")
@@ -215,15 +217,32 @@ function stripSystemMetadataFromNote(note: unknown): string {
 function domainFromLightId(lightId: unknown): string {
   const value = trimOrEmpty(lightId).toLowerCase();
   if (!value) return "streetlights";
+  const rawPrefix = value.includes(":") ? trimOrEmpty(value.split(":")[0]) : value;
   if (
-    value.startsWith("water_drain_issues:")
-    || value.startsWith("water_drain:")
-    || value.startsWith("storm_drain:")
-    || value.startsWith("sewer_backup:")
-    || value.startsWith("water_main:")
+    rawPrefix === "water_drain_issues"
+    || rawPrefix === "water_drain"
+    || rawPrefix === "storm_drain"
+    || rawPrefix === "sewer_backup"
+    || rawPrefix === "water_main"
   ) return "water_drain_issues";
-  if (value.startsWith("street_signs:")) return "street_signs";
+  if (rawPrefix === "street_signs") return "street_signs";
+  if (rawPrefix === "streetlights" || !value.includes(":")) return "streetlights";
+  if (/^[a-z0-9][a-z0-9_-]*$/.test(rawPrefix)) return rawPrefix;
   return "streetlights";
+}
+
+function titleCaseWords(value: string) {
+  return trimOrEmpty(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function humanizeDomainKey(domainKey: string) {
+  const raw = trimOrEmpty(domainKey);
+  if (!raw) return "Streetlights";
+  return titleCaseWords(raw.replace(/[_-]+/g, " "));
 }
 
 function domainLabel(domainKey: string): string {
@@ -235,7 +254,7 @@ function domainLabel(domainKey: string): string {
     case "street_signs":
       return "Street Signs";
     default:
-      return "Streetlights";
+      return humanizeDomainKey(domainKey);
   }
 }
 

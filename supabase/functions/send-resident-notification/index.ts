@@ -602,7 +602,6 @@ serve(async (req) => {
       ? await admin
           .from("native_push_tokens")
           .select("user_id,token,platform")
-          .eq("tenant_key", tenantKey)
           .eq("enabled", true)
           .eq("platform", "ios")
           .in("user_id", pushUserIds)

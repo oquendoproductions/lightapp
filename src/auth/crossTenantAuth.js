@@ -69,6 +69,53 @@ function readLogoutPayload() {
   return decodePayload(readCookie(LOGOUT_MARKER_COOKIE));
 }
 
+export function readCrossTenantAuthBridgeState() {
+  const bridgePayload = readBridgePayload();
+  const logoutPayload = readLogoutPayload();
+  return {
+    hasBridgeSessionHint: Boolean(
+      trimOrEmpty(bridgePayload?.access_token) && trimOrEmpty(bridgePayload?.refresh_token)
+    ),
+    hasLogoutMarker: Boolean(logoutPayload),
+  };
+}
+
+function isInvalidRefreshTokenError(error) {
+  const status = Number(error?.status || 0);
+  const code = trimOrEmpty(error?.code).toUpperCase();
+  const message = trimOrEmpty(error?.message).toLowerCase();
+  return (
+    code === "REFRESH_TOKEN_NOT_FOUND" ||
+    message.includes("invalid refresh token") ||
+    message.includes("refresh token not found") ||
+    (status === 400 && message.includes("refresh token"))
+  );
+}
+
+async function clearLocalSupabaseSession(supabase) {
+  markCrossTenantLogout();
+  if (!supabase?.auth) return;
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {
+    // ignore local sign-out cleanup failures
+  }
+}
+
+async function getSessionSafely(supabase) {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    return data?.session || null;
+  } catch (error) {
+    if (isInvalidRefreshTokenError(error)) {
+      await clearLocalSupabaseSession(supabase);
+      return null;
+    }
+    throw error;
+  }
+}
+
 export function persistCrossTenantSession(session) {
   const accessToken = trimOrEmpty(session?.access_token);
   const refreshToken = trimOrEmpty(session?.refresh_token);
@@ -123,23 +170,25 @@ export async function hydrateCrossTenantSession(supabase) {
           access_token: handoffSession.access_token,
           refresh_token: handoffSession.refresh_token,
         });
+      } catch (error) {
+        if (isInvalidRefreshTokenError(error)) {
+          await clearLocalSupabaseSession(supabase);
+        }
+      } finally {
         const nextUrl = `${window.location.pathname}${window.location.search}${handoffSession.cleanedHash}`;
         window.history.replaceState({}, "", nextUrl);
-      } catch {
-        // ignore
       }
     }
   }
 
-  let { data } = await supabase.auth.getSession();
-  let session = data?.session || null;
+  let session = await getSessionSafely(supabase);
   const bridgePayload = readBridgePayload();
   const logoutPayload = readLogoutPayload();
 
   if (logoutPayload && !bridgePayload) {
     if (session) {
       try {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
       } catch {
         // ignore
       }
@@ -153,10 +202,13 @@ export async function hydrateCrossTenantSession(supabase) {
         access_token: bridgePayload.access_token,
         refresh_token: bridgePayload.refresh_token,
       });
-      ({ data } = await supabase.auth.getSession());
-      session = data?.session || null;
-    } catch {
-      markCrossTenantLogout();
+      session = await getSessionSafely(supabase);
+    } catch (error) {
+      if (isInvalidRefreshTokenError(error)) {
+        await clearLocalSupabaseSession(supabase);
+      } else {
+        markCrossTenantLogout();
+      }
       return null;
     }
   }

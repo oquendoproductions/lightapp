@@ -26,6 +26,15 @@ function finiteOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function normalizePotholeIncidentId(value: unknown): string {
+  const normalized = String(value || "").replace(/^potholes?:/i, "").trim();
+  return isUuidLike(normalized) ? normalized : "";
+}
+
 function normalizeTenantKey(value: unknown): string {
   return String(value || "")
     .trim()
@@ -37,9 +46,10 @@ function requestTenantKey(req: Request): string {
   return normalizeTenantKey(req.headers.get("x-tenant-key"));
 }
 
-function normalizeDomain(value: unknown): "streetlights" | "potholes" | "water_main" {
+function normalizeDomain(value: unknown): string {
   const raw = String(value || "").trim().toLowerCase();
   if (raw === "potholes") return "potholes";
+  if (raw === "street_signs") return "street_signs";
   if (
     raw === "water_drain_issues" ||
     raw === "water drain issues" ||
@@ -49,7 +59,7 @@ function normalizeDomain(value: unknown): "streetlights" | "potholes" | "water_m
   ) {
     return "water_main";
   }
-  return "streetlights";
+  return raw || "streetlights";
 }
 
 function normalizeWaterIssueType(value: unknown): "sewer_backup" | "storm_drain_clog" {
@@ -78,21 +88,26 @@ serve(async (req) => {
     }
 
     const domain = normalizeDomain(body?.domain);
-    const incidentId = String(
+    const rawIncidentId = String(
       body?.incident_id || body?.incidentId || body?.light_id || body?.lightId || body?.pothole_id || ""
     ).trim();
+    const incidentId = domain === "potholes"
+      ? normalizePotholeIncidentId(rawIncidentId)
+      : rawIncidentId;
     if (!incidentId) {
       return json({ ok: false, error: "Missing incident identifier" }, 400);
     }
 
     const nearestAddress = clampText(body?.nearest_address ?? body?.nearestAddress, 400);
     const nearestCrossStreet = clampText(body?.nearest_cross_street ?? body?.nearestCrossStreet, 240);
+    const nearestIntersection = clampText(body?.nearest_intersection ?? body?.nearestIntersection, 240);
     const nearestLandmark = clampText(body?.nearest_landmark ?? body?.nearestLandmark, 240);
+    const locationLabel = clampText(body?.location_label ?? body?.locationLabel, 400);
     const lat = finiteOrNull(body?.lat);
     const lng = finiteOrNull(body?.lng);
     const issueType = normalizeWaterIssueType(body?.issue_type ?? body?.issueType);
 
-    if (!nearestAddress && !nearestCrossStreet && !nearestLandmark) {
+    if (!nearestAddress && !nearestCrossStreet && !nearestIntersection && !nearestLandmark && !locationLabel) {
       return json({ ok: true, skipped: true, reason: "no_geo_values" });
     }
 
@@ -105,8 +120,10 @@ serve(async (req) => {
     const admin = createClient(url, serviceRole, { auth: { persistSession: false } });
     const updatePayload = {
       tenant_key: tenantKey,
+      location_label: locationLabel || nearestAddress || null,
       nearest_address: nearestAddress || null,
       nearest_cross_street: nearestCrossStreet || null,
+      nearest_intersection: nearestIntersection || null,
       nearest_landmark: nearestLandmark || null,
       geo_updated_at: new Date().toISOString(),
     };
@@ -116,19 +133,12 @@ serve(async (req) => {
     if (domain === "streetlights") {
       const res = await admin
         .from("official_lights")
-        .update(updatePayload)
-        .eq("tenant_key", tenantKey)
-        .eq("id", incidentId)
-        .select("tenant_key,id, nearest_address, nearest_cross_street, nearest_landmark, geo_updated_at")
-        .maybeSingle();
-      data = res.data as Record<string, unknown> | null;
-      error = res.error as { message?: string } | null;
-    } else if (domain === "potholes") {
-      const res = await admin
-        .from("potholes")
         .update({
-          ...updatePayload,
-          location_label: nearestAddress || null,
+          tenant_key: updatePayload.tenant_key,
+          nearest_address: updatePayload.nearest_address,
+          nearest_cross_street: updatePayload.nearest_cross_street,
+          nearest_landmark: updatePayload.nearest_landmark,
+          geo_updated_at: updatePayload.geo_updated_at,
         })
         .eq("tenant_key", tenantKey)
         .eq("id", incidentId)
@@ -136,7 +146,7 @@ serve(async (req) => {
         .maybeSingle();
       data = res.data as Record<string, unknown> | null;
       error = res.error as { message?: string } | null;
-    } else {
+    } else if (domain === "water_main") {
       const nowIso = new Date().toISOString();
       const res = await admin
         .from("water_drain_incidents")
@@ -157,6 +167,31 @@ serve(async (req) => {
           { onConflict: "tenant_key,incident_id" }
         )
         .select("tenant_key,incident_id, wd_id, issue_type, lat, lng, nearest_address, nearest_cross_street, nearest_landmark, geo_updated_at, updated_at")
+        .maybeSingle();
+      data = res.data as Record<string, unknown> | null;
+      error = res.error as { message?: string } | null;
+    } else {
+      const res = await admin
+        .from("incident_location_cache")
+        .upsert(
+          [
+            {
+              tenant_key: tenantKey,
+              domain,
+              incident_id: incidentId,
+              lat,
+              lng,
+              location_label: locationLabel || nearestAddress || null,
+              nearest_address: nearestAddress || null,
+              nearest_cross_street: nearestCrossStreet || null,
+              nearest_intersection: nearestIntersection || null,
+              nearest_landmark: nearestLandmark || null,
+              geo_updated_at: new Date().toISOString(),
+            },
+          ],
+          { onConflict: "tenant_key,domain,incident_id" }
+        )
+        .select("tenant_key,domain,incident_id,lat,lng,location_label,nearest_address,nearest_cross_street,nearest_intersection,nearest_landmark,geo_updated_at,updated_at")
         .maybeSingle();
       data = res.data as Record<string, unknown> | null;
       error = res.error as { message?: string } | null;

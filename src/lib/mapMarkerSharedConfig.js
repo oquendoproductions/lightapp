@@ -1,0 +1,13 @@
+export const MAP_MARKER_SIZE = 34;
+export const MAP_MARKER_CENTER = MAP_MARKER_SIZE / 2;
+export const MAP_MARKER_RADIUS = 12.2;
+export const MAP_MARKER_STROKE = 2.8;
+export const MAP_MARKER_GLYPH_SIZE = 19;
+export const MAP_MARKER_HALO_COLOR = "#ffffff";
+export const MAP_MARKER_GLYPH_HALO_BLUR = 2.8;
+export const MAP_MARKER_SVG_GLYPH_INSET = 8.1;
+export const INCIDENT_DOMAIN_ICON_SIZE = Math.round(MAP_MARKER_SIZE * 1.14);
+export const STREET_SIGN_MARKER_SIZE = MAP_MARKER_SIZE * 1.16;
+export const INCIDENT_CLUSTER_MAX_ZOOM = 15;
+export const INCIDENT_STACK_LOCATION_DECIMALS = 5;
+

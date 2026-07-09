@@ -225,6 +225,29 @@ export const MAP_UI_THEME_FIELDS = Object.freeze([
   { key: "tool_active_text", label: "Active Tool Icon / Text" },
 ]);
 
+function svgDataUri(svg) {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(String(svg || "").trim())}`;
+}
+
+const DEFAULT_CURRENT_LOCATION_MARKER_SRC = svgDataUri(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Current location marker">
+    <defs>
+      <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2.4" flood-color="rgba(5,16,30,0.28)"/>
+      </filter>
+    </defs>
+    <circle cx="18" cy="18" r="11" fill="#1976d2" stroke="#ffffff" stroke-width="4" filter="url(#shadow)"/>
+  </svg>
+`);
+
+const DEFAULT_NAVIGATION_LOCATION_MARKER_SRC = svgDataUri(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 36 36" role="img" aria-label="Navigation heading marker">
+    <path d="M18 1 L26 15.5 L18 11.2 L10 15.5 Z" fill="rgba(8,18,32,0.22)" stroke="rgba(255,255,255,0.96)" stroke-width="1.8"/>
+    <path d="M18 3.8 L22.7 12.4 L18 10.5 L13.3 12.4 Z" fill="#071a2f" stroke="rgba(255,255,255,0.98)" stroke-width="1.25"/>
+    <circle cx="18" cy="12.8" r="1.35" fill="#7fd7ff" stroke="#ffffff" stroke-width="0.7"/>
+  </svg>
+`);
+
 export const DEFAULT_UI_ICON_SRC = Object.freeze({
   account: "/account_icon.png",
   streetlight: "/streetlight_icon.png",
@@ -233,6 +256,8 @@ export const DEFAULT_UI_ICON_SRC = Object.freeze({
   powerOutage: "/power_outage_icon.png",
   waterMain: "/water_main_icon.png",
   filter: "/filter_icon.png",
+  utilityReportReference: "/Icons/Buttons/edit_button/edit_button_blue_icon.png",
+  allLocations: "/location_icon.png",
   openReports: "/open_reports_icon.png",
   mapping: "/streetlight_mapping_icon.png",
   bulk: "/bulk_reporting_icon.png",
@@ -246,10 +271,18 @@ export const DEFAULT_UI_ICON_SRC = Object.freeze({
   incidentReportingLayer: "/Icons/Map Tools/incident_driven_map_layer_button.png",
   allIncidentReports: "/Icons/Map Tools/incident_driven_map_layer_button.png",
   mapTab: "/Icons/Buttons/tab_buttons/map_tab_icon.png",
+  notifications: "/Icons/Map Tools/incident_driven_map_layer_button.png",
   calendar: "/calendar_icon.png",
   notification: "/notification_icon.png",
   satellite: "/satellite_icon.png",
   streetMap: "/street_map_icon.png",
+  noticeInfo: "/info_icon.png",
+  noticeWarning: "/street_sign_icons/warning_sign_icon.png",
+  noticeSuccess: "/info_icon.png",
+  noticeZoom: "/street_sign_icons/warning_sign_icon.png",
+  noticeLoading: "/info_icon.png",
+  currentLocationMarker: DEFAULT_CURRENT_LOCATION_MARKER_SRC,
+  navigationLocationMarker: DEFAULT_NAVIGATION_LOCATION_MARKER_SRC,
 });
 
 function sanitizeHexColor(value, fallback = "#111111") {
@@ -329,6 +362,30 @@ export const MAP_UI_ICON_CATALOG = Object.freeze([
     group: "Bottom Navigation",
   },
   {
+    key: "filter",
+    label: "Reports Filter",
+    description: "Icon used for the Reports page filter/search button.",
+    group: "Reports",
+  },
+  {
+    key: "utilityReportReference",
+    label: "Utility Report Reference",
+    description: "Icon used for the streetlight saved-report utility reference add/edit action.",
+    group: "Reports",
+  },
+  {
+    key: "notifications",
+    label: "Notifications",
+    description: "Bottom navigation and map shortcut icon for the cross-tenant notifications inbox.",
+    group: "Bottom Navigation",
+  },
+  {
+    key: "allLocations",
+    label: "All Locations",
+    description: "Filter icon for the Notifications inbox location selector.",
+    group: "Notifications",
+  },
+  {
     key: "notification",
     label: "Alerts",
     description: "Bottom navigation and map shortcut icon for alerts.",
@@ -377,6 +434,18 @@ export const MAP_UI_ICON_CATALOG = Object.freeze([
     group: "Map Controls",
   },
   {
+    key: "currentLocationMarker",
+    label: "Current Location Marker",
+    description: "Live on-map marker for the device's current position. This is the marker on the map itself, not the My Location toolbar button.",
+    group: "Map Controls",
+  },
+  {
+    key: "navigationLocationMarker",
+    label: "Navigation / Heading Marker",
+    description: "Directional overlay shown on the live location marker when heading or travel follow is active. This is the live heading marker on the map itself, not the navigation toolbar button.",
+    group: "Map Controls",
+  },
+  {
     key: "homeRecenter",
     label: "Home Recenter",
     description: "Toolbar icon for jumping back to the tenant boundary/home extent.",
@@ -390,20 +459,14 @@ export const MAP_UI_ICON_CATALOG = Object.freeze([
   },
   {
     key: "incidentReportingLayer",
-    label: "Layers",
-    description: "Toolbar icon for the incident reporting filter button.",
+    label: "Layers + Domain Selector",
+    description: "Shared icon for the map Layers button and the Reports domain selector button.",
     group: "Map Controls",
   },
   {
     key: "allIncidentReports",
-    label: "All Incident Reports",
-    description: "Icon shown for the all-incident-reports option inside the incident layer filter menu.",
-    group: "Map Controls",
-  },
-  {
-    key: "filter",
-    label: "Filter",
-    description: "Icon used in reports filtering controls.",
+    label: "All",
+    description: "Shared icon for the All option inside the map Layers and Reports domain selector menus.",
     group: "Map Controls",
   },
   {
@@ -430,6 +493,36 @@ export const MAP_UI_ICON_CATALOG = Object.freeze([
     description: "Help/about icon used inside map guidance surfaces.",
     group: "Admin + Utility Tools",
   },
+  {
+    key: "noticeInfo",
+    label: "Notice Info",
+    description: "Default info icon used by map/system notices.",
+    group: "Notice System",
+  },
+  {
+    key: "noticeWarning",
+    label: "Notice Warning",
+    description: "Default warning icon used by map/system notices.",
+    group: "Notice System",
+  },
+  {
+    key: "noticeSuccess",
+    label: "Notice Success",
+    description: "Default success icon used by map/system notices.",
+    group: "Notice System",
+  },
+  {
+    key: "noticeZoom",
+    label: "Notice Zoom",
+    description: "Default icon used for zoom-in guidance notices.",
+    group: "Notice System",
+  },
+  {
+    key: "noticeLoading",
+    label: "Notice Loading",
+    description: "Default icon used for loading/refreshing notices.",
+    group: "Notice System",
+  },
 ]).map((entry) => ({
   ...entry,
   defaultSrc: DEFAULT_UI_ICON_META[entry.key]?.src || "",
@@ -437,6 +530,263 @@ export const MAP_UI_ICON_CATALOG = Object.freeze([
 }));
 
 export const MAP_UI_ICON_KEYS = Object.freeze(MAP_UI_ICON_CATALOG.map((entry) => entry.key));
+
+export const MAP_UI_ICON_SURFACE_REQUIREMENTS = Object.freeze({
+  bottomNavigation: Object.freeze([
+    "mapTab",
+    "openReports",
+    "notifications",
+    "notification",
+    "calendar",
+    "account",
+  ]),
+  notifications: Object.freeze([
+    "allLocations",
+  ]),
+  reports: Object.freeze([
+    "filter",
+    "utilityReportReference",
+  ]),
+  mapControls: Object.freeze([
+    "satellite",
+    "streetMap",
+    "headingReset",
+    "location",
+    "navigationArrow",
+    "currentLocationMarker",
+    "navigationLocationMarker",
+    "homeRecenter",
+    "incidentReportingLayer",
+    "allIncidentReports",
+  ]),
+  adminUtilityTools: Object.freeze([
+    "bulk",
+    "mapping",
+    "toolbox",
+    "info",
+  ]),
+  noticeSystem: Object.freeze([
+    "noticeWarning",
+    "noticeZoom",
+    "noticeLoading",
+  ]),
+});
+
+const MAP_UI_ICON_GROUP_LABELS = Object.freeze({
+  bottomNavigation: "Bottom Navigation",
+  notifications: "Notifications",
+  reports: "Reports",
+  mapControls: "Map Controls",
+  adminUtilityTools: "Admin + Utility Tools",
+  noticeSystem: "Notice System",
+});
+
+export const MAP_UI_NOTICE_CATALOG = Object.freeze([
+  {
+    key: "zoom_to_report",
+    label: "Zoom In To Report",
+    description: "Shown when a user must zoom in further before placing a report.",
+    icon_key: "noticeZoom",
+    title: "Zoom in to report",
+    message: "To improve accuracy of marker placement, zoom in further to report.",
+  },
+  {
+    key: "zoom_to_select",
+    label: "Zoom In To Select",
+    description: "Shown when a user must zoom in further before selecting lights for bulk reporting.",
+    icon_key: "noticeZoom",
+    title: "Zoom in to select",
+    message: "To improve accuracy of bulk selection, zoom in further before selecting lights.",
+  },
+  {
+    key: "road_required",
+    label: "Road Required",
+    description: "Shown when a report must be placed on a road.",
+    icon_key: "noticeWarning",
+    title: "Road required",
+    message: "This report must be placed on a road. Tap directly on the road surface and try again.",
+  },
+  {
+    key: "road_validation_unavailable",
+    label: "Road Validation Unavailable",
+    description: "Shown when road validation is temporarily unavailable.",
+    icon_key: "noticeWarning",
+    title: "Road validation unavailable",
+    message: "Road validation is temporarily unavailable. Please try again.",
+  },
+  {
+    key: "park_required",
+    label: "Park Required",
+    description: "Shown when a report must be placed inside a park boundary.",
+    icon_key: "noticeWarning",
+    title: "Park required",
+    message: "This report must be placed inside a park boundary.",
+  },
+  {
+    key: "connection_issue",
+    label: "Connection Issue",
+    description: "Shown when live map/report data appears temporarily unavailable.",
+    icon_key: "noticeWarning",
+    title: "Connection issue",
+    message: "Some map/report data may be unavailable temporarily.",
+  },
+  {
+    key: "location_details_unavailable",
+    label: "Location Details Unavailable",
+    description: "Shown when address and nearby place-name lookups are temporarily unavailable.",
+    icon_key: "noticeInfo",
+    title: "Location details temporarily unavailable",
+    message: "Street addresses and nearby place names are temporarily unavailable right now. Reporting still works normally, and any saved location details will still appear.",
+  },
+  {
+    key: "landmark_details_unavailable",
+    label: "Landmark Details Unavailable",
+    description: "Shown when closest-landmark lookups are temporarily unavailable.",
+    icon_key: "noticeInfo",
+    title: "Landmark details temporarily unavailable",
+    message: "Closest landmark details are temporarily unavailable right now. Reporting still works normally.",
+  },
+  {
+    key: "map_refreshing",
+    label: "Map Refreshing",
+    description: "Shown when the app refreshes stale map data after returning from the background.",
+    icon_key: "noticeLoading",
+    title: "Refreshing map",
+    message: "Loading the latest map data…",
+  },
+  {
+    key: "assets_added_successfully",
+    label: "Assets Added Successfully",
+    description: "Shown after bulk mapping saves both lights and signs successfully.",
+    icon_key: "noticeSuccess",
+    title: "Assets added successfully.",
+    message: "Mapped assets were added successfully.",
+  },
+  {
+    key: "signs_added_successfully",
+    label: "Signs Added Successfully",
+    description: "Shown after bulk mapping saves signs successfully.",
+    icon_key: "noticeSuccess",
+    title: "Signs added successfully.",
+    message: "Mapped signs were added successfully.",
+  },
+  {
+    key: "lights_added_successfully",
+    label: "Lights Added Successfully",
+    description: "Shown after bulk mapping saves lights successfully.",
+    icon_key: "noticeSuccess",
+    title: "Lights added successfully.",
+    message: "Mapped lights were added successfully.",
+  },
+  {
+    key: "existing_lights_skipped",
+    label: "Existing Lights Skipped",
+    description: "Shown when queued lights already exist and are skipped during bulk mapping.",
+    icon_key: "noticeInfo",
+    title: "Existing lights skipped",
+    message: "Some queued lights already existed and were not added again.",
+  },
+  {
+    key: "nothing_saved",
+    label: "Nothing Saved",
+    description: "Shown when bulk mapping finishes without adding any valid assets.",
+    icon_key: "noticeWarning",
+    title: "Nothing saved",
+    message: "Queued lights already existed or no valid mapped assets were queued.",
+  },
+  {
+    key: "repair_confirmation_saved",
+    label: "Repair Confirmation Saved",
+    description: "Shown after a resident successfully confirms that a repair is complete.",
+    icon_key: "noticeSuccess",
+    title: "Repair confirmation saved",
+    message: "Thanks. Community repair progress has been updated.",
+  },
+  {
+    key: "incident_state_updated",
+    label: "Incident State Updated",
+    description: "Shown after an admin successfully updates an incident state.",
+    icon_key: "noticeSuccess",
+    title: "State updated",
+    message: "Incident state updated successfully.",
+  },
+  {
+    key: "utility_report_saved",
+    label: "Utility Report Saved",
+    description: "Shown after the utility-report status is updated successfully.",
+    icon_key: "noticeSuccess",
+    title: "Utility report saved",
+    message: "Utility reporting status was updated.",
+  },
+  {
+    key: "clipboard_copy_success",
+    label: "Clipboard Copy Success",
+    description: "Shown after text is copied to the clipboard from the map UI.",
+    icon_key: "noticeSuccess",
+    title: "Copied",
+    message: "Copied to clipboard.",
+  },
+]);
+
+export const MAP_UI_NOTICE_ICON_KEYS = Object.freeze(
+  Array.from(new Set(MAP_UI_NOTICE_CATALOG.map((entry) => String(entry?.icon_key || "").trim()).filter(Boolean)))
+);
+
+export const MAP_UI_NOTICE_DEFAULTS = Object.freeze(
+  Object.fromEntries(
+    MAP_UI_NOTICE_CATALOG.map((entry) => [
+      entry.key,
+      {
+        icon_key: String(entry?.icon_key || "").trim(),
+        title: String(entry?.title || "").trim(),
+        message: String(entry?.message || "").trim(),
+      },
+    ])
+  )
+);
+
+export const MAP_UI_REQUIRED_ICON_KEYS = Object.freeze(
+  Array.from(
+    new Set(
+      Object.values(MAP_UI_ICON_SURFACE_REQUIREMENTS).flat()
+    )
+  )
+);
+
+export function validateMapUiIconCatalog() {
+  const issues = [];
+  const catalogByKey = new Map(MAP_UI_ICON_CATALOG.map((entry) => [entry.key, entry]));
+  const defaultKeys = new Set(Object.keys(DEFAULT_UI_ICON_SRC));
+  const seenCatalogKeys = new Set();
+
+  MAP_UI_ICON_CATALOG.forEach((entry) => {
+    if (seenCatalogKeys.has(entry.key)) {
+      issues.push(`Duplicate MAP_UI_ICON_CATALOG key "${entry.key}".`);
+      return;
+    }
+    seenCatalogKeys.add(entry.key);
+  });
+
+  for (const [groupName, requiredKeys] of Object.entries(MAP_UI_ICON_SURFACE_REQUIREMENTS)) {
+    const expectedGroupLabel = MAP_UI_ICON_GROUP_LABELS[groupName] || "Map UI";
+
+    for (const key of requiredKeys) {
+      if (!catalogByKey.has(key)) {
+        issues.push(`Missing MAP_UI_ICON_CATALOG entry for required key "${key}" (${expectedGroupLabel}).`);
+        continue;
+      }
+      if (!defaultKeys.has(key)) {
+        issues.push(`Missing DEFAULT_UI_ICON_SRC entry for required key "${key}".`);
+      }
+      const entry = catalogByKey.get(key);
+      if (entry?.group !== expectedGroupLabel) {
+        issues.push(`Key "${key}" should belong to "${expectedGroupLabel}" but is grouped under "${entry?.group || "unknown"}".`);
+      }
+    }
+  }
+
+  return issues;
+}
 
 export function sanitizeMapUiIconManifest(raw) {
   const source = raw && typeof raw === "object" && raw.icons && typeof raw.icons === "object"
@@ -484,6 +834,27 @@ export function sanitizeMapUiTheme(raw) {
       if (value) modeNext[field.key] = value;
     }
     if (Object.keys(modeNext).length) next[mode] = modeNext;
+  }
+  return next;
+}
+
+export function sanitizeMapUiNoticeConfig(raw) {
+  const source = raw && typeof raw === "object" && raw.notices && typeof raw.notices === "object"
+    ? raw.notices
+    : raw;
+  const next = {};
+  for (const entry of MAP_UI_NOTICE_CATALOG) {
+    const current = source?.[entry.key];
+    const defaultConfig = MAP_UI_NOTICE_DEFAULTS?.[entry.key] || {};
+    const iconKeyCandidate = String(current?.icon_key || defaultConfig.icon_key || "").trim();
+    const iconKey = MAP_UI_NOTICE_ICON_KEYS.includes(iconKeyCandidate)
+      ? iconKeyCandidate
+      : String(defaultConfig.icon_key || "").trim();
+    next[entry.key] = {
+      icon_key: iconKey,
+      title: String(current?.title ?? defaultConfig.title ?? "").trim(),
+      message: String(current?.message ?? defaultConfig.message ?? "").trim(),
+    };
   }
   return next;
 }
@@ -734,6 +1105,13 @@ export function mergeMapUiIconMeta(raw) {
   };
 }
 
+export function mergeMapUiNoticeConfig(raw) {
+  return {
+    ...MAP_UI_NOTICE_DEFAULTS,
+    ...sanitizeMapUiNoticeConfig(raw),
+  };
+}
+
 export function mergeMapUiIconSrc(raw) {
   const merged = mergeMapUiIconMeta(raw);
   return Object.fromEntries(
@@ -749,9 +1127,12 @@ export function mergeMapUiIconRenderModes(raw) {
 }
 
 export function buildMapUiIconConfigValue(rawIcons, extra = {}) {
+  const { notices: extraNotices, ...restExtra } = extra || {};
+  const notices = sanitizeMapUiNoticeConfig(extraNotices);
   return {
     icons: sanitizeMapUiIconManifest(rawIcons),
-    ...extra,
+    notices,
+    ...restExtra,
   };
 }
 

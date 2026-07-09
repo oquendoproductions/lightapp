@@ -1,7 +1,4 @@
-import { registerPlugin } from "@capacitor/core";
 import { isNativeAppRuntime } from "./runtime.js";
-
-const ExternalBrowser = registerPlugin("ExternalBrowser");
 
 export async function openExternalUrl(rawUrl, options = {}) {
   const url = String(rawUrl || "").trim();
@@ -9,6 +6,8 @@ export async function openExternalUrl(rawUrl, options = {}) {
 
   if (isNativeAppRuntime()) {
     try {
+      const { registerPlugin } = await import("@capacitor/core");
+      const ExternalBrowser = registerPlugin("ExternalBrowser");
       await ExternalBrowser.openUrl({ url });
       return true;
     } catch {

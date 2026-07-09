@@ -1,7 +1,7 @@
 import {
   MAP_UI_ICON_RENDER_MODE,
   normalizeMapUiIconRenderMode,
-} from "./mapUiIconCatalog";
+} from "./mapUiIconRuntimeCoreSupport.js";
 
 export const DOMAIN_ICON_TINT_MODE = Object.freeze({
   DEFAULT: "default",

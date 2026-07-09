@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "validate:map-ui-icons": "node scripts/validate-map-ui-icons.mjs",
+    "build": "npm run validate:map-ui-icons && vite build",
     "deploy:pages": "bash scripts/deploy-pages.sh",
     "supabase:db:push": "bash scripts/supabase-db-push.sh",
     "supabase:migration:list": "bash scripts/run-supabase.sh migration list --workdir . --linked",

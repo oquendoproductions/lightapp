@@ -19,11 +19,20 @@ type DomainRuntimeConfig = {
   domainLabel: string;
   domainClass: string;
   recipientEmail: string;
+  ccRecipientEmails: string;
   assignmentActive: boolean;
   assignmentVisible: boolean;
   notificationTemplateKey: string;
   notificationSubjectTemplate: string;
   notificationBodyTemplate: string;
+};
+
+type DomainTypeOptionSelection = {
+  key?: string;
+  label?: string;
+  value?: string;
+  valueLabel?: string;
+  macroKey?: string;
 };
 
 const DEFAULT_TENANT_KEY = "ashtabulacity";
@@ -95,6 +104,17 @@ function humanizeKey(raw: unknown, fallback = "Report"): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function normalizeTemplateTokenKey(raw: unknown, fallback = "type_option"): string {
+  const normalized = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[{}]/g, "")
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_{2,}/g, "_");
+  return normalized || fallback;
+}
+
 function isMissingColumnError(error: unknown): boolean {
   const code = String((error as { code?: string })?.code || "").trim().toUpperCase();
   const message = String((error as { message?: string })?.message || "").toLowerCase();
@@ -110,6 +130,25 @@ function escapeHtml(raw: unknown): string {
     .replaceAll("'", "&#39;");
 }
 
+function splitEmails(raw: unknown): string[] {
+  return String(raw || "")
+    .split(/[,\n;]/)
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function dedupeEmails(values: string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+}
+
 function defaultSubjectTemplate() {
   return "{{domain_label}} report ({{report_number}})";
 }
@@ -120,6 +159,7 @@ function defaultBodyTemplate() {
 Tenant: {{tenant_key}}
 Domain: {{domain_label}}
 Issue Type: {{issue_type}}
+Type Details: {{type_options_summary}}
 Report Number: {{report_number}}
 Closest Address: {{closest_address}}
 Cross Street: {{closest_cross_street}}
@@ -193,8 +233,34 @@ function normalizeNotes(raw: unknown): string {
     .split("|")
     .map((s) => s.trim())
     .filter(Boolean)
-    .filter((s) => !/^(address|landmark|location|image)\s*:/i.test(s));
+    .filter((s) => !/^(address|landmark|location|image|type|sign type|type option\s+[^:]+)\s*:/i.test(s));
   return chunks.join(" | ").trim() || "No notes provided";
+}
+
+function normalizeDomainTypeOptions(raw: unknown) {
+  const rows = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  return rows
+    .map((row, index) => {
+      if (!row || typeof row !== "object") return null;
+      const item = row as DomainTypeOptionSelection;
+      const label = String(item.label || "").trim() || humanizeKey(item.key || "", `Type Option ${index + 1}`);
+      const value = String(item.value || "").trim().toLowerCase();
+      const valueLabel = String(item.valueLabel || item.value || "").trim();
+      const macroKey = normalizeTemplateTokenKey(
+        item.macroKey || `type_option_${normalizeTemplateTokenKey(item.key || label, `option_${index + 1}`)}`,
+        `type_option_${index + 1}`
+      );
+      if (!label || !valueLabel || seen.has(macroKey)) return null;
+      seen.add(macroKey);
+      return {
+        label,
+        value,
+        valueLabel,
+        macroKey,
+      };
+    })
+    .filter(Boolean) as Array<{ label: string; value: string; valueLabel: string; macroKey: string }>;
 }
 
 function extractImageUrl(raw: unknown): string {
@@ -302,7 +368,7 @@ async function loadDomainRuntimeConfig(
 
   let assignmentResult = await admin
     .from("tenant_domain_assignments")
-    .select("active,visibility,display_label,notification_email,notification_template_key,notification_subject_template,notification_body_template")
+    .select("active,visibility,display_label,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template")
     .eq("tenant_key", tenantKey)
     .eq("domain_key", domainKey)
     .maybeSingle();
@@ -366,6 +432,7 @@ async function loadDomainRuntimeConfig(
         || String(definition?.default_notification_email || "").trim()
         || legacyDomainNotificationEmail
         || fallbackRecipient,
+      ccRecipientEmails: String(assignment?.notification_cc_emails || "").trim(),
       assignmentActive: assignment?.active !== false,
       assignmentVisible: String(assignment?.visibility || "enabled").trim().toLowerCase() !== "disabled",
       notificationTemplateKey: String(assignment?.notification_template_key || "standard_ops").trim().toLowerCase() || "standard_ops",
@@ -383,6 +450,7 @@ async function loadDomainRuntimeConfig(
       domainLabel: humanizeKey(domainKey, domainKey),
       domainClass: "incident_driven",
       recipientEmail: "",
+      ccRecipientEmails: "",
       assignmentActive: true,
       assignmentVisible: true,
       notificationTemplateKey: "standard_ops",
@@ -491,7 +559,11 @@ serve(async (req) => {
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY") || "";
     const recipientEmail = String(cfg.recipientEmail || "").trim();
+    const ccRecipients = dedupeEmails(splitEmails(cfg.ccRecipientEmails).filter((email) => email !== recipientEmail.toLowerCase()));
     const fromEmail = Deno.env.get("PW_REPORT_FROM") || "CityReport.io <noreply@auth.cityreport.io>";
+    const brandLogoUrl =
+      Deno.env.get("PW_EMAIL_BRAND_LOGO_DARK_URL")
+      || "https://cityreport.io/Logos/cityreport_logo_dark_mode.svg";
     if (!resendApiKey) {
       await logEmailDeliveryEvent(admin, {
         tenantKey: cfg.tenantKey,
@@ -538,11 +610,19 @@ serve(async (req) => {
     const reporterName = String(reporter?.name || "").trim() || "Unknown";
     const reporterEmail = String(reporter?.email || "").trim() || "Not provided";
     const reporterPhone = String(reporter?.phone || "").trim() || "Not provided";
+    const normalizedTypeOptions = normalizeDomainTypeOptions(body?.typeOptions);
+    const typeOptionsSummary = normalizedTypeOptions.length
+      ? normalizedTypeOptions.map((row) => `${row.label}: ${row.valueLabel}`).join(" | ")
+      : "Not provided";
+    const typeOptionTemplateVariables = Object.fromEntries(
+      normalizedTypeOptions.map((row) => [row.macroKey, row.valueLabel])
+    );
 
     const templateVariables = {
       tenant_key: cfg.tenantKey,
       domain_label: domainLabel,
       issue_type: issueType || "Not provided",
+      type_options_summary: typeOptionsSummary,
       report_number: reportNumber,
       closest_address: closestAddress,
       closest_cross_street: closestCrossStreet,
@@ -556,6 +636,7 @@ serve(async (req) => {
       reporter_name: reporterName,
       reporter_email: reporterEmail,
       reporter_phone: reporterPhone,
+      ...typeOptionTemplateVariables,
     };
 
     const subject = renderTemplate(cfg.notificationSubjectTemplate || defaultSubjectTemplate(), templateVariables)
@@ -567,9 +648,16 @@ serve(async (req) => {
     const html = `
       <div style="font-family:Arial,sans-serif;line-height:1.5;color:#122033;max-width:700px;margin:0 auto;padding:24px;background:#f5f8fb;">
         <div style="background:#ffffff;border:1px solid #d9e3ee;border-radius:16px;overflow:hidden;">
-          <div style="background:#16324f;color:#ffffff;padding:18px 24px;">
-            <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;opacity:0.82;">CityReport.io</div>
-            <h2 style="margin:8px 0 0;font-size:24px;line-height:1.2;">${escapeHtml(subject)}</h2>
+          <div style="background:linear-gradient(180deg,#16324f 0%,#1b4266 100%);color:#ffffff;padding:18px 24px;">
+            <div style="display:grid;gap:14px;">
+              <img
+                src="${escapeHtml(brandLogoUrl)}"
+                alt="CityReport.io"
+                width="150"
+                style="display:block;width:150px;max-width:100%;height:auto;"
+              />
+              <h2 style="margin:0;font-size:24px;line-height:1.2;">${escapeHtml(subject)}</h2>
+            </div>
           </div>
           <div style="padding:24px;">
             <p style="margin:0 0 16px;">${escapeHtml(title)}</p>
@@ -592,8 +680,9 @@ serve(async (req) => {
       body: JSON.stringify({
         from: fromEmail,
         to: [recipientEmail],
+        ...(ccRecipients.length ? { cc: ccRecipients } : {}),
         subject,
-        text,
+        text: bodyText,
         html,
       }),
     });
@@ -622,6 +711,7 @@ serve(async (req) => {
           domainLabel,
           issueType,
           notificationTemplateKey: cfg.notificationTemplateKey,
+          ccRecipients,
         },
       });
       return json({ ok: false, error: resendBodyText }, 502);
@@ -635,13 +725,14 @@ serve(async (req) => {
       providerMessageId,
       httpStatus: resendStatus || 200,
       success: true,
-      metadata: {
-        domainLabel,
-        issueType,
-        notificationTemplateKey: cfg.notificationTemplateKey,
-        closestAddress,
-        closestCrossStreet,
-        closestIntersection,
+        metadata: {
+          domainLabel,
+          issueType,
+          notificationTemplateKey: cfg.notificationTemplateKey,
+          ccRecipients,
+          closestAddress,
+          closestCrossStreet,
+          closestIntersection,
         closestLandmark,
       },
     });

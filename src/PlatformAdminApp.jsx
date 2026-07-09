@@ -18,16 +18,21 @@ import {
   MAP_UI_ICON_RENDER_MODE,
   MAP_UI_ICON_RENDER_MODE_OPTIONS,
   MAP_UI_ICON_THEME_DEFAULTS,
+  MAP_UI_NOTICE_CATALOG,
+  MAP_UI_NOTICE_ICON_KEYS,
   MAP_UI_THEME_DEFAULT_THEME_ID,
   MAP_UI_THEME_DRAFT_CONFIG_KEY,
   MAP_UI_THEME_PUBLISHED_CONFIG_KEY,
   MAP_UI_THEME_FIELDS,
+  buildMapUiIconConfigValue,
   buildMapUiThemeConfigValue,
   isMapUiBaseThemeEnabled,
   mergeMapUiIconMeta,
+  mergeMapUiNoticeConfig,
   mergeMapUiTheme,
   resolveActiveMapUiThemeSchedule,
   sanitizeMapUiIconManifest,
+  sanitizeMapUiNoticeConfig,
   sanitizeMapUiTheme,
   sanitizeMapUiThemes,
   sanitizeMapUiThemeSchedules,
@@ -40,6 +45,7 @@ import {
   normalizeDomainIconTintMode,
   resolveDomainMarkerIconTintColor,
 } from "./domainIconRendering";
+import { BUILT_IN_DOMAIN_OPTIONS, defaultDomainType } from "./lib/domainCatalog";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
@@ -47,18 +53,10 @@ const MOBILE_TITLE_LOGO_SRC =
   import.meta.env.VITE_MOBILE_TITLE_LOGO_SRC || "/Logos/cityreport_pin_logo.svg";
 const TITLE_LOGO_ALT = "CityReport.io";
 
-const DOMAIN_OPTIONS = [
-  { key: "streetlights", label: "Streetlights" },
-  { key: "street_signs", label: "Street Signs" },
-  { key: "potholes", label: "Potholes" },
-  { key: "water_drain_issues", label: "Water / Drain" },
-  { key: "power_outage", label: "Power Outage" },
-  { key: "water_main", label: "Water Main" },
-  { key: "downed_tree", label: "Downed Tree" },
-  { key: "encampment", label: "Encampment" },
-  { key: "illegal_dumping", label: "Illegal Dumping" },
-  { key: "graffiti", label: "Graffiti" },
-];
+const DOMAIN_OPTIONS = BUILT_IN_DOMAIN_OPTIONS.map((domain) => ({
+  key: domain.key,
+  label: String(domain.adminLabel || domain.label || domain.key).trim() || domain.key,
+}));
 
 function fallbackRegistryDomainRows() {
   return DOMAIN_OPTIONS.map((domain, index) => ({
@@ -229,6 +227,7 @@ const TAB_OPTIONS = [
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
   { key: "domains", label: "Domains" },
+  { key: "parks", label: "Parks" },
   { key: "map-features", label: "Map Features" },
   { key: "files", label: "Assets" },
   { key: "audit", label: "Audit" },
@@ -329,7 +328,7 @@ function readInitialControlPlaneRouteState() {
     controlPlaneSection: "reports",
     controlPlanePage: DEFAULT_CONTROL_PLANE_PAGE,
     entryStep: "start",
-    selectedTenantKey: "ashtabulacity",
+    selectedTenantKey: "",
     activeTab: "tenants",
     addTenantStep: ADD_TENANT_STEPS[0].key,
     selectedLeadId: "",
@@ -458,6 +457,7 @@ const TENANT_WORKSPACE_TAB_PERMISSIONS = {
   users: "users.access",
   roles: "roles.access",
   domains: "domains.access",
+  parks: "domains.access",
   "map-features": "domains.access",
   files: "files.access",
   audit: "audit.access",
@@ -1135,12 +1135,6 @@ function initialDomainVisibilityForm() {
   return out;
 }
 
-function defaultDomainType(domainKey) {
-  const key = String(domainKey || "").trim().toLowerCase();
-  if (key === "streetlights" || key === "street_signs") return "asset_backed";
-  return "incident_driven";
-}
-
 function isLegacyIncidentEnumDomain(domainKey) {
   const key = String(domainKey || "").trim().toLowerCase();
   return [
@@ -1181,6 +1175,20 @@ function defaultDomainHighConfidenceMinReports(domainKey) {
   return Math.max(publicMin, 4);
 }
 
+function defaultDomainHighConfidenceMarkerColor(domainKey) {
+  const key = String(domainKey || "").trim().toLowerCase();
+  if (defaultDomainType(key) === "asset_backed") return "#f57c00";
+  return defaultDomainMarkerColor(key);
+}
+
+function defaultDomainHighConfidenceIconTintMode(domainKey) {
+  return DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST;
+}
+
+function defaultDomainHighConfidenceIconTintColor(domainKey) {
+  return "";
+}
+
 function initialDomainConfigForm() {
   const out = {};
   for (const d of DOMAIN_OPTIONS) {
@@ -1190,15 +1198,20 @@ function initialDomainConfigForm() {
       display_label: defaultDomainLabel(d.key),
       marker_color: defaultDomainMarkerColor(d.key),
       notification_email: "",
+      notification_cc_emails: "",
       notification_template_key: preset.key,
       notification_subject_template: preset.subject,
       notification_body_template: preset.body,
       organization_monitored_repairs: true,
+      park_required: false,
       public_visibility_min_reports: defaultDomainPublicVisibilityMinReports(d.key),
       high_confidence_min_reports: defaultDomainHighConfidenceMinReports(d.key),
+      high_confidence_marker_color: defaultDomainHighConfidenceMarkerColor(d.key),
       icon_render_mode: MAP_UI_ICON_RENDER_MODE.RASTER,
       icon_tint_mode: DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST,
       icon_tint_color: "",
+      high_confidence_icon_tint_mode: defaultDomainHighConfidenceIconTintMode(d.key),
+      high_confidence_icon_tint_color: defaultDomainHighConfidenceIconTintColor(d.key),
       type_options: [],
       report_disclosures: defaultDomainDisclosures(d.key),
     };
@@ -1382,6 +1395,37 @@ function normalizeDomainTypeOptionConfigs(value, domainKey = "") {
   }).filter((row) => row.option_label || row.choices_input);
 }
 
+function buildEditableDomainTypeOptionConfigs(value, domainKey = "") {
+  const rows = Array.isArray(value) ? value : [];
+  return rows.map((row, index) => {
+    const rawLabel = row?.option_label ?? row?.optionLabel ?? row?.label;
+    const optionLabel = rawLabel == null
+      ? defaultDomainTypeOptionLabel(domainKey, index)
+      : String(rawLabel);
+    const existingChoicesInput = row?.choices_input;
+    const rawChoices = Array.isArray(row?.choices)
+      ? row.choices
+      : Array.isArray(row?.options)
+        ? row.options
+        : Array.isArray(row?.type_choices)
+          ? row.type_choices
+          : [];
+    const parsedChoices = rawChoices.map((choice, choiceIndex) => ({
+      value: String(choice?.value || choice?.type_key || "").trim().toLowerCase(),
+      label: String(choice?.label || choice?.type_label || "").trim(),
+      sort_order: Number.isFinite(Number(choice?.sort_order)) ? Number(choice.sort_order) : (choiceIndex + 1) * 10,
+    })).filter((choice) => choice.value && choice.label);
+    return {
+      id: String(row?.id || "").trim() || createDomainDisclosureId("type_option"),
+      option_key: slugifyDomainKeyInput(row?.optionKey || row?.option_key || optionLabel || `type_option_${index + 1}`) || `type_option_${index + 1}`,
+      option_label: optionLabel,
+      choices_input: existingChoicesInput == null
+        ? serializeDomainTypeOptionChoicesInput(parsedChoices)
+        : String(existingChoicesInput),
+    };
+  }).filter((row) => String(row?.option_label || "").trim() || String(row?.choices_input || "").trim());
+}
+
 function buildStoredDomainTypeOptionConfigs(value, domainKey = "") {
   return normalizeDomainTypeOptionConfigs(value, domainKey)
     .map((row, index) => {
@@ -1549,6 +1593,7 @@ function initialDomainRegistryForm() {
     allow_report_images: false,
     road_required: false,
     type_options: [],
+    report_disclosures: defaultDomainDisclosures(""),
   };
 }
 
@@ -1572,6 +1617,7 @@ function buildDomainRegistryForm(row) {
     allow_report_images: row?.allow_report_images === true,
     road_required: row?.road_required === true,
     type_options: normalizeDomainTypeOptionConfigs(row?.type_options, row?.key),
+    report_disclosures: normalizeDomainDisclosureRows(row?.report_disclosures, row?.key, { fallbackToDefaults: true }),
   };
 }
 
@@ -1630,6 +1676,23 @@ function buildMapUiThemeDraftForm(raw) {
 
 function extractMapUiThemeFromForm(form) {
   return sanitizeMapUiTheme(form);
+}
+
+function buildMapUiNoticeDraftForm(raw) {
+  const merged = mergeMapUiNoticeConfig(raw);
+  const next = {};
+  for (const entry of MAP_UI_NOTICE_CATALOG) {
+    next[entry.key] = {
+      icon_key: String(merged?.[entry.key]?.icon_key || entry.icon_key || "").trim(),
+      title: String(merged?.[entry.key]?.title || entry.title || "").trim(),
+      message: String(merged?.[entry.key]?.message || entry.message || "").trim(),
+    };
+  }
+  return next;
+}
+
+function extractMapUiNoticeConfigFromForm(form) {
+  return sanitizeMapUiNoticeConfig(form);
 }
 
 function buildMapUiThemePreview(themeForm = {}, baseThemeForm = {}) {
@@ -1999,11 +2062,16 @@ function initialTenantDomainAssignmentForm() {
     visibility: "enabled",
     display_label: "",
     marker_color: "#234a72",
+    high_confidence_marker_color: "#f57c00",
+    high_confidence_icon_tint_mode: DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST,
+    high_confidence_icon_tint_color: "",
     notification_email: "",
+    notification_cc_emails: "",
     notification_template_key: preset.key,
     notification_subject_template: preset.subject,
     notification_body_template: preset.body,
     organization_monitored_repairs: true,
+    park_required: false,
     billing_status: "not_applicable",
     billing_model: "included",
     billing_amount: "0",
@@ -2021,15 +2089,125 @@ function buildTenantDomainAssignmentForm(row) {
     visibility: String(row?.visibility || "enabled"),
     display_label: String(row?.display_label || ""),
     marker_color: sanitizeHexColor(row?.marker_color, defaultDomainMarkerColor(row?.domain_key)),
+    high_confidence_marker_color: sanitizeHexColor(
+      row?.high_confidence_marker_color,
+      defaultDomainHighConfidenceMarkerColor(row?.domain_key)
+    ),
+    high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+      row?.high_confidence_icon_tint_mode ?? row?.icon_tint_mode
+    ),
+    high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+      row?.high_confidence_icon_tint_color,
+      row?.icon_tint_color || ""
+    ),
     notification_email: String(row?.notification_email || ""),
+    notification_cc_emails: String(row?.notification_cc_emails || ""),
     notification_template_key: preset.key,
     notification_subject_template: String(row?.notification_subject_template || preset.subject || ""),
     notification_body_template: String(row?.notification_body_template || preset.body || ""),
     organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+    park_required: row?.park_required === true,
     billing_status: String(row?.billing_status || "not_applicable"),
     billing_model: String(row?.billing_model || "included"),
     billing_amount: String(row?.billing_amount ?? "0"),
     billing_notes: String(row?.billing_notes || ""),
+  };
+}
+
+function initialTenantParkForm() {
+  return {
+    park_key: "",
+    park_name: "",
+    boundary_geojson: "",
+    border_color: "#2e7d32",
+    border_width: "2",
+    fill_color: "#66bb6a",
+    fill_opacity: "0.18",
+    label_color: "#17314f",
+    show_label: true,
+    label_lat: "",
+    label_lng: "",
+    sort_order: "1",
+    active: true,
+  };
+}
+
+function buildParkBoundaryAssetSubtype(parkKey) {
+  const normalized = slugifyDomainKeyInput(parkKey);
+  return normalized ? `park:${normalized}` : "";
+}
+
+function extractPolygonFeaturesFromGeoJson(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const geoJson = extractBoundaryGeoJsonPayload(raw);
+  if (!geoJson) return [];
+
+  const toFeatures = (candidate, inheritedProperties = {}) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const type = String(candidate?.type || "").trim();
+    if (!type) return [];
+
+    if (type === "FeatureCollection") {
+      return Array.isArray(candidate.features)
+        ? candidate.features.flatMap((feature) => toFeatures(feature, inheritedProperties))
+        : [];
+    }
+
+    if (type === "Feature") {
+      const nextProperties = candidate?.properties && typeof candidate.properties === "object" && !Array.isArray(candidate.properties)
+        ? { ...inheritedProperties, ...candidate.properties }
+        : { ...inheritedProperties };
+      return toFeatures(candidate.geometry, nextProperties);
+    }
+
+    if (type === "GeometryCollection") {
+      return Array.isArray(candidate.geometries)
+        ? candidate.geometries.flatMap((geometry) => toFeatures(geometry, inheritedProperties))
+        : [];
+    }
+
+    if (type === "Polygon" || type === "MultiPolygon") {
+      return [{
+        type: "Feature",
+        properties: { ...inheritedProperties },
+        geometry: candidate,
+      }];
+    }
+
+    return [];
+  };
+
+  return toFeatures(geoJson);
+}
+
+function buildTenantParkForm(row) {
+  if (!row) return initialTenantParkForm();
+  return {
+    park_key: String(row?.park_key || ""),
+    park_name: String(row?.park_name || ""),
+    boundary_geojson: JSON.stringify(row?.boundary_geojson ?? {}, null, 2),
+    border_color: sanitizeHexColor(row?.border_color, "#2e7d32"),
+    border_width: String(
+      Number.isFinite(Number(row?.border_width))
+        ? Math.max(0, Math.min(12, Number(row.border_width)))
+        : 2
+    ),
+    fill_color: sanitizeHexColor(row?.fill_color, "#66bb6a"),
+    fill_opacity: String(
+      Number.isFinite(Number(row?.fill_opacity))
+        ? Math.max(0, Math.min(1, Number(row.fill_opacity)))
+        : 0.18
+    ),
+    label_color: sanitizeHexColor(row?.label_color, "#17314f"),
+    show_label: row?.show_label !== false,
+    label_lat: parseOptionalNumber(row?.label_lat) != null ? String(parseOptionalNumber(row?.label_lat)) : "",
+    label_lng: parseOptionalNumber(row?.label_lng) != null ? String(parseOptionalNumber(row?.label_lng)) : "",
+    sort_order: String(
+      Number.isFinite(Number(row?.sort_order))
+        ? Math.max(1, Number(row.sort_order))
+        : 1
+    ),
+    active: row?.active !== false,
   };
 }
 
@@ -2245,6 +2423,13 @@ function buildAuditEntityLabel(row) {
 function cleanOptional(value) {
   const v = String(value || "").trim();
   return v || null;
+}
+
+function parseOptionalNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function composeMailingAddress(parts) {
@@ -2648,6 +2833,7 @@ export default function PlatformAdminApp() {
   const [tenantDomainIssueTypesByTenant, setTenantDomainIssueTypesByTenant] = useState({});
   const [tenantDomainAssignmentsByTenant, setTenantDomainAssignmentsByTenant] = useState({});
   const [tenantMapFeaturesByTenant, setTenantMapFeaturesByTenant] = useState({});
+  const [tenantParksByTenant, setTenantParksByTenant] = useState({});
   const [domainRegistryRows, setDomainRegistryRows] = useState([]);
   const [domainRegistrySchemaReady, setDomainRegistrySchemaReady] = useState(true);
   const [domainRegistryEditorOpen, setDomainRegistryEditorOpen] = useState(false);
@@ -2664,6 +2850,7 @@ export default function PlatformAdminApp() {
   const [mapUiThemeEditorOpen, setMapUiThemeEditorOpen] = useState(false);
   const [mapUiThemeEditorDraft, setMapUiThemeEditorDraft] = useState(null);
   const [mapUiIconDraftForm, setMapUiIconDraftForm] = useState(() => buildMapUiIconDraftForm({}));
+  const [mapUiNoticeDraftForm, setMapUiNoticeDraftForm] = useState(() => buildMapUiNoticeDraftForm({}));
   const [mapUiThemeDraftForm, setMapUiThemeDraftForm] = useState(() => buildMapUiThemeDraftForm({}));
   const [mapUiThemeBaseEnabled, setMapUiThemeBaseEnabled] = useState(false);
   const [mapUiThemeSchedulesDraft, setMapUiThemeSchedulesDraft] = useState([]);
@@ -2687,6 +2874,12 @@ export default function PlatformAdminApp() {
   const [selectedAssignedDomainSectionKey, setSelectedAssignedDomainSectionKey] = useState(ASSIGNED_DOMAIN_SECTION_OPTIONS[0].key);
   const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
   const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
+  const [tenantParkSchemaReady, setTenantParkSchemaReady] = useState(true);
+  const [tenantParkEditorOpen, setTenantParkEditorOpen] = useState(false);
+  const [editingTenantParkId, setEditingTenantParkId] = useState("");
+  const [tenantParkForm, setTenantParkForm] = useState(initialTenantParkForm);
+  const [tenantParkBoundaryUploads, setTenantParkBoundaryUploads] = useState([]);
+  const [tenantParkSaving, setTenantParkSaving] = useState(false);
   const assignedDomainCardRefs = useRef({});
   const pendingAssignedDomainFocusKeyRef = useRef("");
   const mapUiIconPreviewUrlsRef = useRef({});
@@ -2701,6 +2894,7 @@ export default function PlatformAdminApp() {
   const [domainVisibilityForm, setDomainVisibilityForm] = useState(initialDomainVisibilityForm);
   const [domainConfigForm, setDomainConfigForm] = useState(initialDomainConfigForm);
   const [editingDomainKey, setEditingDomainKey] = useState("");
+  const [editingAssignedDomainSectionKey, setEditingAssignedDomainSectionKey] = useState("");
   const [editingOrganizationSection, setEditingOrganizationSection] = useState("");
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
@@ -2949,10 +3143,32 @@ export default function PlatformAdminApp() {
     () => activeMapUiIconItems.find((entry) => entry.key === activeMapUiIconSelectedKey) || activeMapUiIconItems[0] || null,
     [activeMapUiIconItems, activeMapUiIconSelectedKey]
   );
+  const mapUiNoticeIconOptions = useMemo(
+    () => MAP_UI_ICON_CATALOG.filter((entry) => MAP_UI_NOTICE_ICON_KEYS.includes(String(entry?.key || "").trim())),
+    []
+  );
   const publishedMapUiIconMeta = useMemo(
     () => mergeMapUiIconMeta(mapUiIconPublishedConfig),
     [mapUiIconPublishedConfig]
   );
+  const draftMapUiNoticeMeta = useMemo(
+    () => mergeMapUiNoticeConfig({ notices: extractMapUiNoticeConfigFromForm(mapUiNoticeDraftForm) }),
+    [mapUiNoticeDraftForm]
+  );
+  const publishedMapUiNoticeMeta = useMemo(
+    () => mergeMapUiNoticeConfig(mapUiIconPublishedConfig),
+    [mapUiIconPublishedConfig]
+  );
+  const activeMapUiNoticeEntries = useMemo(() => {
+    if (activeMapUiIconGroup !== "Notice System") return [];
+    const selectedNoticeIconKey = String(activeMapUiIconSelectedKey || "").trim();
+    if (!selectedNoticeIconKey) return [];
+    return MAP_UI_NOTICE_CATALOG.filter((noticeEntry) => {
+      const draftRow = mapUiNoticeDraftForm?.[noticeEntry.key] || {};
+      const effectiveIconKey = String(draftRow?.icon_key || noticeEntry.icon_key || "").trim();
+      return effectiveIconKey === selectedNoticeIconKey;
+    });
+  }, [activeMapUiIconGroup, activeMapUiIconSelectedKey, mapUiNoticeDraftForm]);
   const draftDefaultMapUiThemeEntry = useMemo(
     () => mapUiThemeDraftThemes.find((entry) => entry?.is_default) || null,
     [mapUiThemeDraftThemes]
@@ -3017,6 +3233,16 @@ export default function PlatformAdminApp() {
     });
     return rows;
   }, [selectedTenantDomainAssignments, visibleDomainRegistryRows]);
+  const selectedTenantParkRows = useMemo(() => {
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    const rows = Array.isArray(tenantParksByTenant?.[tenantKey]) ? tenantParksByTenant[tenantKey] : [];
+    return [...rows].sort((a, b) => {
+      const aSort = Number.isFinite(Number(a?.sort_order)) ? Number(a.sort_order) : 1;
+      const bSort = Number.isFinite(Number(b?.sort_order)) ? Number(b.sort_order) : 1;
+      if (aSort !== bSort) return aSort - bSort;
+      return String(a?.park_name || "").localeCompare(String(b?.park_name || ""));
+    });
+  }, [selectedTenantKey, tenantParksByTenant]);
   useEffect(() => {
     setSelectedAssignedDomainKey((prev) => {
       const availableKeys = selectedTenantAssignedDomainRows
@@ -3564,6 +3790,48 @@ export default function PlatformAdminApp() {
     }
     return grouped;
   }, [tenantFiles]);
+  const parkBoundaryFilesByParkKey = useMemo(() => {
+    const grouped = {};
+    for (const row of tenantFiles || []) {
+      if (String(row?.file_category || "").trim().toLowerCase() !== "boundary_geojson") continue;
+      const subtype = String(row?.asset_subtype || "").trim().toLowerCase();
+      if (!subtype.startsWith("park:")) continue;
+      const parkKey = subtype.slice(5);
+      if (!parkKey) continue;
+      if (!grouped[parkKey]) grouped[parkKey] = [];
+      grouped[parkKey].push(row);
+    }
+    return grouped;
+  }, [tenantFiles]);
+  const selectedTenantParkNameByKey = useMemo(
+    () => Object.fromEntries(
+      selectedTenantParkRows.map((row) => [
+        String(row?.park_key || "").trim().toLowerCase(),
+        String(row?.park_name || "").trim() || String(row?.park_key || "").trim(),
+      ]).filter(([key]) => Boolean(key))
+    ),
+    [selectedTenantParkRows]
+  );
+  const tenantParkEditorParkKey = useMemo(
+    () => slugifyDomainKeyInput(tenantParkForm?.park_key || tenantParkForm?.park_name || ""),
+    [tenantParkForm?.park_key, tenantParkForm?.park_name]
+  );
+  const tenantParkEditorStoredBoundaryFiles = useMemo(
+    () => (tenantParkEditorParkKey ? (parkBoundaryFilesByParkKey?.[tenantParkEditorParkKey] || []) : []),
+    [parkBoundaryFilesByParkKey, tenantParkEditorParkKey]
+  );
+  const summarizeTenantFileSubtype = useCallback((row) => {
+    const subtype = String(row?.asset_subtype || "").trim().toLowerCase();
+    if (!subtype) return "";
+    if (String(row?.file_category || "").trim().toLowerCase() === "asset_coordinates") {
+      return domainKeyToLabel(subtype);
+    }
+    if (subtype.startsWith("park:")) {
+      const parkKey = subtype.slice(5);
+      return selectedTenantParkNameByKey[parkKey] ? `${selectedTenantParkNameByKey[parkKey]} park` : `Park: ${parkKey}`;
+    }
+    return subtype;
+  }, [selectedTenantParkNameByKey]);
   const filteredLeadRows = useMemo(() => {
     const leadNumberFilter = String(leadFilters?.lead_number || "").trim().toLowerCase();
     const orgNameFilter = String(leadFilters?.org_name || "").trim().toLowerCase();
@@ -4058,7 +4326,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_configs")
-      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports");
+      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,high_confidence_marker_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color");
     if (error && isMissingColumnError(error)) {
       const fallback = await supabase
         .from("tenant_domain_configs")
@@ -4092,6 +4360,17 @@ export default function PlatformAdminApp() {
           row?.high_confidence_min_reports,
           defaultDomainHighConfidenceMinReports(domain),
           { min: 1, max: 25 }
+        ),
+        high_confidence_marker_color: sanitizeHexColor(
+          row?.high_confidence_marker_color,
+          defaultDomainHighConfidenceMarkerColor(domain)
+        ),
+        high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+          row?.high_confidence_icon_tint_mode
+        ),
+        high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+          row?.high_confidence_icon_tint_color,
+          ""
         ),
       };
     }
@@ -4142,21 +4421,33 @@ export default function PlatformAdminApp() {
     }
     const definitionsResult = await supabase
       .from("domain_definitions")
-      .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+      .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,report_disclosures,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
       .order("sort_order", { ascending: true })
       .order("label", { ascending: true });
-    if (definitionsResult.error) {
-      if (isMissingRelationError(definitionsResult.error)) {
+    let definitionsData = definitionsResult.data;
+    let definitionsError = definitionsResult.error;
+    if (definitionsError && isMissingColumnError(definitionsError)) {
+      const fallbackResult = await supabase
+        .from("domain_definitions")
+        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+        .order("sort_order", { ascending: true })
+        .order("label", { ascending: true });
+      definitionsData = fallbackResult.data;
+      definitionsError = fallbackResult.error;
+    }
+    if (definitionsError) {
+      if (isMissingRelationError(definitionsError)) {
         setDomainRegistryRows([]);
         setDomainRegistrySchemaReady(false);
         return;
       }
-      throw definitionsResult.error;
+      throw definitionsError;
     }
-    const rows = (definitionsResult.data || []).map((row) => ({
+    const rows = (definitionsData || []).map((row) => ({
       ...row,
       key: String(row?.key || "").trim().toLowerCase(),
       type_options: normalizeDomainTypeOptionConfigs(row?.type_options, row?.key),
+      report_disclosures: normalizeDomainDisclosureRows(row?.report_disclosures, row?.key, { fallbackToDefaults: true }),
     }));
     setDomainRegistryRows(rows);
     setDomainRegistrySchemaReady(true);
@@ -4174,6 +4465,7 @@ export default function PlatformAdminApp() {
       setMapUiThemeEditorOpen(false);
       setMapUiThemeEditorDraft(null);
       setMapUiIconDraftForm(buildMapUiIconDraftForm({}));
+      setMapUiNoticeDraftForm(buildMapUiNoticeDraftForm({}));
       setMapUiThemeDraftForm(buildMapUiThemeDraftForm({}));
       setMapUiThemeBaseEnabled(false);
       setMapUiThemeSchedulesDraft([]);
@@ -4228,6 +4520,7 @@ export default function PlatformAdminApp() {
     setMapUiThemeEditorOpen(false);
     setMapUiThemeEditorDraft(null);
     setMapUiIconDraftForm(buildMapUiIconDraftForm(baseIcons));
+    setMapUiNoticeDraftForm(buildMapUiNoticeDraftForm(baseIcons));
     const draftDefaultTheme = draftThemeLibrary.find((entry) => entry?.is_default);
     setMapUiThemeDraftForm(buildMapUiThemeDraftForm(draftDefaultTheme?.themeForm || draftDefaultTheme?.theme || baseTheme));
     setMapUiThemeBaseEnabled(isMapUiBaseThemeEnabled(baseTheme));
@@ -4244,7 +4537,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,notification_email,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,park_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -4309,6 +4602,40 @@ export default function PlatformAdminApp() {
       };
     }
     setTenantMapFeaturesByTenant(next);
+  }, [hasPlatformPermission]);
+
+  const loadTenantParks = useCallback(async () => {
+    if (!hasPlatformPermission("domains.access") && !hasPlatformPermission("domains.edit")) {
+      setTenantParksByTenant({});
+      setTenantParkSchemaReady(true);
+      return;
+    }
+    let { data, error } = await supabase
+      .from("tenant_parks")
+      .select("id,tenant_key,park_key,park_name,boundary_geojson,border_color,border_width,fill_color,fill_opacity,label_color,show_label,label_lat,label_lng,sort_order,active,created_at,updated_at")
+      .order("tenant_key", { ascending: true })
+      .order("sort_order", { ascending: true })
+      .order("park_name", { ascending: true });
+    if (error) {
+      if (isMissingRelationError(error)) {
+        setTenantParksByTenant({});
+        setTenantParkSchemaReady(false);
+        return;
+      }
+      throw error;
+    }
+    const next = {};
+    for (const row of data || []) {
+      const tenantKey = sanitizeTenantKey(row?.tenant_key);
+      if (!tenantKey) continue;
+      if (!next[tenantKey]) next[tenantKey] = [];
+      next[tenantKey].push({
+        ...row,
+        park_key: String(row?.park_key || "").trim().toLowerCase(),
+      });
+    }
+    setTenantParksByTenant(next);
+    setTenantParkSchemaReady(true);
   }, [hasPlatformPermission]);
 
   const loadTenantFiles = useCallback(async (tenantKey) => {
@@ -4418,13 +4745,14 @@ export default function PlatformAdminApp() {
         loadMapUiIconConfigs(),
         loadTenantDomainAssignments(),
         loadTenantMapFeatures(),
+        loadTenantParks(),
         loadAudit(),
       ]);
       setStatus((prev) => ({ ...prev, hydrate: "" }));
     } catch (error) {
       setStatus((prev) => ({ ...prev, hydrate: statusText(error, "") }));
     }
-  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadTenantDomainIssueTypes, loadDomainRegistryData, loadMapUiIconConfigs, loadTenantDomainAssignments, loadTenantMapFeatures, loadAudit]);
+  }, [purgeExpiredOrganizationDeletions, loadTenants, loadTenantAdmins, loadPlatformRoleConfig, loadPlatformTeamAssignments, loadClientLeads, loadTenantRoleConfig, loadTenantProfiles, loadTenantVisibility, loadTenantDomainConfigs, loadTenantDomainIssueTypes, loadDomainRegistryData, loadMapUiIconConfigs, loadTenantDomainAssignments, loadTenantMapFeatures, loadTenantParks, loadAudit]);
 
   const loadAssignmentUserSummaries = useCallback(async () => {
     if (!canViewTenantUsers) {
@@ -4872,6 +5200,14 @@ export default function PlatformAdminApp() {
     if (!nextPage || !canAccessControlPlanePage(nextPage.key)) return;
     setControlPlaneSection(nextPage.section);
     setControlPlanePage(nextPage.key);
+    if (nextPage.key === "manage-organizations") {
+      setEntryStep("start");
+      setTenantSearch("");
+      setIsEditingTenant(false);
+      setIsEditingProfile(false);
+      setTenantUsersManagementView("list");
+      setTenantRoleManagementView("list");
+    }
     setOpenControlPlaneDropdown("");
   }, [canAccessControlPlanePage]);
 
@@ -5834,6 +6170,12 @@ export default function PlatformAdminApp() {
   }, [entryStep, isEditingTenant, selectedTenant]);
 
   useEffect(() => {
+    setEditingTenantParkId("");
+    setTenantParkEditorOpen(false);
+    setTenantParkForm(initialTenantParkForm());
+  }, [selectedTenantKey]);
+
+  useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) return;
 
@@ -5879,19 +6221,38 @@ export default function PlatformAdminApp() {
         domain_type: String(configured?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
         display_label: String(assignment?.display_label || defaultDomainLabel(d.key)).trim() || defaultDomainLabel(d.key),
         marker_color: sanitizeHexColor(assignment?.marker_color, defaultDomainMarkerColor(d.key)),
+        high_confidence_marker_color: sanitizeHexColor(
+          assignment?.high_confidence_marker_color ?? configured?.high_confidence_marker_color,
+          defaultDomainHighConfidenceMarkerColor(d.key)
+        ),
         icon_render_mode: normalizeDomainIconRenderMode(
           assignment?.icon_render_mode,
           domainIconSrc
         ),
         icon_tint_mode: normalizeDomainIconTintMode(assignment?.icon_tint_mode),
         icon_tint_color: normalizeDomainIconTintColor(assignment?.icon_tint_color, ""),
+        high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+          assignment?.high_confidence_icon_tint_mode
+          ?? configured?.high_confidence_icon_tint_mode
+          ?? assignment?.icon_tint_mode
+          ?? configured?.icon_tint_mode
+        ),
+        high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+          assignment?.high_confidence_icon_tint_color,
+          configured?.high_confidence_icon_tint_color
+          ?? assignment?.icon_tint_color
+          ?? configured?.icon_tint_color
+          ?? ""
+        ),
         notification_email: String(assignment?.notification_email || configured?.notification_email || fallbackNotification).trim(),
+        notification_cc_emails: String(assignment?.notification_cc_emails || "").trim(),
         notification_template_key: templatePreset.key,
         notification_subject_template: String(assignment?.notification_subject_template || templatePreset.subject || ""),
         notification_body_template: String(assignment?.notification_body_template || templatePreset.body || ""),
         organization_monitored_repairs: typeof assignment?.organization_monitored_repairs === "boolean"
           ? assignment.organization_monitored_repairs
           : configured?.organization_monitored_repairs !== false,
+        park_required: assignment?.park_required === true,
         public_visibility_min_reports: sanitizePositiveIntegerSetting(
           assignment?.public_visibility_min_reports ?? configured?.public_visibility_min_reports,
           defaultDomainPublicVisibilityMinReports(d.key),
@@ -6535,6 +6896,20 @@ export default function PlatformAdminApp() {
     }));
   }, []);
 
+  const updateMapUiNoticeDraftValue = useCallback((noticeKey, fieldKey, value) => {
+    const key = String(noticeKey || "").trim();
+    const field = String(fieldKey || "").trim();
+    if (!MAP_UI_NOTICE_CATALOG.some((entry) => entry.key === key)) return;
+    if (!["icon_key", "title", "message"].includes(field)) return;
+    setMapUiNoticeDraftForm((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev?.[key] || {}),
+        [field]: value,
+      },
+    }));
+  }, []);
+
   const updateMapUiThemeDraftValue = useCallback((mode, fieldKey, value) => {
     const modeKey = String(mode || "").trim().toLowerCase();
     const resolvedFieldKey = String(fieldKey || "").trim();
@@ -6998,6 +7373,7 @@ export default function PlatformAdminApp() {
     try {
       const nextDraftForm = { ...mapUiIconDraftForm };
       const resolvedIcons = {};
+      const resolvedNotices = extractMapUiNoticeConfigFromForm(mapUiNoticeDraftForm);
 
       for (const entry of MAP_UI_ICON_CATALOG) {
         const row = nextDraftForm?.[entry.key] || {};
@@ -7063,11 +7439,11 @@ export default function PlatformAdminApp() {
         }
       }
 
-      const draftValue = {
-        icons: sanitizeMapUiIconManifest(resolvedIcons),
+      const draftValue = buildMapUiIconConfigValue(resolvedIcons, {
+        notices: resolvedNotices,
         saved_at: new Date().toISOString(),
         saved_by: sessionUserId || null,
-      };
+      });
       const draftResult = await supabase
         .from("app_config")
         .upsert([{ key: MAP_UI_ICON_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
@@ -7078,14 +7454,15 @@ export default function PlatformAdminApp() {
 
       setMapUiIconDraftConfig(draftValue);
       setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
+      setMapUiNoticeDraftForm(buildMapUiNoticeDraftForm(draftValue));
 
       if (publish) {
-        const publishedValue = {
-          icons: draftValue.icons,
+        const publishedValue = buildMapUiIconConfigValue(draftValue.icons, {
+          notices: resolvedNotices,
           published_at: new Date().toISOString(),
           published_by: sessionUserId || null,
           source_saved_at: draftValue.saved_at,
-        };
+        });
         const publishResult = await supabase
           .from("app_config")
           .upsert([{ key: MAP_UI_ICON_PUBLISHED_CONFIG_KEY, value: publishedValue }], { onConflict: "key" });
@@ -7104,7 +7481,7 @@ export default function PlatformAdminApp() {
       setMapUiIconSavingDraft(false);
       setMapUiIconPublishing(false);
     }
-  }, [canManageDomainRegistry, mapUiIconDraftForm, sessionUserId]);
+  }, [canManageDomainRegistry, mapUiIconDraftForm, mapUiNoticeDraftForm, sessionUserId]);
 
   const resetMapUiIconDraftToPublished = useCallback(async () => {
     if (!canManageDomainRegistry) {
@@ -7115,12 +7492,13 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, mapUiIcons: "" }));
     try {
       const publishedIcons = sanitizeMapUiIconManifest(mapUiIconPublishedConfig);
-      const draftValue = {
-        icons: publishedIcons,
+      const publishedNotices = sanitizeMapUiNoticeConfig(mapUiIconPublishedConfig);
+      const draftValue = buildMapUiIconConfigValue(publishedIcons, {
+        notices: publishedNotices,
         saved_at: new Date().toISOString(),
         saved_by: sessionUserId || null,
         reset_to_published: true,
-      };
+      });
       const { error } = await supabase
         .from("app_config")
         .upsert([{ key: MAP_UI_ICON_DRAFT_CONFIG_KEY, value: draftValue }], { onConflict: "key" });
@@ -7130,6 +7508,7 @@ export default function PlatformAdminApp() {
       }
       setMapUiIconDraftConfig(draftValue);
       setMapUiIconDraftForm(buildMapUiIconDraftForm(draftValue));
+      setMapUiNoticeDraftForm(buildMapUiNoticeDraftForm(draftValue));
       setStatus((prev) => ({ ...prev, mapUiIcons: "Reset the draft icon set back to the currently published version." }));
     } finally {
       setMapUiIconSavingDraft(false);
@@ -7332,6 +7711,7 @@ export default function PlatformAdminApp() {
       allow_report_images: domainRegistryForm?.allow_report_images === true,
       road_required: domainRegistryForm?.road_required === true,
       type_options: buildStoredDomainTypeOptionConfigs(domainRegistryForm?.type_options, key),
+      report_disclosures: normalizeDomainDisclosureRows(domainRegistryForm?.report_disclosures, key),
       updated_by: sessionUserId || null,
     };
 
@@ -7450,6 +7830,112 @@ export default function PlatformAdminApp() {
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
   }, []);
 
+  const beginCreateTenantPark = useCallback(() => {
+    if (!canEditTenantDomains) return;
+    const highestExistingSortOrder = selectedTenantParkRows.reduce((maxValue, row) => {
+      const nextValue = Number(row?.sort_order);
+      return Number.isFinite(nextValue) ? Math.max(maxValue, nextValue) : maxValue;
+    }, 0);
+    const nextSortOrder = highestExistingSortOrder + 1 || 1;
+    setEditingTenantParkId("");
+    setTenantParkForm({
+      ...initialTenantParkForm(),
+      sort_order: String(nextSortOrder),
+    });
+    setTenantParkBoundaryUploads([]);
+    setTenantParkEditorOpen(true);
+    setStatus((prev) => ({ ...prev, parks: "" }));
+  }, [canEditTenantDomains, selectedTenantParkRows]);
+
+  const beginEditTenantPark = useCallback((parkId) => {
+    if (!canEditTenantDomains) return;
+    const parkKey = String(parkId || "").trim();
+    const row = selectedTenantParkRows.find((entry) => String(entry?.id || "") === parkKey) || null;
+    if (!row) return;
+    setEditingTenantParkId(parkKey);
+    setTenantParkForm(buildTenantParkForm(row));
+    setTenantParkBoundaryUploads([]);
+    setTenantParkEditorOpen(true);
+    setStatus((prev) => ({ ...prev, parks: "" }));
+  }, [canEditTenantDomains, selectedTenantParkRows]);
+
+  const cancelTenantParkEditor = useCallback(() => {
+    setEditingTenantParkId("");
+    setTenantParkForm(initialTenantParkForm());
+    setTenantParkBoundaryUploads([]);
+    setTenantParkEditorOpen(false);
+    setStatus((prev) => ({ ...prev, parks: "" }));
+  }, []);
+
+  const appendTenantParkBoundaryUploads = useCallback((files) => {
+    const nextFiles = Array.from(files || []).filter(Boolean);
+    if (!nextFiles.length) return;
+    setTenantParkBoundaryUploads((prev) => {
+      const existingKeys = new Set(
+        (prev || []).map((entry) => `${entry?.file?.name || ""}:${entry?.file?.size || 0}:${entry?.file?.lastModified || 0}`)
+      );
+      const appended = [...prev];
+      nextFiles.forEach((file, index) => {
+        const dedupeKey = `${file?.name || ""}:${file?.size || 0}:${file?.lastModified || 0}`;
+        if (existingKeys.has(dedupeKey)) return;
+        existingKeys.add(dedupeKey);
+        appended.push({
+          id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+          file,
+        });
+      });
+      return appended;
+    });
+  }, []);
+
+  const removeTenantParkBoundaryUpload = useCallback((uploadId) => {
+    const targetId = String(uploadId || "").trim();
+    if (!targetId) return;
+    setTenantParkBoundaryUploads((prev) => prev.filter((entry) => String(entry?.id || "") !== targetId));
+  }, []);
+
+  const readParkBoundaryFeaturesFromFile = useCallback(async (file, sourceLabel) => {
+    try {
+      const parsed = JSON.parse(await file.text());
+      const features = extractPolygonFeaturesFromGeoJson(parsed);
+      if (!features.length) {
+        return {
+          ok: false,
+          error: `${sourceLabel || file?.name || "Boundary file"} must contain Polygon or MultiPolygon GeoJSON data.`,
+        };
+      }
+      return { ok: true, features };
+    } catch {
+      return {
+        ok: false,
+        error: `${sourceLabel || file?.name || "Boundary file"} must be valid GeoJSON JSON.`,
+      };
+    }
+  }, []);
+
+  const readParkBoundaryFeaturesFromStoredFile = useCallback(async (row) => {
+    const bucket = String(row?.storage_bucket || "tenant-files").trim() || "tenant-files";
+    const path = String(row?.storage_path || "").trim();
+    const label = String(row?.file_name || path || "boundary file").trim() || "boundary file";
+    if (!path) {
+      return { ok: false, error: `${label} is missing a storage path.` };
+    }
+    try {
+      const { data, error } = await supabase.storage.from(bucket).download(path);
+      if (error || !data) {
+        return { ok: false, error: statusText(error || "Unable to download boundary file", "") };
+      }
+      const parsed = JSON.parse(await data.text());
+      const features = extractPolygonFeaturesFromGeoJson(parsed);
+      if (!features.length) {
+        return { ok: false, error: `${label} must contain Polygon or MultiPolygon GeoJSON data.` };
+      }
+      return { ok: true, features };
+    } catch {
+      return { ok: false, error: `${label} could not be parsed as GeoJSON.` };
+    }
+  }, []);
+
   const saveTenantDomainAssignment = useCallback(async (event) => {
     event?.preventDefault?.();
     if (!canManageDomainRegistry) {
@@ -7481,6 +7967,7 @@ export default function PlatformAdminApp() {
       active: tenantDomainAssignmentForm?.active !== false,
       visibility: String(tenantDomainAssignmentForm?.visibility || "enabled").trim().toLowerCase(),
       notification_email: String(tenantDomainAssignmentForm?.notification_email || "").trim() || null,
+      notification_cc_emails: String(tenantDomainAssignmentForm?.notification_cc_emails || "").trim() || null,
       notification_template_key: String(tenantDomainAssignmentForm?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
       notification_subject_template: String(tenantDomainAssignmentForm?.notification_subject_template || "").trim() || null,
       notification_body_template: String(tenantDomainAssignmentForm?.notification_body_template || "").trim() || null,
@@ -7529,6 +8016,223 @@ export default function PlatformAdminApp() {
     await refreshControlPlaneData();
   }, [canManageDomainRegistry, cancelTenantDomainAssignmentEditor, domainRegistryRows, editingTenantDomainAssignmentKey, refreshControlPlaneData, selectedTenantKey, selectedTenantOrganizationName, selectedTenantPublicDisplayName, sessionUserId, tenantDomainAssignmentForm]);
 
+  const saveTenantPark = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canEditTenantDomains) {
+      setStatus((prev) => ({ ...prev, parks: "You need the Domains edit permission to manage parks." }));
+      return;
+    }
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    if (!tenantKey) {
+      setStatus((prev) => ({ ...prev, parks: "Select an organization first." }));
+      return;
+    }
+    const parkName = String(tenantParkForm?.park_name || "").trim();
+    const parkKey = slugifyDomainKeyInput(tenantParkForm?.park_key || parkName || "");
+    if (!parkName) {
+      setStatus((prev) => ({ ...prev, parks: "Enter a park name before saving." }));
+      return;
+    }
+    if (!parkKey) {
+      setStatus((prev) => ({ ...prev, parks: "Enter a valid park key before saving." }));
+      return;
+    }
+    const existingBoundaryFiles = editingTenantParkId
+      ? (parkBoundaryFilesByParkKey?.[parkKey] || [])
+      : [];
+    const combinedFeatures = [];
+
+    for (const row of existingBoundaryFiles) {
+      const existingResult = await readParkBoundaryFeaturesFromStoredFile(row);
+      if (!existingResult.ok) {
+        setStatus((prev) => ({ ...prev, parks: existingResult.error || "Unable to read one of the saved park boundary files." }));
+        return;
+      }
+      combinedFeatures.push(...(existingResult.features || []));
+    }
+
+    for (const upload of tenantParkBoundaryUploads) {
+      const nextFile = upload?.file || null;
+      if (!nextFile) continue;
+      const uploadResult = await readParkBoundaryFeaturesFromFile(nextFile, nextFile.name);
+      if (!uploadResult.ok) {
+        setStatus((prev) => ({ ...prev, parks: uploadResult.error || "Unable to read one of the new park boundary files." }));
+        return;
+      }
+      combinedFeatures.push(...(uploadResult.features || []));
+    }
+
+    let boundaryGeojson = null;
+    if (combinedFeatures.length) {
+      boundaryGeojson = {
+        type: "FeatureCollection",
+        features: combinedFeatures,
+      };
+    } else {
+      try {
+        boundaryGeojson = JSON.parse(String(tenantParkForm?.boundary_geojson || "").trim() || "{}");
+      } catch {
+        setStatus((prev) => ({ ...prev, parks: "Upload at least one valid boundary file before saving this park." }));
+        return;
+      }
+      const boundaryType = String(boundaryGeojson?.type || "").trim();
+      if (!boundaryType || typeof boundaryGeojson !== "object" || Array.isArray(boundaryGeojson)) {
+        setStatus((prev) => ({ ...prev, parks: "Upload at least one valid boundary file before saving this park." }));
+        return;
+      }
+    }
+    const payload = {
+      tenant_key: tenantKey,
+      park_key: parkKey,
+      park_name: parkName,
+      boundary_geojson: boundaryGeojson,
+      border_color: sanitizeHexColor(tenantParkForm?.border_color, "#2e7d32"),
+      border_width: Number.isFinite(Number(tenantParkForm?.border_width))
+        ? Math.max(0, Math.min(12, Number(tenantParkForm.border_width)))
+        : 2,
+      fill_color: sanitizeHexColor(tenantParkForm?.fill_color, "#66bb6a"),
+      fill_opacity: Number.isFinite(Number(tenantParkForm?.fill_opacity))
+        ? Math.max(0, Math.min(1, Number(tenantParkForm.fill_opacity)))
+        : 0.18,
+      label_color: sanitizeHexColor(tenantParkForm?.label_color, "#17314f"),
+      show_label: tenantParkForm?.show_label !== false,
+      label_lat: parseOptionalNumber(tenantParkForm?.label_lat),
+      label_lng: parseOptionalNumber(tenantParkForm?.label_lng),
+      sort_order: sanitizePositiveIntegerSetting(tenantParkForm?.sort_order, 1, { min: 1, max: 9999 }),
+      active: tenantParkForm?.active !== false,
+      updated_by: cleanOptional(sessionUserId),
+    };
+    if (!editingTenantParkId) {
+      payload.created_by = cleanOptional(sessionUserId);
+    }
+
+    setTenantParkSaving(true);
+    setStatus((prev) => ({ ...prev, parks: "" }));
+    const result = editingTenantParkId
+      ? await supabase
+          .from("tenant_parks")
+          .update(payload)
+          .eq("tenant_key", tenantKey)
+          .eq("id", editingTenantParkId)
+      : await supabase.from("tenant_parks").insert(payload);
+    setTenantParkSaving(false);
+    if (result.error) {
+      setStatus((prev) => ({ ...prev, parks: statusText(result.error, "") }));
+      return;
+    }
+
+    const uploadedBoundaryFiles = [];
+    for (const upload of tenantParkBoundaryUploads) {
+      const nextFile = upload?.file || null;
+      if (!nextFile) continue;
+      const now = Date.now();
+      const fileName = sanitizeFileNameSegment(nextFile.name);
+      const path = [
+        tenantKey,
+        "boundary_geojson",
+        "parks",
+        parkKey,
+        toDatePath(new Date()),
+        `${now}_${fileName}`,
+      ].join("/");
+      const contentType = String(nextFile.type || "application/octet-stream");
+
+      const { error: uploadError } = await supabase.storage.from("tenant-files").upload(path, nextFile, {
+        upsert: false,
+        contentType,
+      });
+      if (uploadError) {
+        setStatus((prev) => ({
+          ...prev,
+          parks: `Saved ${parkName}, but failed to upload ${nextFile.name}: ${statusText(uploadError, "")}`,
+        }));
+        await refreshControlPlaneData();
+        return;
+      }
+
+      const metadataPayload = {
+        tenant_key: tenantKey,
+        file_category: "boundary_geojson",
+        file_name: nextFile.name,
+        storage_bucket: "tenant-files",
+        storage_path: path,
+        mime_type: contentType,
+        size_bytes: Number(nextFile.size || 0),
+        uploaded_by: cleanOptional(sessionUserId),
+        notes: cleanOptional(`Park boundary parcel for ${parkName}`),
+        asset_subtype: cleanOptional(buildParkBoundaryAssetSubtype(parkKey)),
+        active: true,
+      };
+
+      const { error: metaError } = await supabase.from("tenant_files").insert([metadataPayload]);
+      if (metaError) {
+        setStatus((prev) => ({
+          ...prev,
+          parks: `Saved ${parkName}, but failed to store metadata for ${nextFile.name}: ${statusText(metaError, "")}`,
+        }));
+        await refreshControlPlaneData();
+        return;
+      }
+
+      uploadedBoundaryFiles.push(nextFile.name);
+      await logAudit({
+        tenant_key: tenantKey,
+        action: "tenant_park_boundary_file_uploaded",
+        entity_type: "tenant_file",
+        entity_id: path,
+        details: {
+          park_key: parkKey,
+          park_name: parkName,
+          file_name: nextFile.name,
+          size_bytes: metadataPayload.size_bytes,
+        },
+      });
+    }
+
+    cancelTenantParkEditor();
+    setStatus((prev) => ({
+      ...prev,
+      parks: `${editingTenantParkId ? "Updated" : "Added"} ${parkName}${uploadedBoundaryFiles.length ? ` with ${uploadedBoundaryFiles.length} boundary file${uploadedBoundaryFiles.length === 1 ? "" : "s"}` : ""}.`,
+    }));
+    await refreshControlPlaneData();
+  }, [canEditTenantDomains, cancelTenantParkEditor, editingTenantParkId, logAudit, parkBoundaryFilesByParkKey, readParkBoundaryFeaturesFromFile, readParkBoundaryFeaturesFromStoredFile, refreshControlPlaneData, selectedTenantKey, sessionUserId, tenantParkBoundaryUploads, tenantParkForm]);
+
+  const deleteTenantPark = useCallback(async (parkId) => {
+    if (!canEditTenantDomains) {
+      setStatus((prev) => ({ ...prev, parks: "You need the Domains edit permission to delete parks." }));
+      return;
+    }
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    const parkKey = String(parkId || "").trim();
+    if (!tenantKey || !parkKey) return;
+    const parkRow = selectedTenantParkRows.find((row) => String(row?.id || "") === parkKey) || null;
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Remove ${String(parkRow?.park_name || "this park").trim() || "this park"}?`);
+    if (!confirmed) return;
+
+    setTenantParkSaving(true);
+    setStatus((prev) => ({ ...prev, parks: "" }));
+    const { error } = await supabase
+      .from("tenant_parks")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("id", parkKey);
+    setTenantParkSaving(false);
+    if (error) {
+      setStatus((prev) => ({ ...prev, parks: statusText(error, "") }));
+      return;
+    }
+    if (editingTenantParkId === parkKey) {
+      cancelTenantParkEditor();
+    }
+    setStatus((prev) => ({
+      ...prev,
+      parks: `Removed ${String(parkRow?.park_name || "park").trim() || "park"}.`,
+    }));
+    await refreshControlPlaneData();
+  }, [canEditTenantDomains, cancelTenantParkEditor, editingTenantParkId, refreshControlPlaneData, selectedTenantKey, selectedTenantParkRows]);
+
   const saveDomainAndFeatureSettings = useCallback(async (event, options = {}) => {
     event?.preventDefault?.();
     if (!canEditTenantDomains) {
@@ -7567,7 +8271,11 @@ export default function PlatformAdminApp() {
     });
     if (!checkpointApproved) return;
 
-    const persistedDomainRows = activeManageableTenantDomainRows.filter((d) => (
+    const shouldSaveSingleDomain = Boolean(closingDomainKey);
+    const candidateDomainRows = shouldSaveSingleDomain
+      ? activeManageableTenantDomainRows.filter((d) => d.key === closingDomainKey)
+      : activeManageableTenantDomainRows;
+    const persistedDomainRows = candidateDomainRows.filter((d) => (
       Boolean(selectedTenantDomainAssignments?.[d.key])
       || String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() !== "disabled"
       || editingDomainKey === d.key
@@ -7586,6 +8294,7 @@ export default function PlatformAdminApp() {
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      park_required: domainConfigForm?.[d.key]?.park_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
         defaultDomainPublicVisibilityMinReports(d.key),
@@ -7596,6 +8305,16 @@ export default function PlatformAdminApp() {
         defaultDomainHighConfidenceMinReports(d.key),
         { min: 1, max: 25 }
       ),
+      high_confidence_marker_color: sanitizeHexColor(
+        domainConfigForm?.[d.key]?.high_confidence_marker_color,
+        defaultDomainHighConfidenceMarkerColor(d.key)
+      ),
+      high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+        domainConfigForm?.[d.key]?.high_confidence_icon_tint_mode
+      ),
+      high_confidence_icon_tint_color: cleanOptional(
+        normalizeDomainIconTintColor(domainConfigForm?.[d.key]?.high_confidence_icon_tint_color, "")
+      ),
       updated_by: cleanOptional(sessionUserId),
     }));
     const assignmentRows = persistedDomainRows.map((d) => ({
@@ -7605,17 +8324,29 @@ export default function PlatformAdminApp() {
       visibility: String(domainVisibilityForm?.[d.key] || "disabled").trim().toLowerCase() === "disabled" ? "disabled" : "enabled",
       display_label: cleanOptional(domainConfigForm?.[d.key]?.display_label),
       marker_color: sanitizeHexColor(domainConfigForm?.[d.key]?.marker_color, defaultDomainMarkerColor(d.key)),
+      high_confidence_marker_color: sanitizeHexColor(
+        domainConfigForm?.[d.key]?.high_confidence_marker_color,
+        defaultDomainHighConfidenceMarkerColor(d.key)
+      ),
       icon_render_mode: normalizeDomainIconRenderMode(
         domainConfigForm?.[d.key]?.icon_render_mode,
         String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
       ),
       icon_tint_mode: normalizeDomainIconTintMode(domainConfigForm?.[d.key]?.icon_tint_mode),
       icon_tint_color: cleanOptional(normalizeDomainIconTintColor(domainConfigForm?.[d.key]?.icon_tint_color, "")),
+      high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+        domainConfigForm?.[d.key]?.high_confidence_icon_tint_mode
+      ),
+      high_confidence_icon_tint_color: cleanOptional(
+        normalizeDomainIconTintColor(domainConfigForm?.[d.key]?.high_confidence_icon_tint_color, "")
+      ),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
+      notification_cc_emails: cleanOptional(domainConfigForm?.[d.key]?.notification_cc_emails),
       notification_template_key: String(domainConfigForm?.[d.key]?.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key).trim().toLowerCase(),
       notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
       notification_body_template: cleanOptional(domainConfigForm?.[d.key]?.notification_body_template),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      park_required: domainConfigForm?.[d.key]?.park_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
         defaultDomainPublicVisibilityMinReports(d.key),
@@ -7645,16 +8376,38 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    const tenantPayload = {
-      notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
-      notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
-    };
+    const tenantPayload = shouldSaveSingleDomain
+      ? {
+          ...(closingDomainKey === "potholes"
+            ? { notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email) }
+            : {}),
+          ...(closingDomainKey === "water_drain_issues"
+            ? { notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email) }
+            : {}),
+        }
+      : {
+          notification_email_potholes: cleanOptional(domainConfigForm?.potholes?.notification_email),
+          notification_email_water_drain: cleanOptional(domainConfigForm?.water_drain_issues?.notification_email),
+        };
 
-    const [{ error: visError }, { error: domainConfigError }, { error: tenantError }, assignmentResult] = await Promise.all([
-      supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" }),
-      supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" }),
-      supabase.from("tenants").update(tenantPayload).eq("tenant_key", key),
-      supabase.from("tenant_domain_assignments").upsert(assignmentRows, { onConflict: "tenant_key,domain_key" }),
+    const [
+      { error: visError },
+      { error: domainConfigError },
+      { error: tenantError },
+      assignmentResult,
+    ] = await Promise.all([
+      visibilityRows.length
+        ? supabase.from("tenant_visibility_config").upsert(visibilityRows, { onConflict: "tenant_key,domain" })
+        : Promise.resolve({ error: null }),
+      domainConfigRows.length
+        ? supabase.from("tenant_domain_configs").upsert(domainConfigRows, { onConflict: "tenant_key,domain" })
+        : Promise.resolve({ error: null }),
+      Object.keys(tenantPayload).length
+        ? supabase.from("tenants").update(tenantPayload).eq("tenant_key", key)
+        : Promise.resolve({ error: null }),
+      assignmentRows.length
+        ? supabase.from("tenant_domain_assignments").upsert(assignmentRows, { onConflict: "tenant_key,domain_key" })
+        : Promise.resolve({ error: null }),
     ]);
     let assignmentError = assignmentResult.error;
     if (assignmentError && isMissingColumnError(assignmentError)) {
@@ -7665,6 +8418,7 @@ export default function PlatformAdminApp() {
         visibility: row.visibility,
         notification_email: row.notification_email,
         organization_monitored_repairs: row.organization_monitored_repairs,
+        park_required: row.park_required,
         updated_by: row.updated_by,
       }));
       const fallbackAssignmentResult = await supabase
@@ -7713,21 +8467,46 @@ export default function PlatformAdminApp() {
               organization_monitored_repairs: savedConfig.organization_monitored_repairs !== false,
               public_visibility_min_reports: savedConfig.public_visibility_min_reports,
               high_confidence_min_reports: savedConfig.high_confidence_min_reports,
+              high_confidence_marker_color: savedConfig.high_confidence_marker_color || defaultDomainHighConfidenceMarkerColor(closingDomainKey),
+              high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+                savedConfig.high_confidence_icon_tint_mode
+              ),
+              high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+                savedConfig.high_confidence_icon_tint_color,
+                ""
+              ),
             } : {}),
             ...(savedAssignment ? {
               display_label: savedAssignment.display_label || "",
               marker_color: savedAssignment.marker_color || defaultDomainMarkerColor(closingDomainKey),
+              high_confidence_marker_color:
+                savedAssignment.high_confidence_marker_color
+                || savedConfig?.high_confidence_marker_color
+                || defaultDomainHighConfidenceMarkerColor(closingDomainKey),
               icon_render_mode: normalizeDomainIconRenderMode(
                 savedAssignment.icon_render_mode,
                 String(manageableTenantDomainRowByKey?.[closingDomainKey]?.icon_src || "").trim()
               ),
               icon_tint_mode: normalizeDomainIconTintMode(savedAssignment.icon_tint_mode),
               icon_tint_color: normalizeDomainIconTintColor(savedAssignment.icon_tint_color, ""),
+              high_confidence_icon_tint_mode: normalizeDomainIconTintMode(
+                savedAssignment.high_confidence_icon_tint_mode
+                ?? savedConfig?.high_confidence_icon_tint_mode
+                ?? savedAssignment.icon_tint_mode
+              ),
+              high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+                savedAssignment.high_confidence_icon_tint_color,
+                savedConfig?.high_confidence_icon_tint_color
+                ?? savedAssignment.icon_tint_color
+                ?? ""
+              ),
               notification_email: savedAssignment.notification_email || (savedConfig?.notification_email || ""),
+              notification_cc_emails: savedAssignment.notification_cc_emails || "",
               notification_template_key: savedAssignment.notification_template_key || DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS[0].key,
               notification_subject_template: savedAssignment.notification_subject_template || "",
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
+              park_required: savedAssignment.park_required === true,
               type_options: normalizeDomainTypeOptionConfigs(savedAssignment.type_options, closingDomainKey),
               report_disclosures: normalizeDomainDisclosureRows(savedAssignment.report_disclosures, closingDomainKey),
             } : {}),
@@ -7735,6 +8514,7 @@ export default function PlatformAdminApp() {
         }));
       }
       setEditingDomainKey("");
+      setEditingAssignedDomainSectionKey("");
       setEditingDomainSnapshot(null);
       setExpandedAssignedDomainCardKey((prev) => (prev === closingDomainKey ? "" : prev));
     }
@@ -8303,12 +9083,14 @@ export default function PlatformAdminApp() {
     setTenantAssetsManagementView("add");
   }, []);
 
-  const beginDomainEdit = useCallback((domainKey) => {
+  const beginDomainEdit = useCallback((domainKey, sectionKey = "marker-icon") => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
     setExpandedAssignedDomainCardKey(key);
     setSelectedAssignedDomainKey(key);
+    setSelectedAssignedDomainSectionKey(sectionKey);
     setEditingDomainKey(key);
+    setEditingAssignedDomainSectionKey(sectionKey);
     setEditingDomainSnapshot({
       key,
       visibility: String(domainVisibilityForm?.[key] || "enabled"),
@@ -8337,6 +9119,7 @@ export default function PlatformAdminApp() {
       }));
     }
     setEditingDomainKey("");
+    setEditingAssignedDomainSectionKey("");
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
 
@@ -8744,6 +9527,180 @@ export default function PlatformAdminApp() {
           style={{ ...modalInput, minHeight: 86, resize: "vertical" }}
         />
       </label>
+      <div
+        style={{
+          ...subPanel,
+          display: "grid",
+          gap: 10,
+          background: "rgba(255,255,255,0.82)",
+          borderColor: "rgba(17,36,69,0.1)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 3 }}>
+            <div style={{ fontWeight: 900, color: palette.navy900 }}>Global Report Disclosures</div>
+            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+              These disclosures apply to this domain across every tenant that activates it. Tenant-specific disclosures can still be added later on the assigned domain.
+            </div>
+          </div>
+          <button
+            type="button"
+            style={buttonAlt}
+            disabled={domainRegistrySaving}
+            onClick={() => setDomainRegistryForm((prev) => ({
+              ...prev,
+              report_disclosures: [
+                ...(Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : []),
+                {
+                  id: createDomainDisclosureId("global_report_disclosure"),
+                  title: "",
+                  body: "",
+                  required_acknowledgement: false,
+                  display_position: "inside_form",
+                },
+              ],
+            }))}
+          >
+            Add Disclosure
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {(Array.isArray(domainRegistryForm?.report_disclosures) ? domainRegistryForm.report_disclosures : []).length ? (
+            (Array.isArray(domainRegistryForm?.report_disclosures) ? domainRegistryForm.report_disclosures : []).map((disclosure, disclosureIndex) => (
+              <div
+                key={disclosure.id || `domain-registry-disclosure-${disclosureIndex}`}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 12,
+                  borderRadius: 14,
+                  border: "1px solid rgba(17,36,69,0.12)",
+                  background: "rgba(255,255,255,0.92)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                      Disclosure {disclosureIndex + 1}
+                    </span>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                      {domainDisclosurePositionLabel(disclosure.display_position)}
+                    </span>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: disclosure.required_acknowledgement ? palette.red600 : palette.mint700, background: disclosure.required_acknowledgement ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                      {disclosure.required_acknowledgement ? "Required acknowledgment" : "Informational"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    style={buttonAlt}
+                    disabled={domainRegistrySaving}
+                    onClick={() => setDomainRegistryForm((prev) => ({
+                      ...prev,
+                      report_disclosures: (Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : [])
+                        .filter((row, rowIndex) => rowIndex !== disclosureIndex),
+                    }))}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div style={responsiveActionGrid}>
+                  <label style={modalField}>
+                    <span>Title</span>
+                    <input
+                      value={disclosure.title || ""}
+                      onChange={(e) => setDomainRegistryForm((prev) => ({
+                        ...prev,
+                        report_disclosures: (Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : []).map((row, rowIndex) => (
+                          rowIndex === disclosureIndex
+                            ? { ...row, title: e.target.value }
+                            : row
+                        )),
+                      }))}
+                      placeholder="Disclosure title"
+                      style={modalInput}
+                    />
+                  </label>
+                  <label style={modalField}>
+                    <span>Display Position</span>
+                    <select
+                      value={disclosure.display_position || "inside_form"}
+                      onChange={(e) => setDomainRegistryForm((prev) => ({
+                        ...prev,
+                        report_disclosures: (Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : []).map((row, rowIndex) => (
+                          rowIndex === disclosureIndex
+                            ? { ...row, display_position: e.target.value === "before_form" ? "before_form" : "inside_form" }
+                            : row
+                        )),
+                      }))}
+                      style={modalInput}
+                    >
+                      <option value="inside_form">Inside form</option>
+                      <option value="before_form">Before form</option>
+                    </select>
+                  </label>
+                  <div style={{ ...modalField, justifyContent: "center" }}>
+                    <span>Acknowledgement</span>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        minHeight: 48,
+                        padding: "0 14px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(17, 36, 69, 0.14)",
+                        background: "#eef4fb",
+                        color: palette.navy900,
+                        fontWeight: 700,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={disclosure.required_acknowledgement === true}
+                        onChange={(e) => setDomainRegistryForm((prev) => ({
+                          ...prev,
+                          report_disclosures: (Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : []).map((row, rowIndex) => (
+                            rowIndex === disclosureIndex
+                              ? { ...row, required_acknowledgement: e.target.checked }
+                              : row
+                          )),
+                        }))}
+                      />
+                      <span style={{ display: "grid", gap: 2 }}>
+                        <span style={{ fontWeight: 800 }}>Require acknowledgement?</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                          {disclosure.required_acknowledgement ? "Reporter must confirm this before continuing." : "Shown as informational text only."}
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                  <span>Body Text</span>
+                  <textarea
+                    value={disclosure.body || ""}
+                    onChange={(e) => setDomainRegistryForm((prev) => ({
+                      ...prev,
+                      report_disclosures: (Array.isArray(prev?.report_disclosures) ? prev.report_disclosures : []).map((row, rowIndex) => (
+                        rowIndex === disclosureIndex
+                          ? { ...row, body: e.target.value }
+                          : row
+                      )),
+                    }))}
+                    rows={4}
+                    placeholder="Disclosure text shown to the reporter."
+                    style={{ ...modalInput, minHeight: 110, resize: "vertical" }}
+                  />
+                </label>
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+              No global disclosures configured for this domain yet.
+            </div>
+          )}
+        </div>
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
           type="submit"
@@ -11405,6 +12362,7 @@ export default function PlatformAdminApp() {
                               {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
                               {domain.allow_report_images ? " • Photos enabled" : ""}
                               {domain.road_required ? " • Road required" : ""}
+                              {(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0) ? ` • ${(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0)} disclosure${(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0) === 1 ? "" : "s"}` : ""}
                               {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
                             {domain.description ? (
@@ -12170,6 +13128,131 @@ export default function PlatformAdminApp() {
                       })}
                     </div>
                   </div>
+                  {activeMapUiIconGroup === "Notice System" ? (
+                    <div style={{ ...subPanel, display: "grid", gap: 12 }}>
+                      <div style={{ display: "grid", gap: 3 }}>
+                        <strong style={{ color: palette.navy900 }}>
+                          Notices Using {activeMapUiIconEntry?.label || "This Notice Icon"}
+                        </strong>
+                        <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          The selected Notice System asset above is the shared icon for the notices listed below. If you move a notice to a different Notice Icon, it will appear under that icon&apos;s section instead.
+                        </span>
+                      </div>
+                      {!activeMapUiNoticeEntries.length ? (
+                        <div style={{ ...subPanel, background: "#f8fbff", color: palette.textMuted, fontSize: 12.5, lineHeight: 1.5 }}>
+                          No notice popups are currently assigned to {activeMapUiIconEntry?.label || "this Notice Icon"}.
+                        </div>
+                      ) : null}
+                      <div style={{ display: "grid", gap: 10 }}>
+                        {activeMapUiNoticeEntries.map((noticeEntry) => {
+                          const draftRow = mapUiNoticeDraftForm?.[noticeEntry.key] || {};
+                          const publishedRow = publishedMapUiNoticeMeta?.[noticeEntry.key] || {};
+                          const draftIconKey = String(draftRow?.icon_key || noticeEntry.icon_key || "").trim();
+                          const publishedIconKey = String(publishedRow?.icon_key || noticeEntry.icon_key || "").trim();
+                          const draftIconMeta = mergeMapUiIconMeta(mapUiIconDraftForm)[draftIconKey] || {};
+                          const publishedIconMetaRow = publishedMapUiIconMeta?.[publishedIconKey] || {};
+                          return (
+                            <div key={noticeEntry.key} style={{ ...subPanel, display: "grid", gap: 10, background: "#f8fbff" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: palette.navy900 }}>{noticeEntry.label}</strong>
+                                  <span style={{ fontSize: 12.5, color: palette.textMuted }}>{noticeEntry.description}</span>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                    Key: <code>{noticeEntry.key}</code>
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonAlt, opacity: canManageDomainRegistry && !mapUiIconSavingDraft && !mapUiIconPublishing ? 1 : 0.55 }}
+                                  disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                  onClick={() => {
+                                    updateMapUiNoticeDraftValue(noticeEntry.key, "icon_key", noticeEntry.icon_key);
+                                    updateMapUiNoticeDraftValue(noticeEntry.key, "title", noticeEntry.title);
+                                    updateMapUiNoticeDraftValue(noticeEntry.key, "message", noticeEntry.message);
+                                  }}
+                                >
+                                  Use Default
+                                </button>
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>Draft Icon</span>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                    <div style={{ width: 56, height: 56, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: previewMapUiTheme?.light?.tool_button_bg || "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      {draftIconMeta?.src ? (
+                                        <img src={draftIconMeta.src} alt={`${noticeEntry.label} draft icon`} style={{ width: 28, height: 28, objectFit: "contain" }} />
+                                      ) : (
+                                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>None</span>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      {MAP_UI_ICON_CATALOG.find((entry) => entry.key === draftIconKey)?.label || "Default"}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  <span style={{ fontSize: 11.5, color: palette.textMuted }}>Published Icon</span>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                    <div style={{ width: 56, height: 56, borderRadius: 16, border: "1px solid rgba(17,36,69,0.12)", background: publishedMapUiTheme?.light?.tool_button_bg || "#ffffff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                      {publishedIconMetaRow?.src ? (
+                                        <img src={publishedIconMetaRow.src} alt={`${noticeEntry.label} published icon`} style={{ width: 28, height: 28, objectFit: "contain" }} />
+                                      ) : (
+                                        <span style={{ fontSize: 11.5, color: palette.textMuted }}>None</span>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      {MAP_UI_ICON_CATALOG.find((entry) => entry.key === publishedIconKey)?.label || "Default"}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={responsiveTwoColGrid}>
+                                <label style={modalField}>
+                                  <span>Notice Icon</span>
+                                  <select
+                                    value={draftIconKey}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiNoticeDraftValue(noticeEntry.key, "icon_key", event.target.value)}
+                                    style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  >
+                                    {mapUiNoticeIconOptions.map((entry) => (
+                                      <option key={entry.key} value={entry.key}>{entry.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label style={modalField}>
+                                  <span>Notice Title</span>
+                                  <input
+                                    value={draftRow?.title || ""}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiNoticeDraftValue(noticeEntry.key, "title", event.target.value)}
+                                    style={{ ...modalInput, background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Notice Message</span>
+                                  <textarea
+                                    value={draftRow?.message || ""}
+                                    disabled={!canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing}
+                                    onChange={(event) => updateMapUiNoticeDraftValue(noticeEntry.key, "message", event.target.value)}
+                                    rows={3}
+                                    style={{ ...modalInput, minHeight: 92, resize: "vertical", background: !canManageDomainRegistry || mapUiIconSavingDraft || mapUiIconPublishing ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <div style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Published Copy</span>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
+                                    <strong>{publishedRow?.title || noticeEntry.title}</strong>
+                                    <div>{publishedRow?.message || noticeEntry.message}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -14003,8 +15086,386 @@ export default function PlatformAdminApp() {
           </section>
         ) : null}
 
-        {inTenantWorkspace && ["domains", "map-features", "files"].includes(activeTab) ? (
+        {inTenantWorkspace && ["domains", "parks", "map-features", "files"].includes(activeTab) ? (
           <section style={{ display: "grid", gap: 14 }}>
+            {activeTab === "parks" ? (
+              <div style={{ ...card, display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Parks</h2>
+                    <p style={{ margin: 0, color: palette.textMuted }}>
+                      Add park boundaries for this organization so park-only domains can be enforced on the public map.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    style={{ ...buttonBase, opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
+                    disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
+                    onClick={beginCreateTenantPark}
+                  >
+                    Add Park
+                  </button>
+                </div>
+                {status.parks ? (
+                  <div style={{ fontSize: 12.5, color: String(status.parks || "").startsWith("Error:") ? palette.red600 : palette.textMuted }}>
+                    {status.parks}
+                  </div>
+                ) : null}
+                {!tenantParkSchemaReady ? (
+                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                    Tenant parks are not available in this environment yet. Run the latest migration locally to enable park management.
+                  </div>
+                ) : null}
+                {tenantParkEditorOpen ? (
+                  <form onSubmit={(event) => void saveTenantPark(event)} style={{ ...subPanel, display: "grid", gap: 10, background: "rgba(46,98,143,0.08)", borderColor: "rgba(46,98,143,0.22)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                        {editingTenantParkId ? "Edit Park" : "Add Park"}
+                      </div>
+                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                        Add one or more GeoJSON parcel files. They will be combined into a single park boundary when you save.
+                      </div>
+                    </div>
+                    <div style={responsiveActionGrid}>
+                      <label style={modalField}>
+                        <span>Park Name</span>
+                        <input
+                          value={tenantParkForm.park_name}
+                          onChange={(e) => setTenantParkForm((prev) => ({
+                            ...prev,
+                            park_name: e.target.value,
+                            park_key: !editingTenantParkId ? slugifyDomainKeyInput(e.target.value) : prev.park_key,
+                          }))}
+                          placeholder="Riverside Park"
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Park Key</span>
+                        <input
+                          value={tenantParkForm.park_key}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, park_key: slugifyDomainKeyInput(e.target.value) }))}
+                          placeholder="riverside_park"
+                          style={{ ...modalInput, background: editingTenantParkId ? "#eef4fb" : modalInput.background }}
+                          readOnly={Boolean(editingTenantParkId)}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Sort Order</span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={tenantParkForm.sort_order}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, sort_order: e.target.value }))}
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Border Width</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={tenantParkForm.border_width}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, border_width: e.target.value }))}
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Fill Opacity</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={tenantParkForm.fill_opacity}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, fill_opacity: e.target.value }))}
+                          style={modalInput}
+                        />
+                      </label>
+                      <div style={{ ...modalField, justifyContent: "center" }}>
+                        <span>Active</span>
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            minHeight: 48,
+                            padding: "0 14px",
+                            borderRadius: 14,
+                            border: "1px solid rgba(17, 36, 69, 0.14)",
+                            background: "rgba(255,255,255,0.92)",
+                            color: palette.navy900,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tenantParkForm.active !== false}
+                            onChange={(e) => setTenantParkForm((prev) => ({ ...prev, active: e.target.checked }))}
+                          />
+                          <span style={{ fontWeight: 800 }}>{tenantParkForm.active !== false ? "Enabled" : "Disabled"}</span>
+                        </label>
+                      </div>
+                      <label style={modalField}>
+                        <span>Border Color</span>
+                        <input
+                          type="color"
+                          value={sanitizeHexColor(tenantParkForm.border_color, "#2e7d32")}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, border_color: e.target.value }))}
+                          style={{ ...modalInput, padding: 4, height: 42 }}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Fill Color</span>
+                        <input
+                          type="color"
+                          value={sanitizeHexColor(tenantParkForm.fill_color, "#66bb6a")}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, fill_color: e.target.value }))}
+                          style={{ ...modalInput, padding: 4, height: 42 }}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Label Color</span>
+                        <input
+                          type="color"
+                          value={sanitizeHexColor(tenantParkForm.label_color, "#17314f")}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, label_color: e.target.value }))}
+                          style={{ ...modalInput, padding: 4, height: 42 }}
+                        />
+                      </label>
+                      <div style={{ ...modalField, justifyContent: "center" }}>
+                        <span>Show Park Name</span>
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            minHeight: 48,
+                            padding: "0 14px",
+                            borderRadius: 14,
+                            border: "1px solid rgba(17, 36, 69, 0.14)",
+                            background: "rgba(255,255,255,0.92)",
+                            color: palette.navy900,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tenantParkForm.show_label !== false}
+                            onChange={(e) => setTenantParkForm((prev) => ({ ...prev, show_label: e.target.checked }))}
+                          />
+                          <span style={{ fontWeight: 800 }}>{tenantParkForm.show_label !== false ? "Visible" : "Hidden"}</span>
+                        </label>
+                      </div>
+                      <label style={modalField}>
+                        <span>Label Latitude</span>
+                        <input
+                          value={tenantParkForm.label_lat}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, label_lat: e.target.value }))}
+                          placeholder="Optional"
+                          style={modalInput}
+                        />
+                      </label>
+                      <label style={modalField}>
+                        <span>Label Longitude</span>
+                        <input
+                          value={tenantParkForm.label_lng}
+                          onChange={(e) => setTenantParkForm((prev) => ({ ...prev, label_lng: e.target.value }))}
+                          placeholder="Optional"
+                          style={modalInput}
+                        />
+                      </label>
+                    </div>
+                    <div style={{ ...modalField, gridColumn: "1 / -1" }}>
+                      <span>Boundary Parcel Files</span>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <label
+                            style={{
+                              ...buttonAlt,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              cursor: "pointer",
+                            }}
+                          >
+                            Add Parcel Files
+                            <input
+                              type="file"
+                              multiple
+                              accept=".geojson,.json,application/geo+json,application/json"
+                              style={{ display: "none" }}
+                              onChange={(event) => {
+                                appendTenantParkBoundaryUploads(event.target.files);
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+                          <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            Upload one file per parcel when a park spans multiple parcels.
+                          </span>
+                        </div>
+                        {tenantParkEditorStoredBoundaryFiles.length ? (
+                          <div style={{ display: "grid", gap: 8 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Saved Parcel Files</div>
+                            {tenantParkEditorStoredBoundaryFiles.map((row) => (
+                              <div
+                                key={row.id}
+                                style={{
+                                  ...subPanel,
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: 10,
+                                  flexWrap: "wrap",
+                                  background: "#f8fbff",
+                                }}
+                              >
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed parcel file"}</strong>
+                                  <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    {formatBytes(row.size_bytes)}
+                                    {" • "}
+                                    {row.uploaded_at ? new Date(row.uploaded_at).toLocaleString() : "Upload date unavailable"}
+                                  </span>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                  <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
+                                  <button
+                                    type="button"
+                                    style={{ ...buttonAlt, opacity: canEditTenantFiles ? 1 : 0.55 }}
+                                    disabled={!canEditTenantFiles || tenantParkSaving}
+                                    onClick={() => void removeTenantFile(row)}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {tenantParkBoundaryUploads.length ? (
+                          <div style={{ display: "grid", gap: 8 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>New Parcel Files</div>
+                            {tenantParkBoundaryUploads.map((entry) => (
+                              <div
+                                key={entry.id}
+                                style={{
+                                  ...subPanel,
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: 10,
+                                  flexWrap: "wrap",
+                                  background: "#f8fbff",
+                                }}
+                              >
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <strong style={{ color: palette.navy900 }}>{entry?.file?.name || "Unnamed parcel file"}</strong>
+                                  <span style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    {formatBytes(entry?.file?.size || 0)}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  style={buttonAlt}
+                                  disabled={tenantParkSaving}
+                                  onClick={() => removeTenantParkBoundaryUpload(entry.id)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {!tenantParkEditorStoredBoundaryFiles.length && !tenantParkBoundaryUploads.length ? (
+                          <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                            No parcel files added yet.
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="submit"
+                        style={{ ...buttonBase, opacity: tenantParkSaving ? 0.65 : 1 }}
+                        disabled={tenantParkSaving}
+                      >
+                        {tenantParkSaving ? "Saving..." : editingTenantParkId ? "Save Park" : "Create Park"}
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        disabled={tenantParkSaving}
+                        onClick={cancelTenantParkEditor}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+                <div style={{ display: "grid", gap: 10 }}>
+                  {selectedTenantParkRows.length ? (
+                    selectedTenantParkRows.map((park) => (
+                      <div
+                        key={park.id}
+                        style={{
+                          ...subPanel,
+                          display: "grid",
+                          gap: 10,
+                          background: "rgba(255,255,255,0.78)",
+                          borderColor: "rgba(17,36,69,0.12)",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <strong style={{ color: palette.navy900 }}>{park.park_name}</strong>
+                              <span style={{ fontSize: 11.5, fontWeight: 800, color: park.active === false ? palette.red600 : palette.mint700, background: park.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                                {park.active === false ? "Inactive" : "Active"}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                              <code>{park.park_key}</code>
+                              {` • Sort ${Number(park.sort_order || 1)}`}
+                              {park.show_label === false ? " • Label hidden" : " • Label shown"}
+                              {park.label_lat != null && park.label_lng != null ? ` • Label ${park.label_lat}, ${park.label_lng}` : ""}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
+                              disabled={!canEditTenantDomains || tenantParkSaving}
+                              onClick={() => beginEditTenantPark(park.id)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
+                              disabled={!canEditTenantDomains || tenantParkSaving}
+                              onClick={() => void deleteTenantPark(park.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Border {sanitizeHexColor(park.border_color, "#2e7d32")} • Fill {sanitizeHexColor(park.fill_color, "#66bb6a")} @ {Number(park.fill_opacity ?? 0.18)} opacity
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ ...subPanel, color: palette.textMuted }}>
+                      No parks have been configured for this organization yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
             {activeTab === "domains" ? (
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 3 }}>
@@ -14096,11 +15557,17 @@ export default function PlatformAdminApp() {
                         const isAssetBacked = domainType === "asset_backed";
                         const isEditingAssignment = editingTenantDomainAssignmentKey === d.key;
                         const isEditingDomain = editingDomainKey === d.key;
-                        const domainFieldsReadOnly = !canEditTenantDomains || !isEditingDomain;
+                        const activeDomainEditSectionKey = isEditingDomain
+                          ? (editingAssignedDomainSectionKey || "marker-icon")
+                          : "";
+                        const isEditingMarkerIconSection = activeDomainEditSectionKey === "marker-icon";
+                        const isEditingReportingSection = activeDomainEditSectionKey === "reporting";
+                        const isEditingReportEmailSection = activeDomainEditSectionKey === "report-email-template";
+                        const domainFieldsReadOnly = !canEditTenantDomains || activeDomainEditSectionKey !== selectedAssignedDomainSectionKey;
                         const assignmentFieldsReadOnly = !canManageDomainRegistry || !isEditingAssignment;
                         const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
                         const assignmentEditLockedByOtherDomain = Boolean(editingTenantDomainAssignmentKey) && !isEditingAssignment;
-                        const domainTypeOptionRows = normalizeDomainTypeOptionConfigs(domainConfigForm?.[d.key]?.type_options, d.key);
+                        const domainTypeOptionRows = buildEditableDomainTypeOptionConfigs(domainConfigForm?.[d.key]?.type_options, d.key);
                         const domainDisclosureRows = Array.isArray(domainConfigForm?.[d.key]?.report_disclosures)
                           ? domainConfigForm[d.key].report_disclosures
                           : defaultDomainDisclosures(d.key);
@@ -14241,16 +15708,6 @@ export default function PlatformAdminApp() {
                                   </select>
                                 </label>
                                 <label style={modalField}>
-                                  <span>Notification Email</span>
-                                  <input
-                                    readOnly={assignmentFieldsReadOnly}
-                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.notification_email || "") : (assignment.notification_email || "")}
-                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
-                                    placeholder="notifications@examplecity.gov"
-                                    style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                  />
-                                </label>
-                                <label style={modalField}>
                                   <span>Billing Status</span>
                                   <select
                                     value={isEditingAssignment ? (tenantDomainAssignmentForm?.billing_status || "not_applicable") : (assignment.billing_status || "not_applicable")}
@@ -14352,12 +15809,12 @@ export default function PlatformAdminApp() {
                                   </div>
                                 </div>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                  {!isEditingDomain ? (
+                                  {!isEditingMarkerIconSection ? (
                                     <button
                                       type="button"
                                       style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
                                       disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment}
-                                      onClick={() => beginDomainEdit(d.key)}
+                                      onClick={() => beginDomainEdit(d.key, "marker-icon")}
                                       title={
                                         editLockedByOtherDomain
                                           ? "Finish the current domain edit before opening another domain."
@@ -14378,7 +15835,7 @@ export default function PlatformAdminApp() {
                                         disabled={!canEditTenantDomains}
                                         onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
                                       >
-                                        Save Settings
+                                        Save Marker & Icon
                                       </button>
                                       <button
                                         type="button"
@@ -14446,6 +15903,52 @@ export default function PlatformAdminApp() {
                                     />
                                   </div>
                                 </label>
+                                {isAssetBacked ? (
+                                  <label style={modalField}>
+                                    <span>High-Confidence Marker Color</span>
+                                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                                      <input
+                                        type="color"
+                                        value={sanitizeHexColor(
+                                          domainConfigForm?.[d.key]?.high_confidence_marker_color,
+                                          defaultDomainHighConfidenceMarkerColor(d.key)
+                                        )}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_marker_color: e.target.value,
+                                          },
+                                        }))}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                      />
+                                      <input
+                                        readOnly={domainFieldsReadOnly}
+                                        value={domainConfigForm?.[d.key]?.high_confidence_marker_color || ""}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_marker_color: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_marker_color: sanitizeHexColor(
+                                              normalizeHexDraft(e.target.value, prev?.[d.key]?.high_confidence_marker_color),
+                                              defaultDomainHighConfidenceMarkerColor(d.key)
+                                            ),
+                                          },
+                                        }))}
+                                        placeholder={defaultDomainHighConfidenceMarkerColor(d.key)}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                      />
+                                    </div>
+                                  </label>
+                                ) : null}
                                 <label style={modalField}>
                                   <span>Icon Render Mode</span>
                                   <select
@@ -14545,6 +16048,89 @@ export default function PlatformAdminApp() {
                                     </div>
                                   </label>
                                 ) : null}
+                                {isAssetBacked ? (
+                                  <label style={modalField}>
+                                    <span>High-Confidence Icon Tint</span>
+                                    <select
+                                      value={domainConfigForm?.[d.key]?.high_confidence_icon_tint_mode || DOMAIN_ICON_TINT_MODE.AUTO_CONTRAST}
+                                      disabled={
+                                        domainFieldsReadOnly
+                                        || normalizeDomainIconRenderMode(
+                                          domainConfigForm?.[d.key]?.icon_render_mode,
+                                          String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+                                        ) !== MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG
+                                      }
+                                      onChange={(e) => setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          high_confidence_icon_tint_mode: normalizeDomainIconTintMode(e.target.value),
+                                        },
+                                      }))}
+                                      style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                    >
+                                      {DOMAIN_ICON_TINT_MODE_OPTIONS.map((option) => (
+                                        <option key={option.key} value={option.key}>{option.label}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null}
+                                {isAssetBacked
+                                && normalizeDomainIconRenderMode(
+                                  domainConfigForm?.[d.key]?.icon_render_mode,
+                                  String(manageableTenantDomainRowByKey?.[d.key]?.icon_src || "").trim()
+                                ) === MAP_UI_ICON_RENDER_MODE.TINTABLE_SVG
+                                && normalizeDomainIconTintMode(domainConfigForm?.[d.key]?.high_confidence_icon_tint_mode) === DOMAIN_ICON_TINT_MODE.CUSTOM ? (
+                                  <label style={modalField}>
+                                    <span>High-Confidence Custom Tint</span>
+                                    <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
+                                      <input
+                                        type="color"
+                                        value={normalizeDomainIconTintColor(
+                                          domainConfigForm?.[d.key]?.high_confidence_icon_tint_color,
+                                          resolveDomainMarkerIconTintColor({
+                                            renderMode: domainConfigForm?.[d.key]?.icon_render_mode,
+                                            tintMode: DOMAIN_ICON_TINT_MODE.CUSTOM,
+                                            tintColor: domainConfigForm?.[d.key]?.high_confidence_icon_tint_color,
+                                            markerColor: domainConfigForm?.[d.key]?.high_confidence_marker_color,
+                                          })
+                                        )}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_icon_tint_color: e.target.value,
+                                          },
+                                        }))}
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background, padding: 4, height: 42 }}
+                                      />
+                                      <input
+                                        readOnly={domainFieldsReadOnly}
+                                        value={domainConfigForm?.[d.key]?.high_confidence_icon_tint_color || ""}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_icon_tint_color: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            high_confidence_icon_tint_color: normalizeDomainIconTintColor(
+                                              e.target.value,
+                                              prev?.[d.key]?.high_confidence_icon_tint_color || "#111111"
+                                            ),
+                                          },
+                                        }))}
+                                        placeholder="#ffffff"
+                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                      />
+                                    </div>
+                                  </label>
+                                ) : null}
                               </div>
                               {isAssetBacked ? (
                                 <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
@@ -14598,9 +16184,103 @@ export default function PlatformAdminApp() {
                             </div>
                                 ) : null}
                                 {selectedAssignedDomainSectionKey === "reporting" ? (
-                              <div style={{ display: "grid", gap: 10 }}>
-                                {!isAssetBacked ? (
-                                  <div style={responsiveActionGrid}>
+                              <div
+                                style={{
+                                  ...subPanel,
+                                  display: "grid",
+                                  gap: 10,
+                                  background: "rgba(255,255,255,0.78)",
+                                  borderColor: "rgba(17,36,69,0.12)",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                                  <div style={{ display: "grid", gap: 4 }}>
+                                    <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Reporting</div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Configure placement rules, visibility thresholds, type options, and report disclosures for this tenant.
+                                    </div>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {!isEditingReportingSection ? (
+                                      <button
+                                        type="button"
+                                        style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                        disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                        onClick={() => beginDomainEdit(d.key, "reporting")}
+                                        title={
+                                          isEditingDomain && !isEditingReportingSection
+                                            ? "Finish the current domain section edit before opening another one."
+                                            : editLockedByOtherDomain
+                                              ? "Finish the current domain edit before opening another domain."
+                                              : isEditingAssignment
+                                                ? "Finish editing assignment before editing reporting."
+                                                : canEditTenantDomains
+                                                  ? `Edit ${d.label} reporting`
+                                                  : "You need the Domains edit permission"
+                                        }
+                                      >
+                                        Edit Reporting
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                          disabled={!canEditTenantDomains}
+                                          onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
+                                        >
+                                          Save Reporting
+                                        </button>
+                                        <button
+                                          type="button"
+                                          style={buttonAlt}
+                                          onClick={() => cancelDomainEdit(d.key)}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                <div style={{ display: "grid", gap: 10 }}>
+                                <div style={responsiveActionGrid}>
+                                  <div style={{ ...modalField, justifyContent: "center" }}>
+                                    <span>Park Required</span>
+                                    <label
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        minHeight: 48,
+                                        padding: "0 14px",
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(17, 36, 69, 0.14)",
+                                        background: "rgba(255,255,255,0.92)",
+                                        color: palette.navy900,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={domainConfigForm?.[d.key]?.park_required === true}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            park_required: e.target.checked,
+                                          },
+                                        }))}
+                                      />
+                                      <span style={{ display: "grid", gap: 2 }}>
+                                        <span style={{ fontWeight: 800 }}>Require park placement?</span>
+                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                          {domainConfigForm?.[d.key]?.park_required === true ? "Reports must land inside a park boundary" : "Reports can be placed anywhere allowed"}
+                                        </span>
+                                      </span>
+                                    </label>
+                                  </div>
+                                  {!isAssetBacked ? (
                                     <label style={modalField}>
                                       <span>Public Visibility Threshold</span>
                                       <input
@@ -14630,45 +16310,49 @@ export default function PlatformAdminApp() {
                                         style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                                       />
                                     </label>
-                                    <label style={modalField}>
-                                      <span>High Confidence Threshold</span>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        readOnly={domainFieldsReadOnly}
-                                        value={domainConfigForm?.[d.key]?.high_confidence_min_reports ?? defaultDomainHighConfidenceMinReports(d.key)}
-                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                  ) : null}
+                                  <label style={modalField}>
+                                    <span>High Confidence Threshold</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      readOnly={domainFieldsReadOnly}
+                                      value={domainConfigForm?.[d.key]?.high_confidence_min_reports ?? defaultDomainHighConfidenceMinReports(d.key)}
+                                      onChange={(e) => setDomainConfigForm((prev) => ({
+                                        ...prev,
+                                        [d.key]: {
+                                          ...(prev?.[d.key] || {}),
+                                          high_confidence_min_reports: e.target.value,
+                                        },
+                                      }))}
+                                      onBlur={(e) => setDomainConfigForm((prev) => {
+                                        const publicMin = isAssetBacked
+                                          ? 1
+                                          : sanitizePositiveIntegerSetting(
+                                              prev?.[d.key]?.public_visibility_min_reports,
+                                              defaultDomainPublicVisibilityMinReports(d.key),
+                                              { min: 1, max: 25 }
+                                            );
+                                        return {
                                           ...prev,
                                           [d.key]: {
                                             ...(prev?.[d.key] || {}),
-                                            high_confidence_min_reports: e.target.value,
+                                            ...(isAssetBacked
+                                              ? {}
+                                              : { public_visibility_min_reports: publicMin }),
+                                            high_confidence_min_reports: sanitizePositiveIntegerSetting(
+                                              e.target.value,
+                                              Math.max(publicMin, defaultDomainHighConfidenceMinReports(d.key)),
+                                              { min: publicMin, max: 25 }
+                                            ),
                                           },
-                                        }))}
-                                        onBlur={(e) => setDomainConfigForm((prev) => {
-                                          const publicMin = sanitizePositiveIntegerSetting(
-                                            prev?.[d.key]?.public_visibility_min_reports,
-                                            defaultDomainPublicVisibilityMinReports(d.key),
-                                            { min: 1, max: 25 }
-                                          );
-                                          return {
-                                            ...prev,
-                                            [d.key]: {
-                                              ...(prev?.[d.key] || {}),
-                                              public_visibility_min_reports: publicMin,
-                                              high_confidence_min_reports: sanitizePositiveIntegerSetting(
-                                                e.target.value,
-                                                Math.max(publicMin, defaultDomainHighConfidenceMinReports(d.key)),
-                                                { min: publicMin, max: 25 }
-                                              ),
-                                            },
-                                          };
-                                        })}
-                                        style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
-                                      />
-                                    </label>
-                                  </div>
-                                ) : null}
+                                        };
+                                      })}
+                                      style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                    />
+                                  </label>
+                                </div>
                               <div
                                 style={{
                                   ...subPanel,
@@ -14853,7 +16537,7 @@ export default function PlatformAdminApp() {
                                   <div style={{ display: "grid", gap: 3 }}>
                                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Disclosures</div>
                                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Add informational notices or required acknowledgements for this tenant and domain. Disclosures can appear before the form opens or inside the form before submission.
+                                      Add tenant-specific notices or required acknowledgements for this domain. Any global disclosures configured in the domain registry are also shown to reporters across all tenants.
                                     </div>
                                   </div>
                                   <button
@@ -15034,6 +16718,7 @@ export default function PlatformAdminApp() {
                                   )}
                                 </div>
                               </div>
+                              </div>
                               <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
                                 {isAssetBacked
                                   ? "Asset-backed domains do not use public incident confidence thresholds."
@@ -15051,15 +16736,58 @@ export default function PlatformAdminApp() {
                                   borderColor: "rgba(17,36,69,0.12)",
                                 }}
                               >
-                                <div style={{ display: "grid", gap: 3 }}>
-                                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+                                  <div style={{ display: "grid", gap: 3 }}>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
+                                    </div>
+                                    <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                      Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
+                                      {" • "}
+                                      {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
+                                    </div>
                                   </div>
-                                  <div style={{ fontSize: 11.5, color: palette.textMuted }}>
-                                    Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
-                                    {" • "}
-                                    {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {!isEditingReportEmailSection ? (
+                                      <button
+                                        type="button"
+                                        style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                        disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                        onClick={() => beginDomainEdit(d.key, "report-email-template")}
+                                        title={
+                                          isEditingDomain && !isEditingReportEmailSection
+                                            ? "Finish the current domain section edit before opening another one."
+                                            : editLockedByOtherDomain
+                                              ? "Finish the current domain edit before opening another domain."
+                                              : isEditingAssignment
+                                                ? "Finish editing assignment before editing the email template."
+                                                : canEditTenantDomains
+                                                  ? `Edit ${d.label} report email template`
+                                                  : "You need the Domains edit permission"
+                                        }
+                                      >
+                                        Edit Email Template
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                          disabled={!canEditTenantDomains}
+                                          onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
+                                        >
+                                          Save Email Template
+                                        </button>
+                                        <button
+                                          type="button"
+                                          style={buttonAlt}
+                                          onClick={() => cancelDomainEdit(d.key)}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
@@ -15086,6 +16814,44 @@ export default function PlatformAdminApp() {
                                     ))}
                                   </select>
                                 </label>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>Notification Email</span>
+                                  <input
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.notification_email || ""}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        notification_email: e.target.value,
+                                      },
+                                    }))}
+                                    placeholder="notifications@examplecity.gov"
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                  Primary recipient for report emails sent from this domain.
+                                </div>
+                                <label style={{ ...modalField, gridColumn: "1 / -1" }}>
+                                  <span>CC Recipients</span>
+                                  <input
+                                    readOnly={domainFieldsReadOnly}
+                                    value={domainConfigForm?.[d.key]?.notification_cc_emails || ""}
+                                    onChange={(e) => setDomainConfigForm((prev) => ({
+                                      ...prev,
+                                      [d.key]: {
+                                        ...(prev?.[d.key] || {}),
+                                        notification_cc_emails: e.target.value,
+                                      },
+                                    }))}
+                                    placeholder="ops@examplecity.gov, dispatch@examplecity.gov"
+                                    style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                  />
+                                </label>
+                                <div style={{ fontSize: 11.5, color: palette.textMuted }}>
+                                  Optional. Separate multiple CC addresses with commas. Each report email for this domain will copy this list.
+                                </div>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                   <span>Email Subject Template</span>
                                   <input
@@ -15381,7 +17147,7 @@ export default function PlatformAdminApp() {
                                   <strong style={{ color: palette.navy900 }}>{row.file_name || "Unnamed file"}</strong>
                                   <span style={{ fontSize: 12.5, color: palette.textMuted }}>
                                     {summarizeTenantAssetCategory(row.file_category)}
-                                    {String(row?.asset_subtype || "").trim() ? ` • ${domainKeyToLabel(String(row.asset_subtype).trim().toLowerCase())}` : ""}
+                                    {summarizeTenantFileSubtype(row) ? ` • ${summarizeTenantFileSubtype(row)}` : ""}
                                     {" • "}
                                     {formatBytes(row.size_bytes)}
                                     {" • "}

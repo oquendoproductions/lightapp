@@ -1,10 +1,16 @@
-import { Capacitor } from "@capacitor/core";
-
 const DEFAULT_NATIVE_APP_SCOPE = "map";
+
+function getCapacitorRuntime() {
+  try {
+    return globalThis?.Capacitor || null;
+  } catch {
+    return null;
+  }
+}
 
 export function isNativeAppRuntime() {
   try {
-    return Capacitor.isNativePlatform();
+    return Boolean(getCapacitorRuntime()?.isNativePlatform?.());
   } catch {
     return false;
   }
@@ -12,7 +18,7 @@ export function isNativeAppRuntime() {
 
 export function getPlatformName() {
   try {
-    return String(Capacitor.getPlatform?.() || "web").trim().toLowerCase() || "web";
+    return String(getCapacitorRuntime()?.getPlatform?.() || "web").trim().toLowerCase() || "web";
   } catch {
     return "web";
   }

@@ -1,0 +1,251 @@
+import React from "react";
+import AppLaunchInteractiveScreen from "../AppLaunchInteractiveScreen.jsx";
+
+export function TenantInitialSelectionScreen({
+  tenantSearch = "",
+  onTenantSearchChange,
+  tenantSearchTerm = "",
+  options = [],
+  optionsReady = false,
+  onSelectTenant,
+}) {
+  return (
+    <AppLaunchInteractiveScreen
+      eyebrow="Welcome"
+      title="Find your City"
+      subtitle="Search for a city to explore before signing in. You can switch cities later from the app menu."
+      status={optionsReady ? "" : "Loading available cities..."}
+    >
+      <div style={{ display: "grid", gap: 12 }}>
+        <input
+          type="search"
+          value={tenantSearch}
+          onChange={(e) => onTenantSearchChange?.(e.target.value)}
+          placeholder="Search by city name"
+          autoCapitalize="words"
+          autoCorrect="off"
+          spellCheck={false}
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            borderRadius: 18,
+            border: "1px solid rgba(214, 231, 248, 0.18)",
+            background: "rgba(17, 39, 64, 0.98)",
+            color: "#eef6ff",
+            fontSize: 16,
+            fontWeight: 700,
+            lineHeight: 1.2,
+            outline: "none",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+          }}
+        />
+        {tenantSearchTerm ? (
+          options.length ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {options.map((option) => (
+                <button
+                  key={option.tenantKey}
+                  type="button"
+                  onClick={() => {
+                    void onSelectTenant?.(option.tenantKey);
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "grid",
+                    gap: 4,
+                    textAlign: "left",
+                    padding: "14px 16px",
+                    borderRadius: 18,
+                    border: "1px solid rgba(214, 231, 248, 0.16)",
+                    background: "linear-gradient(180deg, rgba(29, 62, 103, 0.98) 0%, rgba(20, 46, 77, 0.98) 100%)",
+                    color: "#eef6ff",
+                    boxShadow: "0 10px 18px rgba(4, 10, 16, 0.18)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ fontSize: 16, fontWeight: 900, lineHeight: 1.15 }}>
+                    {option.displayName || option.name}
+                  </span>
+                  <span style={{ fontSize: 12.5, lineHeight: 1.45, color: "rgba(228, 239, 249, 0.76)" }}>
+                    {option.primarySubdomain || `${option.tenantKey}.cityreport.io`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : optionsReady ? (
+            <div
+              style={{
+                padding: "14px 16px",
+                borderRadius: 18,
+                border: "1px solid rgba(214, 231, 248, 0.12)",
+                background: "rgba(17, 39, 64, 0.82)",
+                color: "rgba(228, 239, 249, 0.82)",
+                fontSize: 14,
+                lineHeight: 1.5,
+                textAlign: "left",
+              }}
+            >
+              No cities found for that search.
+            </div>
+          ) : null
+        ) : (
+          <div
+            style={{
+              padding: "10px 4px 2px",
+              color: "rgba(228, 239, 249, 0.78)",
+              fontSize: 13.5,
+              lineHeight: 1.45,
+              textAlign: "left",
+            }}
+          >
+            Start typing to find your city.
+          </div>
+        )}
+      </div>
+    </AppLaunchInteractiveScreen>
+  );
+}
+
+export function TenantPublicOnboardingScreen({
+  organizationName = "your city",
+  onSignIn,
+  onSignUp,
+  onExploreGuest,
+}) {
+  const onboardingCards = [
+    {
+      key: "map",
+      eyebrow: "Report",
+      title: "Tap the map to report",
+      body: "Choose incident reporting for potholes and water/drain issues, or switch to Streetlights for asset-based reporting.",
+    },
+    {
+      key: "reports",
+      eyebrow: "Follow",
+      title: "Check Reports",
+      body: "Reports shows your submitted issues and nearby activity so you can see what is already being tracked.",
+    },
+    {
+      key: "alerts",
+      eyebrow: "Stay Updated",
+      title: "Use Alerts and Events",
+      body: "Public notices are available right away. Sign in later if you want notification preferences and saved history.",
+    },
+  ];
+
+  return (
+    <AppLaunchInteractiveScreen
+      eyebrow={organizationName}
+      title={`Welcome to ${organizationName}`}
+      subtitle="Choose how you want to start. You can explore as a guest, or sign in to keep reports, followed cities, and notifications connected to you."
+      status="Quick tour"
+    >
+      <div style={{ display: "grid", gap: 12 }}>
+        {onboardingCards.map((card) => (
+          <div
+            key={card.key}
+            style={{
+              display: "grid",
+              gap: 5,
+              textAlign: "left",
+              padding: "14px 16px",
+              borderRadius: 18,
+              border: "1px solid rgba(214, 231, 248, 0.14)",
+              background: "linear-gradient(180deg, rgba(29, 62, 103, 0.96) 0%, rgba(20, 46, 77, 0.96) 100%)",
+              color: "#eef6ff",
+              boxShadow: "0 10px 18px rgba(4, 10, 16, 0.14)",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "#6ce0d5",
+              }}
+            >
+              {card.eyebrow}
+            </span>
+            <span style={{ fontSize: 17, fontWeight: 900, lineHeight: 1.15 }}>
+              {card.title}
+            </span>
+            <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "rgba(228, 239, 249, 0.82)" }}>
+              {card.body}
+            </span>
+          </div>
+        ))}
+
+        <div
+          style={{
+            padding: "13px 15px",
+            borderRadius: 18,
+            border: "1px solid rgba(108, 224, 213, 0.16)",
+            background: "rgba(108, 224, 213, 0.10)",
+            color: "#d8fffb",
+            fontSize: 13.5,
+            lineHeight: 1.5,
+            textAlign: "left",
+          }}
+        >
+          Best first step: open <b>Map</b>, choose a layer, and explore what is already being reported in {organizationName}.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 9 }}>
+          <button
+            type="button"
+            onClick={() => onSignIn?.()}
+            style={{
+              width: "100%",
+              padding: "15px 16px",
+              borderRadius: 18,
+              border: "1px solid rgba(214, 231, 248, 0.16)",
+              background: "linear-gradient(180deg, #2f9b84 0%, #2a7262 100%)",
+              color: "#f7fffe",
+              fontSize: 15.5,
+              fontWeight: 900,
+              cursor: "pointer",
+              boxShadow: "0 14px 24px rgba(4, 10, 16, 0.18)",
+            }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => onSignUp?.()}
+            style={{
+              width: "100%",
+              padding: "15px 16px",
+              borderRadius: 18,
+              border: "1px solid rgba(108, 224, 213, 0.24)",
+              background: "linear-gradient(180deg, rgba(36, 123, 105, 0.88) 0%, rgba(31, 91, 80, 0.88) 100%)",
+              color: "#f7fffe",
+              fontSize: 15,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Create Account
+          </button>
+          <button
+            type="button"
+            onClick={() => onExploreGuest?.()}
+            style={{
+              width: "100%",
+              padding: "13px 16px",
+              borderRadius: 18,
+              border: "1px solid rgba(214, 231, 248, 0.18)",
+              background: "rgba(17, 39, 64, 0.74)",
+              color: "#eef6ff",
+              fontSize: 14.5,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Explore as Guest
+          </button>
+        </div>
+      </div>
+    </AppLaunchInteractiveScreen>
+  );
+}

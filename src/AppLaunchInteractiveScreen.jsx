@@ -1,0 +1,283 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+const TITLE_LOGO_ALT = "CityReport.io";
+const MOBILE_TITLE_LOGO_SRC =
+  import.meta.env.VITE_TITLE_LOGO_DARK_SRC || "/Logos/cityreport_logo_dark_mode.svg";
+const LAUNCH_SCREEN_BACKGROUND =
+  "radial-gradient(circle at top, rgba(96, 182, 214, 0.26) 0%, rgba(28, 62, 103, 0.96) 34%, rgba(17, 39, 64, 1) 100%)";
+
+export default function AppLaunchInteractiveScreen({
+  eyebrow = "CityReport.io",
+  title = "Loading CityReport",
+  subtitle = "",
+  status = "",
+  children = null,
+}) {
+  const [viewportTop, setViewportTop] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    return Number(window.visualViewport?.offsetTop || 0);
+  });
+  const [viewportHeight, setViewportHeight] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    return window.visualViewport?.height || window.innerHeight || 0;
+  });
+  const [baseViewportHeight, setBaseViewportHeight] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    return window.innerHeight || window.visualViewport?.height || 0;
+  });
+  const keyboardOpen = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const fullHeight = window.innerHeight || 0;
+    if (!fullHeight || !viewportHeight) return false;
+    return fullHeight - viewportHeight > 140;
+  }, [viewportHeight]);
+  const effectiveViewportHeight = useMemo(() => {
+    if (typeof window === "undefined") return viewportHeight || 0;
+    return viewportHeight || window.innerHeight || 0;
+  }, [viewportHeight]);
+  const effectiveViewportTop = useMemo(() => {
+    return Math.max(0, Number(viewportTop || 0));
+  }, [viewportTop]);
+  const stableViewportHeight = useMemo(() => {
+    const candidate = Number(baseViewportHeight || 0);
+    if (candidate > 0) return candidate;
+    const fallback = Number(effectiveViewportHeight || 0);
+    return fallback > 0 ? fallback : 0;
+  }, [baseViewportHeight, effectiveViewportHeight]);
+  const launchViewportHeight = useMemo(() => {
+    const candidate = Number(effectiveViewportHeight || 0);
+    return candidate > 0 ? `${Math.max(0, Math.floor(candidate))}px` : "100%";
+  }, [effectiveViewportHeight]);
+  const launchCardViewportHeight = keyboardOpen
+    ? Number(effectiveViewportHeight || 0)
+    : Number(stableViewportHeight || 0);
+  const launchCardMaxHeight = launchCardViewportHeight
+    ? `${Math.max(280, Math.floor(launchCardViewportHeight - (keyboardOpen ? 20 : 56)))}px`
+    : "calc(100lvh - 56px)";
+  const launchChildrenMaxHeight = launchCardViewportHeight
+    ? `${Math.max(120, Math.min(360, Math.floor(launchCardViewportHeight - (keyboardOpen ? 264 : 320))))}px`
+    : "min(360px, calc(100lvh - 320px))";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const viewport = window.visualViewport;
+    const updateViewportHeight = () => {
+      const nextWindowHeight = window.innerHeight || 0;
+      const nextViewportHeight = viewport?.height || nextWindowHeight || 0;
+      setViewportHeight(nextViewportHeight);
+      setViewportTop(Number(viewport?.offsetTop || 0));
+      setBaseViewportHeight((prev) => Math.max(prev || 0, nextWindowHeight || 0, nextViewportHeight || 0));
+    };
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("resize", updateViewportHeight);
+    viewport?.addEventListener("scroll", updateViewportHeight);
+    return () => {
+      window.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("resize", updateViewportHeight);
+      viewport?.removeEventListener("scroll", updateViewportHeight);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      const previousBodyOverflow = document.body.style.overflow;
+      const previousBodyOverscroll = document.body.style.overscrollBehavior;
+      const previousBodyBackground = document.body.style.background;
+      const previousHtmlOverflow = document.documentElement.style.overflow;
+      const previousHtmlOverscroll = document.documentElement.style.overscrollBehavior;
+      const previousHtmlBackground = document.documentElement.style.background;
+      document.body.style.overflow = "hidden";
+      document.body.style.overscrollBehavior = "none";
+      document.body.style.background = LAUNCH_SCREEN_BACKGROUND;
+      document.documentElement.style.overflow = "hidden";
+      document.documentElement.style.overscrollBehavior = "none";
+      document.documentElement.style.background = LAUNCH_SCREEN_BACKGROUND;
+      return () => {
+        document.body.style.overflow = previousBodyOverflow;
+        document.body.style.overscrollBehavior = previousBodyOverscroll;
+        document.body.style.background = previousBodyBackground;
+        document.documentElement.style.overflow = previousHtmlOverflow;
+        document.documentElement.style.overscrollBehavior = previousHtmlOverscroll;
+        document.documentElement.style.background = previousHtmlBackground;
+      };
+    }
+    return undefined;
+  }, []);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: LAUNCH_SCREEN_BACKGROUND,
+        overflow: "hidden",
+        fontFamily: "Manrope, sans-serif",
+        color: "#eef6ff",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: `${effectiveViewportTop}px`,
+          left: 0,
+          right: 0,
+          height: launchViewportHeight,
+          display: "flex",
+          alignItems: keyboardOpen ? "flex-end" : "center",
+          justifyContent: "center",
+          padding: keyboardOpen ? "12px 18px 8px" : "28px 18px",
+          overflowX: "hidden",
+          overflowY: "hidden",
+          overscrollBehavior: "none",
+          touchAction: "manipulation",
+        }}
+      >
+        <div
+          style={{
+            width: "min(420px, 100%)",
+            display: "grid",
+            justifyItems: "center",
+            gap: keyboardOpen ? 14 : 18,
+            textAlign: "center",
+            padding: keyboardOpen ? "24px 20px 22px" : "32px 24px 28px",
+            maxHeight: launchCardMaxHeight,
+            overflow: "hidden",
+            borderRadius: 28,
+            border: "1px solid rgba(214, 231, 248, 0.14)",
+            background: "linear-gradient(180deg, rgba(21, 49, 80, 0.92) 0%, rgba(17, 39, 64, 0.92) 100%)",
+            boxShadow: "0 26px 44px rgba(4, 10, 16, 0.34)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            transform: "translateY(0)",
+            transition: "max-height 180ms ease, padding 180ms ease",
+          }}
+        >
+          <div
+            style={{
+              width: "min(404px, calc(100% - 4px))",
+              display: "grid",
+              placeItems: "center",
+              paddingTop: 4,
+            }}
+          >
+            <img
+              src={MOBILE_TITLE_LOGO_SRC}
+              alt={TITLE_LOGO_ALT}
+              style={{
+                width: "100%",
+                maxWidth: 396,
+                height: "auto",
+                maxHeight: 144,
+                objectFit: "contain",
+                display: "block",
+                filter: "drop-shadow(0 12px 18px rgba(4, 10, 16, 0.24))",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "grid", gap: 10, justifyItems: "center", marginTop: -2 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "#6ce0d5",
+              }}
+            >
+              {eyebrow}
+            </div>
+            <div
+              style={{
+                fontSize: 30,
+                fontWeight: 950,
+                lineHeight: 1.04,
+                color: "#f4f9ff",
+              }}
+            >
+              {title}
+            </div>
+            {subtitle ? (
+              <div
+                style={{
+                  maxWidth: 320,
+                  fontSize: 14,
+                  lineHeight: 1.5,
+                  color: "rgba(228, 239, 249, 0.86)",
+                }}
+              >
+                {subtitle}
+              </div>
+            ) : null}
+          </div>
+
+          {status ? (
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(108, 224, 213, 0.18)",
+                background: "rgba(108, 224, 213, 0.10)",
+                color: "#d5fffb",
+                fontSize: 12.5,
+                fontWeight: 800,
+                lineHeight: 1.2,
+              }}
+            >
+              {status}
+            </div>
+          ) : null}
+
+          {children ? (
+            <div
+              style={{
+                width: "100%",
+                display: "grid",
+                gap: 12,
+                minHeight: 0,
+                maxHeight: launchChildrenMaxHeight,
+                overflowY: "auto",
+                overflowX: "hidden",
+                overscrollBehavior: "contain",
+                WebkitOverflowScrolling: "touch",
+                paddingRight: 2,
+              }}
+            >
+              {children}
+            </div>
+          ) : (
+            <div
+              style={{
+                width: 64,
+                height: 6,
+                borderRadius: 999,
+                background: "rgba(255, 255, 255, 0.12)",
+                overflow: "hidden",
+                position: "relative",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 999,
+                  background: "linear-gradient(90deg, rgba(108,224,213,0.18) 0%, rgba(244,249,255,0.98) 50%, rgba(108,224,213,0.18) 100%)",
+                  animation: "cityreport-launch-pulse 1.5s ease-in-out infinite",
+                  transformOrigin: "center",
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+      <style>{`
+        @keyframes cityreport-launch-pulse {
+          0% { transform: translateX(-55%) scaleX(0.58); opacity: 0.55; }
+          50% { transform: translateX(0%) scaleX(1); opacity: 1; }
+          100% { transform: translateX(55%) scaleX(0.58); opacity: 0.55; }
+        }
+      `}</style>
+    </div>
+  );
+}

@@ -92,21 +92,61 @@
    - Add audit events for submit, delivery, city-view, assignment, and closure.
    - Add Hub-visible delivery/view timeline per report.
    - Checklist: `docs/governance/week5/14-pilot-cya-implementation-checklist.md`
+14. Full-page map UI/theme preview in PCP:
+   - Add a real app-scale preview surface for theme and icon changes, not just isolated control previews.
+   - Preview must show a full-page approximation of the live map app UI so color, icon, contrast, spacing, and hierarchy can be judged in context.
+   - Preview should make draft vs published state obvious and support testing draft changes before publish.
+   - Explore temporary/scheduled theme variants:
+     - allow setting a temporary theme for specific dates or date ranges
+     - intended uses: holidays, major local events, seasonal campaigns, civic moments
+     - preview should support seeing both the base theme and the temporary scheduled override before publish
+   - Follow-up design/engineering review needed on draft/publish linkage:
+     - user noted there may be a missing link between draft theme/icon edits and publishing behavior
+     - revisit how preview, draft saves, reset, and publish are connected before finalizing UX
 
 ## Later
 1. Two-factor authentication.
 2. Branding/logo pass.
 3. Additional analytics and incident ops tooling.
-4. CityReport entity structure decision:
+4. PCP disclosure editor UX polish:
+   - Reduce friction when adding multiple disclosures to a tenant domain.
+   - Make disclosure authoring feel cleaner and faster in the assigned-domain settings card.
+   - Revisit whether disclosure editing should stay inline or move to a more focused editor pattern.
+5. CityReport entity structure decision:
    - Review with finance advisor and board before formation.
    - Compare Delaware C-corp operating in Ohio vs Ohio for-profit corporation.
    - Evaluate investor readiness, tax/compliance overhead, governance, and near-term operating cost.
    - Decide formation path before finalizing incorporation filings.
-5. Open Reports search-result card sizing:
+6. Open Reports search-result card sizing:
    - Keep row/card height consistent.
    - Do not stretch cards vertically when result count is small.
-6. Go-live webhook activation for lead notifications:
+7. Go-live webhook activation for lead notifications:
    - Set `LEAD_NOTIFY_WEBHOOK_URL` in Supabase secrets to stable production endpoint.
    - Set `LEAD_NOTIFY_WEBHOOK_BEARER` in Supabase secrets (if endpoint requires bearer auth).
    - Redeploy `lead-capture` function after secrets update.
    - Verify webhook receives lead payload in production while lead DB insert + email notifications still succeed.
+8. Civic gamification / contributor system (`v3`, deferred):
+   - Treat as a later-phase civic engagement layer, not a current implementation track.
+   - Core principle: do not reward raw report volume; reward verified impact.
+   - Product posture: gamification must be progressively disclosed and optional, with the main reporting flow kept simple for casual residents.
+   - Foundation prerequisites before build:
+     - stable incident/domain model
+     - stable resident auth/profile model
+     - clear moderation and abuse policy
+     - reliable verification / repair-confirmation semantics
+     - confidence that incentives will not distort reporting behavior
+   - Expected building blocks:
+     - contributor profile totals and public civic stats
+     - append-only impact / XP ledger
+     - nearby verification missions
+     - hidden reputation / trust tiers
+     - leaderboards based on impact, not volume
+     - badges tied to verified actions
+   - UX rule: gamification should live behind a `Community Impact` entry point, not on the primary map/report flow.
+   - Early rollout preference:
+     - keep confirmation UI simple
+     - add impact profile before badges, leaderboards, or missions
+     - use one shared game system for all signed-in users, with optional deeper engagement rather than separate gameplay modes
+   - Reference specs:
+     - `docs/CIVIC_GAMIFICATION_IMPLEMENTATION_PLAN.md`
+     - `docs/PROGRESSIVE_GAMIFICATION_BACKLOG_PLAN.md`

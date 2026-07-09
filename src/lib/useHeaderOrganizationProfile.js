@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createTenantScopedReadClient } from "./tenantScopedSupabase";
 
 function isMissingRelationError(error) {
   const code = String(error?.code || "").trim();
@@ -7,32 +7,29 @@ function isMissingRelationError(error) {
   return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
 }
 
-export function useHeaderOrganizationProfile(tenantKey) {
+export function useHeaderOrganizationProfile(tenantKey, options = {}) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  const enabled = options?.enabled !== false;
+  const deferUntilIdle = options?.deferUntilIdle === true;
+  const idleTimeoutMs = Number(options?.idleTimeoutMs || 1800);
+  const fallbackDelayMs = Number(options?.fallbackDelayMs || 180);
   const scopedSupabase = useMemo(() => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseAnonKey || !normalizedTenantKey) return null;
-    return createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          "x-tenant-key": normalizedTenantKey,
-        },
-      },
-    });
-  }, [normalizedTenantKey]);
+    if (!enabled || !normalizedTenantKey) return null;
+    return createTenantScopedReadClient(normalizedTenantKey);
+  }, [enabled, normalizedTenantKey]);
   const [headerOrganizationProfile, setHeaderOrganizationProfile] = useState(null);
   const [headerOrganizationProfileLoaded, setHeaderOrganizationProfileLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    let idleHandle = null;
+    let timeoutHandle = null;
 
     async function loadHeaderOrganizationProfile() {
       setHeaderOrganizationProfile(null);
       setHeaderOrganizationProfileLoaded(false);
-      if (!normalizedTenantKey || !scopedSupabase) {
+      if (!enabled || !normalizedTenantKey || !scopedSupabase) {
         setHeaderOrganizationProfile(null);
-        setHeaderOrganizationProfileLoaded(true);
         return;
       }
 
@@ -56,11 +53,40 @@ export function useHeaderOrganizationProfile(tenantKey) {
       setHeaderOrganizationProfileLoaded(true);
     }
 
-    void loadHeaderOrganizationProfile();
+    if (deferUntilIdle) {
+      if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+        idleHandle = window.requestIdleCallback(() => {
+          idleHandle = null;
+          if (!cancelled) void loadHeaderOrganizationProfile();
+        }, { timeout: idleTimeoutMs });
+      } else if (typeof window !== "undefined") {
+        timeoutHandle = window.setTimeout(() => {
+          timeoutHandle = null;
+          if (!cancelled) void loadHeaderOrganizationProfile();
+        }, fallbackDelayMs);
+      } else {
+        void loadHeaderOrganizationProfile();
+      }
+    } else {
+      void loadHeaderOrganizationProfile();
+    }
     return () => {
       cancelled = true;
+      if (idleHandle != null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null && typeof window !== "undefined") {
+        window.clearTimeout(timeoutHandle);
+      }
     };
-  }, [normalizedTenantKey, scopedSupabase]);
+  }, [
+    deferUntilIdle,
+    enabled,
+    fallbackDelayMs,
+    idleTimeoutMs,
+    normalizedTenantKey,
+    scopedSupabase,
+  ]);
 
   return { profile: headerOrganizationProfile, loaded: headerOrganizationProfileLoaded };
 }
