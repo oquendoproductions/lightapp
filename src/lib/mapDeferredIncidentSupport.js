@@ -1,4 +1,5 @@
 export { buildSharedIncidentReportTarget } from "./mapIncidentReportTargetSupport.js";
+import { parseWorkingContactFromNote } from "./mapIncidentDeferredSupport.js";
 import {
   isPlaceholderLocationText,
   isUsableAddressText,
@@ -594,7 +595,6 @@ export async function submitIsWorkingShared(context = {}, deps = {}) {
     registerAbuseEventWithServer,
     openRateLimitNotice,
     normalizePhone,
-    supabase,
     insertReportWithFallback,
     normalizeReportQuality,
     setReports,

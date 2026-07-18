@@ -13,6 +13,9 @@
    - pothole submit path
    - water/drain submit path
    - admin open reports
+   - optional browser startup smoke:
+     - `npm run smoke:startup -- https://testcity.cityreport.io`
+     - `PAGES_STARTUP_SMOKE_URLS="https://testcity.cityreport.io" npm run deploy:pages`
 4. Verify tenant resolver behavior in local/dev host simulation:
    - `cityreport.io/`
    - `cityreport.io/ashtabulacity`

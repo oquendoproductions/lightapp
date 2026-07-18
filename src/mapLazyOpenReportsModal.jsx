@@ -55,6 +55,7 @@ import {
   resolveStreetlightUtilityForIncidentShared,
 } from "./lib/mapIncidentRowLocationSupport.js";
 import {
+  canonicalIncidentDrivenIncidentIdShared,
   incidentDomainResolveLookupValueByModeShared,
   incidentSnapshotCandidateDomainsShared,
   searchableIncidentLookupIdsForDomainShared,
@@ -498,6 +499,7 @@ export default function OpenReportsModal(props) {
     resolveIncidentDrivenDomainMeta,
     slIdByUuid,
   ]);
+  const [incidentLocationCacheByKey, setIncidentLocationCacheByKey] = useState({});
   const resolveIncidentDrivenLocationContextForRow = useCallback((domainKeyRaw, row) => (
     resolveIncidentDrivenLocationContextForRowShared(domainKeyRaw, row, {
       incidentLocationCacheByKey,
@@ -854,7 +856,6 @@ export default function OpenReportsModal(props) {
   const [streetlightReportInfoByIncident, setStreetlightReportInfoByIncident] = useState({});
   const [streetlightUtilityExpandedSet, setStreetlightUtilityExpandedSet] = useState(() => new Set());
   const [streetlightUtilityLoadingByIncident, setStreetlightUtilityLoadingByIncident] = useState({});
-  const [incidentLocationCacheByKey, setIncidentLocationCacheByKey] = useState({});
   const currentTenantLocationCacheKey = String(activeTenantKey() || "").trim().toLowerCase();
   const [incidentLocationModal, setIncidentLocationModal] = useState({
     open: false,
@@ -1582,15 +1583,6 @@ export default function OpenReportsModal(props) {
     return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
   }, [actionsByLightId, lastFixByLightId]);
 
-  const sortedGroups = useMemo(() => {
-    const arr = Array.isArray(effectiveGroups) ? [...effectiveGroups] : [];
-    if (sortMode === "recent") {
-      arr.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-      return arr;
-    }
-    arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
-    return arr;
-  }, [effectiveGroups, sortMode]);
   const groupCoordsForViewFilter = useCallback((g) => {
     if (!g) return null;
     const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || g?.mineRows?.[0] || null);
@@ -1610,27 +1602,6 @@ export default function OpenReportsModal(props) {
     }
     return null;
   }, [resolveItemDomainKey, reports, officialLights]);
-  const visibleGroups = useMemo(() => {
-    const base = Array.isArray(sortedGroups) ? sortedGroups : [];
-    if (!(inViewOnlyActive && mapBounds)) return base;
-    return base.filter((g) => {
-      const coords = groupCoordsForViewFilter(g);
-      const lat = Number(coords?.lat);
-      const lng = Number(coords?.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-      return isPointInBounds(lat, lng, mapBounds);
-    });
-  }, [sortedGroups, inViewOnlyActive, mapBounds, groupCoordsForViewFilter]);
-  const inViewIncidentIdSet = useMemo(() => {
-    if (!(inViewOnlyActive && mapBounds)) return null;
-    const ids = new Set();
-    for (const g of visibleGroups || []) {
-      const incidentId = String(g?.incidentId || g?.lightId || "").trim();
-      const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || g?.mineRows?.[0] || null);
-      if (incidentId && domainKey) ids.add(`${domainKey}::${incidentId}`);
-    }
-    return ids;
-  }, [inViewOnlyActive, mapBounds, visibleGroups, resolveItemDomainKey]);
   const exactIncidentSearch = useMemo(() => {
     const raw = String(searchQuery || "").trim();
     if (!raw) return "";
@@ -1642,122 +1613,6 @@ export default function OpenReportsModal(props) {
     return "";
   }, [searchQuery]);
   const bypassDateRangeForExactIncidentSearch = Boolean(exactIncidentSearch);
-
-  const matchedSearchRows = useMemo(() => {
-    const q = String(searchQuery || "").trim().toLowerCase();
-    if (!q) return [];
-    const from = (() => {
-      const s = String(exportFromDate || "").trim();
-      if (!s) return null;
-      return parseIsoDate(s);
-    })();
-    const toExclusive = (() => {
-      const s = String(exportToDate || "").trim();
-      if (!s) return null;
-      const d = parseIsoDate(s);
-      if (!d) return null;
-      const next = new Date(d);
-      next.setDate(next.getDate() + 1);
-      return next;
-    })();
-    const inRange = (ts) => {
-      if (bypassDateRangeForExactIncidentSearch) return true;
-      const n = Number(ts || 0);
-      if (!n) return false;
-      const d = new Date(n);
-      if (from && d < from) return false;
-      if (toExclusive && d >= toExclusive) return false;
-      return true;
-    };
-    const digitsQ = normalizePhone(q);
-    const out = [];
-    for (const g of visibleGroups || []) {
-      const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || null);
-      const isStreetlights = domainKey === "streetlights";
-      const coords = isStreetlights
-        ? getCoordsForLightId(String(g?.incidentId || g?.lightId || "").trim() || g.lightId, reports, officialLights)
-        : groupCoordsForViewFilter(g);
-      const locationLabel =
-        String(g.location_label || "").trim() ||
-        readLocationFromNote(g.rows?.[0]?.note) ||
-        (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
-          ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
-          : "Location unavailable");
-      for (const r of g?.rows || []) {
-        const ts = Number(r?.ts || 0);
-        if (!inRange(ts)) continue;
-        const rowDomainKey = resolveItemDomainKey(g, r, domainKey);
-        const reportNo = reportNumberForRow(r, rowDomainKey).toLowerCase();
-        const name = String(r?.reporter_name || "").toLowerCase();
-        const email = String(r?.reporter_email || "").toLowerCase();
-        const phoneNorm = normalizePhone(r?.reporter_phone || "");
-        const lightId = String(g?.lightId || "").toLowerCase();
-        const incidentIdRaw = String(r?.incident_id || g?.incidentId || g?.lightId || "").trim();
-        const groupDisplayIdRaw = String(g?.displayId || "").trim();
-        const displayId = formattedIncidentDisplayId(
-          rowDomainKey,
-          incidentIdRaw || g?.lightId,
-          coords,
-          groupDisplayIdRaw,
-          slIdByUuid
-        );
-        const incidentLabel = adminIncidentLabelForDomain(
-          rowDomainKey,
-          incidentIdRaw || g?.lightId,
-          r?.report_number || "",
-          slIdByUuid,
-          displayId
-        );
-        const issueLabel = resolveIssueLabel(r, rowDomainKey);
-        const incidentIdNorm = String(incidentIdRaw || "").trim().toLowerCase();
-        const groupIncidentIdNorm = String(g?.incidentId || "").trim().toLowerCase();
-        const searchableLookupIds = searchableIncidentLookupIdsForDomain(rowDomainKey, incidentIdNorm);
-        const displayIdNorm = String(displayId || "").toLowerCase();
-        const matches =
-          reportNo.includes(q) ||
-          name.includes(q) ||
-          email.includes(q) ||
-          lightId.includes(q) ||
-          incidentIdNorm.includes(q) ||
-          groupIncidentIdNorm.includes(q) ||
-          searchableLookupIds.some((candidateId) => candidateId.includes(q)) ||
-          incidentLabel.toLowerCase().includes(q) ||
-          String(issueLabel || "").toLowerCase().includes(q) ||
-          displayIdNorm.includes(q) ||
-          (digitsQ && phoneNorm.includes(digitsQ));
-        if (!matches) continue;
-        out.push({
-          id: `${g.lightId}:${r.id}`,
-          lightId: g.lightId,
-          row: r,
-          coords,
-          displayId,
-          locationLabel,
-          count: Number(g?.count || 0),
-          isStreetlights,
-          domainKey: rowDomainKey,
-          incidentLabel,
-          issueLabel,
-        });
-      }
-    }
-    return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
-  }, [
-    searchQuery,
-    sortedGroups,
-    visibleGroups,
-    activeDomain,
-    reports,
-    officialLights,
-    slIdByUuid,
-    exportFromDate,
-    exportToDate,
-    parseIsoDate,
-    bypassDateRangeForExactIncidentSearch,
-    groupCoordsForViewFilter,
-    resolveItemDomainKey,
-    resolveIssueLabel,
-  ]);
 
   const parseLocalDateStart = useCallback((v) => {
     return parseIsoDate(v);
@@ -2014,6 +1869,151 @@ export default function OpenReportsModal(props) {
   const effectiveAllDomainReports = Array.isArray(allDomainReports)
     ? allDomainReports
     : (usesPersonalMyReportsLayout ? derivedPersonalMyReports.rows : derivedSharedIncidentSelection.rows);
+  const sortedGroups = useMemo(() => {
+    const arr = Array.isArray(effectiveGroups) ? [...effectiveGroups] : [];
+    if (sortMode === "recent") {
+      arr.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+      return arr;
+    }
+    arr.sort((a, b) => (b.count - a.count) || ((b.lastTs || 0) - (a.lastTs || 0)));
+    return arr;
+  }, [effectiveGroups, sortMode]);
+  const visibleGroups = useMemo(() => {
+    const base = Array.isArray(sortedGroups) ? sortedGroups : [];
+    if (!(inViewOnlyActive && mapBounds)) return base;
+    return base.filter((g) => {
+      const coords = groupCoordsForViewFilter(g);
+      const lat = Number(coords?.lat);
+      const lng = Number(coords?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      return isPointInBounds(lat, lng, mapBounds);
+    });
+  }, [sortedGroups, inViewOnlyActive, mapBounds, groupCoordsForViewFilter]);
+  const inViewIncidentIdSet = useMemo(() => {
+    if (!(inViewOnlyActive && mapBounds)) return null;
+    const ids = new Set();
+    for (const g of visibleGroups || []) {
+      const incidentId = String(g?.incidentId || g?.lightId || "").trim();
+      const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || g?.mineRows?.[0] || null);
+      if (incidentId && domainKey) ids.add(`${domainKey}::${incidentId}`);
+    }
+    return ids;
+  }, [inViewOnlyActive, mapBounds, visibleGroups, resolveItemDomainKey]);
+  const matchedSearchRows = useMemo(() => {
+    const q = String(searchQuery || "").trim().toLowerCase();
+    if (!q) return [];
+    const from = (() => {
+      const s = String(exportFromDate || "").trim();
+      if (!s) return null;
+      return parseIsoDate(s);
+    })();
+    const toExclusive = (() => {
+      const s = String(exportToDate || "").trim();
+      if (!s) return null;
+      const d = parseIsoDate(s);
+      if (!d) return null;
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      return next;
+    })();
+    const inRange = (ts) => {
+      if (bypassDateRangeForExactIncidentSearch) return true;
+      const n = Number(ts || 0);
+      if (!n) return false;
+      const d = new Date(n);
+      if (from && d < from) return false;
+      if (toExclusive && d >= toExclusive) return false;
+      return true;
+    };
+    const digitsQ = normalizePhone(q);
+    const out = [];
+    for (const g of visibleGroups || []) {
+      const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || null);
+      const isStreetlights = domainKey === "streetlights";
+      const coords = isStreetlights
+        ? getCoordsForLightId(String(g?.incidentId || g?.lightId || "").trim() || g.lightId, reports, officialLights)
+        : groupCoordsForViewFilter(g);
+      const locationLabel =
+        String(g.location_label || "").trim() ||
+        readLocationFromNote(g.rows?.[0]?.note) ||
+        (Number.isFinite(coords?.lat) && Number.isFinite(coords?.lng)
+          ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+          : "Location unavailable");
+      for (const r of g?.rows || []) {
+        const ts = Number(r?.ts || 0);
+        if (!inRange(ts)) continue;
+        const rowDomainKey = resolveItemDomainKey(g, r, domainKey);
+        const reportNo = reportNumberForRow(r, rowDomainKey).toLowerCase();
+        const name = String(r?.reporter_name || "").toLowerCase();
+        const email = String(r?.reporter_email || "").toLowerCase();
+        const phoneNorm = normalizePhone(r?.reporter_phone || "");
+        const lightId = String(g?.lightId || "").toLowerCase();
+        const incidentIdRaw = String(r?.incident_id || g?.incidentId || g?.lightId || "").trim();
+        const groupDisplayIdRaw = String(g?.displayId || "").trim();
+        const displayId = formattedIncidentDisplayId(
+          rowDomainKey,
+          incidentIdRaw || g?.lightId,
+          coords,
+          groupDisplayIdRaw,
+          slIdByUuid
+        );
+        const incidentLabel = adminIncidentLabelForDomain(
+          rowDomainKey,
+          incidentIdRaw || g?.lightId,
+          r?.report_number || "",
+          slIdByUuid,
+          displayId
+        );
+        const issueLabel = resolveIssueLabel(r, rowDomainKey);
+        const incidentIdNorm = String(incidentIdRaw || "").trim().toLowerCase();
+        const groupIncidentIdNorm = String(g?.incidentId || "").trim().toLowerCase();
+        const searchableLookupIds = searchableIncidentLookupIdsForDomain(rowDomainKey, incidentIdNorm);
+        const displayIdNorm = String(displayId || "").toLowerCase();
+        const matches =
+          reportNo.includes(q) ||
+          name.includes(q) ||
+          email.includes(q) ||
+          lightId.includes(q) ||
+          incidentIdNorm.includes(q) ||
+          groupIncidentIdNorm.includes(q) ||
+          searchableLookupIds.some((candidateId) => candidateId.includes(q)) ||
+          incidentLabel.toLowerCase().includes(q) ||
+          String(issueLabel || "").toLowerCase().includes(q) ||
+          displayIdNorm.includes(q) ||
+          (digitsQ && phoneNorm.includes(digitsQ));
+        if (!matches) continue;
+        out.push({
+          id: `${g.lightId}:${r.id}`,
+          lightId: g.lightId,
+          row: r,
+          coords,
+          displayId,
+          locationLabel,
+          count: Number(g?.count || 0),
+          isStreetlights,
+          domainKey: rowDomainKey,
+          incidentLabel,
+          issueLabel,
+        });
+      }
+    }
+    return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
+  }, [
+    searchQuery,
+    sortedGroups,
+    visibleGroups,
+    activeDomain,
+    reports,
+    officialLights,
+    slIdByUuid,
+    exportFromDate,
+    exportToDate,
+    parseIsoDate,
+    bypassDateRangeForExactIncidentSearch,
+    groupCoordsForViewFilter,
+    resolveItemDomainKey,
+    resolveIssueLabel,
+  ]);
 
   const getIncidentStateForDisplay = useCallback((incidentId, rows = [], domainOverride = "") => {
     const id = String(incidentId || "").trim();
@@ -2828,31 +2828,6 @@ export default function OpenReportsModal(props) {
     if (!incidentId) return null;
     return (displayedAdminRows || []).find((row) => String(row?.incident_id || "").trim() === incidentId) || null;
   }, [displayedAdminRows, savedStreetlightReportIncidentId]);
-  const submittedReportsRow = submittedReportsModal?.row || null;
-  const submittedReportsRowDomainKey = submittedReportsRow
-    ? (String(submittedReportsModal?.domainKey || resolveDisplayedRowDomainKey(submittedReportsRow, activeDomain)).trim() || "streetlights")
-    : "";
-  const submittedReportsRepairSnapshot = submittedReportsRow
-    ? getRepairSnapshotForIncident(submittedReportsRow.incident_id, submittedReportsRowDomainKey)
-    : null;
-  const submittedReportsTitleLabel = submittedReportsRow
-    ? singularizeDomainLabel(
-      enabledDomainOptions.find((option) => option.key === submittedReportsRowDomainKey)?.label || humanizeLabel(submittedReportsRowDomainKey),
-      "Incident"
-    )
-    : "";
-  const submittedReportsTitleValue = submittedReportsRow
-    ? (
-      incidentDisplayValueForDomain(
-        submittedReportsRowDomainKey,
-        submittedReportsRow?.incident_id,
-        submittedReportsRow?.coords,
-        submittedReportsRow?.incident_label,
-        "",
-        slIdByUuid
-      ) || submittedReportsRow?.incident_id
-    )
-    : "";
 
   useEffect(() => {
     if (!savedStreetlightReportRow) return;
@@ -2936,6 +2911,32 @@ export default function OpenReportsModal(props) {
       || String(fallback || "streetlights").trim()
       || "streetlights";
   }, [activeDomain, reportKnownAssetIdSetsByDomain]);
+
+  const submittedReportsRow = submittedReportsModal?.row || null;
+  const submittedReportsRowDomainKey = submittedReportsRow
+    ? (String(submittedReportsModal?.domainKey || resolveDisplayedRowDomainKey(submittedReportsRow, activeDomain)).trim() || "streetlights")
+    : "";
+  const submittedReportsRepairSnapshot = submittedReportsRow
+    ? getRepairSnapshotForIncident(submittedReportsRow.incident_id, submittedReportsRowDomainKey)
+    : null;
+  const submittedReportsTitleLabel = submittedReportsRow
+    ? singularizeDomainLabel(
+      enabledDomainOptions.find((option) => option.key === submittedReportsRowDomainKey)?.label || humanizeLabel(submittedReportsRowDomainKey),
+      "Incident"
+    )
+    : "";
+  const submittedReportsTitleValue = submittedReportsRow
+    ? (
+      incidentDisplayValueForDomain(
+        submittedReportsRowDomainKey,
+        submittedReportsRow?.incident_id,
+        submittedReportsRow?.coords,
+        submittedReportsRow?.incident_label,
+        "",
+        slIdByUuid
+      ) || submittedReportsRow?.incident_id
+    )
+    : "";
 
   const openAdminSubmittedReportsModal = useCallback((row, domainOverride = "") => {
     if (!row) return;

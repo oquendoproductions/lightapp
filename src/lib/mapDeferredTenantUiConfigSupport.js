@@ -114,6 +114,23 @@ export function normalizeTenantMapFeaturesConfigShared(row, defaultTenantMapFeat
   };
 }
 
+export function tenantMapFeaturesMatchDefaultShared(features, defaultTenantMapFeatures = {}) {
+  const normalizedFeatures = normalizeTenantMapFeaturesConfigShared(features, defaultTenantMapFeatures);
+  const normalizedDefaults = normalizeTenantMapFeaturesConfigShared(
+    defaultTenantMapFeatures,
+    defaultTenantMapFeatures,
+  );
+  return (
+    normalizedFeatures.show_boundary_border === normalizedDefaults.show_boundary_border
+    && normalizedFeatures.shade_outside_boundary === normalizedDefaults.shade_outside_boundary
+    && normalizedFeatures.show_alert_icon === normalizedDefaults.show_alert_icon
+    && normalizedFeatures.show_event_icon === normalizedDefaults.show_event_icon
+    && normalizedFeatures.outside_shade_opacity === normalizedDefaults.outside_shade_opacity
+    && normalizedFeatures.boundary_border_color === normalizedDefaults.boundary_border_color
+    && normalizedFeatures.boundary_border_width === normalizedDefaults.boundary_border_width
+  );
+}
+
 function tenantMapFeaturesCacheStorageKeyShared(tenantKey) {
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
   if (!normalizedTenantKey) return "";
@@ -131,7 +148,14 @@ export function readCachedTenantMapFeaturesShared(tenantKey, defaultTenantMapFea
     const cachedFeatures = parsed && typeof parsed === "object" && parsed.features
       ? parsed.features
       : parsed;
-    return normalizeTenantMapFeaturesConfigShared(cachedFeatures, defaultTenantMapFeatures);
+    const normalizedFeatures = normalizeTenantMapFeaturesConfigShared(
+      cachedFeatures,
+      defaultTenantMapFeatures,
+    );
+    if (tenantMapFeaturesMatchDefaultShared(normalizedFeatures, defaultTenantMapFeatures)) {
+      return null;
+    }
+    return normalizedFeatures;
   } catch {
     return null;
   }
@@ -147,6 +171,10 @@ export function writeCachedTenantMapFeaturesShared(
   if (!storageKey) return;
   try {
     const normalizedFeatures = normalizeTenantMapFeaturesConfigShared(features, defaultTenantMapFeatures);
+    if (tenantMapFeaturesMatchDefaultShared(normalizedFeatures, defaultTenantMapFeatures)) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
     window.localStorage.setItem(storageKey, JSON.stringify({
       features: normalizedFeatures,
       cachedAt: new Date().toISOString(),
@@ -318,7 +346,6 @@ export async function loadTenantMapFeaturesShared({
     tenantMapFeaturesSourceRef.current = "fallback-no-row";
     setTenantMapFeatures({ ...defaultTenantMapFeatures });
     setTenantMapFeaturesLoaded(true);
-    writeCachedTenantMapFeatures?.(tenantKey, defaultTenantMapFeatures);
     pushTenantBoundaryDiagnostic?.("tenant_map_features:fallback-no-row", {
       tenantKey,
       resolvedTenantMapFeaturesTenantKey,
@@ -349,9 +376,19 @@ function scheduleDeferredTenantUiRefreshShared(loadFn, {
   let cancelled = false;
   let idleHandle = null;
   let timeoutHandle = null;
+  let started = false;
 
   const runLoad = async () => {
-    if (cancelled) return;
+    if (cancelled || started) return;
+    started = true;
+    if (idleHandle != null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(idleHandle);
+      idleHandle = null;
+    }
+    if (timeoutHandle != null && typeof window !== "undefined") {
+      window.clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
     await loadFn(() => cancelled);
   };
 
@@ -360,7 +397,8 @@ function scheduleDeferredTenantUiRefreshShared(loadFn, {
       idleHandle = null;
       void runLoad();
     }, { timeout: idleTimeoutMs });
-  } else if (typeof window !== "undefined") {
+  }
+  if (typeof window !== "undefined") {
     timeoutHandle = window.setTimeout(() => {
       timeoutHandle = null;
       void runLoad();

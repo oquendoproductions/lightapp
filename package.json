@@ -8,6 +8,7 @@
     "validate:map-ui-icons": "node scripts/validate-map-ui-icons.mjs",
     "build": "npm run validate:map-ui-icons && vite build",
     "deploy:pages": "bash scripts/deploy-pages.sh",
+    "smoke:startup": "node scripts/smoke/check_pages_startup.mjs",
     "supabase:db:push": "bash scripts/supabase-db-push.sh",
     "supabase:migration:list": "bash scripts/run-supabase.sh migration list --workdir . --linked",
     "lint": "eslint .",
@@ -62,6 +63,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "jsdom": "^27.0.1",
+    "playwright-core": "^1.61.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vitest": "^3.2.4"

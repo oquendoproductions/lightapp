@@ -75,7 +75,7 @@ function upsertIncidentLocationCacheEntryRuntimeShared(domainKeyRaw, incidentIdR
   });
 }
 
-async function persistIncidentLocationCacheEntryRuntimeShared(
+export async function persistIncidentLocationCacheEntryRuntimeShared(
   domainKeyRaw,
   incidentIdRaw,
   nextValues = {},

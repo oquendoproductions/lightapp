@@ -31,10 +31,12 @@ import {
   DOMAIN_MARKER_GLYPHS,
   DOMAIN_MARKER_ICON_SRCS,
   POTHOLE_MERGE_RADIUS_METERS,
-  INCIDENT_DOMAIN_STARTUP_HELPERS as INCIDENT_DOMAIN_HELPERS,
-  getIncidentDomainStartupHelperShared as getIncidentDomainHelper,
-  incidentDomainStartupHelperKeysForConfiguredFieldShared as incidentDomainHelperKeysForConfiguredField,
 } from "./lib/mapIncidentDomainStartupConfig.js";
+import {
+  INCIDENT_DOMAIN_HELPERS,
+  getIncidentDomainHelperShared as getIncidentDomainHelper,
+  incidentDomainHelperKeysForConfiguredFieldShared as incidentDomainHelperKeysForConfiguredField,
+} from "./lib/mapIncidentDomainConfig.js";
 import {
   normalizeDomainIconRenderMode,
   normalizeDomainIconTintColor,
@@ -125,6 +127,7 @@ import {
 import {
   dedupeIncidentMarkerRenderSourceShared,
 } from "./lib/mapIncidentMarkerSourceSupport.js";
+import { resolveReportDomainLabelShared } from "./lib/mapReportDisplaySupport.js";
 import { createTenantScopedAuthedClient, createTenantScopedReadClient } from "./lib/tenantScopedSupabase";
 
 const LazyAccountMenuPanel = lazy(() => import("./mapLazyAccountPanels.jsx").then((module) => ({ default: module.AccountMenuPanel })));
@@ -2231,11 +2234,37 @@ function buildConfiguredIncidentDomainCollections(entries = []) {
 
     const seededRows = Array.isArray(entry?.seededRows) ? entry.seededRows : [];
     const reportRows = Array.isArray(entry?.reportRows) ? entry.reportRows : [];
-    const seededById = new Map(
-      seededRows
-        .map((row) => [String(row?.id || "").trim(), row])
-        .filter(([id]) => Boolean(id))
-    );
+    const helper = getIncidentDomainHelper(domainKey) || {};
+    const aliasFieldNames = Array.from(new Set([
+      "id",
+      "incident_id",
+      String(helper?.seededLookupField || "").trim(),
+      String(helper?.normalizeSeededRecordExternalIdField || "").trim(),
+      String(helper?.displayIdHintField || "").trim(),
+      ...(Array.isArray(helper?.normalizeSeededRecordExternalDisplayFields)
+        ? helper.normalizeSeededRecordExternalDisplayFields
+        : []),
+      ...(Array.isArray(helper?.seededMarkerExternalDisplaySourceFields)
+        ? helper.seededMarkerExternalDisplaySourceFields
+        : []),
+    ].map((fieldName) => String(fieldName || "").trim()).filter(Boolean)));
+    const seededById = new Map();
+    for (const row of seededRows) {
+      if (!row || typeof row !== "object") continue;
+      const aliasValues = new Set();
+      for (const fieldName of aliasFieldNames) {
+        const rawValue = String(row?.[fieldName] || "").trim();
+        if (!rawValue) continue;
+        aliasValues.add(rawValue);
+        const normalizedLookupValue = lookupIncidentIdForDomain(domainKey, rawValue);
+        if (normalizedLookupValue) aliasValues.add(normalizedLookupValue);
+      }
+      const canonicalIncidentId = incidentDomainCanonicalIncidentId(domainKey, row);
+      if (canonicalIncidentId) aliasValues.add(canonicalIncidentId);
+      for (const aliasValue of aliasValues) {
+        seededById.set(aliasValue, row);
+      }
+    }
 
     seededRowsByDomain.set(domainKey, seededRows);
     reportRowsByDomain.set(domainKey, reportRows);
@@ -2466,6 +2495,7 @@ export default function App({
   const isMobile = useIsMobile(640);
   const useAppShellLayout = isMobile || isNativeAppRuntime();
   const useNativeAppBehavior = useAppShellLayout;
+  const [backgroundWarmupPolicy, setBackgroundWarmupPolicy] = useState(() => resolveBackgroundWarmupPolicy());
   const [prefersDarkMode, setPrefersDarkMode] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -2863,7 +2893,6 @@ export default function App({
   const userDragPanRef = useRef(false);
   const [nonCriticalStartupReady, setNonCriticalStartupReady] = useState(false);
   const [mapTilesReady, setMapTilesReady] = useState(false);
-  const [backgroundWarmupPolicy, setBackgroundWarmupPolicy] = useState(() => resolveBackgroundWarmupPolicy());
   const backgroundWarmupAllowed = backgroundWarmupPolicy?.allowWarmup !== false;
   const backgroundWarmupReduced = backgroundWarmupPolicy?.reducedWarmup === true;
   const startupWarmupReady = backgroundWarmupAllowed && nonCriticalStartupReady && mapTilesReady;
@@ -2872,6 +2901,11 @@ export default function App({
   const [accountAccessWarmupReady, setAccountAccessWarmupReady] = useState(false);
   const [residentFeedBadgeWarmupReady, setResidentFeedBadgeWarmupReady] = useState(false);
   const [deferredRealtimeReady, setDeferredRealtimeReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [mapDataReloadToken, setMapDataReloadToken] = useState(0);
+  const [resumeRefreshActive, setResumeRefreshActive] = useState(false);
 
   // Google Maps center (actual camera center)
   const [mapCenter, setMapCenter] = useState({ lat: USA_OVERVIEW[0], lng: USA_OVERVIEW[1] });
@@ -2901,6 +2935,8 @@ export default function App({
   useEffect(() => {
     let cancelled = false;
     let dispose = () => {};
+    let idleHandle = null;
+    let timeoutHandle = null;
     if (loading) {
       return () => {
         cancelled = true;
@@ -3043,12 +3079,6 @@ export default function App({
   const [streetlightAreaPowerOn, setStreetlightAreaPowerOn] = useState("");
   const [streetlightHazardYesNo, setStreetlightHazardYesNo] = useState("");
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [mapDataReloadToken, setMapDataReloadToken] = useState(0);
-  const [resumeRefreshActive, setResumeRefreshActive] = useState(false);
-
   // fixedLights: { [light_id]: fixed_at_ms }
   const [fixedLights, setFixedLights] = useState({});
   const [lastFixByLightId, setLastFixByLightId] = useState({});
@@ -3062,6 +3092,7 @@ export default function App({
   const [activeLight, setActiveLight] = useState(null);
   const [domainReportTarget, setDomainReportTarget] = useState(null); // { domain, lat, lng, lightId, locationLabel }
   const [domainDisclosureGateTarget, setDomainDisclosureGateTarget] = useState(null);
+  const confirmReportTarget = null;
   const [domainReportNote, setDomainReportNote] = useState("");
   const [domainReportImageFile, setDomainReportImageFile] = useState(null);
   const [domainReportImagePreviewUrl, setDomainReportImagePreviewUrl] = useState("");
@@ -3224,6 +3255,47 @@ export default function App({
       setConfiguredIncidentSeededRowsForDomain,
       setConfiguredIncidentReportRowsForDomain,
       reverseGeocodeRoadLabel,
+    ]
+  );
+
+  const persistIncidentLocationCacheEntry = useCallback(
+    async (domainKeyRaw, incidentIdRaw, nextValues = {}, extra = {}) => {
+      const [
+        { persistIncidentLocationCacheEntryRuntimeShared },
+        {
+          incidentDomainApplyPersistedLocationCacheState,
+          incidentDomainNormalizePersistenceIncidentId,
+        },
+      ] = await Promise.all([
+        loadDeferredIncidentLocationRuntimeModule(),
+        loadDeferredIncidentDomainSubmitHelpers(),
+      ]);
+      return persistIncidentLocationCacheEntryRuntimeShared(
+        domainKeyRaw,
+        incidentIdRaw,
+        nextValues,
+        extra,
+        {
+          normalizeDomainKeyOrSlug,
+          normalizeDomainKey,
+          incidentDomainNormalizePersistenceIncidentId,
+          buildConfiguredIncidentDomainRuntimeEntry,
+          incidentDomainHelperKeysForConfiguredField,
+          setConfiguredIncidentSeededRowsForDomain,
+          setConfiguredIncidentReportRowsForDomain,
+          setIncidentLocationCacheByKey,
+          setOfficialLights,
+          incidentDomainApplyPersistedLocationCacheState,
+          setPersistedIncidentRecordStateByDomain,
+          supabase,
+          activeTenantKey,
+        }
+      );
+    },
+    [
+      loadDeferredIncidentDomainSubmitHelpers,
+      setConfiguredIncidentSeededRowsForDomain,
+      setConfiguredIncidentReportRowsForDomain,
     ]
   );
 
@@ -3452,6 +3524,13 @@ export default function App({
     );
   }
 
+  function isMissingFunctionError(err) {
+    if (!err) return false;
+    const rawCode = String(err?.code || "").toUpperCase();
+    const msg = String(err?.message || "").toLowerCase();
+    return rawCode === "42883" || rawCode === "PGRST202" || (msg.includes("function") && msg.includes("exist"));
+  }
+
   function notifyDbConnectionIssue(errOrStatus) {
     if (!isConnectionLikeDbError(errOrStatus)) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
@@ -3512,8 +3591,7 @@ export default function App({
       setNonCriticalStartupReady(false);
       return undefined;
     }
-    let idleHandle = null;
-    let timeoutHandle = null;
+    let cancelled = false;
     const timer = window.setTimeout(() => {
       if (!cancelled) setNonCriticalStartupReady(true);
     }, 4500);
@@ -3645,9 +3723,9 @@ export default function App({
     return String(list?.[0]?.key || "streetlights").trim() || "streetlights";
   }
 
-  const closeMyReports = useCallback(() => {
+  function closeMyReports() {
     setMyReportsOpen(false);
-  }, []);
+  }
 
   function nextReportLaunchToken() {
     return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -3684,7 +3762,7 @@ export default function App({
     }
   }
 
-  const openMyReports = useCallback((opts = {}) => {
+  function openMyReports(opts = {}) {
     const requestedDomainKey = String(opts?.domainKey || "").trim();
     const defaultDomainKey = String(
       adminReportDomain
@@ -3720,13 +3798,9 @@ export default function App({
     });
     setMyReportsReportedByMode(reportedByMode);
     setMyReportsOpen(true);
-  }, [
-    adminReportDomain,
-    visibleDomainOptions,
-    myReportsReportedByMode,
-  ]);
+  }
 
-  const openNotificationsInbox = useCallback(() => {
+  function openNotificationsInbox() {
     closeAnyPopup();
     setSelectedOfficialId(null);
     setSelectedDomainMarker(null);
@@ -3738,7 +3812,7 @@ export default function App({
     setAlertsWindowOpen(false);
     setEventsWindowOpen(false);
     setNotificationsWindowOpen(true);
-  }, []);
+  }
 
   function closeOpenReports() {
     setOpenReportsOpen(false);
@@ -3765,7 +3839,7 @@ export default function App({
     setPendingIncidentRepairDomainKey(domainKey);
   }
 
-  const openOpenReports = useCallback(({ inViewOnly = false, focusIncidentId = "", focusQuery = "" } = {}) => {
+  function openOpenReports({ inViewOnly = false, focusIncidentId = "", focusQuery = "" } = {}) {
     if (!canOpenDomainReports) return;
     primeReportsModalWorkspace();
     setOpenReportsLaunchOptions({
@@ -3775,7 +3849,7 @@ export default function App({
       inViewOnly: Boolean(inViewOnly),
     });
     setOpenReportsOpen(true);
-  }, [canOpenDomainReports]);
+  }
 
   const handleUtilityReportedChange = useCallback(async (incidentId, reported, opts = {}) => {
     const { normalizeUtilityReportReference } = await loadIncidentDeferredSupportModule();
@@ -4092,6 +4166,20 @@ export default function App({
   const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
   const [canEditDomainReports, setCanEditDomainReports] = useState(false);
   const [reportAccessResolved, setReportAccessResolved] = useState(false);
+  // Access vocabulary:
+  // - isPlatformAdmin: developer/platform-only tools and diagnostics
+  // - hasOrgAdminReportsAccess: richer org-admin reports workspace
+  // - hasOrgDomainReportsAccess: org-admin can open domain reports
+  // - hasOrgDomainReportsEditAccess: org-admin can mark fixed / reopen on managed incident domains
+  const isPlatformAdmin = isAdmin;
+  const hasOrgAdminReportsAccess = canAccessAdminReports;
+  const hasOrgDomainReportsAccess = canAccessDomainReports;
+  const hasOrgDomainReportsEditAccess = canEditDomainReports;
+  const canOpenAdminReports = isPlatformAdmin || hasOrgAdminReportsAccess;
+  const canOpenDomainReports = isPlatformAdmin || hasOrgDomainReportsAccess;
+  // Domain-report access should also unlock full incident visibility on the map.
+  const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess || hasOrgDomainReportsAccess;
+  const reportsAdminView = isReportsAdminView;
   const tenantScopedReadClient = useMemo(
     () => createTenantScopedReadClient(tenant?.tenantKey || activeTenantKey()),
     [tenant?.tenantKey]
@@ -4841,20 +4929,6 @@ export default function App({
       return normalizeExplicitDomainSelection(next, openReportsVisibleDomainKeys);
     });
   }, [openReportsVisibleDomainKeys]);
-  // Access vocabulary:
-  // - isPlatformAdmin: developer/platform-only tools and diagnostics
-  // - hasOrgAdminReportsAccess: richer org-admin reports workspace
-  // - hasOrgDomainReportsAccess: org-admin can open domain reports
-  // - hasOrgDomainReportsEditAccess: org-admin can mark fixed / reopen on managed incident domains
-  const isPlatformAdmin = isAdmin;
-  const hasOrgAdminReportsAccess = canAccessAdminReports;
-  const hasOrgDomainReportsAccess = canAccessDomainReports;
-  const hasOrgDomainReportsEditAccess = canEditDomainReports;
-  const canOpenAdminReports = isPlatformAdmin || hasOrgAdminReportsAccess;
-  const canOpenDomainReports = isPlatformAdmin || hasOrgDomainReportsAccess;
-  // Domain-report access should also unlock full incident visibility on the map.
-  const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess || hasOrgDomainReportsAccess;
-  const reportsAdminView = isReportsAdminView;
   const shouldWaitForAuthBeforePublicMapLoad = Boolean(
     reportsAdminView
     || initialCrossTenantAuthBridgeStateRef.current?.hasBridgeSessionHint
@@ -4987,6 +5061,69 @@ export default function App({
   const [mobileTabTransitionDirection, setMobileTabTransitionDirection] = useState("forward");
   const [accountView, setAccountView] = useState("menu"); 
   // "menu" | "manage" | "myReports"
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageEditing, setManageEditing] = useState(false);
+  const [manageSaving, setManageSaving] = useState(false);
+  const [manageForm, setManageForm] = useState({ full_name: "", phone: "" });
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deleteAccountSaving, setDeleteAccountSaving] = useState(false);
+  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
+  const [deleteAccountDisclosureAccepted, setDeleteAccountDisclosureAccepted] = useState(false);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthSaving, setReauthSaving] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthIntent, setReauthIntent] = useState(null); // "edit_profile" | "save_profile" | "delete_account"
+  const reauthAtRef = useRef(0);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
+  const [changePasswordValue, setChangePasswordValue] = useState("");
+  const [changePasswordValue2, setChangePasswordValue2] = useState("");
+  const [changePasswordCurrentValue, setChangePasswordCurrentValue] = useState("");
+  const [recoveryPasswordOpen, setRecoveryPasswordOpen] = useState(false);
+  const [recoveryPasswordSaving, setRecoveryPasswordSaving] = useState(false);
+  const [recoveryPasswordValue, setRecoveryPasswordValue] = useState("");
+  const [recoveryPasswordValue2, setRecoveryPasswordValue2] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState([]); // array of official light UUIDs
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [isWorkingConfirmOpen, setIsWorkingConfirmOpen] = useState(false);
+  const [pendingWorkingLightId, setPendingWorkingLightId] = useState(null);
+  const [incidentRepairConfirmOpen, setIncidentRepairConfirmOpen] = useState(false);
+  const [pendingIncidentRepairId, setPendingIncidentRepairId] = useState("");
+  const [pendingIncidentRepairDomainKey, setPendingIncidentRepairDomainKey] = useState("");
+  const [utilityReportDialogOpen, setUtilityReportDialogOpen] = useState(false);
+  const [pendingUtilityReportLightId, setPendingUtilityReportLightId] = useState(null);
+  const [pendingUtilityReportReference, setPendingUtilityReportReference] = useState("");
+  const [markFixedConfirmOpen, setMarkFixedConfirmOpen] = useState(false);
+  const [pendingMarkFixedLightId, setPendingMarkFixedLightId] = useState(null);
+  const [pendingMarkFixedClusterReports, setPendingMarkFixedClusterReports] = useState([]);
+  const [pendingIncidentCompatMarker, setPendingIncidentCompatMarker] = useState(null);
+  const [, setPendingIncidentActionType] = useState("fix"); // fix | reopen
+  const [pendingIncidentDomainKey, setPendingIncidentDomainKey] = useState("");
+  const [pendingIncidentCurrentState, setPendingIncidentCurrentState] = useState("");
+  const [pendingIncidentNextState, setPendingIncidentNextState] = useState("");
+  const [pendingIncidentLabel, setPendingIncidentLabel] = useState("");
+  const [pendingIncidentIsOfficialTarget, setPendingIncidentIsOfficialTarget] = useState(false);
+  const [pendingIncidentPin, setPendingIncidentPin] = useState("");
+  const [pendingIncidentStatusError, setPendingIncidentStatusError] = useState("");
+  const [markFixedNote, setMarkFixedNote] = useState("");
+  const [deleteOfficialConfirmOpen, setDeleteOfficialConfirmOpen] = useState(false);
+  const [pendingDeleteOfficialLightId, setPendingDeleteOfficialLightId] = useState(null);
+  const [deleteCircleMode, setDeleteCircleMode] = useState(false);
+  const [deleteCircleDraft, setDeleteCircleDraft] = useState(null); // { center: {lat,lng}, radiusMeters }
+  const [deleteCircleConfirmOpen, setDeleteCircleConfirmOpen] = useState(false);
+  const [deleteCircleNote, setDeleteCircleNote] = useState("");
+  const [deleteOfficialSignConfirmOpen, setDeleteOfficialSignConfirmOpen] = useState(false);
+  const [pendingDeleteOfficialSignId, setPendingDeleteOfficialSignId] = useState(null);
+  const [clearQueuedConfirmOpen, setClearQueuedConfirmOpen] = useState(false);
+  const [domainSwitchConfirmOpen, setDomainSwitchConfirmOpen] = useState(false);
+  const [pendingDomainSwitchTarget, setPendingDomainSwitchTarget] = useState(null);
+  const [queueSignTypeOpen, setQueueSignTypeOpen] = useState(false);
+  const [pendingQueuedSign, setPendingQueuedSign] = useState(null); // {lat, lng, sign_type}
+  const [incidentTypePickerOpen, setIncidentTypePickerOpen] = useState(false);
+  const [pendingIncidentTypeTarget, setPendingIncidentTypeTarget] = useState(null);
+  const [incidentTypePickerOpenedAt, setIncidentTypePickerOpenedAt] = useState(0);
+  const [mappingQueue, setMappingQueue] = useState([]);
   const [notificationPreferencesOpen, setNotificationPreferencesOpen] = useState(false);
   const [savedNotificationPreferencesByTopic, setSavedNotificationPreferencesByTopic] = useState({});
   const nativePushRegisteringRef = useRef(false);
@@ -5055,6 +5192,10 @@ export default function App({
       || ""
     ).trim()
   );
+  const viewerIdentityKey = useMemo(
+    () => reporterIdentityKey({ session, profile, guestInfo }),
+    [session?.user?.id, guestInfo?.email, guestInfo?.phone, guestInfo?.name]
+  );
   const shouldNeedStreetlightConfidenceState = Boolean(
     shouldComputeStreetlightRuntimeState && (
       shouldPrioritizeStreetlightRuntimeStartup
@@ -5120,29 +5261,6 @@ export default function App({
     if (getPlatformName() === "android") return false;
     return Boolean(showNotificationPreferencesEntry);
   }, [showNotificationPreferencesEntry]);
-
-  const [manageOpen, setManageOpen] = useState(false);
-  const [manageEditing, setManageEditing] = useState(false);
-  const [manageSaving, setManageSaving] = useState(false);
-  const [manageForm, setManageForm] = useState({ full_name: "", phone: "" });
-  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
-  const [deleteAccountSaving, setDeleteAccountSaving] = useState(false);
-  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
-  const [deleteAccountDisclosureAccepted, setDeleteAccountDisclosureAccepted] = useState(false);
-  const [reauthOpen, setReauthOpen] = useState(false);
-  const [reauthSaving, setReauthSaving] = useState(false);
-  const [reauthPassword, setReauthPassword] = useState("");
-  const [reauthIntent, setReauthIntent] = useState(null); // "edit_profile" | "save_profile" | "delete_account"
-  const reauthAtRef = useRef(0);
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [changePasswordSaving, setChangePasswordSaving] = useState(false);
-  const [changePasswordValue, setChangePasswordValue] = useState("");
-  const [changePasswordValue2, setChangePasswordValue2] = useState("");
-  const [changePasswordCurrentValue, setChangePasswordCurrentValue] = useState("");
-  const [recoveryPasswordOpen, setRecoveryPasswordOpen] = useState(false);
-  const [recoveryPasswordSaving, setRecoveryPasswordSaving] = useState(false);
-  const [recoveryPasswordValue, setRecoveryPasswordValue] = useState("");
-  const [recoveryPasswordValue2, setRecoveryPasswordValue2] = useState("");
 
   const closeAccountSubpages = useCallback(() => {
     setAccountMenuOpen(false);
@@ -5219,47 +5337,6 @@ export default function App({
   // =========================
   // BULK REPORTING (official lights)
   // =========================
-  const [bulkMode, setBulkMode] = useState(false);
-  const [bulkSelectedIds, setBulkSelectedIds] = useState([]); // array of official light UUIDs
-  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-  const [isWorkingConfirmOpen, setIsWorkingConfirmOpen] = useState(false);
-  const [pendingWorkingLightId, setPendingWorkingLightId] = useState(null);
-  const [incidentRepairConfirmOpen, setIncidentRepairConfirmOpen] = useState(false);
-  const [pendingIncidentRepairId, setPendingIncidentRepairId] = useState("");
-  const [pendingIncidentRepairDomainKey, setPendingIncidentRepairDomainKey] = useState("");
-  const [utilityReportDialogOpen, setUtilityReportDialogOpen] = useState(false);
-  const [pendingUtilityReportLightId, setPendingUtilityReportLightId] = useState(null);
-  const [pendingUtilityReportReference, setPendingUtilityReportReference] = useState("");
-  const [markFixedConfirmOpen, setMarkFixedConfirmOpen] = useState(false);
-  const [pendingMarkFixedLightId, setPendingMarkFixedLightId] = useState(null);
-  const [pendingMarkFixedClusterReports, setPendingMarkFixedClusterReports] = useState([]);
-  const [pendingIncidentCompatMarker, setPendingIncidentCompatMarker] = useState(null);
-  const [, setPendingIncidentActionType] = useState("fix"); // fix | reopen
-  const [pendingIncidentDomainKey, setPendingIncidentDomainKey] = useState("");
-  const [pendingIncidentCurrentState, setPendingIncidentCurrentState] = useState("");
-  const [pendingIncidentNextState, setPendingIncidentNextState] = useState("");
-  const [pendingIncidentLabel, setPendingIncidentLabel] = useState("");
-  const [pendingIncidentIsOfficialTarget, setPendingIncidentIsOfficialTarget] = useState(false);
-  const [pendingIncidentPin, setPendingIncidentPin] = useState("");
-  const [pendingIncidentStatusError, setPendingIncidentStatusError] = useState("");
-  const [markFixedNote, setMarkFixedNote] = useState("");
-  const [deleteOfficialConfirmOpen, setDeleteOfficialConfirmOpen] = useState(false);
-  const [pendingDeleteOfficialLightId, setPendingDeleteOfficialLightId] = useState(null);
-  const [deleteCircleMode, setDeleteCircleMode] = useState(false);
-  const [deleteCircleDraft, setDeleteCircleDraft] = useState(null); // { center: {lat,lng}, radiusMeters }
-  const [deleteCircleConfirmOpen, setDeleteCircleConfirmOpen] = useState(false);
-  const [deleteCircleNote, setDeleteCircleNote] = useState("");
-  const [deleteOfficialSignConfirmOpen, setDeleteOfficialSignConfirmOpen] = useState(false);
-  const [pendingDeleteOfficialSignId, setPendingDeleteOfficialSignId] = useState(null);
-  const [clearQueuedConfirmOpen, setClearQueuedConfirmOpen] = useState(false);
-  const [domainSwitchConfirmOpen, setDomainSwitchConfirmOpen] = useState(false);
-  const [pendingDomainSwitchTarget, setPendingDomainSwitchTarget] = useState(null);
-  const [queueSignTypeOpen, setQueueSignTypeOpen] = useState(false);
-  const [pendingQueuedSign, setPendingQueuedSign] = useState(null); // {lat, lng, sign_type}
-  const [incidentTypePickerOpen, setIncidentTypePickerOpen] = useState(false);
-  const [pendingIncidentTypeTarget, setPendingIncidentTypeTarget] = useState(null);
-  const [incidentTypePickerOpenedAt, setIncidentTypePickerOpenedAt] = useState(0);
-
   const bulkSelectedSet = useMemo(() => new Set(bulkSelectedIds), [bulkSelectedIds]);
   const bulkSelectedCount = bulkSelectedIds.length;
 
@@ -5327,7 +5404,7 @@ export default function App({
     }
     exitMappingMode();
   }, [mappingQueue.length, exitMappingMode]);
-  const handleMobileBottomRailMapClick = useCallback(() => {
+  function handleMobileBottomRailMapClick() {
     setMobileTabTransitionFor("map");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     closeMyReports();
@@ -5338,8 +5415,8 @@ export default function App({
     setNotificationsWindowOpen(false);
     setAlertsWindowOpen(false);
     setEventsWindowOpen(false);
-  }, [closeAccountSubpages, closeMyReports, setMobileTabTransitionFor]);
-  const handleMobileBottomRailReportsClick = useCallback(() => {
+  }
+  function handleMobileBottomRailReportsClick() {
     setMobileTabTransitionFor((!viewerIdentityKey && !hasMapSession) ? "account" : "reports");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     if (mappingMode) requestExitMappingMode();
@@ -5356,17 +5433,8 @@ export default function App({
       return;
     }
     openMyReports({ inViewOnly: false });
-  }, [
-    bulkMode,
-    closeAccountSubpages,
-    hasMapSession,
-    mappingMode,
-    openMyReports,
-    requestExitMappingMode,
-    setMobileTabTransitionFor,
-    viewerIdentityKey,
-  ]);
-  const handleMobileBottomRailNotificationsClick = useCallback(() => {
+  }
+  function handleMobileBottomRailNotificationsClick() {
     setMobileTabTransitionFor((!viewerIdentityKey && !hasMapSession) ? "account" : "notifications");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     closeMyReports();
@@ -5382,15 +5450,8 @@ export default function App({
       return;
     }
     openNotificationsInbox();
-  }, [
-    closeAccountSubpages,
-    closeMyReports,
-    hasMapSession,
-    openNotificationsInbox,
-    setMobileTabTransitionFor,
-    viewerIdentityKey,
-  ]);
-  const handleMobileBottomRailAlertsClick = useCallback(() => {
+  }
+  function handleMobileBottomRailAlertsClick() {
     setMobileTabTransitionFor("alerts");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     closeMyReports();
@@ -5401,8 +5462,8 @@ export default function App({
     setNotificationsWindowOpen(false);
     setEventsWindowOpen(false);
     setAlertsWindowOpen(true);
-  }, [closeAccountSubpages, closeMyReports, setMobileTabTransitionFor]);
-  const handleMobileBottomRailEventsClick = useCallback(() => {
+  }
+  function handleMobileBottomRailEventsClick() {
     setMobileTabTransitionFor("events");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     closeMyReports();
@@ -5413,8 +5474,8 @@ export default function App({
     setNotificationsWindowOpen(false);
     setAlertsWindowOpen(false);
     setEventsWindowOpen(true);
-  }, [closeAccountSubpages, closeMyReports, setMobileTabTransitionFor]);
-  const handleMobileBottomRailAccountClick = useCallback(() => {
+  }
+  function handleMobileBottomRailAccountClick() {
     setMobileTabTransitionFor("account");
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
     closeMyReports();
@@ -5430,7 +5491,7 @@ export default function App({
     setEventsWindowOpen(false);
     setAccountView("menu");
     setAccountMenuOpen(true);
-  }, [closeMyReports, setMobileTabTransitionFor]);
+  }
   const handleMobileTitleLogoError = useCallback(() => {
     setTitleLogoError(true);
   }, []);
@@ -5472,21 +5533,21 @@ export default function App({
   const handleMobileToggleTravelFollow = useCallback(() => {
     toggleTravelFollowMode();
   }, [toggleTravelFollowMode]);
-  const handleMobileRecenterHome = useCallback(() => {
+  function handleMobileRecenterHome() {
     setAutoFollow(false);
     setFollowCamera(false);
     setTravelFollowMode(false);
     recenterToTenantHome("home-button");
-  }, [recenterToTenantHome]);
-  const handleMobileSelectMapLayer = useCallback((layerKey, layerLabel) => {
+  }
+  function handleMobileSelectMapLayer(layerKey, layerLabel) {
     requestMapLayerSwitch(layerKey, layerLabel);
-  }, [requestMapLayerSwitch]);
-  const handleMobileResetIncidentFilter = useCallback(() => {
+  }
+  function handleMobileResetIncidentFilter() {
     resetIncidentMapFilter();
-  }, [resetIncidentMapFilter]);
-  const handleMobileToggleIncidentDomainFilter = useCallback((domainKey, domainLabel) => {
+  }
+  function handleMobileToggleIncidentDomainFilter(domainKey, domainLabel) {
     toggleIncidentMapDomainFilter(domainKey, domainLabel);
-  }, [toggleIncidentMapDomainFilter]);
+  }
   const handleMobileToggleBulkMode = useCallback((event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
@@ -5626,7 +5687,7 @@ export default function App({
     setDomainReportTarget(pendingTarget);
   }
 
-  const startIncidentReportAtPoint = useCallback(async (domainKey, lat, lng, options = {}) => {
+  async function startIncidentReportAtPoint(domainKey, lat, lng, options = {}) {
     const { incidentDomainNormalizeSubmitTarget } = await loadDeferredIncidentDomainSubmitHelpers();
     const { startIncidentReportAtPointRuntimeShared } = await loadDeferredMapTapRuntimeModule();
     await startIncidentReportAtPointRuntimeShared(domainKey, lat, lng, options, {
@@ -5640,14 +5701,7 @@ export default function App({
       incidentDrivenMarkersForDomain,
       openDomainReportFlow,
     });
-  }, [
-    loadDeferredIncidentDomainSubmitHelpers,
-    incidentDrivenMarkersForDomain,
-    isTenantAssetBackedDomain,
-    municipalBoundaryGate,
-    openDomainReportFlow,
-    visibleDomainOptionsByKey,
-  ]);
+  }
 
   const requestAdminDomainSwitch = useCallback((domainKey, domainLabel, opts = {}) => {
     const nextKey = String(domainKey || "").trim();
@@ -5856,7 +5910,6 @@ export default function App({
   // =========================
   // ADMIN LIGHT MAPPING QUEUE
   // =========================
-  const [mappingQueue, setMappingQueue] = useState([]);
   // rows: { lat, lng, tempId, domain, sl_id?, sign_type? }
 
   function queueOfficialLight(lat, lng) {
@@ -6978,8 +7031,13 @@ async function selectTenantScopedPublicRows(
         ? officialLights.filter(Boolean)
         : [];
       const cachedIncidentStateForStartup = cachedPublicMapCoreSnapshot?.incidentStateByKey || {};
-      const canUseCachedReportsForStartup = Boolean(
+      const shouldPreferFreshPublicIncidentReportsAtStartup = Boolean(
         !reportsAdminView
+        && activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+      );
+      const canUseCachedReportsForStartup = Boolean(
+        !shouldPreferFreshPublicIncidentReportsAtStartup
+        && !reportsAdminView
         && !initialFocusedIncidentId
         && cachedReportRowsForStartup.length > 0
       );
@@ -7006,7 +7064,21 @@ async function selectTenantScopedPublicRows(
       const shouldLoadRichStartupReports = Boolean(
         reportsAdminView && (myReportsOpen || openReportsOpen)
       );
-      const configuredIncidentDataSupportModulePromise = reportsAdminView
+      const configuredIncidentStartupDomainKeySet = new Set(
+        configuredIncidentDemandDomainKeysRef.current
+          .filter((domainKey) => configuredIncidentRuntimeEntryByDomain.has(domainKey))
+      );
+      if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
+        for (const option of visibleDomainOptionsRef.current || []) {
+          const domainKey = normalizeDomainKeyOrSlug(option?.key, { allowUnknown: true }) || normalizeDomainKey(option?.key);
+          if (!domainKey || domainKey === "streetlights") continue;
+          if (!configuredIncidentRuntimeEntryByDomain.has(domainKey)) continue;
+          configuredIncidentStartupDomainKeySet.add(domainKey);
+        }
+      }
+      const configuredIncidentStartupDomainKeys = Array.from(configuredIncidentStartupDomainKeySet);
+      const shouldLoadConfiguredIncidentRuntimeNow = configuredIncidentStartupDomainKeys.length > 0;
+      const configuredIncidentDataSupportModulePromise = shouldLoadConfiguredIncidentRuntimeNow
         ? loadDeferredConfiguredIncidentDataSupportModule()
         : null;
 
@@ -7115,7 +7187,7 @@ async function selectTenantScopedPublicRows(
       let reportData = cachedReportRowsForStartup;
       let repErr = null;
 
-      const configuredIncidentStateRuntimeHelpers = reportsAdminView
+      const configuredIncidentStateRuntimeHelpers = shouldLoadConfiguredIncidentRuntimeNow
         ? await loadDeferredConfiguredIncidentStateRuntimeHelpers()
         : null;
       const configuredIncidentDataSupportDeps = {
@@ -7143,7 +7215,7 @@ async function selectTenantScopedPublicRows(
       let configuredPersistedRecordStateCountByDomain = {};
       let configuredPersistedRecordStateLoadErrors = [];
 
-      if (reportsAdminView) {
+      if (shouldLoadConfiguredIncidentRuntimeNow && configuredIncidentDataSupportModulePromise) {
         const {
           loadConfiguredIncidentDomainDataShared,
           loadConfiguredIncidentPersistedRecordStateShared,
@@ -7154,8 +7226,7 @@ async function selectTenantScopedPublicRows(
           mergeLoadedConfiguredIncidentDomainKeysShared,
           mergeLoadedConfiguredIncidentPersistedStateDomainKeysShared,
         } = await configuredIncidentDataSupportModulePromise;
-        const configuredIncidentInitialLoadDomainKeys = configuredIncidentDemandDomainKeysRef.current
-          .filter((domainKey) => configuredIncidentRuntimeEntryByDomain.has(domainKey));
+        const configuredIncidentInitialLoadDomainKeys = configuredIncidentStartupDomainKeys;
 
         const configuredIncidentLoadResultsPromise = Promise.all(
           configuredIncidentInitialLoadDomainKeys.map(async (domainKey) => {
@@ -7311,7 +7382,7 @@ async function selectTenantScopedPublicRows(
       let normalizedPersistedIncidentRecordStateByDomain = {};
       let normalizedConfiguredIncidentSeededRowsStateByDomain = {};
       let normalizedConfiguredIncidentReportRowsStateByDomain = {};
-      if (reportsAdminView && configuredIncidentDataSupportModulePromise) {
+      if (configuredIncidentDataSupportModulePromise) {
         const {
           buildNormalizedConfiguredIncidentPersistedStateByDomainShared,
           buildNormalizedConfiguredIncidentRuntimeStateByDomainShared,
@@ -7663,6 +7734,7 @@ async function selectTenantScopedPublicRows(
     ));
     const shouldDeferCachedConfiguredIncidentHydrationBootstrap =
       !reportsAdminView
+      && activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
       && publicMapCoreCacheHydrated
       && canRefreshConfiguredDomainsFromCachedSnapshot
       && canRefreshPersistedStateFromCachedSnapshot
@@ -7739,6 +7811,7 @@ async function selectTenantScopedPublicRows(
     loading,
     startupWarmupReady,
     publicReadAccessReady,
+    activeMapLayerKey,
     publicMapCoreCacheHydrated,
     reportsAdminView,
     tenant?.ready,
@@ -7963,7 +8036,7 @@ async function selectTenantScopedPublicRows(
       ? (reducedWarmup ? 4200 : 3200)
       : 240;
 
-    void loadIncidentDeferredSupportModule().then(({ schedulePassiveStreetlightRuntimeShared }) => {
+    void loadDeferredIncidentSupportModule().then(({ schedulePassiveStreetlightRuntimeShared }) => {
       if (cancelled) return;
       dispose = schedulePassiveStreetlightRuntimeShared({
         publicReadClient,
@@ -8617,12 +8690,6 @@ async function selectTenantScopedPublicRows(
     || communityFeedEditor.open
     || residentFeedBadgeWarmupReady
   );
-  const shouldMountIncidentRepairProgressController = Boolean(
-    shouldHydrateIncidentRepairProgress
-    || incidentRepairProgressReadyForContext
-    || incidentRepairProgressAttemptedContextKey
-    || incidentRepairProgressReadyContextKey
-  );
   const secondaryWorkspaceVisible = Boolean(
     isWorkingConfirmOpen
     || incidentRepairConfirmOpen
@@ -9158,7 +9225,9 @@ async function selectTenantScopedPublicRows(
           isValidLatLng,
         })
         : null;
-    if (helper?.specializedMarkerCollectionCoversGenericRows && Array.isArray(specializedMarkers)) {
+    const specializedMarkersHaveVisibleCounts = Array.isArray(specializedMarkers)
+      && specializedMarkers.some((marker) => Number(marker?.count || 0) > 0);
+    if (helper?.specializedMarkerCollectionCoversGenericRows && specializedMarkersHaveVisibleCounts) {
       return specializedMarkers;
     }
     const sharedGenericBaseMarkers = Array.isArray(sharedIncidentBaseMarkersStateByDomain?.[domainKey])
@@ -9285,10 +9354,6 @@ async function selectTenantScopedPublicRows(
     nonStreetlightDomainMarkers,
   ]);
 
-  const viewerIdentityKey = useMemo(
-    () => reporterIdentityKey({ session, profile, guestInfo }),
-    [session?.user?.id, guestInfo?.email, guestInfo?.phone, guestInfo?.name]
-  );
   const shouldComputeStreetlightConfidenceState = Boolean(
     shouldNeedStreetlightConfidenceState
     && typeof computeStreetlightConfidenceSnapshot === "function"
@@ -9548,6 +9613,12 @@ async function selectTenantScopedPublicRows(
     )
   );
   const incidentRepairProgressReadyForContext = incidentRepairProgressReadyContextKey === incidentRepairProgressContextKey;
+  const shouldMountIncidentRepairProgressController = Boolean(
+    shouldHydrateIncidentRepairProgress
+    || incidentRepairProgressReadyForContext
+    || incidentRepairProgressAttemptedContextKey
+    || incidentRepairProgressReadyContextKey
+  );
 
   const getIncidentRepairSnapshot = useCallback((domain, incidentId) => {
     return resolveIncidentRepairSnapshotShared(domain, incidentId, {
@@ -9583,21 +9654,21 @@ async function selectTenantScopedPublicRows(
     });
   }, []);
 
-  const incidentLifecycleDomainTypeForDomain = useCallback((domainKeyRaw) => {
+  function incidentLifecycleDomainTypeForDomain(domainKeyRaw) {
     const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
     if (!domainKey) return resolveDomainType(domainKeyRaw, "");
     const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
     return resolveDomainType(domainKey, cfg?.domain_type);
-  }, [tenantDomainPublicConfigByDomain]);
+  }
 
-  const isPublicRepairEnabledForDomain = useCallback((domainKeyRaw) => {
+  function isPublicRepairEnabledForDomain(domainKeyRaw) {
     const domainKey = String(domainKeyRaw || "").trim().toLowerCase();
     if (!domainKey) return false;
     const cfg = tenantDomainPublicConfigByDomain?.[domainKey] || null;
     const domainType = incidentLifecycleDomainTypeForDomain(domainKey);
     if (domainType !== "incident_driven") return false;
     return cfg?.organization_monitored_repairs === false;
-  }, [incidentLifecycleDomainTypeForDomain, tenantDomainPublicConfigByDomain]);
+  }
 
   const isOrganizationManagedIncidentDomain = useCallback((domainKeyRaw) => {
     return isTenantOrganizationManagedIncidentDomain(domainKeyRaw);
@@ -10880,7 +10951,12 @@ async function selectTenantScopedPublicRows(
       } = await loadDeferredIncidentSupportModule();
       return dispatchDomainSubmitEmailNoticeRuntimeShared(args, {
         normalizeDomainKeyOrSlug,
-        resolveReportDomainLabel,
+        resolveReportDomainLabel: (domainKeyRaw, fallback = "Incident") => (
+          resolveReportDomainLabelShared(domainKeyRaw, fallback, {
+            runtimeDomainMeta: RUNTIME_DOMAIN_META,
+            reportDomainOptions: REPORT_DOMAIN_OPTIONS,
+          })
+        ),
         emailLocationEnrichmentWaitMs: EMAIL_LOCATION_ENRICHMENT_WAIT_MS,
         setTimeoutImpl: window.setTimeout.bind(window),
         tenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
@@ -11011,7 +11087,7 @@ async function selectTenantScopedPublicRows(
       guestInfoDraft,
       guestInfo,
       profile,
-      selectedDomain,
+      selectedDomain: domainReportTarget?.domain || selectedDomainMarker?.domain || adminReportDomain,
       viewerIdentityKey,
       domainReportTypeSelections,
       reports,
@@ -11699,7 +11775,7 @@ async function insertReportWithFallback(payload) {
   }
 
   // Helper: always forces map camera move
-  const flyToTarget = useCallback((pos, zoom) => {
+  function flyToTarget(pos, zoom) {
     return loadDeferredMapFlyRuntimeModule()
       .then(({ flyToTargetRuntimeShared }) => flyToTargetRuntimeShared(
         pos,
@@ -11719,7 +11795,7 @@ async function insertReportWithFallback(payload) {
         },
       ))
       .catch(() => {});
-  }, [mapCenter, mapZoom]);
+  }
 
   const flyToLightAndOpen = useCallback((pos, zoom, lightId) => {
     return loadDeferredMapFlyRuntimeModule()
@@ -12960,7 +13036,7 @@ async function insertReportWithFallback(payload) {
             setTenantVisibilityByDomain={setTenantVisibilityByDomain}
             setTenantVisibilityLoaded={setTenantVisibilityLoaded}
             resolvedTenantMapFeaturesTenantKey={resolvedTenantMapFeaturesTenantKey}
-            authReady={authReady}
+            authReady={publicReadAccessReady}
             activeTenantKey={activeTenantKey}
             getSupabaseTenantKey={getSupabaseTenantKey}
             createTenantScopedReadClient={createTenantScopedReadClient}

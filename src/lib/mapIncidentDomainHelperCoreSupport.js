@@ -32,7 +32,10 @@ export function readIncidentDomainConfiguredCollectionHelperStringShared(
   const resolved = resolveIncidentDomainHelperEntryShared(domainKeyRaw, deps);
   if (!resolved) return "";
   const kind = String(kindRaw || "seeded").trim().toLowerCase();
-  return String(kind === "reports" ? resolved.helper?.[reportsField] : resolved.helper?.[seededField] || "").trim();
+  const value = kind === "reports"
+    ? resolved.helper?.[reportsField]
+    : resolved.helper?.[seededField];
+  return String(value || "").trim();
 }
 
 export function incidentDomainResolveLookupValueByModeShared(modeRaw, row = null, domainKeyRaw = "", deps = {}) {

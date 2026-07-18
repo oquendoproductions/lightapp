@@ -1,4 +1,5 @@
 import { normalizeDomainKeyOrSlug } from "./mapReportParsingSupport.js";
+import { INCIDENT_DOMAIN_STARTUP_HELPERS } from "./mapIncidentDomainStartupConfig.js";
 import {
   DOMAIN_MARKER_GLYPHS,
   DOMAIN_MARKER_ICON_SRCS,
@@ -50,10 +51,15 @@ const INCIDENT_DOMAIN_LAZY_HELPERS = Object.freeze({
 
 export const INCIDENT_DOMAIN_HELPERS = Object.freeze(
   Object.fromEntries(
-    Object.entries(INCIDENT_DOMAIN_CORE_HELPERS).map(([domainKey, helper]) => [
+    Array.from(new Set([
+      ...Object.keys(INCIDENT_DOMAIN_STARTUP_HELPERS || {}),
+      ...Object.keys(INCIDENT_DOMAIN_CORE_HELPERS || {}),
+      ...Object.keys(INCIDENT_DOMAIN_LAZY_HELPERS || {}),
+    ])).map((domainKey) => [
       domainKey,
       Object.freeze({
-        ...helper,
+        ...(INCIDENT_DOMAIN_STARTUP_HELPERS[domainKey] || {}),
+        ...(INCIDENT_DOMAIN_CORE_HELPERS[domainKey] || {}),
         ...(INCIDENT_DOMAIN_LAZY_HELPERS[domainKey] || {}),
       }),
     ])

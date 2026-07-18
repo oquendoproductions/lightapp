@@ -120,6 +120,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       selectedDomainMarker,
     ]
   );
+  const [incidentPopupSupport, setIncidentPopupSupport] = useState(null);
   const resolveReportTypeOptionDetails = useCallback((row, domainKeyRaw) => (
     incidentPopupSupport?.resolveReportTypeOptionDetailsShared?.(row, domainKeyRaw, RUNTIME_DOMAIN_META) || []
   ), [incidentPopupSupport]);
@@ -202,7 +203,6 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     hideSubmittedBy: false,
     useSubmittedReportFormat: false,
   });
-  const [incidentPopupSupport, setIncidentPopupSupport] = useState(null);
   const [incidentLocationCopyToast, setIncidentLocationCopyToast] = useState(null);
   const incidentLocationCopyToastTimerRef = useRef(null);
   useEffect(() => () => {

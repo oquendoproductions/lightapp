@@ -92,9 +92,7 @@ export default function MapLazyTenantRuntimeController({
   useEffect(() => {
     let cancelled = false;
     let dispose = () => {};
-    const hasCachedTenantMapFeatures =
-      tenantMapFeaturesSourceRef.current === "cache"
-      || tenantMapFeaturesSourceRef.current === "default-pending";
+    const hasCachedTenantMapFeatures = tenantMapFeaturesSourceRef.current === "cache";
     if (hasCachedTenantMapFeatures && mapInteracting) {
       return () => {
         cancelled = true;

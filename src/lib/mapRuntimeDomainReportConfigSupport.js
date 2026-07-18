@@ -2,6 +2,7 @@ import {
   defaultDomainIssueOptions,
   defaultDomainTypeOptionConfigs,
   mergeDomainTypeOptionConfigsWithIssueOptions,
+  normalizeDomainIssueOptions,
 } from "./mapDomainConfigSupport";
 import { getIncidentDomainCoreHelperShared as getIncidentDomainHelperShared } from "./mapIncidentDomainCoreConfig.js";
 import { buildSharedIncidentAuthorizationDisclosures } from "./mapSharedIncidentSupport.js";
