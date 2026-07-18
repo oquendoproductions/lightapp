@@ -8,6 +8,9 @@ import { getCurrentLocationSnapshot, getNativeAppScope, getPlatformName, isNativ
 import { TenantProvider } from "./tenant/TenantContext";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
+import { installVitePreloadRecovery } from "./lib/vitePreloadRecovery.js";
+
+installVitePreloadRecovery();
 
 const App = lazy(() => import("./App.jsx"));
 const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));

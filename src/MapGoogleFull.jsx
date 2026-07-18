@@ -64,6 +64,10 @@ import {
   shouldWaitForAuthenticatedReportAccessShared,
 } from "./lib/mapStartupAccessSupport.js";
 import {
+  isExpectedPermissionErrorShared as isExpectedPermissionError,
+  isMissingFunctionErrorShared as isMissingFunctionError,
+} from "./lib/mapErrorClassifierSupport.js";
+import {
   BUILT_IN_DOMAIN_DISPLAY_PREFIXES,
   DEFAULT_PUBLIC_DOMAINS,
   INCIDENT_REPORTING_LAYER_KEY,
@@ -3549,28 +3553,6 @@ export default function App({
     ) return true;
 
     return false;
-  }
-
-  function isExpectedPermissionError(err) {
-    if (!err) return false;
-    const statusNum = Number(err?.status);
-    const rawCode = String(err?.code || "").toUpperCase();
-    const combined = `${String(err?.message || "").toLowerCase()} ${String(err?.details || "").toLowerCase()} ${String(err?.hint || "").toLowerCase()}`;
-    if (statusNum === 401 || statusNum === 403) return true;
-    if (rawCode === "42501" || rawCode === "PGRST301") return true;
-    return (
-      combined.includes("permission denied") ||
-      combined.includes("row-level security") ||
-      combined.includes("forbidden") ||
-      combined.includes("not authorized")
-    );
-  }
-
-  function isMissingFunctionError(err) {
-    if (!err) return false;
-    const rawCode = String(err?.code || "").toUpperCase();
-    const msg = String(err?.message || "").toLowerCase();
-    return rawCode === "42883" || rawCode === "PGRST202" || (msg.includes("function") && msg.includes("exist"));
   }
 
   function notifyDbConnectionIssue(errOrStatus) {
