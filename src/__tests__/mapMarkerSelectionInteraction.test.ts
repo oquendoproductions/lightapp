@@ -11,12 +11,13 @@ import {
   MARKER_SELECTION_VERTICAL_FRACTION,
   focusMapMarkerSelectionShared,
   markerSelectionCameraCenterShared,
+  markerSelectionPopupAnchorShared,
 } from "../lib/mapMarkerSelectionInteractionSupport";
 import {
-  MARKER_POPUP_ANCHOR_GAP,
-  MARKER_POPUP_CARD_Y_OFFSET,
+  MARKER_POPUP_POINTER_TIP_EXTENSION,
   resolveMarkerPopupPlacementShared,
 } from "../lib/mapPopupSharedConfig";
+import { MAP_MARKER_CENTER } from "../lib/mapMarkerSharedConfig";
 
 describe("map marker selection interactions", () => {
   it("centers a marker and raises zoom to 17 when below the selection minimum", () => {
@@ -24,15 +25,28 @@ describe("map marker selection interactions", () => {
     const setZoom = vi.fn();
     const setMapCenter = vi.fn();
     const setMapZoom = vi.fn();
+    const setPopupAnchorPixel = vi.fn();
     const mapZoomRef = { current: 12 };
 
     const focused = focusMapMarkerSelectionShared({ lat: 41.6, lng: -80.8 }, {
-      mapRef: { current: { getZoom: () => 12, getDiv: () => ({ clientHeight: 900 }), panTo, setZoom } },
+      mapRef: {
+        current: {
+          getZoom: () => 12,
+          getDiv: () => ({
+            clientWidth: 390,
+            clientHeight: 900,
+            getBoundingClientRect: () => ({ left: 0, top: 0 }),
+          }),
+          panTo,
+          setZoom,
+        },
+      },
       mapZoomRef,
       suppressMapClickRef: { current: { until: 0 } },
     }, {
       setMapCenter,
       setMapZoom,
+      setPopupAnchorPixel,
     });
 
     expect(focused).toBe(true);
@@ -42,6 +56,12 @@ describe("map marker selection interactions", () => {
     expect(setZoom).toHaveBeenCalledWith(MARKER_SELECTION_MIN_ZOOM);
     expect(setMapCenter).toHaveBeenCalledWith(cameraCenter);
     expect(setMapZoom).toHaveBeenCalledWith(MARKER_SELECTION_MIN_ZOOM);
+    expect(setPopupAnchorPixel).toHaveBeenCalledWith({
+      x: 195,
+      y: 600,
+      lat: 41.6,
+      lng: -80.8,
+    });
     expect(mapZoomRef.current).toBe(MARKER_SELECTION_MIN_ZOOM);
   });
 
@@ -78,6 +98,16 @@ describe("map marker selection interactions", () => {
     expect(projectedMarkerY).toBeCloseTo(viewportHeight * MARKER_SELECTION_VERTICAL_FRACTION, 5);
   });
 
+  it("uses the selection camera target as the popup marker anchor", () => {
+    expect(markerSelectionPopupAnchorShared({
+      getDiv: () => ({
+        clientWidth: 390,
+        clientHeight: 750,
+        getBoundingClientRect: () => ({ left: 12, top: 24 }),
+      }),
+    })).toEqual({ x: 207, y: 524 });
+  });
+
   it("anchors an above-marker popup pointer to the marker near a viewport edge", () => {
     const placement = resolveMarkerPopupPlacementShared({ x: 32, y: 650 }, {
       estimatedHeight: 340,
@@ -88,9 +118,9 @@ describe("map marker selection interactions", () => {
 
     expect(placement.frameStyle.transform).toBe("translate(-50%, -100%)");
     expect(placement.frameStyle.top).toBe(
-      650 - MARKER_POPUP_ANCHOR_GAP - MARKER_POPUP_CARD_Y_OFFSET
+      650 - MAP_MARKER_CENTER - MARKER_POPUP_POINTER_TIP_EXTENSION
     );
-    expect(placement.frameStyle.top).toBe(650 - 24 - 40);
+    expect(placement.frameStyle.top).toBe(650 - 17 - 10);
     expect(placement.arrowStyle.bottom).toBe(-7);
     expect(placement.arrowStyle.width).toBe(12);
     expect(placement.arrowStyle.transform).toContain("rotate(45deg)");

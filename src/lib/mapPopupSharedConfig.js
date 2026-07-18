@@ -1,6 +1,7 @@
+import { MAP_MARKER_CENTER } from "./mapMarkerSharedConfig.js";
+
 export const REPORTING_MIN_ZOOM = 17;
-export const MARKER_POPUP_ANCHOR_GAP = 24;
-export const MARKER_POPUP_CARD_Y_OFFSET = 40;
+export const MARKER_POPUP_POINTER_TIP_EXTENSION = 10;
 
 export const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim()
@@ -36,20 +37,20 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
   const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
   const topSafe = useAppShellLayout ? 150 : 102;
   const bottomSafe = useAppShellLayout ? 92 : 20;
-  // Keep the original marker/pointer clearance, then raise the complete popup
-  // frame so the rendered card does not cover the selected marker.
-  const anchorGap = MARKER_POPUP_ANCHOR_GAP;
-  const cardYOffset = MARKER_POPUP_CARD_Y_OFFSET;
   const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
   const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
   const frameLeft = clampedX - (width / 2);
   const arrowLeft = clamp(x - frameLeft, 18, width - 18);
-  const fitsAbove = y - estimatedHeight - anchorGap - cardYOffset >= topSafe;
-  const fitsBelow = y + estimatedHeight + anchorGap - cardYOffset <= usableBottom;
+  // The frame is anchored by the pointer tip, not by an estimated card edge.
+  // Put that tip at the top or bottom edge of the centered 34px marker.
+  const abovePointerTipY = y - MAP_MARKER_CENTER;
+  const belowPointerTipY = y + MAP_MARKER_CENTER;
+  const aboveCardBottomY = abovePointerTipY - MARKER_POPUP_POINTER_TIP_EXTENSION;
+  const belowCardTopY = belowPointerTipY + MARKER_POPUP_POINTER_TIP_EXTENSION;
+  const fitsAbove = aboveCardBottomY - estimatedHeight >= topSafe;
+  const fitsBelow = belowCardTopY + estimatedHeight <= usableBottom;
   const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
-  const top = placeBelow
-    ? clamp(y + anchorGap - cardYOffset, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
-    : clamp(y - anchorGap - cardYOffset, topSafe + estimatedHeight, usableBottom);
+  const top = placeBelow ? belowCardTopY : aboveCardBottomY;
 
   return {
     frameStyle: {

@@ -2502,6 +2502,7 @@ export default function App({
 }) {
   const tenant = useContext(TenantContext);
   const mapRef = useRef(null);
+  const selectedMarkerPopupAnchorRef = useRef(null);
   const desktopAccountMenuAnchorRef = useRef(null);
   const desktopAccountMenuPanelRef = useRef(null);
   const domainMenuAnchorRef = useRef(null);
@@ -10125,6 +10126,14 @@ async function selectTenantScopedPublicRows(
     const lat = Number(latRaw);
     const lng = Number(lngRaw);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    const selectionAnchor = selectedMarkerPopupAnchorRef.current;
+    if (
+      selectionAnchor
+      && Math.abs(Number(selectionAnchor.lat) - lat) < 1e-8
+      && Math.abs(Number(selectionAnchor.lng) - lng) < 1e-8
+    ) {
+      return { x: selectionAnchor.x, y: selectionAnchor.y };
+    }
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(lat, lng) || null;
   }, [popupProjectionRevision]);
 
@@ -10593,6 +10602,9 @@ async function selectTenantScopedPublicRows(
     }, {
       setMapCenter,
       setMapZoom,
+      setPopupAnchorPixel: (anchor) => {
+        selectedMarkerPopupAnchorRef.current = anchor;
+      },
     });
   }, []);
 
@@ -10951,6 +10963,7 @@ async function selectTenantScopedPublicRows(
   }
   // CMD+F: function closeAnyPopup
   function closeAnyPopup() {
+    selectedMarkerPopupAnchorRef.current = null;
     // Google Maps InfoWindow (official)
     try { setSelectedOfficialId(null); } catch {}
     try { setSelectedDomainMarker(null); } catch {}

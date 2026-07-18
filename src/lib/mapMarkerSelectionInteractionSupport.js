@@ -27,6 +27,20 @@ export function markerSelectionCameraCenterShared(marker = null, zoom = MARKER_S
   };
 }
 
+export function markerSelectionPopupAnchorShared(map = null) {
+  const mapDiv = map?.getDiv?.();
+  const width = Number(mapDiv?.clientWidth || 0);
+  const height = Number(mapDiv?.clientHeight || 0);
+  if (!(width > 0) || !(height > 0)) return null;
+  const mapRect = mapDiv?.getBoundingClientRect?.();
+  const left = Number(mapRect?.left || 0);
+  const top = Number(mapRect?.top || 0);
+  return {
+    x: left + (width / 2),
+    y: top + (height * MARKER_SELECTION_VERTICAL_FRACTION),
+  };
+}
+
 export function focusMapMarkerSelectionShared(marker = null, state = {}, deps = {}) {
   const lat = Number(marker?.lat);
   const lng = Number(marker?.lng);
@@ -46,8 +60,16 @@ export function focusMapMarkerSelectionShared(marker = null, state = {}, deps = 
       ?? 0
   );
   const center = markerSelectionCameraCenterShared({ lat, lng }, targetZoom, viewportHeight) || { lat, lng };
+  const popupAnchor = markerSelectionPopupAnchorShared(map);
 
   deps?.setMapCenter?.(center);
+  if (popupAnchor) {
+    deps?.setPopupAnchorPixel?.({
+      ...popupAnchor,
+      lat,
+      lng,
+    });
+  }
   if (state?.suppressMapClickRef?.current) {
     state.suppressMapClickRef.current.until = Date.now() + 700;
   }
