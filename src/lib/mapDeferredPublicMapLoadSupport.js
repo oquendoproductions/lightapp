@@ -324,16 +324,34 @@ export function normalizeResidentReportRowShared(row = null, state = {}, deps = 
 export function shouldRetrySparseFirstLoadShared(state = {}) {
   const registryDomainCount = Number(state.registryDomainCount || 0);
   const visibleDomainCount = Number(state.visibleDomainCount || 0);
+  const expectedConfiguredRuntimeDomainCount = Number(state.expectedConfiguredRuntimeDomainCount || 0);
+  const configuredDomainsWithAnyData = new Set();
+  for (const countsByDomain of [
+    state.configuredIncidentSeededCountByDomain,
+    state.configuredIncidentReportCountByDomain,
+    state.configuredPersistedRecordStateCountByDomain,
+  ]) {
+    if (!countsByDomain || typeof countsByDomain !== "object") continue;
+    for (const [domainKeyRaw, countRaw] of Object.entries(countsByDomain)) {
+      const count = Number(countRaw || 0);
+      if (count > 0) configuredDomainsWithAnyData.add(String(domainKeyRaw || "").trim());
+    }
+  }
+  const shouldRetryPartialConfiguredRuntime = Boolean(
+    expectedConfiguredRuntimeDomainCount > 1
+    && configuredDomainsWithAnyData.size > 0
+    && configuredDomainsWithAnyData.size < Math.min(expectedConfiguredRuntimeDomainCount, 2)
+  );
   return Boolean(
     !state.cancelled
     && !state.reportsAdminView
     && Number(state.loadAttempt || 0) < 2
     && Boolean(state.loadTenantKey)
-    && !state.genericIncidentDataLoaded
     && !state.repErr
     && !state.offErr
     && (
-      Math.max(registryDomainCount, visibleDomainCount) > 2
+      (!state.genericIncidentDataLoaded && Math.max(registryDomainCount, visibleDomainCount) > 2)
+      || shouldRetryPartialConfiguredRuntime
       || state.waitingForDomainConfigForRetry
     )
   );

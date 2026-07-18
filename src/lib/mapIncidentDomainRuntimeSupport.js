@@ -90,13 +90,14 @@ export function createMapIncidentDomainRuntimeHelpers(deps = {}) {
     const resolved = resolveIncidentDomainHelperEntry(domainKeyRaw);
     if (!resolved) return [];
     const helper = resolved.helper || {};
+    const reportRows = Array.isArray(context?.reportRows) ? context.reportRows : [];
     if (typeof helper?.buildIncidentRows === "function") {
       return helper.buildIncidentRows(context, resolved) || [];
     }
     const mode = String(helper?.buildIncidentRowsMode || "").trim();
     if (mode === "canonical_incident_rows_from_lookup") {
       const rows = [];
-      for (const row of Array.isArray(context?.reportRows) ? context.reportRows : []) {
+      for (const row of reportRows) {
         const lookupId = incidentDomainResolveLookupValueByMode(
           "incident_or_domain_report_id",
           row,
@@ -114,7 +115,34 @@ export function createMapIncidentDomainRuntimeHelpers(deps = {}) {
       }
       return rows;
     }
-    return [];
+    return reportRows.map((row) => {
+      const lat = Number(row?.lat);
+      const lng = Number(row?.lng);
+      const fallbackIncidentId =
+        Number.isFinite(lat) && Number.isFinite(lng) && typeof lightIdFor === "function"
+          ? String(lightIdFor(lat, lng) || "").trim()
+          : "";
+      const incidentId = String(
+        row?.incident_id
+        || row?.light_id
+        || incidentDomainResolveLookupValueByMode(
+          "incident_or_domain_report_id",
+          row,
+          resolved.domainKey
+        )
+        || fallbackIncidentId
+        || ""
+      ).trim();
+      if (!incidentId) return null;
+      return {
+        ...row,
+        domainKey: resolved.domainKey,
+        domain: resolved.domainKey,
+        incident_id: incidentId,
+        light_id: String(row?.light_id || incidentId).trim() || incidentId,
+        ts: Number(row?.ts || 0) || Date.parse(String(row?.created_at || "")) || 0,
+      };
+    }).filter(Boolean);
   }
 
   function incidentDomainBuildCoordsDisplayId(domainKeyRaw, { incidentId = "", lat = Number.NaN, lng = Number.NaN } = {}) {

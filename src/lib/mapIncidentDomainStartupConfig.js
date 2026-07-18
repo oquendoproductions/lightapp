@@ -32,6 +32,7 @@ export const INCIDENT_DOMAIN_STARTUP_HELPERS = Object.freeze({
     requiresConfiguredRuntime: true,
     roadRequiredDefault: true,
     suppressesGlyph: true,
+    specializedMarkerCollectionCoversGenericRows: true,
     fixTsMode: "incident_map",
     markerIconTextY: 15.3,
     markerIconTextSize: 14.5,
