@@ -2952,6 +2952,7 @@ export default function App({
   // Google Maps center (actual camera center)
   const [mapCenter, setMapCenter] = useState({ lat: USA_OVERVIEW[0], lng: USA_OVERVIEW[1] });
   const [mapBounds, setMapBounds] = useState(null);
+  const [popupProjectionRevision, setPopupProjectionRevision] = useState(0);
 
   const loadPublishedMapUiBundle = useCallback(async ({ preferCacheOnError = true } = {}) => {
     const {
@@ -10115,11 +10116,14 @@ async function selectTenantScopedPublicRows(
     return incidentStackRenderItems;
   }, [activeMapLayerKey, renderedDomainMarkers, mapZoom, incidentClusterRenderItems, incidentStackRenderItems]);
   const projectPopupPixel = useCallback((latRaw, lngRaw) => {
+    // Recreate this projector after the map camera settles so open popups use
+    // the marker's final pixel after an animated pan or zoom.
+    void popupProjectionRevision;
     const lat = Number(latRaw);
     const lng = Number(lngRaw);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return officialCanvasOverlayRef.current?.projectLatLngToContainerPixel?.(lat, lng) || null;
-  }, []);
+  }, [popupProjectionRevision]);
 
   const zoomToIncidentCluster = useCallback((clusterMarker) => {
     if (!clusterMarker) return;
@@ -12558,6 +12562,9 @@ async function insertReportWithFallback(payload) {
             setMapZoom,
             setMapCenter,
             setMapBounds,
+            refreshPopupProjection: () => {
+              setPopupProjectionRevision((prev) => (prev + 1) % 1_000_000);
+            },
             resumeFollowCameraFromLiveMotion,
           },
         );

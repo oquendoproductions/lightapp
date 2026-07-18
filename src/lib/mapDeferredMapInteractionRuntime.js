@@ -74,6 +74,10 @@ export function handleMapIdleRuntimeShared(state = {}, deps = {}) {
     typeof deps?.setMapBounds === "function"
       ? deps.setMapBounds
       : () => {};
+  const refreshPopupProjection =
+    typeof deps?.refreshPopupProjection === "function"
+      ? deps.refreshPopupProjection
+      : () => {};
   const resumeFollowCameraFromLiveMotion =
     typeof deps?.resumeFollowCameraFromLiveMotion === "function"
       ? deps.resumeFollowCameraFromLiveMotion
@@ -131,6 +135,11 @@ export function handleMapIdleRuntimeShared(state = {}, deps = {}) {
       return { north, east, south, west };
     });
   }
+
+  // Camera state can already contain the requested destination before an
+  // animated pan completes. Refresh independently so popup anchors are never
+  // left at their pre-pan projection.
+  refreshPopupProjection();
 
   if (shouldResumeTravelFollow) {
     resumeFollowCameraFromLiveMotion({ syncState: true });

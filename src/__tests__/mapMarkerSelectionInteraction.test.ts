@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   handleMapDragStartRuntimeShared,
+  handleMapIdleRuntimeShared,
   handleMapZoomChangedRuntimeShared,
 } from "../lib/mapDeferredMapInteractionRuntime";
 import { processGoogleMapTapRuntimeShared } from "../lib/mapDeferredMapTapRuntime";
@@ -112,6 +113,27 @@ describe("map marker selection interactions", () => {
     });
 
     expect(closeAnyPopup).not.toHaveBeenCalled();
+  });
+
+  it("reanchors an open popup after the map camera settles", () => {
+    const refreshPopupProjection = vi.fn();
+
+    handleMapIdleRuntimeShared({
+      mapRef: {
+        current: {
+          getZoom: () => 17,
+          getCenter: () => ({ lat: () => 41.6, lng: () => -80.8 }),
+          getBounds: () => null,
+        },
+      },
+    }, {
+      setMapZoom: vi.fn(),
+      setMapCenter: vi.fn(),
+      setMapBounds: vi.fn(),
+      refreshPopupProjection,
+    });
+
+    expect(refreshPopupProjection).toHaveBeenCalledTimes(1);
   });
 
   it("consumes an outside map tap after closing an open popup", () => {
