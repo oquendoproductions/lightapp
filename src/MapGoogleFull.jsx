@@ -58,6 +58,11 @@ import {
   sanitizeIncidentReportThreshold,
 } from "./lib/mapIncidentThresholdSupport";
 import {
+  isMapReadAccessReadyShared,
+  shouldHydratePublicMapCoreCacheShared,
+  shouldWaitForAuthenticatedReportAccessShared,
+} from "./lib/mapStartupAccessSupport.js";
+import {
   BUILT_IN_DOMAIN_DISPLAY_PREFIXES,
   DEFAULT_PUBLIC_DOMAINS,
   INCIDENT_REPORTING_LAYER_KEY,
@@ -4208,6 +4213,11 @@ export default function App({
   // Domain-report access should also unlock full incident visibility on the map.
   const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess || hasOrgDomainReportsAccess;
   const reportsAdminView = isReportsAdminView;
+  const waitingForAuthenticatedReportAccess = shouldWaitForAuthenticatedReportAccessShared({
+    authReady,
+    sessionUserId: session?.user?.id,
+    reportAccessResolved,
+  });
   const tenantScopedReadClient = useMemo(
     () => createTenantScopedReadClient(tenant?.tenantKey || activeTenantKey()),
     [tenant?.tenantKey]
@@ -4238,7 +4248,7 @@ export default function App({
   ).trim().toLowerCase();
 
   useLayoutEffect(() => {
-    if (!resolvedTenantBoundaryTenantKey) {
+    const clearMapCoreRuntime = () => {
       setPublicMapCoreCacheHydrated(false);
       setPublicMapCoreCacheHasIncidentData(false);
       setOfficialLights([]);
@@ -4259,30 +4269,22 @@ export default function App({
       cachedConfiguredIncidentReportRowsByDomainRef.current = {};
       cachedPersistedIncidentRecordStateByDomainRef.current = {};
       setPersistedIncidentRecordStateByDomain({});
+    };
+
+    const shouldHydratePublicCache = shouldHydratePublicMapCoreCacheShared({
+      tenantKey: resolvedTenantBoundaryTenantKey,
+      reportsAdminView,
+      shouldHydrateAuthEagerly: shouldHydrateMapAuthEagerly,
+      authReady,
+      waitingForReportAccess: waitingForAuthenticatedReportAccess,
+    });
+    if (!shouldHydratePublicCache) {
+      clearMapCoreRuntime();
       return;
     }
     const cachedMapCoreSnapshot = readCachedTenantPublicMapCoreSnapshot(resolvedTenantBoundaryTenantKey);
     if (!cachedMapCoreSnapshot) {
-      setPublicMapCoreCacheHydrated(false);
-      setPublicMapCoreCacheHasIncidentData(false);
-      setOfficialLights([]);
-      setReports([]);
-      setSharedIncidentReportRowsStateByDomain({});
-      setSharedIncidentBaseMarkersStateByDomain({});
-      setStreetlightOutageTsByLightId({});
-      setIncidentStateByKey({});
-      setFixedLights({});
-      setActionsByLightId({});
-      setConfiguredIncidentSeededRowsStateByDomain({});
-      setConfiguredIncidentReportRowsStateByDomain({});
-      setConfiguredIncidentLoadedDomainKeys([]);
-      setConfiguredIncidentPersistedStateLoadedDomainKeys([]);
-      configuredIncidentLoadingDomainKeysRef.current = new Set();
-      configuredIncidentPersistedStateLoadingDomainKeysRef.current = new Set();
-      cachedConfiguredIncidentSeededRowsByDomainRef.current = {};
-      cachedConfiguredIncidentReportRowsByDomainRef.current = {};
-      cachedPersistedIncidentRecordStateByDomainRef.current = {};
-      setPersistedIncidentRecordStateByDomain({});
+      clearMapCoreRuntime();
       return;
     }
     const cachedReports = Array.isArray(cachedMapCoreSnapshot.reports)
@@ -4329,7 +4331,13 @@ export default function App({
     configuredIncidentLoadingDomainKeysRef.current = new Set();
     configuredIncidentPersistedStateLoadingDomainKeysRef.current = new Set();
     setPersistedIncidentRecordStateByDomain(cachedMapCoreSnapshot.persistedIncidentRecordStateByDomain || {});
-  }, [reportsAdminView, resolvedTenantBoundaryTenantKey]);
+  }, [
+    authReady,
+    reportsAdminView,
+    resolvedTenantBoundaryTenantKey,
+    shouldHydrateMapAuthEagerly,
+    waitingForAuthenticatedReportAccess,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4961,7 +4969,11 @@ export default function App({
     reportsAdminView
     || initialCrossTenantAuthBridgeStateRef.current?.hasBridgeSessionHint
   );
-  const publicReadAccessReady = authReady || !shouldWaitForAuthBeforePublicMapLoad;
+  const publicReadAccessReady = isMapReadAccessReadyShared({
+    authReady,
+    shouldWaitForAuth: shouldWaitForAuthBeforePublicMapLoad,
+    waitingForReportAccess: waitingForAuthenticatedReportAccess,
+  });
   const canToggleReportedByInMyReports = canOpenDomainReports || canOpenAdminReports;
 
   useEffect(() => {
@@ -5159,6 +5171,7 @@ export default function App({
     Boolean(session?.user?.id) &&
     (tenantMapFeatures?.show_alert_icon !== false || tenantMapFeatures?.show_event_icon !== false);
   const shouldLoadReportAccessEagerly =
+    Boolean(session?.user?.id) ||
     accountMenuOpen ||
     mobileHeaderMenuOpen ||
     openReportsOpen ||
@@ -7013,12 +7026,13 @@ async function selectTenantScopedPublicRows(
     abuseFlagBannerShownRef.current = false;
   }, [isAdmin]);
 
-  const publicMapLoadAuthGateKey = shouldWaitForAuthBeforePublicMapLoad
-    ? String(authReady)
-    : "skip-auth-gate";
+  const publicMapLoadAuthGateKey = [
+    shouldWaitForAuthBeforePublicMapLoad ? String(authReady) : "skip-auth-gate",
+    waitingForAuthenticatedReportAccess ? "waiting-report-access" : String(reportAccessResolved),
+  ].join("::");
 
   useEffect(() => {
-    if (shouldWaitForAuthBeforePublicMapLoad && !authReady) return;
+    if (!publicReadAccessReady) return;
     if (tenant?.ready === false) return;
     let cancelled = false;
     let deferredStartupCleanup = null;
@@ -7735,7 +7749,7 @@ async function selectTenantScopedPublicRows(
       cancelled = true;
       deferredStartupCleanup?.();
     };
-  }, [applyIncidentStateSnapshot, publicMapLoadAuthGateKey, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken, shouldWaitForAuthBeforePublicMapLoad]);
+  }, [applyIncidentStateSnapshot, publicMapLoadAuthGateKey, publicReadAccessReady, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken]);
 
   useEffect(() => {
     if (!publicReadAccessReady || tenant?.ready === false) return;

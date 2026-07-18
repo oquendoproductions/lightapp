@@ -179,6 +179,17 @@ export default function MapLazyAuthBootstrapController({
         if (!mounted) return;
         setSession(nextSession || null);
         setAuthReady(true);
+        if (!nextSession && shouldHydrateMapAuthEagerly) {
+          openNotice(
+            "Session expired",
+            "Sign in again",
+            "Your saved session is no longer valid. The map is currently showing public incident visibility."
+          );
+          setAccountView("menu");
+          setAccountMenuOpen(false);
+          setAuthGateStep("login");
+          setAuthGateOpen(true);
+        }
       } catch (error) {
         if (!mounted) return;
         console.warn("[auth hydrate]", error?.message || error);
@@ -243,10 +254,14 @@ export default function MapLazyAuthBootstrapController({
     setAuthGateOpen,
     setAuthReady,
     setForgotPasswordOpen,
+    setAccountMenuOpen,
+    setAccountView,
+    setAuthGateStep,
     setRecoveryPasswordOpen,
     setRecoveryPasswordValue,
     setRecoveryPasswordValue2,
     setSession,
+    openNotice,
     shouldHydrateMapAuthEagerly,
     supabase,
   ]);
