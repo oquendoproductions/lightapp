@@ -38,7 +38,14 @@ export function buildIncidentDrivenPopupVariantShared({
     : popupVariantTitleMode === "popup_domain_label_or_fallback"
       ? String(popupInfo?.domainLabel || helper?.popupVariantTitle || "").trim()
       : String(helper?.popupVariantTitle || "").trim();
-  if (!popupVariantTitle) return null;
+  if (!popupVariantTitle) {
+    return buildSharedIncidentDrivenPopupVariant({
+      domainKey: normalizedDomainKey,
+      popupInfo,
+      marker,
+      sharedVariantConfig: null,
+    });
+  }
 
   const fallbackDisplayIdMode = String(helper?.popupVariantFallbackDisplayIdMode || "").trim();
   let fallbackDisplayId = "";

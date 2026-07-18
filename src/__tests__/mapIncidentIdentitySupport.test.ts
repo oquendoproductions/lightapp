@@ -12,6 +12,9 @@ import {
   buildSharedIncidentDrivenPopupVariant,
 } from "../lib/mapIncidentPopupVariantSupport";
 import {
+  buildIncidentDrivenPopupVariantShared,
+} from "../lib/mapDeferredSelectionPopupRenderSupport";
+import {
   buildSharedIncidentLocationCacheEntryPayload,
   buildSharedIncidentReportTarget,
   buildSharedIncidentSavedLocationContext,
@@ -410,6 +413,44 @@ describe("shared incident builders", () => {
       lat: 41.61025,
       lng: -80.8247,
       locationLabel: "968 Long Shadow Ln",
+    });
+  });
+
+  it("renders a generic shared popup when a domain has no popup-specific configuration", () => {
+    const popupInfo = {
+      incidentId: "graffiti:abc",
+      domainLabel: "Graffiti",
+      currentState: "reported",
+      rows: [{ id: 1 }],
+    };
+    const marker = { id: "marker-1", domain: "graffiti" };
+
+    expect(buildIncidentDrivenPopupVariantShared({
+      domainKey: "graffiti",
+      popupInfo,
+      marker,
+      getIncidentDomainHelper: () => ({}),
+      buildSharedConfiguredIncidentPopupVariantConfig,
+      buildSharedIncidentDrivenPopupVariant,
+    })).toEqual({
+      title: "Graffiti",
+      domainKey: "graffiti",
+      popupInfo,
+      renderModelOptions: {
+        domainIdFallback: "Incident",
+      },
+      adminAction: {
+        incidentId: "graffiti:abc",
+        currentState: "reported",
+        clusterReports: [{ id: 1 }],
+        showAllReports: true,
+        allowUpdateState: true,
+      },
+      resident: {
+        showActionSpacer: true,
+        reportIssue: {},
+        repairIncidentId: "graffiti:abc",
+      },
     });
   });
 });
