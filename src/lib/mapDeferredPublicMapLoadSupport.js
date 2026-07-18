@@ -670,6 +670,27 @@ export async function selectTenantScopedPublicRowsShared(
   return baseQuery();
 }
 
+export async function fetchTenantPublicMapReportsShared(client, tenantKeyRaw = "") {
+  const tenantKey = String(tenantKeyRaw || "").trim().toLowerCase();
+  if (!tenantKey || !client || typeof client.rpc !== "function") {
+    return {
+      data: [],
+      error: {
+        code: "CITYREPORT_TENANT_SCOPE_REQUIRED",
+        message: "A tenant-scoped public report read is required.",
+      },
+    };
+  }
+
+  const result = await client.rpc("public_map_reports", {
+    p_tenant_key: tenantKey,
+  });
+  return {
+    data: Array.isArray(result?.data) ? result.data : [],
+    error: result?.error || null,
+  };
+}
+
 export function scheduleDeferredStartupFollowupRuntimeShared(loadFn, {
   startupDelayMs = 4600,
   idleTimeoutMs = 1200,

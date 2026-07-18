@@ -512,7 +512,8 @@ const BULK_MAX_LIGHTS_PER_SUBMIT = 10;
 const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
-const TENANT_PUBLIC_MAP_CORE_CACHE_KEY = "cityreport_public_map_core_v1";
+// v2 excludes snapshots created from the formerly unscoped reports_public view.
+const TENANT_PUBLIC_MAP_CORE_CACHE_KEY = "cityreport_public_map_core_v2";
 const MAP_COMMUNITY_FEED_REMOTE_TABLE = "resident_community_feed_views";
 const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
 const NATIVE_PUSH_DEFAULT_ENABLED = "false";
@@ -7056,9 +7057,6 @@ async function selectTenantScopedPublicRows(
       setError("");
 
       const isAuthed = Boolean(session?.user?.id);
-      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
-      const reportSelectPublicWithNumber = "id, created_at, lat, lng, report_type, note, light_id, report_number, report_domain";
-      const reportSelectPublicLegacy = "id, created_at, lat, lng, report_type, note, light_id";
       const reportSelectMapRuntime = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, report_domain";
       const reportSelectFull = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, reporter_name, reporter_phone, reporter_email, report_domain";
       const actionsSelectPublic = "id, light_id, action, created_at";
@@ -7141,54 +7139,13 @@ async function selectTenantScopedPublicRows(
           return { data: nextReportData, error: nextRepErr };
         }
 
-        const first = await selectTenantScopedPublicRows(
+        const { fetchTenantPublicMapReportsShared } = await publicMapLoadSupportModulePromise;
+        const result = await fetchTenantPublicMapReportsShared(
           publicReadClient,
-          "reports_public",
-          reportSelectPublic,
-          loadTenantKey,
-          "created_at",
-          { preferScopedClient: preferScopedPublicReads }
+          loadTenantKey
         );
-        nextReportData = first?.data || [];
-        nextRepErr = first?.error || null;
-        const missingTenantKey =
-          nextRepErr && isMissingTenantKeyColumnError(nextRepErr);
-        if (missingTenantKey) {
-          const legacy = await selectTenantScopedPublicRows(
-            publicReadClient,
-            "reports_public",
-            reportSelectPublicLegacy,
-            loadTenantKey,
-            "created_at",
-            { preferScopedClient: preferScopedPublicReads }
-          );
-          nextReportData = legacy?.data || [];
-          nextRepErr = legacy?.error || null;
-        }
-
-        const { shouldFallbackFromPublicReportRowsShared } = await publicMapLoadSupportModulePromise;
-        if (shouldFallbackFromPublicReportRowsShared(nextReportData, nextRepErr)) {
-          try {
-            const fallback = await publicReadClient
-              .from("reports")
-              .select(reportSelectPublicWithNumber)
-              .eq("tenant_key", loadTenantKey)
-              .order("created_at", { ascending: false });
-            if (
-              !fallback.error
-              && Array.isArray(fallback.data)
-              && (
-                fallback.data.length > 0
-                || !(Array.isArray(nextReportData) && nextReportData.length > 0)
-              )
-            ) {
-              nextReportData = fallback.data;
-              nextRepErr = null;
-            }
-          } catch {
-            // keep original result
-          }
-        }
+        nextReportData = result?.data || [];
+        nextRepErr = result?.error || null;
 
         return { data: nextReportData, error: nextRepErr };
       };
