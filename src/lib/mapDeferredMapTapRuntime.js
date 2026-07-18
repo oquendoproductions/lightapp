@@ -111,6 +111,7 @@ export function processGoogleMapTapRuntimeShared(lat, lng, state = {}, deps = {}
     setSelectedQueuedTempId?.(null);
     setSelectedDomainMarker?.(null);
     setSelectedIncidentStackMarker?.(null);
+    return;
   }
 
   if (

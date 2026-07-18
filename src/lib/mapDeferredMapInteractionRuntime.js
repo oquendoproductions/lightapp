@@ -15,8 +15,13 @@ export function handleMapDragStartRuntimeShared(state = {}, deps = {}) {
     typeof deps?.setTravelFollowMode === "function"
       ? deps.setTravelFollowMode
       : () => {};
+  const closeAnyPopup =
+    typeof deps?.closeAnyPopup === "function"
+      ? deps.closeAnyPopup
+      : () => {};
 
   beginMapInteraction();
+  closeAnyPopup();
   if (state?.userDragPanRef) {
     state.userDragPanRef.current = true;
   }

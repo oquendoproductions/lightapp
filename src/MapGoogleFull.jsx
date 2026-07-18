@@ -141,6 +141,7 @@ import {
 } from "./lib/mapIncidentMarkerSourceSupport.js";
 import { resolveReportDomainLabelShared } from "./lib/mapReportDisplaySupport.js";
 import { createTenantScopedAuthedClient, createTenantScopedReadClient } from "./lib/tenantScopedSupabase";
+import { focusMapMarkerSelectionShared } from "./lib/mapMarkerSelectionInteractionSupport.js";
 
 const LazyAccountMenuPanel = lazy(() => import("./mapLazyAccountPanels.jsx").then((module) => ({ default: module.AccountMenuPanel })));
 const LazyMobileHeaderMenuPanel = lazy(() => import("./mapLazyAccountFlows.jsx").then((module) => ({ default: module.MobileHeaderMenuPanel })));
@@ -10568,9 +10569,30 @@ async function selectTenantScopedPublicRows(
     );
   }, [shouldComputeStreetlightConfidenceState, officialMarkerColorForViewer, streetlightConfidenceByLightId]);
 
+  const renderedOfficialLightById = useMemo(() => {
+    const byId = new Map();
+    for (const light of renderedOfficialLights || []) {
+      const id = String(light?.id || "").trim();
+      if (id) byId.set(id, light);
+    }
+    return byId;
+  }, [renderedOfficialLights]);
+
+  const focusMapMarkerSelection = useCallback((marker) => {
+    focusMapMarkerSelectionShared(marker, {
+      mapRef,
+      mapZoomRef,
+      suppressMapClickRef,
+    }, {
+      setMapCenter,
+      setMapZoom,
+    });
+  }, []);
+
   const handleOfficialMarkerClick = useCallback((lightId) => {
     primeMapSelectionPopupsWorkspace({ officialStreetlight: true });
     if (mappingMode) {
+      focusMapMarkerSelection(renderedOfficialLightById.get(String(lightId || "").trim()));
       setSelectedQueuedTempId(null);
       setSelectedDomainMarker(null);
       setSelectedOfficialId(lightId);
@@ -10582,19 +10604,21 @@ async function selectTenantScopedPublicRows(
       return;
     }
 
+    focusMapMarkerSelection(renderedOfficialLightById.get(String(lightId || "").trim()));
     setSelectedQueuedTempId(null);
     setSelectedDomainMarker(null);
     setSelectedOfficialId(lightId);
-  }, [mappingMode, bulkMode, toggleBulkSelect]);
+  }, [mappingMode, bulkMode, focusMapMarkerSelection, renderedOfficialLightById, toggleBulkSelect]);
 
   const openIncidentDomainMarker = useCallback((marker) => {
     if (!marker) return;
     primeMapSelectionPopupsWorkspace({ incidentDriven: true });
+    focusMapMarkerSelection(marker);
     setSelectedIncidentStackMarker(null);
     setSelectedQueuedTempId(null);
     setSelectedOfficialId(null);
     setSelectedDomainMarker(marker);
-  }, [primeMapSelectionPopupsWorkspace]);
+  }, [focusMapMarkerSelection, primeMapSelectionPopupsWorkspace]);
   const handleDisplayedDomainMarkerClick = useCallback((marker) => {
     if (!marker) return;
     setSelectedQueuedTempId(null);
@@ -10605,19 +10629,21 @@ async function selectTenantScopedPublicRows(
     }
     if (marker?.kind === "incident_stack") {
       primeMapSelectionPopupsWorkspace({ incidentStack: true });
+      focusMapMarkerSelection(marker);
       setSelectedDomainMarker(null);
       setSelectedIncidentStackMarker(marker);
       return;
     }
     openIncidentDomainMarker(marker);
-  }, [openIncidentDomainMarker, zoomToIncidentCluster]);
+  }, [focusMapMarkerSelection, openIncidentDomainMarker, zoomToIncidentCluster]);
   const handleQueuedPreviewMarkerClick = useCallback((queuedMarker) => {
     if (!queuedMarker) return;
     primeMapSelectionPopupsWorkspace({ queued: true });
+    focusMapMarkerSelection(queuedMarker);
     setSelectedOfficialId(null);
     setSelectedDomainMarker(null);
     setSelectedQueuedTempId(queuedMarker.tempId);
-  }, []);
+  }, [focusMapMarkerSelection]);
   const isPointVisibleInCurrentMapBounds = useCallback((lat, lng) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
     if (!mapBounds) return true;
@@ -12489,6 +12515,7 @@ async function insertReportWithFallback(payload) {
           },
           {
             beginMapInteraction,
+            closeAnyPopup,
             stopFollowCameraAnimation,
             setFollowCamera,
             setTravelFollowMode,
@@ -12496,7 +12523,7 @@ async function insertReportWithFallback(payload) {
         );
       })
       .catch(() => {});
-  }, [beginMapInteraction, followCamera, stopFollowCameraAnimation, travelFollowMode]);
+  }, [beginMapInteraction, closeAnyPopup, followCamera, stopFollowCameraAnimation, travelFollowMode]);
 
   const handleDeferredMapZoomChanged = useCallback(() => {
     void loadDeferredMapInteractionRuntimeModule()
