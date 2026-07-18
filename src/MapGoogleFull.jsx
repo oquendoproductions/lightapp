@@ -512,8 +512,8 @@ const BULK_MAX_LIGHTS_PER_SUBMIT = 10;
 const ABUSE_BACKOFF_KEY = "cityreport_abuse_backoff_v1";
 const ABUSE_BACKOFF_MAX_MS = 15 * 60 * 1000;
 const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
-// v2 excludes snapshots created from the formerly unscoped reports_public view.
-const TENANT_PUBLIC_MAP_CORE_CACHE_KEY = "cityreport_public_map_core_v2";
+// v3 excludes snapshots that may contain account-specific report visibility.
+const TENANT_PUBLIC_MAP_CORE_CACHE_KEY = "cityreport_public_map_core_v3";
 const MAP_COMMUNITY_FEED_REMOTE_TABLE = "resident_community_feed_views";
 const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
 const NATIVE_PUSH_DEFAULT_ENABLED = "false";
@@ -4268,8 +4268,8 @@ export default function App({
     const shouldHydratePublicCache = shouldHydratePublicMapCoreCacheShared({
       tenantKey: resolvedTenantBoundaryTenantKey,
       reportsAdminView,
-      shouldHydrateAuthEagerly: shouldHydrateMapAuthEagerly,
       authReady,
+      sessionUserId: session?.user?.id || "",
       waitingForReportAccess: waitingForAuthenticatedMapAccess,
     });
     if (!shouldHydratePublicCache) {
@@ -4329,6 +4329,7 @@ export default function App({
     authReady,
     reportsAdminView,
     resolvedTenantBoundaryTenantKey,
+    session?.user?.id,
     shouldHydrateMapAuthEagerly,
     waitingForAuthenticatedMapAccess,
   ]);
@@ -4391,7 +4392,7 @@ export default function App({
   }, [resolvedTenantBoundaryTenantKey]);
 
   useEffect(() => {
-    if (reportsAdminView || !resolvedTenantBoundaryTenantKey) return;
+    if (reportsAdminView || session?.user?.id || !resolvedTenantBoundaryTenantKey) return;
     cachedConfiguredIncidentSeededRowsByDomainRef.current = configuredIncidentSeededRowsStateByDomain || {};
     cachedConfiguredIncidentReportRowsByDomainRef.current = configuredIncidentReportRowsStateByDomain || {};
     cachedPersistedIncidentRecordStateByDomainRef.current = persistedIncidentRecordStateByDomain || {};
@@ -4451,6 +4452,7 @@ export default function App({
     streetlightOutageTsByLightId,
     reportsAdminView,
     resolvedTenantBoundaryTenantKey,
+    session?.user?.id,
     startupWarmupReady,
   ]);
 
@@ -4959,11 +4961,7 @@ export default function App({
       return normalizeExplicitDomainSelection(next, openReportsVisibleDomainKeys);
     });
   }, [openReportsVisibleDomainKeys]);
-  const shouldWaitForAuthBeforePublicMapLoad = Boolean(
-    reportsAdminView
-    || shouldHydrateMapAuthEagerly
-    || initialCrossTenantAuthBridgeStateRef.current?.hasBridgeSessionHint
-  );
+  const shouldWaitForAuthBeforePublicMapLoad = true;
   const publicReadAccessReady = isMapReadAccessReadyShared({
     authReady,
     shouldWaitForAuth: shouldWaitForAuthBeforePublicMapLoad,
@@ -7136,18 +7134,36 @@ async function selectTenantScopedPublicRows(
             .order("created_at", { ascending: false });
           nextReportData = result?.data || [];
           nextRepErr = result?.error || null;
-          return { data: nextReportData, error: nextRepErr };
+          return { data: nextReportData, publicData: [], error: nextRepErr };
         }
 
-        const { fetchTenantPublicMapReportsShared } = await publicMapLoadSupportModulePromise;
-        const result = await fetchTenantPublicMapReportsShared(
-          publicReadClient,
-          loadTenantKey
+        const {
+          fetchTenantPublicMapReportsShared,
+          mergeTenantPublicAndViewerReportsShared,
+        } = await publicMapLoadSupportModulePromise;
+        const [publicResult, viewerResult] = await Promise.all([
+          fetchTenantPublicMapReportsShared(publicReadClient, loadTenantKey),
+          isAuthed
+            ? authedReadClient
+                .from("reports")
+                .select(reportSelectMapRuntime)
+                .eq("tenant_key", loadTenantKey)
+                .eq("reporter_user_id", session.user.id)
+                .order("created_at", { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        const publicReportData = publicResult?.data || [];
+        const viewerReportData = viewerResult?.data || [];
+        if (viewerResult?.error && !isExpectedPermissionError(viewerResult.error)) {
+          console.warn("[viewer map reports] load warning:", viewerResult.error?.message || viewerResult.error);
+        }
+        nextReportData = mergeTenantPublicAndViewerReportsShared(
+          publicReportData,
+          viewerReportData
         );
-        nextReportData = result?.data || [];
-        nextRepErr = result?.error || null;
+        nextRepErr = publicResult?.error || null;
 
-        return { data: nextReportData, error: nextRepErr };
+        return { data: nextReportData, publicData: publicReportData, error: nextRepErr };
       };
 
       const fixedLightsPromise = shouldLoadStreetlightRuntimeNow
@@ -7179,7 +7195,11 @@ async function selectTenantScopedPublicRows(
         .catch((error) => ({ data: [], error }));
 
       const reportsResultPromise = canUseCachedReportsForStartup
-        ? Promise.resolve({ data: cachedReportRowsForStartup, error: null })
+        ? Promise.resolve({
+            data: cachedReportRowsForStartup,
+            publicData: cachedReportRowsForStartup,
+            error: null,
+          })
         : loadReportsNow();
       const officialLightsResultPromise = canUseCachedOfficialLightsForStartup
         ? Promise.resolve({ data: cachedOfficialLightRowsForStartup, error: null })
@@ -7317,6 +7337,7 @@ async function selectTenantScopedPublicRows(
 
       const liveReportsResult = await reportsResultPromise;
       reportData = liveReportsResult?.data || [];
+      const publicReportData = liveReportsResult?.publicData || [];
       repErr = liveReportsResult?.error || null;
 
       let officialData = cachedOfficialLightRowsForStartup;
@@ -7475,6 +7496,11 @@ async function selectTenantScopedPublicRows(
         : (reportData || [])
             .map(normalizeResidentReportRow)
             .filter(Boolean);
+      const normalizedPublicCacheReports = canUseCachedReportsForStartup
+        ? cachedReportRowsForStartup
+        : (publicReportData || [])
+            .map(normalizeResidentReportRow)
+            .filter(Boolean);
       const startupReportRuntimeState = derivePublicMapReportRuntimeState(
         normalizedPublicReports,
         normalizedOfficialLightIdSet,
@@ -7490,6 +7516,7 @@ async function selectTenantScopedPublicRows(
 
       const loadDeferredMapStartupData = async () => {
         let deferredNormalizedPublicReports = normalizedPublicReports;
+        let deferredNormalizedPublicCacheReports = normalizedPublicCacheReports;
         let deferredOfficialLightRows = normalizedOfficialLightRows;
         let deferredOfficialLightIdSet = normalizedOfficialLightIdSet;
         let deferredOfficialIdByAlias = officialIdByAlias;
@@ -7529,6 +7556,21 @@ async function selectTenantScopedPublicRows(
           deferredRepErr = deferredReportsResult?.error || null;
           if (!deferredRepErr) {
             deferredNormalizedPublicReports = (deferredReportsResult?.data || [])
+              .map((row) => normalizeResidentReportRowShared(row, {
+                officialIdByAlias: deferredOfficialIdByAlias,
+                officialIdByCoordKey: deferredOfficialIdByCoordKey,
+                officialLightRows: deferredOfficialLightRows,
+                knownAssetIdSetsByDomain: deferredKnownAssetIdSetsByDomain,
+                officialLightIdSet: deferredOfficialLightIdSet,
+              }, {
+                canonicalOfficialLightId,
+                normalizeDomainKeyOrSlug,
+                normalizeReportQuality,
+                reportDomainForRow,
+              }))
+              .filter(Boolean)
+              .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+            deferredNormalizedPublicCacheReports = (deferredReportsResult?.publicData || [])
               .map((row) => normalizeResidentReportRowShared(row, {
                 officialIdByAlias: deferredOfficialIdByAlias,
                 officialIdByCoordKey: deferredOfficialIdByCoordKey,
@@ -7644,32 +7686,34 @@ async function selectTenantScopedPublicRows(
           ? (cachedPublicMapCoreSnapshot?.incidentStateByKey || nextIncidentStateByKey)
           : nextIncidentStateByKey;
 
-        writeCachedTenantPublicMapCoreSnapshotShared(loadTenantKey, {
-          officialLights: deferredOfficialLightRows,
-          reports: deferredNormalizedPublicReports,
-          streetlightOutageTsByLightId: deferredStreetlightOutageTsByLightId,
-          incidentStateByKey: cachedIncidentStateByKeyForDeferredWrite,
-          fixedLights: cachedFixedLightsForDeferredWrite,
-          actionsByLightId: cachedActionsByLightIdForDeferredWrite,
-          configuredIncidentSeededRowsStateByDomain: normalizedConfiguredIncidentSeededRowsStateByDomain,
-          configuredIncidentReportRowsStateByDomain: normalizedConfiguredIncidentReportRowsStateByDomain,
-          persistedIncidentRecordStateByDomain: normalizedPersistedIncidentRecordStateByDomain,
-        }, {
-          tenantPublicMapCoreCacheStorageKey,
-          normalizeOfficialLightRow,
-          normalizeCachedPublicMapReports,
-          normalizeCachedStreetlightOutageTsByLightId,
-          derivePublicMapReportRuntimeState,
-          normalizeCachedIncidentStateByKey,
-          normalizeCachedFixedLights,
-          normalizeCachedConfiguredIncidentRowsByDomain:
-            configuredIncidentStateRuntimeHelpers?.normalizeCachedConfiguredIncidentRowsByDomainShared,
-          normalizeCachedPersistedIncidentRecordStateByDomain:
-            configuredIncidentStateRuntimeHelpers?.normalizeCachedPersistedIncidentRecordStateByDomainShared,
-          normalizeDomainKeyOrSlug,
-          incidentDomainNormalizeConfiguredReportRecord:
-            configuredIncidentStateRuntimeHelpers?.incidentDomainNormalizeConfiguredReportRecord,
-        });
+        if (!isAuthed && !reportsAdminView) {
+          writeCachedTenantPublicMapCoreSnapshotShared(loadTenantKey, {
+            officialLights: deferredOfficialLightRows,
+            reports: deferredNormalizedPublicCacheReports,
+            streetlightOutageTsByLightId: deferredStreetlightOutageTsByLightId,
+            incidentStateByKey: cachedIncidentStateByKeyForDeferredWrite,
+            fixedLights: cachedFixedLightsForDeferredWrite,
+            actionsByLightId: cachedActionsByLightIdForDeferredWrite,
+            configuredIncidentSeededRowsStateByDomain: normalizedConfiguredIncidentSeededRowsStateByDomain,
+            configuredIncidentReportRowsStateByDomain: normalizedConfiguredIncidentReportRowsStateByDomain,
+            persistedIncidentRecordStateByDomain: normalizedPersistedIncidentRecordStateByDomain,
+          }, {
+            tenantPublicMapCoreCacheStorageKey,
+            normalizeOfficialLightRow,
+            normalizeCachedPublicMapReports,
+            normalizeCachedStreetlightOutageTsByLightId,
+            derivePublicMapReportRuntimeState,
+            normalizeCachedIncidentStateByKey,
+            normalizeCachedFixedLights,
+            normalizeCachedConfiguredIncidentRowsByDomain:
+              configuredIncidentStateRuntimeHelpers?.normalizeCachedConfiguredIncidentRowsByDomainShared,
+            normalizeCachedPersistedIncidentRecordStateByDomain:
+              configuredIncidentStateRuntimeHelpers?.normalizeCachedPersistedIncidentRecordStateByDomainShared,
+            normalizeDomainKeyOrSlug,
+            incidentDomainNormalizeConfiguredReportRecord:
+              configuredIncidentStateRuntimeHelpers?.incidentDomainNormalizeConfiguredReportRecord,
+          });
+        }
 
         const loadHadConnectionFailure = hasConnectionLikeFailureShared([
           deferredRepErr,
@@ -12985,9 +13029,10 @@ async function insertReportWithFallback(payload) {
         <Suspense fallback={null}>
           <LazyMapAuthBootstrapController
             shouldHydrateMapAuthEagerly={shouldHydrateMapAuthEagerly}
+            hydrateImmediately={shouldWaitForAuthBeforePublicMapLoad}
             supabase={supabase}
             sessionUserId={session?.user?.id || ""}
-            authReady={publicReadAccessReady}
+            authReady={authReady}
             openNotice={openNotice}
             setSession={setSession}
             setAuthReady={setAuthReady}

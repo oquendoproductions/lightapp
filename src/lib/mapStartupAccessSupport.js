@@ -22,14 +22,15 @@ export function isMapReadAccessReadyShared({
 export function shouldHydratePublicMapCoreCacheShared({
   tenantKey = "",
   reportsAdminView = false,
-  shouldHydrateAuthEagerly = false,
   authReady = false,
+  sessionUserId = "",
   waitingForReportAccess = false,
 } = {}) {
   return Boolean(
     String(tenantKey || "").trim()
     && !reportsAdminView
-    && !(shouldHydrateAuthEagerly && !authReady)
+    && authReady
+    && !String(sessionUserId || "").trim()
     && !waitingForReportAccess
   );
 }

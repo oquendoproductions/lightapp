@@ -365,6 +365,24 @@ export function shouldFallbackFromPublicReportRowsShared(rows, error = null) {
   );
 }
 
+export function mergeTenantPublicAndViewerReportsShared(publicRows = [], viewerRows = []) {
+  const rowsById = new Map();
+  for (const row of publicRows || []) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    rowsById.set(id, row);
+  }
+  for (const row of viewerRows || []) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    rowsById.set(id, {
+      ...(rowsById.get(id) || {}),
+      ...row,
+    });
+  }
+  return Array.from(rowsById.values());
+}
+
 export function buildIncidentStateSnapshotShared(rows = [], deps = {}) {
   const nextIncidentStateByKey = {};
   for (const row of rows || []) {

@@ -58,7 +58,7 @@ describe("map startup access ordering", () => {
     })).toBe(false);
   });
 
-  it("allows resolved resident and anonymous public startup", () => {
+  it("allows resolved resident reads without hydrating the anonymous cache", () => {
     expect(isMapReadAccessReadyShared({
       authReady: true,
       shouldWaitForAuth: true,
@@ -67,8 +67,25 @@ describe("map startup access ordering", () => {
     expect(shouldHydratePublicMapCoreCacheShared({
       tenantKey: "testcity1",
       reportsAdminView: false,
-      shouldHydrateAuthEagerly: true,
       authReady: true,
+      sessionUserId: "user-1",
+      waitingForReportAccess: false,
+    })).toBe(false);
+  });
+
+  it("hydrates the public cache only after anonymous auth resolution", () => {
+    expect(shouldHydratePublicMapCoreCacheShared({
+      tenantKey: "testcity1",
+      reportsAdminView: false,
+      authReady: false,
+      sessionUserId: "",
+      waitingForReportAccess: false,
+    })).toBe(false);
+    expect(shouldHydratePublicMapCoreCacheShared({
+      tenantKey: "testcity1",
+      reportsAdminView: false,
+      authReady: true,
+      sessionUserId: "",
       waitingForReportAccess: false,
     })).toBe(true);
     expect(isMapReadAccessReadyShared({

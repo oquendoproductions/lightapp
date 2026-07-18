@@ -4,6 +4,7 @@ const loadCrossTenantAuthModule = () => import("./auth/crossTenantAuth");
 
 export default function MapLazyAuthBootstrapController({
   shouldHydrateMapAuthEagerly,
+  hydrateImmediately = false,
   supabase,
   sessionUserId,
   authReady,
@@ -198,7 +199,7 @@ export default function MapLazyAuthBootstrapController({
       }
     }
 
-    if (shouldHydrateMapAuthEagerly) {
+    if (shouldHydrateMapAuthEagerly || hydrateImmediately) {
       void hydrateSessionNow();
     } else if (typeof window === "undefined") {
       void hydrateSessionNow();
@@ -262,6 +263,7 @@ export default function MapLazyAuthBootstrapController({
     setRecoveryPasswordValue2,
     setSession,
     openNotice,
+    hydrateImmediately,
     shouldHydrateMapAuthEagerly,
     supabase,
   ]);
