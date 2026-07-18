@@ -1,5 +1,6 @@
 export const REPORTING_MIN_ZOOM = 17;
 export const MARKER_POPUP_ANCHOR_GAP = 24;
+export const MARKER_POPUP_CARD_Y_OFFSET = 40;
 
 export const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim()
@@ -35,19 +36,20 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
   const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
   const topSafe = useAppShellLayout ? 150 : 102;
   const bottomSafe = useAppShellLayout ? 92 : 20;
-  // The diamond tip ends at the top edge of the 34px marker, keeping the
-  // entire marker visible while preserving the original pointer treatment.
+  // Keep the original marker/pointer clearance, then raise the complete popup
+  // frame so the rendered card does not cover the selected marker.
   const anchorGap = MARKER_POPUP_ANCHOR_GAP;
+  const cardYOffset = MARKER_POPUP_CARD_Y_OFFSET;
   const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
   const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
   const frameLeft = clampedX - (width / 2);
   const arrowLeft = clamp(x - frameLeft, 18, width - 18);
-  const fitsAbove = y - estimatedHeight - anchorGap >= topSafe;
-  const fitsBelow = y + estimatedHeight + anchorGap <= usableBottom;
+  const fitsAbove = y - estimatedHeight - anchorGap - cardYOffset >= topSafe;
+  const fitsBelow = y + estimatedHeight + anchorGap - cardYOffset <= usableBottom;
   const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
   const top = placeBelow
-    ? clamp(y + anchorGap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
-    : clamp(y - anchorGap, topSafe + estimatedHeight, usableBottom);
+    ? clamp(y + anchorGap - cardYOffset, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
+    : clamp(y - anchorGap - cardYOffset, topSafe + estimatedHeight, usableBottom);
 
   return {
     frameStyle: {
