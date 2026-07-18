@@ -28,3 +28,25 @@ export function shouldHydratePublicMapCoreCacheShared({
     && !waitingForReportAccess
   );
 }
+
+function hasRows(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some((rows) => Array.isArray(rows) && rows.length > 0);
+}
+
+export function hasRenderableMapRuntimeDataShared({
+  reports = [],
+  officialLights = [],
+  sharedIncidentMarkersByDomain = {},
+  configuredIncidentSeededRowsByDomain = {},
+  configuredIncidentReportRowsByDomain = {},
+} = {}) {
+  return Boolean(
+    hasRows(reports)
+    || hasRows(officialLights)
+    || hasRows(sharedIncidentMarkersByDomain)
+    || hasRows(configuredIncidentSeededRowsByDomain)
+    || hasRows(configuredIncidentReportRowsByDomain)
+  );
+}

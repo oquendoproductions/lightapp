@@ -58,6 +58,7 @@ import {
   sanitizeIncidentReportThreshold,
 } from "./lib/mapIncidentThresholdSupport";
 import {
+  hasRenderableMapRuntimeDataShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
   shouldWaitForAuthenticatedReportAccessShared,
@@ -3103,6 +3104,14 @@ export default function App({
   const [sharedIncidentReportRowsStateByDomain, setSharedIncidentReportRowsStateByDomain] = useState({});
   const [sharedIncidentBaseMarkersStateByDomain, setSharedIncidentBaseMarkersStateByDomain] = useState({});
   const [sharedIncidentSpecializedMarkersByDomain, setSharedIncidentSpecializedMarkersByDomain] = useState({});
+  const hasRenderableMapRuntimeDataRef = useRef(false);
+  hasRenderableMapRuntimeDataRef.current = hasRenderableMapRuntimeDataShared({
+    reports,
+    officialLights,
+    sharedIncidentMarkersByDomain: sharedIncidentBaseMarkersStateByDomain,
+    configuredIncidentSeededRowsByDomain: configuredIncidentSeededRowsStateByDomain,
+    configuredIncidentReportRowsByDomain: configuredIncidentReportRowsStateByDomain,
+  });
   const [incidentDomainMarkerRuntimeHelpers, setIncidentDomainMarkerRuntimeHelpers] = useState(null);
   const [streetlightOutageTsByLightId, setStreetlightOutageTsByLightId] = useState({});
   const [picked, setPicked] = useState(null);
@@ -7050,7 +7059,11 @@ async function selectTenantScopedPublicRows(
           )
         : supabase;
       const preferScopedPublicReads = publicReadClient !== supabase;
-      setLoading(true);
+      // Keep an already-rendered map stable while resume/sparse retries refresh in the background.
+      // Access-scope changes clear runtime data first, so they still use the guarded loading state.
+      if (!hasRenderableMapRuntimeDataRef.current) {
+        setLoading(true);
+      }
       setError("");
 
       const isAuthed = Boolean(session?.user?.id);
@@ -12293,10 +12306,13 @@ async function insertReportWithFallback(payload) {
   const showInitialMapDataLoading =
     loading &&
     !mapHasAnyLoadedData;
+  const showResumeMapDataLoading =
+    resumeRefreshActive &&
+    !mapHasAnyLoadedData;
   const mapRefreshingNotice = UI_NOTICE_META?.map_refreshing || {};
   const mapLoadingMessage = tenant?.switchingTenant
     ? "Switching city..."
-    : (resumeRefreshActive || showInitialMapDataLoading)
+    : (showResumeMapDataLoading || showInitialMapDataLoading)
       ? String(mapRefreshingNotice?.title || "Loading map data...")
       : "";
   const canShowOfficialLightsByZoom = true;

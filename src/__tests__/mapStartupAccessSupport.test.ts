@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasRenderableMapRuntimeDataShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
   shouldWaitForAuthenticatedReportAccessShared,
@@ -55,6 +56,20 @@ describe("map startup access ordering", () => {
       authReady: false,
       shouldWaitForAuth: false,
       waitingForReportAccess: false,
+    })).toBe(true);
+  });
+
+  it("recognizes existing map data that should remain visible during a retry", () => {
+    expect(hasRenderableMapRuntimeDataShared()).toBe(false);
+    expect(hasRenderableMapRuntimeDataShared({
+      sharedIncidentMarkersByDomain: {
+        potholes: [{ id: "PH-1" }],
+      },
+    })).toBe(true);
+    expect(hasRenderableMapRuntimeDataShared({
+      configuredIncidentReportRowsByDomain: {
+        graffiti: [{ id: "GR-1" }],
+      },
     })).toBe(true);
   });
 });
