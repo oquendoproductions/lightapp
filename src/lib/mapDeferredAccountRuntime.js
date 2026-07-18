@@ -165,14 +165,21 @@ export function scheduleAdminStateLoadRuntimeShared(state = {}, deps = {}) {
     const userId = String(state.sessionUserId || "").trim();
     if (!userId) {
       deps.setIsAdmin(false);
+      deps.setAdminStateResolved(true);
       return;
     }
 
-    const { data, error } = await deps.supabase
-      .from("admins")
-      .select("user_id")
-      .eq("user_id", userId)
-      .maybeSingle();
+    let data = null;
+    let error = null;
+    try {
+      ({ data, error } = await deps.supabase
+        .from("admins")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle());
+    } catch (queryError) {
+      error = queryError;
+    }
 
     if (cancelled) return;
 
@@ -181,23 +188,33 @@ export function scheduleAdminStateLoadRuntimeShared(state = {}, deps = {}) {
         console.error(error);
       }
       deps.setIsAdmin(false);
+      deps.setAdminStateResolved(true);
       return;
     }
 
     const nextIsAdmin = Boolean(data?.user_id);
     deps.setIsAdmin(nextIsAdmin);
     deps.writeCachedUserAdminFlag(userId, nextIsAdmin);
+    deps.setAdminStateResolved(true);
   }
 
   const userId = String(state.sessionUserId || "").trim();
   if (!userId) {
     deps.setIsAdmin(false);
+    deps.setAdminStateResolved(true);
     return () => {
       cancelled = true;
     };
   }
 
   if (!state.shouldLoadAdminStateEagerly && !state.nonCriticalStartupReady) {
+    return () => {
+      cancelled = true;
+    };
+  }
+
+  if (state.shouldLoadAdminStateEagerly) {
+    void checkAdmin();
     return () => {
       cancelled = true;
     };
@@ -290,7 +307,16 @@ export function scheduleReportAccessLoadRuntimeShared(state = {}, deps = {}) {
     };
   }
 
-  void loadReportAccess();
+  void loadReportAccess().catch((error) => {
+    if (cancelled) return;
+    if (!deps.isExpectedPermissionError(error)) {
+      console.error(error);
+    }
+    deps.setCanAccessAdminReports(false);
+    deps.setCanAccessDomainReports(false);
+    deps.setCanEditDomainReports(false);
+    deps.setReportAccessResolved(true);
+  });
   return () => {
     cancelled = true;
   };

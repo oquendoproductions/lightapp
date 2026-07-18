@@ -41,6 +41,7 @@ export default function MapLazyAccountAccessController({
   isMissingFunctionError,
   buildProfileFallbackFromSession,
   setIsAdmin,
+  setAdminStateResolved,
   setCanAccessAdminReports,
   setCanAccessDomainReports,
   setCanEditDomainReports,
@@ -58,6 +59,8 @@ export default function MapLazyAccountAccessController({
   setMobileIncidentDomainMenuOpen,
   setManageForm,
 }) {
+  const shouldResolveAdminState = shouldLoadAdminStateEagerly || nonCriticalStartupReady;
+
   useEffect(() => {
     if (!authGateOpen) setLoginError("");
   }, [authGateOpen, authGateStep, setLoginError]);
@@ -172,12 +175,17 @@ export default function MapLazyAccountAccessController({
 
   useEffect(() => {
     const userId = String(sessionUserId || "").trim();
-    if (!userId) return undefined;
+    if (!userId) {
+      setIsAdmin(false);
+      setAdminStateResolved(true);
+      return undefined;
+    }
     const cachedAdminFlag = readCachedUserAdminFlagShared(userId);
     if (cachedAdminFlag !== null) {
       setIsAdmin(Boolean(cachedAdminFlag));
     }
-    if (!shouldLoadAdminStateEagerly && !nonCriticalStartupReady) return undefined;
+    setAdminStateResolved(false);
+    if (!shouldResolveAdminState) return undefined;
     let dispose = () => {};
     let cancelled = false;
 
@@ -189,16 +197,21 @@ export default function MapLazyAccountAccessController({
         dispose = scheduleAdminStateLoadRuntimeShared({
           sessionUserId: userId,
           shouldLoadAdminStateEagerly,
-          nonCriticalStartupReady,
+          nonCriticalStartupReady: shouldResolveAdminState,
           cachedAdminFlag,
         }, {
           supabase,
           isExpectedPermissionError,
           setIsAdmin,
+          setAdminStateResolved,
           writeCachedUserAdminFlag: writeCachedUserAdminFlagShared,
         });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        setIsAdmin(false);
+        setAdminStateResolved(true);
+      });
 
     return () => {
       cancelled = true;
@@ -206,10 +219,11 @@ export default function MapLazyAccountAccessController({
     };
   }, [
     isExpectedPermissionError,
-    nonCriticalStartupReady,
     sessionUserId,
+    setAdminStateResolved,
     setIsAdmin,
     shouldLoadAdminStateEagerly,
+    shouldResolveAdminState,
     supabase,
   ]);
 
@@ -222,13 +236,12 @@ export default function MapLazyAccountAccessController({
       setCanAccessAdminReports(false);
       setCanAccessDomainReports(false);
       setCanEditDomainReports(false);
-      setReportAccessResolved(false);
     } else {
       setCanAccessAdminReports(Boolean(cachedAccess.canAccessAdminReports));
       setCanAccessDomainReports(Boolean(cachedAccess.canAccessDomainReports));
       setCanEditDomainReports(Boolean(cachedAccess.canEditDomainReports));
-      setReportAccessResolved(true);
     }
+    setReportAccessResolved(!shouldLoadReportAccessEagerly && Boolean(cachedAccess));
     if (!shouldLoadReportAccessEagerly) return undefined;
     let dispose = () => {};
     let cancelled = false;
@@ -255,7 +268,13 @@ export default function MapLazyAccountAccessController({
           writeCachedUserReportAccess: writeCachedUserReportAccessShared,
         });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        setCanAccessAdminReports(false);
+        setCanAccessDomainReports(false);
+        setCanEditDomainReports(false);
+        setReportAccessResolved(true);
+      });
 
     return () => {
       cancelled = true;

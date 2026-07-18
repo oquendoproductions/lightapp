@@ -4,14 +4,15 @@ import {
   hasRenderableMapRuntimeDataShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
-  shouldWaitForAuthenticatedReportAccessShared,
+  shouldWaitForAuthenticatedMapAccessShared,
 } from "../lib/mapStartupAccessSupport.js";
 
 describe("map startup access ordering", () => {
   it("blocks map reads while an authenticated user's tenant access is unresolved", () => {
-    const waitingForReportAccess = shouldWaitForAuthenticatedReportAccessShared({
+    const waitingForReportAccess = shouldWaitForAuthenticatedMapAccessShared({
       authReady: true,
       sessionUserId: "user-1",
+      adminStateResolved: true,
       reportAccessResolved: false,
     });
 
@@ -26,6 +27,24 @@ describe("map startup access ordering", () => {
       shouldHydrateAuthEagerly: true,
       authReady: true,
       waitingForReportAccess,
+    })).toBe(false);
+  });
+
+  it("blocks map reads while platform admin status is unresolved", () => {
+    expect(shouldWaitForAuthenticatedMapAccessShared({
+      authReady: true,
+      sessionUserId: "user-1",
+      adminStateResolved: false,
+      reportAccessResolved: true,
+    })).toBe(true);
+  });
+
+  it("allows authenticated map reads only after both access checks resolve", () => {
+    expect(shouldWaitForAuthenticatedMapAccessShared({
+      authReady: true,
+      sessionUserId: "user-1",
+      adminStateResolved: true,
+      reportAccessResolved: true,
     })).toBe(false);
   });
 
@@ -57,6 +76,14 @@ describe("map startup access ordering", () => {
       shouldWaitForAuth: false,
       waitingForReportAccess: false,
     })).toBe(true);
+  });
+
+  it("blocks an eager persisted-session startup until authentication hydrates", () => {
+    expect(isMapReadAccessReadyShared({
+      authReady: false,
+      shouldWaitForAuth: true,
+      waitingForReportAccess: false,
+    })).toBe(false);
   });
 
   it("recognizes existing map data that should remain visible during a retry", () => {

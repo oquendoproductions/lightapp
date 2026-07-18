@@ -61,7 +61,7 @@ import {
   hasRenderableMapRuntimeDataShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
-  shouldWaitForAuthenticatedReportAccessShared,
+  shouldWaitForAuthenticatedMapAccessShared,
 } from "./lib/mapStartupAccessSupport.js";
 import {
   isExpectedPermissionErrorShared as isExpectedPermissionError,
@@ -4186,6 +4186,7 @@ export default function App({
     || initialPersistedSupabaseSessionHintRef.current
   );
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminStateResolved, setAdminStateResolved] = useState(false);
   const [canAccessAdminReports, setCanAccessAdminReports] = useState(false);
   const [canAccessDomainReports, setCanAccessDomainReports] = useState(false);
   const [canEditDomainReports, setCanEditDomainReports] = useState(false);
@@ -4204,9 +4205,10 @@ export default function App({
   // Domain-report access should also unlock full incident visibility on the map.
   const isReportsAdminView = isPlatformAdmin || hasOrgAdminReportsAccess || hasOrgDomainReportsAccess;
   const reportsAdminView = isReportsAdminView;
-  const waitingForAuthenticatedReportAccess = shouldWaitForAuthenticatedReportAccessShared({
+  const waitingForAuthenticatedMapAccess = shouldWaitForAuthenticatedMapAccessShared({
     authReady,
     sessionUserId: session?.user?.id,
+    adminStateResolved,
     reportAccessResolved,
   });
   const tenantScopedReadClient = useMemo(
@@ -4267,7 +4269,7 @@ export default function App({
       reportsAdminView,
       shouldHydrateAuthEagerly: shouldHydrateMapAuthEagerly,
       authReady,
-      waitingForReportAccess: waitingForAuthenticatedReportAccess,
+      waitingForReportAccess: waitingForAuthenticatedMapAccess,
     });
     if (!shouldHydratePublicCache) {
       clearMapCoreRuntime();
@@ -4327,7 +4329,7 @@ export default function App({
     reportsAdminView,
     resolvedTenantBoundaryTenantKey,
     shouldHydrateMapAuthEagerly,
-    waitingForAuthenticatedReportAccess,
+    waitingForAuthenticatedMapAccess,
   ]);
 
   useEffect(() => {
@@ -4958,12 +4960,13 @@ export default function App({
   }, [openReportsVisibleDomainKeys]);
   const shouldWaitForAuthBeforePublicMapLoad = Boolean(
     reportsAdminView
+    || shouldHydrateMapAuthEagerly
     || initialCrossTenantAuthBridgeStateRef.current?.hasBridgeSessionHint
   );
   const publicReadAccessReady = isMapReadAccessReadyShared({
     authReady,
     shouldWaitForAuth: shouldWaitForAuthBeforePublicMapLoad,
-    waitingForReportAccess: waitingForAuthenticatedReportAccess,
+    waitingForReportAccess: waitingForAuthenticatedMapAccess,
   });
   const canToggleReportedByInMyReports = canOpenDomainReports || canOpenAdminReports;
 
@@ -5177,6 +5180,7 @@ export default function App({
     Boolean(domainDisclosureGateTarget) ||
     Boolean(confirmReportTarget);
   const shouldLoadAdminStateEagerly =
+    Boolean(session?.user?.id) ||
     adminMenuOpen ||
     accountMenuOpen ||
     mobileHeaderMenuOpen ||
@@ -6039,8 +6043,8 @@ export default function App({
 
   useEffect(() => {
     const userId = String(session?.user?.id || "").trim();
-    if (userId) return;
-    setIsAdmin(false);
+    setAdminStateResolved(!userId);
+    if (!userId) setIsAdmin(false);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -7019,12 +7023,15 @@ async function selectTenantScopedPublicRows(
 
   const publicMapLoadAuthGateKey = [
     shouldWaitForAuthBeforePublicMapLoad ? String(authReady) : "skip-auth-gate",
-    waitingForAuthenticatedReportAccess ? "waiting-report-access" : String(reportAccessResolved),
+    waitingForAuthenticatedMapAccess
+      ? `waiting-map-access:${String(adminStateResolved)}:${String(reportAccessResolved)}`
+      : `map-access-ready:${String(adminStateResolved)}:${String(reportAccessResolved)}`,
   ].join("::");
 
   useEffect(() => {
     if (!publicReadAccessReady) return;
     if (tenant?.ready === false) return;
+    if (waitingForTenantDomainConfig) return;
     let cancelled = false;
     let deferredStartupCleanup = null;
     async function loadAll(loadAttempt = 0) {
@@ -7402,7 +7409,7 @@ async function selectTenantScopedPublicRows(
           configuredIncidentReportCountByDomain,
           configuredPersistedRecordStateCountByDomain,
           usingSharedSupabaseClient: publicReadClient === supabase,
-        }, { forceWarn: loadAttempt > 0 });
+        });
         await new Promise((resolve) => window.setTimeout(resolve, 250 * (loadAttempt + 1)));
         if (cancelled) return;
         return loadAll(loadAttempt + 1);
@@ -7744,7 +7751,7 @@ async function selectTenantScopedPublicRows(
       cancelled = true;
       deferredStartupCleanup?.();
     };
-  }, [applyIncidentStateSnapshot, publicMapLoadAuthGateKey, publicReadAccessReady, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken]);
+  }, [applyIncidentStateSnapshot, publicMapLoadAuthGateKey, publicReadAccessReady, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken, waitingForTenantDomainConfig]);
 
   useEffect(() => {
     if (!publicReadAccessReady || tenant?.ready === false) return;
@@ -13125,6 +13132,7 @@ async function insertReportWithFallback(payload) {
             isMissingFunctionError={isMissingFunctionError}
             buildProfileFallbackFromSession={buildProfileFallbackFromSession}
             setIsAdmin={setIsAdmin}
+            setAdminStateResolved={setAdminStateResolved}
             setCanAccessAdminReports={setCanAccessAdminReports}
             setCanAccessDomainReports={setCanAccessDomainReports}
             setCanEditDomainReports={setCanEditDomainReports}

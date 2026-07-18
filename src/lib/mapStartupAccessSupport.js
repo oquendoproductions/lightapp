@@ -1,9 +1,14 @@
-export function shouldWaitForAuthenticatedReportAccessShared({
+export function shouldWaitForAuthenticatedMapAccessShared({
   authReady = false,
   sessionUserId = "",
+  adminStateResolved = false,
   reportAccessResolved = false,
 } = {}) {
-  return Boolean(authReady && String(sessionUserId || "").trim() && !reportAccessResolved);
+  return Boolean(
+    authReady
+    && String(sessionUserId || "").trim()
+    && (!adminStateResolved || !reportAccessResolved)
+  );
 }
 
 export function isMapReadAccessReadyShared({
