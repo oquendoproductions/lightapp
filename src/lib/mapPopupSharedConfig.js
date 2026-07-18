@@ -1,4 +1,6 @@
 export const REPORTING_MIN_ZOOM = 17;
+export const MARKER_POPUP_ANCHOR_GAP = 44;
+export const MARKER_POPUP_POINTER_LENGTH = 27;
 
 export const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim()
@@ -34,9 +36,9 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
   const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
   const topSafe = useAppShellLayout ? 150 : 102;
   const bottomSafe = useAppShellLayout ? 92 : 20;
-  // The 12px diamond extends about 10px beyond the card. A 24px gap lands
-  // its tip on the top edge of the shared 34px marker without covering it.
-  const anchorGap = 24;
+  // Keep the card clear of the full marker and bridge the distance with a
+  // tapered pointer whose tip lands at the top edge of the 34px marker.
+  const anchorGap = MARKER_POPUP_ANCHOR_GAP;
   const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
   const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
   const frameLeft = clampedX - (width / 2);
@@ -64,24 +66,24 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
       ? {
           position: "absolute",
           left: arrowLeft,
-          top: -7,
-          width: 12,
-          height: 12,
+          top: -MARKER_POPUP_POINTER_LENGTH,
+          width: 22,
+          height: MARKER_POPUP_POINTER_LENGTH,
           background: "var(--sl-ui-modal-bg)",
-          borderLeft: "1px solid var(--sl-ui-modal-border)",
-          borderTop: "1px solid var(--sl-ui-modal-border)",
-          transform: "translateX(-50%) rotate(45deg)",
+          clipPath: "polygon(50% 0, 100% 100%, 0 100%)",
+          filter: "drop-shadow(0 -1px 0 var(--sl-ui-modal-border))",
+          transform: "translateX(-50%)",
         }
       : {
           position: "absolute",
           left: arrowLeft,
-          bottom: -7,
-          width: 12,
-          height: 12,
+          bottom: -MARKER_POPUP_POINTER_LENGTH,
+          width: 22,
+          height: MARKER_POPUP_POINTER_LENGTH,
           background: "var(--sl-ui-modal-bg)",
-          borderRight: "1px solid var(--sl-ui-modal-border)",
-          borderBottom: "1px solid var(--sl-ui-modal-border)",
-          transform: "translateX(-50%) rotate(45deg)",
+          clipPath: "polygon(0 0, 100% 0, 50% 100%)",
+          filter: "drop-shadow(0 1px 0 var(--sl-ui-modal-border))",
+          transform: "translateX(-50%)",
         },
   };
 }

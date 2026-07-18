@@ -12,7 +12,11 @@ import {
   focusMapMarkerSelectionShared,
   markerSelectionCameraCenterShared,
 } from "../lib/mapMarkerSelectionInteractionSupport";
-import { resolveMarkerPopupPlacementShared } from "../lib/mapPopupSharedConfig";
+import {
+  MARKER_POPUP_ANCHOR_GAP,
+  MARKER_POPUP_POINTER_LENGTH,
+  resolveMarkerPopupPlacementShared,
+} from "../lib/mapPopupSharedConfig";
 
 describe("map marker selection interactions", () => {
   it("centers a marker and raises zoom to 17 when below the selection minimum", () => {
@@ -83,8 +87,11 @@ describe("map marker selection interactions", () => {
     });
 
     expect(placement.frameStyle.transform).toBe("translate(-50%, -100%)");
-    expect(placement.frameStyle.top).toBe(626);
-    expect(placement.arrowStyle.bottom).toBe(-7);
+    expect(placement.frameStyle.top).toBe(650 - MARKER_POPUP_ANCHOR_GAP);
+    expect(placement.arrowStyle.bottom).toBe(-MARKER_POPUP_POINTER_LENGTH);
+    expect(
+      placement.frameStyle.top + MARKER_POPUP_POINTER_LENGTH
+    ).toBe(650 - 17);
     expect(placement.arrowStyle.left).toBe(22);
   });
 
