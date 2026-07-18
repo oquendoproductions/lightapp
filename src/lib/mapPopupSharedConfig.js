@@ -7,3 +7,81 @@ export const STREETLIGHT_UTILITY_REPORT_URL =
 export function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
+
+export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
+  const x = Number(pixel?.x);
+  const y = Number(pixel?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return {
+      frameStyle: { display: "none" },
+      arrowStyle: { display: "none" },
+    };
+  }
+
+  const viewportW = Number(
+    options?.viewportWidth
+      ?? (typeof window !== "undefined" ? window.innerWidth : 0)
+      ?? 0
+  );
+  const viewportH = Number(
+    options?.viewportHeight
+      ?? (typeof window !== "undefined" ? window.innerHeight : 0)
+      ?? 0
+  );
+  const estimatedHeight = Number(options?.estimatedHeight || 320);
+  const maxWidth = Number(options?.maxWidth || 280);
+  const useAppShellLayout = options?.useAppShellLayout === true;
+  const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
+  const topSafe = useAppShellLayout ? 150 : 102;
+  const bottomSafe = useAppShellLayout ? 92 : 20;
+  // The 12px diamond extends about 10px beyond the card. A 24px gap lands
+  // its tip on the top edge of the shared 34px marker without covering it.
+  const anchorGap = 24;
+  const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
+  const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
+  const frameLeft = clampedX - (width / 2);
+  const arrowLeft = clamp(x - frameLeft, 18, width - 18);
+  const fitsAbove = y - estimatedHeight - anchorGap >= topSafe;
+  const fitsBelow = y + estimatedHeight + anchorGap <= usableBottom;
+  const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
+  const top = placeBelow
+    ? clamp(y + anchorGap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
+    : clamp(y - anchorGap, topSafe + estimatedHeight, usableBottom);
+
+  return {
+    frameStyle: {
+      position: "absolute",
+      left: clampedX,
+      top,
+      transform: placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+      zIndex: 2600,
+      pointerEvents: "auto",
+      width,
+      maxWidth: "calc(100vw - 20px)",
+      maxHeight: `min(430px, ${Math.max(160, Math.round(usableBottom - topSafe - 18))}px)`,
+    },
+    arrowStyle: placeBelow
+      ? {
+          position: "absolute",
+          left: arrowLeft,
+          top: -7,
+          width: 12,
+          height: 12,
+          background: "var(--sl-ui-modal-bg)",
+          borderLeft: "1px solid var(--sl-ui-modal-border)",
+          borderTop: "1px solid var(--sl-ui-modal-border)",
+          transform: "translateX(-50%) rotate(45deg)",
+        }
+      : {
+          position: "absolute",
+          left: arrowLeft,
+          bottom: -7,
+          width: 12,
+          height: 12,
+          background: "var(--sl-ui-modal-bg)",
+          borderRight: "1px solid var(--sl-ui-modal-border)",
+          borderBottom: "1px solid var(--sl-ui-modal-border)",
+          transform: "translateX(-50%) rotate(45deg)",
+        },
+  };
+}

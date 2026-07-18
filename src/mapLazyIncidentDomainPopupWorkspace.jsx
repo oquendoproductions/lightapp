@@ -2,7 +2,11 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 import {
   formattedIncidentDisplayIdShared,
 } from "./lib/mapIncidentDisplaySupport.js";
-import { REPORTING_MIN_ZOOM, STREETLIGHT_UTILITY_REPORT_URL, clamp } from "./lib/mapPopupSharedConfig.js";
+import {
+  REPORTING_MIN_ZOOM,
+  STREETLIGHT_UTILITY_REPORT_URL,
+  resolveMarkerPopupPlacementShared,
+} from "./lib/mapPopupSharedConfig.js";
 import {
   resolveReportDomainLabelShared,
 } from "./lib/mapReportDisplaySupport.js";
@@ -840,66 +844,9 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     fontWeight: 900,
     lineHeight: 1,
   };
-  const getMarkerPopupPlacement = (pixel, { estimatedHeight = 320, maxWidth = 280 } = {}) => {
-    const x = Number(pixel?.x);
-    const y = Number(pixel?.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return {
-        frameStyle: { display: "none" },
-        arrowStyle: { display: "none" },
-      };
-    }
-    const viewportW = typeof window !== "undefined" ? Number(window.innerWidth || 0) : 0;
-    const viewportH = typeof window !== "undefined" ? Number(window.innerHeight || 0) : 0;
-    const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
-    const topSafe = useAppShellLayout ? 150 : 102;
-    const bottomSafe = useAppShellLayout ? 92 : 20;
-    const gap = 14;
-    const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
-    const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
-    const fitsAbove = y - estimatedHeight - gap >= topSafe;
-    const fitsBelow = y + estimatedHeight + gap <= usableBottom;
-    const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
-    const top = placeBelow
-      ? clamp(y + gap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
-      : clamp(y - gap, topSafe + estimatedHeight, usableBottom);
-    return {
-      frameStyle: {
-        position: "absolute",
-        left: clampedX,
-        top,
-        transform: placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
-        zIndex: 2600,
-        pointerEvents: "auto",
-        width,
-        maxWidth: "calc(100vw - 20px)",
-        maxHeight: `min(430px, ${Math.max(160, Math.round(usableBottom - topSafe - 18))}px)`,
-      },
-      arrowStyle: placeBelow
-        ? {
-            position: "absolute",
-            left: "50%",
-            top: -7,
-            width: 12,
-            height: 12,
-            background: "var(--sl-ui-modal-bg)",
-            borderLeft: "1px solid var(--sl-ui-modal-border)",
-            borderTop: "1px solid var(--sl-ui-modal-border)",
-            transform: "translateX(-50%) rotate(45deg)",
-          }
-        : {
-            position: "absolute",
-            left: "50%",
-            bottom: -7,
-            width: 12,
-            height: 12,
-            background: "var(--sl-ui-modal-bg)",
-            borderRight: "1px solid var(--sl-ui-modal-border)",
-            borderBottom: "1px solid var(--sl-ui-modal-border)",
-            transform: "translateX(-50%) rotate(45deg)",
-          },
-    };
-  };
+  const getMarkerPopupPlacement = (pixel, options = {}) => (
+    resolveMarkerPopupPlacementShared(pixel, { ...options, useAppShellLayout })
+  );
   const selectedDomainPopupPixel = useMemo(() => (
     selectedDomainMarker
       ? projectPopupPixel?.(selectedDomainMarker.lat, selectedDomainMarker.lng) || null

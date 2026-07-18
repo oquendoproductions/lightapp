@@ -7,8 +7,11 @@ import {
 import { processGoogleMapTapRuntimeShared } from "../lib/mapDeferredMapTapRuntime";
 import {
   MARKER_SELECTION_MIN_ZOOM,
+  MARKER_SELECTION_VERTICAL_FRACTION,
   focusMapMarkerSelectionShared,
+  markerSelectionCameraCenterShared,
 } from "../lib/mapMarkerSelectionInteractionSupport";
+import { resolveMarkerPopupPlacementShared } from "../lib/mapPopupSharedConfig";
 
 describe("map marker selection interactions", () => {
   it("centers a marker and raises zoom to 17 when below the selection minimum", () => {
@@ -19,7 +22,7 @@ describe("map marker selection interactions", () => {
     const mapZoomRef = { current: 12 };
 
     const focused = focusMapMarkerSelectionShared({ lat: 41.6, lng: -80.8 }, {
-      mapRef: { current: { getZoom: () => 12, panTo, setZoom } },
+      mapRef: { current: { getZoom: () => 12, getDiv: () => ({ clientHeight: 900 }), panTo, setZoom } },
       mapZoomRef,
       suppressMapClickRef: { current: { until: 0 } },
     }, {
@@ -28,9 +31,11 @@ describe("map marker selection interactions", () => {
     });
 
     expect(focused).toBe(true);
-    expect(panTo).toHaveBeenCalledWith({ lat: 41.6, lng: -80.8 });
+    const cameraCenter = panTo.mock.calls[0][0];
+    expect(cameraCenter.lng).toBe(-80.8);
+    expect(cameraCenter.lat).toBeGreaterThan(41.6);
     expect(setZoom).toHaveBeenCalledWith(MARKER_SELECTION_MIN_ZOOM);
-    expect(setMapCenter).toHaveBeenCalledWith({ lat: 41.6, lng: -80.8 });
+    expect(setMapCenter).toHaveBeenCalledWith(cameraCenter);
     expect(setMapZoom).toHaveBeenCalledWith(MARKER_SELECTION_MIN_ZOOM);
     expect(mapZoomRef.current).toBe(MARKER_SELECTION_MIN_ZOOM);
   });
@@ -41,16 +46,45 @@ describe("map marker selection interactions", () => {
     const setMapZoom = vi.fn();
 
     focusMapMarkerSelectionShared({ lat: 41.6, lng: -80.8 }, {
-      mapRef: { current: { getZoom: () => 19, panTo, setZoom } },
+      mapRef: { current: { getZoom: () => 19, getDiv: () => ({ clientHeight: 900 }), panTo, setZoom } },
       mapZoomRef: { current: 19 },
     }, {
       setMapCenter: vi.fn(),
       setMapZoom,
     });
 
-    expect(panTo).toHaveBeenCalledWith({ lat: 41.6, lng: -80.8 });
+    expect(panTo.mock.calls[0][0].lat).toBeGreaterThan(41.6);
+    expect(panTo.mock.calls[0][0].lng).toBe(-80.8);
     expect(setZoom).not.toHaveBeenCalled();
     expect(setMapZoom).not.toHaveBeenCalled();
+  });
+
+  it("places the selected marker at two-thirds of the map height", () => {
+    const marker = { lat: 41.6, lng: -80.8 };
+    const viewportHeight = 900;
+    const center = markerSelectionCameraCenterShared(marker, 17, viewportHeight);
+    const worldSize = 256 * (2 ** 17);
+    const worldY = (latitude: number) => {
+      const sin = Math.sin((latitude * Math.PI) / 180);
+      return 0.5 - (Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI));
+    };
+    const projectedMarkerY = (viewportHeight / 2) + ((worldY(marker.lat) - worldY(center.lat)) * worldSize);
+
+    expect(projectedMarkerY).toBeCloseTo(viewportHeight * MARKER_SELECTION_VERTICAL_FRACTION, 5);
+  });
+
+  it("anchors an above-marker popup pointer to the marker near a viewport edge", () => {
+    const placement = resolveMarkerPopupPlacementShared({ x: 32, y: 650 }, {
+      estimatedHeight: 340,
+      useAppShellLayout: true,
+      viewportWidth: 390,
+      viewportHeight: 844,
+    });
+
+    expect(placement.frameStyle.transform).toBe("translate(-50%, -100%)");
+    expect(placement.frameStyle.top).toBe(626);
+    expect(placement.arrowStyle.bottom).toBe(-7);
+    expect(placement.arrowStyle.left).toBe(22);
   });
 
   it("closes marker popups when a map drag begins", () => {
