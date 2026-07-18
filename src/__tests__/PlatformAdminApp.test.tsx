@@ -634,7 +634,7 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
-  async function openDomainsAndAssets() {
+  async function openMapFeatures() {
     const user = userEvent.setup();
     render(<PlatformAdminApp />);
 
@@ -644,9 +644,9 @@ describe("PlatformAdminApp", () => {
 
     await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
-    await user.selectOptions(screen.getByLabelText(/workspace section/i), "domains");
+    await user.selectOptions(screen.getByLabelText(/workspace section/i), "map-features");
 
-    await screen.findByRole("heading", { name: /domains \+ assets/i });
+    await screen.findByText(/^map features$/i, { selector: "div" });
     return { user };
   }
 
@@ -741,8 +741,8 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByText(/no organizations match this report category yet/i)).toBeInTheDocument();
   });
 
-  it("keeps map features behind an explicit edit flow in domains and assets", async () => {
-    const { user } = await openDomainsAndAssets();
+  it("keeps map features behind an explicit edit flow", async () => {
+    const { user } = await openMapFeatures();
 
     expect(screen.queryByRole("button", { name: /save domains \+ assets settings/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /edit map features/i })).toBeInTheDocument();
