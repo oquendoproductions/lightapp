@@ -66,3 +66,26 @@ export function dedupeIncidentMarkerRenderSourceShared(markers = [], deps = {}) 
   return Array.from(merged.values());
 }
 
+export function summarizeCanonicalIncidentMarkersInViewportShared(markers = [], deps = {}) {
+  const isPointVisible = typeof deps?.isPointVisible === "function"
+    ? deps.isPointVisible
+    : () => true;
+  const byDomain = {};
+  const incidentIdsByDomain = {};
+  let count = 0;
+
+  for (const marker of Array.isArray(markers) ? markers : []) {
+    const lat = Number(marker?.lat);
+    const lng = Number(marker?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !isPointVisible(lat, lng)) continue;
+    const domain = String(marker?.domain || "unknown").trim().toLowerCase() || "unknown";
+    const incidentId = String(marker?.incident_id || marker?.id || "").trim();
+    count += 1;
+    byDomain[domain] = Number(byDomain[domain] || 0) + 1;
+    if (!incidentIdsByDomain[domain]) incidentIdsByDomain[domain] = [];
+    if (incidentId) incidentIdsByDomain[domain].push(incidentId);
+  }
+
+  for (const ids of Object.values(incidentIdsByDomain)) ids.sort();
+  return { count, byDomain, incidentIdsByDomain };
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasRenderableMapRuntimeDataShared,
+  isIncidentMapSnapshotReadyShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
   shouldWaitForAuthenticatedMapAccessShared,
@@ -114,6 +115,29 @@ describe("map startup access ordering", () => {
       configuredIncidentReportRowsByDomain: {
         graffiti: [{ id: "GR-1" }],
       },
+    })).toBe(true);
+  });
+
+  it("publishes an incident snapshot only after access, config, data, and lifecycle sources settle", () => {
+    const complete = {
+      incidentLayerActive: true,
+      publicReadAccessReady: true,
+      waitingForTenantDomainConfig: false,
+      tenantDomainConfigLoaded: true,
+      loading: false,
+      pendingConfiguredDomainCount: 0,
+      pendingPersistedStateDomainCount: 0,
+    };
+
+    expect(isIncidentMapSnapshotReadyShared(complete)).toBe(true);
+    expect(isIncidentMapSnapshotReadyShared({ ...complete, publicReadAccessReady: false })).toBe(false);
+    expect(isIncidentMapSnapshotReadyShared({ ...complete, loading: true })).toBe(false);
+    expect(isIncidentMapSnapshotReadyShared({ ...complete, pendingConfiguredDomainCount: 1 })).toBe(false);
+    expect(isIncidentMapSnapshotReadyShared({ ...complete, pendingPersistedStateDomainCount: 1 })).toBe(false);
+    expect(isIncidentMapSnapshotReadyShared({
+      ...complete,
+      loading: true,
+      hasCompleteCachedSnapshot: true,
     })).toBe(true);
   });
 });

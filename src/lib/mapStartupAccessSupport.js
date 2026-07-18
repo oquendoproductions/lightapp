@@ -19,6 +19,27 @@ export function isMapReadAccessReadyShared({
   return Boolean((authReady || !shouldWaitForAuth) && !waitingForReportAccess);
 }
 
+export function isIncidentMapSnapshotReadyShared({
+  incidentLayerActive = false,
+  publicReadAccessReady = false,
+  waitingForTenantDomainConfig = false,
+  tenantDomainConfigLoaded = false,
+  loading = false,
+  hasCompleteCachedSnapshot = false,
+  pendingConfiguredDomainCount = 0,
+  pendingPersistedStateDomainCount = 0,
+} = {}) {
+  if (!incidentLayerActive) return true;
+  return Boolean(
+    publicReadAccessReady
+    && !waitingForTenantDomainConfig
+    && tenantDomainConfigLoaded
+    && (!loading || hasCompleteCachedSnapshot)
+    && Number(pendingConfiguredDomainCount || 0) === 0
+    && Number(pendingPersistedStateDomainCount || 0) === 0
+  );
+}
+
 export function shouldHydratePublicMapCoreCacheShared({
   tenantKey = "",
   reportsAdminView = false,

@@ -59,6 +59,7 @@ import {
 } from "./lib/mapIncidentThresholdSupport";
 import {
   hasRenderableMapRuntimeDataShared,
+  isIncidentMapSnapshotReadyShared,
   isMapReadAccessReadyShared,
   shouldHydratePublicMapCoreCacheShared,
   shouldWaitForAuthenticatedMapAccessShared,
@@ -136,6 +137,7 @@ import {
 } from "./lib/mapIncidentDomainHelperCoreSupport.js";
 import {
   dedupeIncidentMarkerRenderSourceShared,
+  summarizeCanonicalIncidentMarkersInViewportShared,
 } from "./lib/mapIncidentMarkerSourceSupport.js";
 import { resolveReportDomainLabelShared } from "./lib/mapReportDisplaySupport.js";
 import { createTenantScopedAuthedClient, createTenantScopedReadClient } from "./lib/tenantScopedSupabase";
@@ -7094,6 +7096,7 @@ async function selectTenantScopedPublicRows(
       );
       const canUseCachedIncidentStateForStartup = Boolean(
         !reportsAdminView
+        && activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
         && !initialFocusedIncidentId
         && Object.keys(cachedIncidentStateForStartup).length > 0
       );
@@ -7204,9 +7207,19 @@ async function selectTenantScopedPublicRows(
       const officialLightsResultPromise = canUseCachedOfficialLightsForStartup
         ? Promise.resolve({ data: cachedOfficialLightRowsForStartup, error: null })
         : loadOfficialLightsNow();
+      const shouldLoadIncidentStateAtStartup = Boolean(
+        activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
+        && !canUseCachedIncidentStateForStartup
+        && !shouldDeferIncidentStateForStartup
+      );
+      const incidentStateResultPromise = shouldLoadIncidentStateAtStartup
+        ? loadIncidentStateNow()
+        : Promise.resolve({ data: [], error: null });
 
       let reportData = cachedReportRowsForStartup;
       let repErr = null;
+      let startupIncidentStateErr = null;
+      let startupIncidentStateByKey = null;
 
       const configuredIncidentStateRuntimeHelpers = shouldLoadConfiguredIncidentRuntimeNow
         ? await loadDeferredConfiguredIncidentStateRuntimeHelpers()
@@ -7458,6 +7471,22 @@ async function selectTenantScopedPublicRows(
         scheduleDeferredStartupFollowupRuntimeShared,
         writeCachedTenantPublicMapCoreSnapshotShared,
       } = publicMapLoadSupportModule;
+      if (shouldLoadIncidentStateAtStartup) {
+        const startupIncidentStateResult = await incidentStateResultPromise;
+        if (cancelled) return;
+        startupIncidentStateErr = startupIncidentStateResult?.error || null;
+        if (startupIncidentStateErr) {
+          if (!isExpectedPermissionError(startupIncidentStateErr)) {
+            console.warn("[incident_state_current] load warning:", startupIncidentStateErr?.message || startupIncidentStateErr);
+          }
+        } else {
+          startupIncidentStateByKey = buildIncidentStateSnapshotShared(
+            startupIncidentStateResult?.data || [],
+            { incidentSnapshotKey }
+          );
+          applyIncidentStateSnapshot(startupIncidentStateByKey);
+        }
+      }
       const normalizedOfficialLightRows = (officialData || [])
         .map(normalizeOfficialLightRow)
         .filter(Boolean);
@@ -7608,18 +7637,22 @@ async function selectTenantScopedPublicRows(
           }
         }
 
-        const incidentStateResult = (canUseCachedIncidentStateForStartup || shouldDeferIncidentStateForStartup)
+        const incidentStateResult = (canUseCachedIncidentStateForStartup || shouldDeferIncidentStateForStartup || shouldLoadIncidentStateAtStartup)
           ? { data: [], error: null }
           : await loadIncidentStateNow();
         if (cancelled) return;
-        const incidentStateErr = (canUseCachedIncidentStateForStartup || shouldDeferIncidentStateForStartup)
-          ? null
+        const incidentStateErr = (canUseCachedIncidentStateForStartup || shouldDeferIncidentStateForStartup || shouldLoadIncidentStateAtStartup)
+          ? startupIncidentStateErr
           : (incidentStateResult?.error || null);
         deferredIncidentStateErr = incidentStateErr;
-        let nextIncidentStateByKey = canUseCachedIncidentStateForStartup
-          ? { ...cachedIncidentStateForStartup }
-          : {};
-        if (incidentStateErr) {
+        let nextIncidentStateByKey = shouldLoadIncidentStateAtStartup
+          ? { ...(startupIncidentStateByKey || {}) }
+          : canUseCachedIncidentStateForStartup
+            ? { ...cachedIncidentStateForStartup }
+            : {};
+        if (shouldLoadIncidentStateAtStartup) {
+          // The incident layer published this lifecycle snapshot atomically with its markers.
+        } else if (incidentStateErr) {
           if (!isExpectedPermissionError(incidentStateErr)) {
             console.warn("[incident_state_current] load warning:", incidentStateErr?.message || incidentStateErr);
           }
@@ -7628,7 +7661,7 @@ async function selectTenantScopedPublicRows(
             incidentStateResult?.data || [],
             { incidentSnapshotKey }
           );
-          if (!canUseCachedIncidentStateForStartup && !shouldDeferIncidentStateForStartup) {
+          if (!canUseCachedIncidentStateForStartup && !shouldDeferIncidentStateForStartup && !shouldLoadIncidentStateAtStartup) {
             applyIncidentStateSnapshot(nextIncidentStateByKey);
           }
         }
@@ -9846,20 +9879,27 @@ async function selectTenantScopedPublicRows(
     return "#fff";
   }, [shouldComputeStreetlightConfidenceState, viewerStreetlightRingOpenIdSet, viewerUtilityReportedLightIdSet, viewerSavedStreetlightLightIdSet]);
 
-  const suppressIncompleteIncidentDomainRender =
-    activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
-    && (
-      waitingForTenantDomainConfig
-      || (
-        tenantDomainConfigLoaded
-        && loading
-        && !(
-          publicMapCoreCacheHydrated
-          && publicMapCoreCacheHasIncidentData
-          && !reportsAdminView
-        )
-      )
-    );
+  const pendingConfiguredIncidentDomainKeys = configuredIncidentDemandDomainKeys.filter((domainKey) => (
+    configuredIncidentRuntimeEntryByDomain.has(domainKey)
+    && !configuredIncidentLoadedDomainKeySet.has(domainKey)
+  ));
+  const configuredIncidentDemandDomainKeySet = new Set(configuredIncidentDemandDomainKeys);
+  const pendingConfiguredIncidentPersistedStateDomainKeys = configuredIncidentPersistedStateSupportedDomainKeys.filter((domainKey) => (
+    configuredIncidentDemandDomainKeySet.has(domainKey)
+    && !configuredIncidentPersistedStateLoadedDomainKeySet.has(domainKey)
+  ));
+  const incidentMapSnapshotReady = isIncidentMapSnapshotReadyShared({
+    incidentLayerActive: activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY,
+    publicReadAccessReady,
+    waitingForTenantDomainConfig,
+    tenantDomainConfigLoaded,
+    loading,
+    // Open/fixed state must be fresh before the all-incidents snapshot publishes.
+    hasCompleteCachedSnapshot: false,
+    pendingConfiguredDomainCount: pendingConfiguredIncidentDomainKeys.length,
+    pendingPersistedStateDomainCount: pendingConfiguredIncidentPersistedStateDomainKeys.length,
+  });
+  const suppressIncompleteIncidentDomainRender = !incidentMapSnapshotReady;
 
   const renderedDomainMarkers = useMemo(() => {
     if (suppressIncompleteIncidentDomainRender) return [];
@@ -10752,6 +10792,17 @@ async function selectTenantScopedPublicRows(
   }, [isStreetlightsLayerActive, selectedOfficialId, visibleOfficialLightIdSet]);
 
   const displayedDomainMarkerViewportRuntime = useMemo(() => {
+    if (activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
+      const summary = summarizeCanonicalIncidentMarkersInViewportShared(
+        dedupedRenderedIncidentMarkers,
+        { isPointVisible: isPointVisibleInCurrentMapBounds }
+      );
+      return {
+        openReportsInViewCount: summary.count,
+        byDomain: summary.byDomain,
+        incidentIdsByDomain: summary.incidentIdsByDomain,
+      };
+    }
     const visibleMarkers = Array.isArray(displayedDomainMarkers) ? displayedDomainMarkers : [];
     if (!visibleMarkers.length) {
       return {
@@ -10759,23 +10810,44 @@ async function selectTenantScopedPublicRows(
       };
     }
     let openReportsInViewCount = 0;
-    const incidentLayerActive = activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY;
     for (const marker of visibleMarkers) {
       const lat = Number(marker?.lat);
       const lng = Number(marker?.lng);
       if (!isPointVisibleInCurrentMapBounds(lat, lng)) continue;
-      if (incidentLayerActive && (marker?.kind === "incident_cluster" || marker?.kind === "incident_stack")) {
-        openReportsInViewCount += Math.max(0, Number(marker?.incidentCount ?? marker?.markerCount ?? marker?.count ?? 0));
-        continue;
-      }
-      openReportsInViewCount += incidentLayerActive
-        ? 1
-        : Math.max(0, Number(marker?.reportCount ?? marker?.count ?? marker?.incidentCount ?? marker?.markerCount ?? 0));
+      openReportsInViewCount += Math.max(0, Number(marker?.reportCount ?? marker?.count ?? marker?.incidentCount ?? marker?.markerCount ?? 0));
     }
     return {
       openReportsInViewCount,
     };
-  }, [activeMapLayerKey, displayedDomainMarkers, isPointVisibleInCurrentMapBounds]);
+  }, [activeMapLayerKey, dedupedRenderedIncidentMarkers, displayedDomainMarkers, isPointVisibleInCurrentMapBounds]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY) return;
+    window.__CITYREPORT_INCIDENT_MAP_SNAPSHOT__ = {
+      tenantKey: String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase(),
+      ready: incidentMapSnapshotReady,
+      reportsAdminView: Boolean(reportsAdminView),
+      sourceIncidentCount: dedupedRenderedIncidentMarkers.length,
+      inViewIncidentCount: Number(displayedDomainMarkerViewportRuntime.openReportsInViewCount || 0),
+      byDomain: displayedDomainMarkerViewportRuntime.byDomain || {},
+      incidentIdsByDomain: displayedDomainMarkerViewportRuntime.incidentIdsByDomain || {},
+      lifecycleStateCount: Object.keys(incidentStateByKey || {}).length,
+      pendingConfiguredDomains: pendingConfiguredIncidentDomainKeys,
+      pendingPersistedStateDomains: pendingConfiguredIncidentPersistedStateDomainKeys,
+      bounds: mapBounds,
+    };
+  }, [
+    activeMapLayerKey,
+    dedupedRenderedIncidentMarkers,
+    displayedDomainMarkerViewportRuntime,
+    incidentMapSnapshotReady,
+    incidentStateByKey,
+    mapBounds,
+    pendingConfiguredIncidentDomainKeys,
+    pendingConfiguredIncidentPersistedStateDomainKeys,
+    reportsAdminView,
+    tenant?.tenantKey,
+  ]);
 
   const openReportsInViewCount = useMemo(() => {
     if (isStreetlightsLayerActive) {
