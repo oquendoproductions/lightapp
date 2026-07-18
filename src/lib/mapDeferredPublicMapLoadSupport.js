@@ -357,6 +357,14 @@ export function shouldRetrySparseFirstLoadShared(state = {}) {
   );
 }
 
+export function shouldFallbackFromPublicReportRowsShared(rows, error = null) {
+  return Boolean(
+    error
+    || !Array.isArray(rows)
+    || rows.length === 0
+  );
+}
+
 export function buildIncidentStateSnapshotShared(rows = [], deps = {}) {
   const nextIncidentStateByKey = {};
   for (const row of rows || []) {

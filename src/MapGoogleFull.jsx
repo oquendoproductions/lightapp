@@ -7040,7 +7040,7 @@ async function selectTenantScopedPublicRows(
       setError("");
 
       const isAuthed = Boolean(session?.user?.id);
-      const reportSelectPublic = "id, created_at, lat, lng, report_type, note, light_id";
+      const reportSelectPublic = "id, created_at, lat, lng, report_type, report_quality, note, light_id";
       const reportSelectPublicWithNumber = "id, created_at, lat, lng, report_type, note, light_id, report_number, report_domain";
       const reportSelectPublicLegacy = "id, created_at, lat, lng, report_type, note, light_id";
       const reportSelectMapRuntime = "id, created_at, lat, lng, report_type, report_quality, note, light_id, report_number, reporter_user_id, report_domain";
@@ -7150,22 +7150,22 @@ async function selectTenantScopedPublicRows(
           nextRepErr = legacy?.error || null;
         }
 
-        const publicReportRowsMissingDomain =
-          Array.isArray(nextReportData)
-          && nextReportData.length > 0
-          && nextReportData.every((row) => !normalizeDomainKeyOrSlug(row?.report_domain, { allowUnknown: true }));
-        if (
-          nextRepErr
-          || !(Array.isArray(nextReportData) && nextReportData.length)
-          || publicReportRowsMissingDomain
-        ) {
+        const { shouldFallbackFromPublicReportRowsShared } = await publicMapLoadSupportModulePromise;
+        if (shouldFallbackFromPublicReportRowsShared(nextReportData, nextRepErr)) {
           try {
             const fallback = await publicReadClient
               .from("reports")
               .select(reportSelectPublicWithNumber)
               .eq("tenant_key", loadTenantKey)
               .order("created_at", { ascending: false });
-            if (!fallback.error && Array.isArray(fallback.data)) {
+            if (
+              !fallback.error
+              && Array.isArray(fallback.data)
+              && (
+                fallback.data.length > 0
+                || !(Array.isArray(nextReportData) && nextReportData.length > 0)
+              )
+            ) {
               nextReportData = fallback.data;
               nextRepErr = null;
             }
@@ -9848,10 +9848,6 @@ async function selectTenantScopedPublicRows(
     if (suppressIncompleteIncidentDomainRender) return [];
     const isLoggedIn = Boolean(session?.user?.id);
     const adminView = Boolean(reportsAdminView);
-    const bypassPublicThresholdForExplicitIncidentSelection =
-      !adminView
-      && activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
-      && hasExplicitIncidentMapFilter;
     const shouldRestrictToCity = Boolean(restrictPublicMarkersToCity);
     const shapeIncidentMarkersForDomain = (domainKeyRaw, markersRaw = []) => {
       const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true }) || normalizeDomainKey(domainKeyRaw);
@@ -9887,7 +9883,7 @@ async function selectTenantScopedPublicRows(
         }
 
         if (!adminView) {
-          const isPublic = bypassPublicThresholdForExplicitIncidentSelection || count >= publicVisibilityMin;
+          const isPublic = count >= publicVisibilityMin;
           const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
           if (!isPublic && !isPrivateOwn) continue;
           if (!isPublic && isPrivateOwn) {
@@ -9945,7 +9941,6 @@ async function selectTenantScopedPublicRows(
     getIncidentRepairSnapshot,
     isPublicRepairEnabledForDomain,
     incidentPublicVisibilityThresholdForDomain,
-    hasExplicitIncidentMapFilter,
     publicMapCoreCacheHasIncidentData,
     publicMapCoreCacheHydrated,
     session?.user?.id,
