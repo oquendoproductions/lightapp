@@ -1,6 +1,5 @@
 export const REPORTING_MIN_ZOOM = 17;
-export const MARKER_POPUP_CARD_Y_OFFSET = 40;
-export const MARKER_POPUP_ANCHOR_GAP = 44;
+export const MARKER_POPUP_ANCHOR_GAP = 24;
 
 export const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim()
@@ -36,19 +35,19 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
   const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
   const topSafe = useAppShellLayout ? 150 : 102;
   const bottomSafe = useAppShellLayout ? 92 : 20;
-  // Start from the currently deployed card position and move it exactly 40px
-  // up. Keep that translation independent from the restored pointer geometry.
+  // The diamond tip ends at the top edge of the 34px marker, keeping the
+  // entire marker visible while preserving the original pointer treatment.
   const anchorGap = MARKER_POPUP_ANCHOR_GAP;
   const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
   const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
   const frameLeft = clampedX - (width / 2);
   const arrowLeft = clamp(x - frameLeft, 18, width - 18);
-  const fitsAbove = y - estimatedHeight - anchorGap - MARKER_POPUP_CARD_Y_OFFSET >= topSafe;
-  const fitsBelow = y + estimatedHeight + anchorGap - MARKER_POPUP_CARD_Y_OFFSET <= usableBottom;
+  const fitsAbove = y - estimatedHeight - anchorGap >= topSafe;
+  const fitsBelow = y + estimatedHeight + anchorGap <= usableBottom;
   const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
   const top = placeBelow
-    ? clamp(y + anchorGap - MARKER_POPUP_CARD_Y_OFFSET, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
-    : clamp(y - anchorGap - MARKER_POPUP_CARD_Y_OFFSET, topSafe + estimatedHeight, usableBottom);
+    ? clamp(y + anchorGap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
+    : clamp(y - anchorGap, topSafe + estimatedHeight, usableBottom);
 
   return {
     frameStyle: {

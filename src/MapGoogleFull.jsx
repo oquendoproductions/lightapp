@@ -10115,6 +10115,9 @@ async function selectTenantScopedPublicRows(
     if (Number(mapZoom) <= INCIDENT_CLUSTER_MAX_ZOOM) return incidentClusterRenderItems;
     return incidentStackRenderItems;
   }, [activeMapLayerKey, renderedDomainMarkers, mapZoom, incidentClusterRenderItems, incidentStackRenderItems]);
+  const refreshPopupProjection = useCallback(() => {
+    setPopupProjectionRevision((prev) => (prev + 1) % 1_000_000);
+  }, []);
   const projectPopupPixel = useCallback((latRaw, lngRaw) => {
     // Recreate this projector after the map camera settles so open popups use
     // the marker's final pixel after an animated pan or zoom.
@@ -12548,6 +12551,9 @@ async function insertReportWithFallback(payload) {
   }, [beginMapInteraction]);
 
   const handleDeferredMapIdle = useCallback(() => {
+    // Reproject immediately from Google's settled camera. Deferring this until
+    // the interaction runtime loads can leave a lazy popup at its pre-pan pixel.
+    refreshPopupProjection();
     void loadDeferredMapInteractionRuntimeModule()
       .then(({ handleMapIdleRuntimeShared }) => {
         handleMapIdleRuntimeShared(
@@ -12562,15 +12568,12 @@ async function insertReportWithFallback(payload) {
             setMapZoom,
             setMapCenter,
             setMapBounds,
-            refreshPopupProjection: () => {
-              setPopupProjectionRevision((prev) => (prev + 1) % 1_000_000);
-            },
             resumeFollowCameraFromLiveMotion,
           },
         );
       })
       .catch(() => {});
-  }, [endMapInteractionSoon, followCamera, resumeFollowCameraFromLiveMotion, travelFollowMode]);
+  }, [endMapInteractionSoon, followCamera, refreshPopupProjection, resumeFollowCameraFromLiveMotion, travelFollowMode]);
 
   const processGoogleMapTap = useCallback((lat, lng) => {
     void loadDeferredMapTapRuntimeModule()
