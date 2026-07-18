@@ -14,7 +14,7 @@ import {
 } from "../lib/mapMarkerSelectionInteractionSupport";
 import {
   MARKER_POPUP_ANCHOR_GAP,
-  MARKER_POPUP_POINTER_LENGTH,
+  MARKER_POPUP_CARD_Y_OFFSET,
   resolveMarkerPopupPlacementShared,
 } from "../lib/mapPopupSharedConfig";
 
@@ -87,11 +87,11 @@ describe("map marker selection interactions", () => {
     });
 
     expect(placement.frameStyle.transform).toBe("translate(-50%, -100%)");
-    expect(placement.frameStyle.top).toBe(650 - MARKER_POPUP_ANCHOR_GAP);
-    expect(placement.arrowStyle.bottom).toBe(-MARKER_POPUP_POINTER_LENGTH);
-    expect(
-      placement.frameStyle.top + MARKER_POPUP_POINTER_LENGTH
-    ).toBe(650 - 17);
+    expect(placement.frameStyle.top).toBe(650 - MARKER_POPUP_ANCHOR_GAP - MARKER_POPUP_CARD_Y_OFFSET);
+    expect(placement.frameStyle.top).toBe(650 - 44 - MARKER_POPUP_CARD_Y_OFFSET);
+    expect(placement.arrowStyle.bottom).toBe(-7);
+    expect(placement.arrowStyle.width).toBe(12);
+    expect(placement.arrowStyle.transform).toContain("rotate(45deg)");
     expect(placement.arrowStyle.left).toBe(22);
   });
 

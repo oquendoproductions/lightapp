@@ -1,6 +1,6 @@
 export const REPORTING_MIN_ZOOM = 17;
+export const MARKER_POPUP_CARD_Y_OFFSET = 40;
 export const MARKER_POPUP_ANCHOR_GAP = 44;
-export const MARKER_POPUP_POINTER_LENGTH = 27;
 
 export const STREETLIGHT_UTILITY_REPORT_URL =
   String(import.meta.env.VITE_STREETLIGHT_UTILITY_REPORT_URL || "").trim()
@@ -36,19 +36,19 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
   const width = Math.min(maxWidth, Math.max(210, (viewportW || 360) - 20));
   const topSafe = useAppShellLayout ? 150 : 102;
   const bottomSafe = useAppShellLayout ? 92 : 20;
-  // Keep the card clear of the full marker and bridge the distance with a
-  // tapered pointer whose tip lands at the top edge of the 34px marker.
+  // Start from the currently deployed card position and move it exactly 40px
+  // up. Keep that translation independent from the restored pointer geometry.
   const anchorGap = MARKER_POPUP_ANCHOR_GAP;
   const usableBottom = Math.max(topSafe + 120, (viewportH || 720) - bottomSafe);
   const clampedX = clamp(x, 10 + width / 2, Math.max(10 + width / 2, (viewportW || 360) - 10 - width / 2));
   const frameLeft = clampedX - (width / 2);
   const arrowLeft = clamp(x - frameLeft, 18, width - 18);
-  const fitsAbove = y - estimatedHeight - anchorGap >= topSafe;
-  const fitsBelow = y + estimatedHeight + anchorGap <= usableBottom;
+  const fitsAbove = y - estimatedHeight - anchorGap - MARKER_POPUP_CARD_Y_OFFSET >= topSafe;
+  const fitsBelow = y + estimatedHeight + anchorGap - MARKER_POPUP_CARD_Y_OFFSET <= usableBottom;
   const placeBelow = !fitsAbove && (fitsBelow || y < (viewportH || 720) / 2);
   const top = placeBelow
-    ? clamp(y + anchorGap, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
-    : clamp(y - anchorGap, topSafe + estimatedHeight, usableBottom);
+    ? clamp(y + anchorGap - MARKER_POPUP_CARD_Y_OFFSET, topSafe + 8, Math.max(topSafe + 8, usableBottom - estimatedHeight))
+    : clamp(y - anchorGap - MARKER_POPUP_CARD_Y_OFFSET, topSafe + estimatedHeight, usableBottom);
 
   return {
     frameStyle: {
@@ -66,24 +66,24 @@ export function resolveMarkerPopupPlacementShared(pixel, options = {}) {
       ? {
           position: "absolute",
           left: arrowLeft,
-          top: -MARKER_POPUP_POINTER_LENGTH,
-          width: 22,
-          height: MARKER_POPUP_POINTER_LENGTH,
+          top: -7,
+          width: 12,
+          height: 12,
           background: "var(--sl-ui-modal-bg)",
-          clipPath: "polygon(50% 0, 100% 100%, 0 100%)",
-          filter: "drop-shadow(0 -1px 0 var(--sl-ui-modal-border))",
-          transform: "translateX(-50%)",
+          borderLeft: "1px solid var(--sl-ui-modal-border)",
+          borderTop: "1px solid var(--sl-ui-modal-border)",
+          transform: "translateX(-50%) rotate(45deg)",
         }
       : {
           position: "absolute",
           left: arrowLeft,
-          bottom: -MARKER_POPUP_POINTER_LENGTH,
-          width: 22,
-          height: MARKER_POPUP_POINTER_LENGTH,
+          bottom: -7,
+          width: 12,
+          height: 12,
           background: "var(--sl-ui-modal-bg)",
-          clipPath: "polygon(0 0, 100% 0, 50% 100%)",
-          filter: "drop-shadow(0 1px 0 var(--sl-ui-modal-border))",
-          transform: "translateX(-50%)",
+          borderRight: "1px solid var(--sl-ui-modal-border)",
+          borderBottom: "1px solid var(--sl-ui-modal-border)",
+          transform: "translateX(-50%) rotate(45deg)",
         },
   };
 }
