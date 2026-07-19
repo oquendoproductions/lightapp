@@ -1230,9 +1230,6 @@ export function OpenReportsIncidentStateUpdateModal({
     <ModalShell open={open} zIndex={10012}>
       <div style={{ display: "grid", gap: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 950 }}>Update Incident State</div>
-        <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.4 }}>
-          Choose a state, then enter your 4-digit PIN to save.
-        </div>
         {incidentLabel ? (
           <div style={{ fontSize: 12, opacity: 0.82, lineHeight: 1.35 }}>
             <b>Incident:</b> {incidentLabel}

@@ -99,6 +99,21 @@ export const IncidentDomainMarkersLayer = memo(function IncidentDomainMarkersLay
   );
 });
 
+const OutsideBoundaryShadeLayer = memo(function OutsideBoundaryShadeLayer({
+  paths,
+  opacity,
+}) {
+  const options = useMemo(() => ({
+    clickable: false,
+    strokeOpacity: 0,
+    fillColor: "#0b0f17",
+    fillOpacity: opacity,
+    zIndex: 1,
+  }), [opacity]);
+
+  return <PolygonF paths={paths} options={options} />;
+});
+
 export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
   showCityOutsideShade,
   cityOutsideMaskPaths,
@@ -113,15 +128,9 @@ export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
   return (
     <>
       {showCityOutsideShade && cityOutsideMaskPaths.length > 0 && (
-        <PolygonF
+        <OutsideBoundaryShadeLayer
           paths={cityOutsideMaskPaths}
-          options={{
-            clickable: false,
-            strokeOpacity: 0,
-            fillColor: "#0b0f17",
-            fillOpacity: cityOutsideShadeOpacity,
-            zIndex: 1,
-          }}
+          opacity={cityOutsideShadeOpacity}
         />
       )}
       {showCityBoundaryBorder && cityBoundaryOuterRings.map((ring, idx) => (

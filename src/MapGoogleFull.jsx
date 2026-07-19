@@ -4144,6 +4144,8 @@ export default function App({
 
   const [authGateOpen, setAuthGateOpen] = useState(false);
   const [authGateStep, setAuthGateStep] = useState("welcome"); // welcome | login | signup | guest
+  const userInitiatedLogoutRef = useRef(false);
+  const wasUserInitiatedLogout = useCallback(() => userInitiatedLogoutRef.current, []);
 
   const [showLocationPrompt, setShowLocationPrompt] = useState(false);
   const isTouchDevice = useMemo(() => {
@@ -6363,6 +6365,7 @@ export default function App({
       return false;
     }
 
+    userInitiatedLogoutRef.current = false;
     setAccountMenuOpen(false);
     setLoginError("");
     return true;
@@ -6397,6 +6400,7 @@ export default function App({
         openNotice("⚠️", "Sign-in failed", error.message);
         return false;
       }
+      userInitiatedLogoutRef.current = false;
       return true;
     }
 
@@ -6465,6 +6469,9 @@ export default function App({
   }
 
   async function signOut() {
+    userInitiatedLogoutRef.current = true;
+    setAuthGateOpen(false);
+    setAuthGateStep("welcome");
     const { signOutRuntimeShared } = await loadDeferredAccountRuntimeModule();
     return signOutRuntimeShared({}, {
       supabase,
@@ -13171,6 +13178,7 @@ async function insertReportWithFallback(payload) {
             readDeleteAccountDeepLinkRequest={readDeleteAccountDeepLinkRequest}
             clearDeleteAccountQuery={clearDeleteAccountQuery}
             openDeleteAccountFlow={openDeleteAccountFlow}
+            wasUserInitiatedLogout={wasUserInitiatedLogout}
           />
         </Suspense>
       ) : null}

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { shouldOpenExpiredSessionPrompt } from "./lib/mapAuthBootstrapSupport.js";
 
 const loadCrossTenantAuthModule = () => import("./auth/crossTenantAuth");
 
@@ -24,6 +25,7 @@ export default function MapLazyAuthBootstrapController({
   readDeleteAccountDeepLinkRequest,
   clearDeleteAccountQuery,
   openDeleteAccountFlow,
+  wasUserInitiatedLogout,
 }) {
   useEffect(() => {
     const KEY = "sl_email_confirmed_flash_shown";
@@ -180,7 +182,11 @@ export default function MapLazyAuthBootstrapController({
         if (!mounted) return;
         setSession(nextSession || null);
         setAuthReady(true);
-        if (!nextSession && shouldHydrateMapAuthEagerly) {
+        if (shouldOpenExpiredSessionPrompt({
+          nextSession,
+          shouldHydrateMapAuthEagerly,
+          userInitiatedLogout: wasUserInitiatedLogout?.() === true,
+        })) {
           openNotice(
             "Session expired",
             "Sign in again",
@@ -266,6 +272,7 @@ export default function MapLazyAuthBootstrapController({
     hydrateImmediately,
     shouldHydrateMapAuthEagerly,
     supabase,
+    wasUserInitiatedLogout,
   ]);
 
   return null;
