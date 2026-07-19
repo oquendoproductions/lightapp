@@ -15,11 +15,9 @@ export default memo(function MapLazyDesktopMapControls({
   followHeadingEnabledRef,
   mapRef,
   locating,
-  geoDenied,
-  setShowLocationPrompt,
-  findMyLocation,
+  onLocate,
   travelFollowMode,
-  toggleTravelFollowMode,
+  onToggleTravelFollow,
   setAutoFollow,
   setFollowCamera,
   recenterToTenantHome,
@@ -121,13 +119,8 @@ export default memo(function MapLazyDesktopMapControls({
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          if (geoDenied) {
-            setShowLocationPrompt(true);
-            return;
-          }
           showToolHint("Location", 1100, 2);
-          followHeadingEnabledRef.current = true;
-          findMyLocation(false);
+          onLocate?.();
         }}
         title="Find my location"
         aria-label="Find my location"
@@ -142,7 +135,7 @@ export default memo(function MapLazyDesktopMapControls({
           event.preventDefault();
           event.stopPropagation();
           showToolHint(travelFollowMode ? "Travel follow off" : "Travel follow", 1100, 3);
-          toggleTravelFollowMode();
+          onToggleTravelFollow?.();
         }}
         title="Travel follow"
         aria-label="Toggle travel follow"

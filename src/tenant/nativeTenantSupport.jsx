@@ -2,21 +2,88 @@ import React from "react";
 import AppLaunchInteractiveScreen from "../AppLaunchInteractiveScreen.jsx";
 
 export function TenantInitialSelectionScreen({
+  step = "login",
+  loginEmail = "",
+  onLoginEmailChange,
+  loginPassword = "",
+  onLoginPasswordChange,
+  loginBusy = false,
+  loginError = "",
+  onSignIn,
+  onContinueGuest,
   tenantSearch = "",
   onTenantSearchChange,
   tenantSearchTerm = "",
   options = [],
+  savedOptions = [],
   optionsReady = false,
   onSelectTenant,
 }) {
+  if (step === "login") {
+    return (
+      <AppLaunchInteractiveScreen
+        eyebrow="Welcome"
+        title="Sign In"
+        subtitle="Sign in to load your saved locations, or continue as a guest to find a city."
+        status=""
+      >
+        <form
+          style={{ display: "grid", gap: 12 }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSignIn?.();
+          }}
+        >
+          <input
+            type="email"
+            value={loginEmail}
+            onChange={(event) => onLoginEmailChange?.(event.target.value)}
+            placeholder="Email address"
+            autoComplete="email"
+            inputMode="email"
+            style={launchInputStyle}
+          />
+          <input
+            type="password"
+            value={loginPassword}
+            onChange={(event) => onLoginPasswordChange?.(event.target.value)}
+            placeholder="Password"
+            autoComplete="current-password"
+            style={launchInputStyle}
+          />
+          {loginError ? (
+            <div style={{ color: "#ffd1d1", fontSize: 13.5, fontWeight: 750, lineHeight: 1.4, textAlign: "left" }}>
+              {loginError}
+            </div>
+          ) : null}
+          <button type="submit" disabled={loginBusy} style={launchPrimaryButtonStyle}>
+            {loginBusy ? "Signing In..." : "Sign In"}
+          </button>
+          <button type="button" onClick={() => onContinueGuest?.()} style={launchTextButtonStyle}>
+            Continue as Guest
+          </button>
+        </form>
+      </AppLaunchInteractiveScreen>
+    );
+  }
+
   return (
     <AppLaunchInteractiveScreen
-      eyebrow="Welcome"
-      title="Find your City"
-      subtitle="Search for a city to explore before signing in. You can switch cities later from the app menu."
+      eyebrow="Locations"
+      title="Choose a City"
+      subtitle="Open a saved location or search for another CityReport.io community."
       status={optionsReady ? "" : "Loading available cities..."}
     >
       <div style={{ display: "grid", gap: 12 }}>
+        {savedOptions.length ? (
+          <div style={{ display: "grid", gap: 9 }}>
+            <div style={launchSectionLabelStyle}>Saved Locations</div>
+            {savedOptions.map((option) => (
+              <TenantLaunchOption key={`saved-${option.tenantKey}`} option={option} onSelectTenant={onSelectTenant} />
+            ))}
+          </div>
+        ) : null}
+        <div style={launchSectionLabelStyle}>{savedOptions.length ? "Add Another Location" : "Find a Location"}</div>
         <input
           type="search"
           value={tenantSearch}
@@ -25,51 +92,13 @@ export function TenantInitialSelectionScreen({
           autoCapitalize="words"
           autoCorrect="off"
           spellCheck={false}
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 18,
-            border: "1px solid rgba(214, 231, 248, 0.18)",
-            background: "rgba(17, 39, 64, 0.98)",
-            color: "#eef6ff",
-            fontSize: 16,
-            fontWeight: 700,
-            lineHeight: 1.2,
-            outline: "none",
-            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
-          }}
+          style={launchInputStyle}
         />
         {tenantSearchTerm ? (
           options.length ? (
             <div style={{ display: "grid", gap: 10 }}>
               {options.map((option) => (
-                <button
-                  key={option.tenantKey}
-                  type="button"
-                  onClick={() => {
-                    void onSelectTenant?.(option.tenantKey);
-                  }}
-                  style={{
-                    width: "100%",
-                    display: "grid",
-                    gap: 4,
-                    textAlign: "left",
-                    padding: "14px 16px",
-                    borderRadius: 18,
-                    border: "1px solid rgba(214, 231, 248, 0.16)",
-                    background: "linear-gradient(180deg, rgba(29, 62, 103, 0.98) 0%, rgba(20, 46, 77, 0.98) 100%)",
-                    color: "#eef6ff",
-                    boxShadow: "0 10px 18px rgba(4, 10, 16, 0.18)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <span style={{ fontSize: 16, fontWeight: 900, lineHeight: 1.15 }}>
-                    {option.displayName || option.name}
-                  </span>
-                  <span style={{ fontSize: 12.5, lineHeight: 1.45, color: "rgba(228, 239, 249, 0.76)" }}>
-                    {option.primarySubdomain || `${option.tenantKey}.cityreport.io`}
-                  </span>
-                </button>
+                <TenantLaunchOption key={option.tenantKey} option={option} onSelectTenant={onSelectTenant} />
               ))}
             </div>
           ) : optionsReady ? (
@@ -103,6 +132,85 @@ export function TenantInitialSelectionScreen({
         )}
       </div>
     </AppLaunchInteractiveScreen>
+  );
+}
+
+const launchInputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "14px 16px",
+  borderRadius: 18,
+  border: "1px solid rgba(214, 231, 248, 0.18)",
+  background: "rgba(17, 39, 64, 0.98)",
+  color: "#eef6ff",
+  fontSize: 16,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  outline: "none",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+};
+
+const launchPrimaryButtonStyle = {
+  width: "100%",
+  padding: "15px 16px",
+  borderRadius: 18,
+  border: "1px solid rgba(214, 231, 248, 0.16)",
+  background: "linear-gradient(180deg, #2f9b84 0%, #2a7262 100%)",
+  color: "#f7fffe",
+  fontSize: 15.5,
+  fontWeight: 900,
+  cursor: "pointer",
+  boxShadow: "0 14px 24px rgba(4, 10, 16, 0.18)",
+};
+
+const launchTextButtonStyle = {
+  width: "100%",
+  padding: "10px 8px",
+  border: "none",
+  background: "transparent",
+  color: "#d8fffb",
+  fontSize: 14.5,
+  fontWeight: 850,
+  cursor: "pointer",
+};
+
+const launchSectionLabelStyle = {
+  fontSize: 11,
+  fontWeight: 900,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: "#6ce0d5",
+  textAlign: "left",
+};
+
+function TenantLaunchOption({ option, onSelectTenant }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void onSelectTenant?.(option.tenantKey);
+      }}
+      style={{
+        width: "100%",
+        display: "grid",
+        gap: 4,
+        textAlign: "left",
+        padding: "14px 16px",
+        borderRadius: 18,
+        border: "1px solid rgba(214, 231, 248, 0.16)",
+        background: "linear-gradient(180deg, rgba(29, 62, 103, 0.98) 0%, rgba(20, 46, 77, 0.98) 100%)",
+        color: "#eef6ff",
+        boxShadow: "0 10px 18px rgba(4, 10, 16, 0.18)",
+        cursor: "pointer",
+      }}
+    >
+      <span style={{ fontSize: 16, fontWeight: 900, lineHeight: 1.15 }}>
+        {option.displayName || option.name}
+      </span>
+      <span style={{ fontSize: 12.5, lineHeight: 1.45, color: "rgba(228, 239, 249, 0.76)" }}>
+        {option.primarySubdomain || `${option.tenantKey}.cityreport.io`}
+      </span>
+    </button>
   );
 }
 

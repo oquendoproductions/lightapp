@@ -1033,6 +1033,21 @@ export function MobileHeaderMenuPanel({
       residentMenuLinks.map((row) => normalizeResidentMenuLinkRow(row))
     )
     : resolveResidentMenuSections([], residentMenuLinks.map((row) => normalizeResidentMenuLinkRow(row)));
+  const cityReportTextLinkStyle = {
+    width: "auto",
+    justifySelf: "start",
+    padding: "3px 0",
+    border: "none",
+    borderRadius: 0,
+    background: "transparent",
+    boxShadow: "none",
+    color: "var(--sl-ui-modal-btn-secondary-text)",
+    fontSize: 14,
+    fontWeight: 750,
+    lineHeight: 1.35,
+    textAlign: "left",
+    cursor: "pointer",
+  };
 
   return (
     <div
@@ -1165,58 +1180,44 @@ export function MobileHeaderMenuPanel({
               ))}
             </>
           ) : null}
-          {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
-            <button
-              onClick={onOpenCitySwitcher}
-              className="workspace-menu-button"
-              style={{
-                width: "100%",
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-              }}
-            >
-              Switch Location
-            </button>
-          ) : null}
-          {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
-            <button
-              onClick={onOpenLocationDiagnostics}
-              className="workspace-menu-button"
-              style={{
-                width: "100%",
-                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                background: "var(--sl-ui-modal-btn-secondary-bg)",
-                color: "var(--sl-ui-modal-btn-secondary-text)",
-              }}
-            >
-              Location Diagnostics
-            </button>
-          ) : null}
-          <button
-            onClick={onContactUs}
-            className="workspace-menu-button"
+          <div
             style={{
-              width: "100%",
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
+              display: "grid",
+              justifyItems: "start",
+              gap: 7,
+              marginTop: resolvedResidentMenuSections.length ? 8 : 0,
+              paddingTop: 14,
+              borderTop: "1px solid var(--sl-ui-modal-btn-secondary-border)",
             }}
           >
-            Contact Us
-          </button>
-          <button
-            onClick={onOpenAbout}
-            className="workspace-menu-button"
-            style={{
-              width: "100%",
-              border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-              background: "var(--sl-ui-modal-btn-secondary-bg)",
-              color: "var(--sl-ui-modal-btn-secondary-text)",
-            }}
-          >
-            About
-          </button>
+            <div
+              style={{
+                fontSize: 10.5,
+                fontWeight: 900,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "var(--sl-ui-header-eyebrow)",
+              }}
+            >
+              CityReport.io
+            </div>
+            {showCitySwitcher && typeof onOpenCitySwitcher === "function" ? (
+              <button type="button" onClick={onOpenCitySwitcher} style={cityReportTextLinkStyle}>
+                Switch Location
+              </button>
+            ) : null}
+            {showLocationDiagnostics && typeof onOpenLocationDiagnostics === "function" ? (
+              <button type="button" onClick={onOpenLocationDiagnostics} style={cityReportTextLinkStyle}>
+                Location Diagnostics
+              </button>
+            ) : null}
+            <button type="button" onClick={onContactUs} style={cityReportTextLinkStyle}>
+              Contact CityReport.io
+            </button>
+            <button type="button" onClick={onOpenAbout} style={cityReportTextLinkStyle}>
+              About CityReport.io
+            </button>
+          </div>
         </div>
       </div>
     </div>

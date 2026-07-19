@@ -402,6 +402,7 @@ export function TenantProvider({ resolution, children }) {
     async (rawTenantKey) => {
       const nextTenantKey = String(rawTenantKey || tenantKey).trim().toLowerCase();
       if (!nextTenantKey) return false;
+      markPublicOnboardingSeen(nextTenantKey);
       setRuntimeTenantKey(nextTenantKey);
       setInitialTenantChoiceResolved(true);
       if (nextTenantKey === tenantKey) return true;

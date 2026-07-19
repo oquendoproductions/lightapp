@@ -4126,28 +4126,13 @@ export default function App({
     }
   }
 
-  useEffect(() => {
-    // Ask for location immediately on first load (once per app install/browser profile)
-    try {
-      const alreadyPrompted = localStorage.getItem(LOC_PROMPTED_APP_KEY) === "1";
-      if (!alreadyPrompted) {
-        localStorage.setItem(LOC_PROMPTED_APP_KEY, "1");
-        setShowLocationPrompt(true);
-      }
-    } catch {
-      // If storage fails, still show once
-      setShowLocationPrompt(true);
-    }
-  }, []);
-
-
-
   const [authGateOpen, setAuthGateOpen] = useState(false);
   const [authGateStep, setAuthGateStep] = useState("welcome"); // welcome | login | signup | guest
   const userInitiatedLogoutRef = useRef(false);
   const wasUserInitiatedLogout = useCallback(() => userInitiatedLogoutRef.current, []);
 
   const [showLocationPrompt, setShowLocationPrompt] = useState(false);
+  const locationPromptActionRef = useRef("locate");
   const isTouchDevice = useMemo(() => {
     if (typeof window === "undefined" || typeof navigator === "undefined") return false;
     return ("ontouchstart" in window) || Number(navigator.maxTouchPoints || 0) > 0;
@@ -5564,17 +5549,30 @@ export default function App({
       // ignore
     }
   }, []);
+  const hasAcknowledgedLocationPrompt = useCallback(() => {
+    try {
+      return localStorage.getItem(LOC_PROMPTED_APP_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }, []);
   const handleMobileLocate = useCallback(() => {
-    if (geoDenied) {
+    if (geoDenied || !hasAcknowledgedLocationPrompt()) {
+      locationPromptActionRef.current = "locate";
       setShowLocationPrompt(true);
       return;
     }
     followHeadingEnabledRef.current = true;
     void findMyLocation(false);
-  }, [findMyLocation, geoDenied]);
+  }, [findMyLocation, geoDenied, hasAcknowledgedLocationPrompt]);
   const handleMobileToggleTravelFollow = useCallback(() => {
+    if (!travelFollowMode && (geoDenied || !hasAcknowledgedLocationPrompt())) {
+      locationPromptActionRef.current = "travel";
+      setShowLocationPrompt(true);
+      return;
+    }
     toggleTravelFollowMode();
-  }, [toggleTravelFollowMode]);
+  }, [geoDenied, hasAcknowledgedLocationPrompt, travelFollowMode]);
   function handleMobileRecenterHome() {
     setAutoFollow(false);
     setFollowCamera(false);
@@ -12873,6 +12871,16 @@ async function insertReportWithFallback(payload) {
           open={showLocationPrompt}
           onContinue={async () => {
             setShowLocationPrompt(false);
+            try {
+              localStorage.setItem(LOC_PROMPTED_APP_KEY, "1");
+            } catch {
+              // The operating-system prompt can still proceed when storage is unavailable.
+            }
+            if (locationPromptActionRef.current === "travel") {
+              toggleTravelFollowMode(true);
+              return;
+            }
+            followHeadingEnabledRef.current = true;
             await findMyLocation(true);
           }}
           btnPrimary={btnPrimary}
@@ -13910,11 +13918,9 @@ async function insertReportWithFallback(payload) {
               followHeadingEnabledRef={followHeadingEnabledRef}
               mapRef={mapRef}
               locating={locating}
-              geoDenied={geoDenied}
-              setShowLocationPrompt={setShowLocationPrompt}
-              findMyLocation={findMyLocation}
+              onLocate={handleMobileLocate}
               travelFollowMode={travelFollowMode}
-              toggleTravelFollowMode={toggleTravelFollowMode}
+              onToggleTravelFollow={handleMobileToggleTravelFollow}
               setAutoFollow={setAutoFollow}
               setFollowCamera={setFollowCamera}
               recenterToTenantHome={recenterToTenantHome}

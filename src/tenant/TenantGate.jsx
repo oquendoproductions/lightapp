@@ -1,6 +1,8 @@
-import React, { useCallback, useContext, useMemo, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import AppLaunchScreen from "../AppLaunchScreen.jsx";
+import { loadFollowedTenantKeys } from "../lib/followedCitySupport.js";
 import { isNativeAppRuntime } from "../platform/runtime.js";
+import { supabase } from "../supabaseClient";
 import { TenantContext } from "./contextObject";
 import {
   hasSeenPublicOnboarding,
@@ -21,6 +23,12 @@ const LazyTenantPublicOnboardingScreen = React.lazy(() =>
 
 export function TenantGate({ children }) {
   const tenant = useContext(TenantContext);
+  const [initialLaunchStep, setInitialLaunchStep] = useState("login");
+  const [initialLoginEmail, setInitialLoginEmail] = useState("");
+  const [initialLoginPassword, setInitialLoginPassword] = useState("");
+  const [initialLoginBusy, setInitialLoginBusy] = useState(false);
+  const [initialLoginError, setInitialLoginError] = useState("");
+  const [followedTenantKeys, setFollowedTenantKeys] = useState([]);
   const [tenantSearch, setTenantSearch] = useState("");
   const [dismissedPublicOnboardingKeys, setDismissedPublicOnboardingKeys] = useState(() => new Set());
   const activeOnboardingKey = publicOnboardingStorageKey(tenant.tenantKey);
@@ -28,11 +36,22 @@ export function TenantGate({ children }) {
     dismissedPublicOnboardingKeys.has(activeOnboardingKey) ||
     hasSeenPublicOnboarding(tenant.tenantKey);
   const tenantSearchTerm = String(tenantSearch || "").trim().toLowerCase();
+  const availableTenantOptions = useMemo(
+    () => (Array.isArray(tenant.availableTenants) ? tenant.availableTenants.filter(Boolean) : []),
+    [tenant.availableTenants]
+  );
+  const savedTenantOptions = useMemo(() => {
+    const savedKeys = new Set(
+      (Array.isArray(followedTenantKeys) ? followedTenantKeys : [])
+        .map((key) => String(key || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    return availableTenantOptions.filter((option) => savedKeys.has(String(option?.tenantKey || "").trim().toLowerCase()));
+  }, [availableTenantOptions, followedTenantKeys]);
   const searchedTenantOptions = useMemo(() => {
     if (!tenant.initialTenantSelectionPending) return [];
     if (!tenantSearchTerm) return [];
-    const options = Array.isArray(tenant.availableTenants) ? tenant.availableTenants.filter(Boolean) : [];
-    return options.filter((option) => {
+    return availableTenantOptions.filter((option) => {
       const haystack = [
         option?.displayName,
         option?.name,
@@ -45,7 +64,7 @@ export function TenantGate({ children }) {
         .join(" ");
       return haystack.includes(tenantSearchTerm);
     });
-  }, [tenant.availableTenants, tenant.initialTenantSelectionPending, tenantSearchTerm]);
+  }, [availableTenantOptions, tenant.initialTenantSelectionPending, tenantSearchTerm]);
   const showPublicOnboarding =
     tenant.isMunicipalityApp &&
     tenant.appScope === "map" &&
@@ -85,6 +104,61 @@ export function TenantGate({ children }) {
     }, 80);
   }, [completePublicOnboarding]);
 
+  const loadInitialSavedLocations = useCallback(async (userId) => {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) {
+      setFollowedTenantKeys([]);
+      return;
+    }
+    try {
+      setFollowedTenantKeys(await loadFollowedTenantKeys({ supabase, userId: normalizedUserId }));
+    } catch (error) {
+      console.warn("[native launch][saved locations]", error?.message || error);
+      setFollowedTenantKeys([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tenant.initialTenantSelectionPending) return undefined;
+    let cancelled = false;
+    void supabase.auth.getSession().then(({ data }) => {
+      const userId = String(data?.session?.user?.id || "").trim();
+      if (cancelled || !userId) return;
+      setInitialLaunchStep("tenant");
+      void loadInitialSavedLocations(userId);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [loadInitialSavedLocations, tenant.initialTenantSelectionPending]);
+
+  const signInForInitialLaunch = useCallback(async () => {
+    const email = String(initialLoginEmail || "").trim();
+    const password = String(initialLoginPassword || "");
+    if (!email || !password) {
+      setInitialLoginError("Enter your email and password.");
+      return;
+    }
+    setInitialLoginBusy(true);
+    setInitialLoginError("");
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      await loadInitialSavedLocations(data?.user?.id || data?.session?.user?.id || "");
+      setInitialLaunchStep("tenant");
+    } catch (error) {
+      setInitialLoginError(String(error?.message || "Unable to sign in."));
+    } finally {
+      setInitialLoginBusy(false);
+    }
+  }, [initialLoginEmail, initialLoginPassword, loadInitialSavedLocations]);
+
+  const continueInitialLaunchAsGuest = useCallback(() => {
+    setInitialLoginError("");
+    setFollowedTenantKeys([]);
+    setInitialLaunchStep("tenant");
+  }, []);
+
   if (!tenant.isMunicipalityApp) return children;
 
   if (tenant.loading) {
@@ -104,18 +178,28 @@ export function TenantGate({ children }) {
         fallback={(
           <AppLaunchScreen
             eyebrow="Welcome"
-            title="Find your City"
-            subtitle="Search for a city to explore before signing in. You can switch cities later from the app menu."
-            status="Preparing city search..."
+            title="Sign In"
+            subtitle="Sign in to load your saved locations, or continue as a guest."
+            status="Preparing CityReport.io..."
           />
         )}
       >
         <LazyTenantInitialSelectionScreen
+          step={initialLaunchStep}
+          loginEmail={initialLoginEmail}
+          onLoginEmailChange={setInitialLoginEmail}
+          loginPassword={initialLoginPassword}
+          onLoginPasswordChange={setInitialLoginPassword}
+          loginBusy={initialLoginBusy}
+          loginError={initialLoginError}
+          onSignIn={signInForInitialLaunch}
+          onContinueGuest={continueInitialLaunchAsGuest}
           tenantSearch={tenantSearch}
           onTenantSearchChange={setTenantSearch}
           tenantSearchTerm={tenantSearchTerm}
           options={searchedTenantOptions}
-          optionsReady={(Array.isArray(tenant.availableTenants) ? tenant.availableTenants.filter(Boolean) : []).length > 0}
+          savedOptions={savedTenantOptions}
+          optionsReady={availableTenantOptions.length > 0}
           onSelectTenant={tenant.completeInitialTenantChoice}
         />
       </React.Suspense>
