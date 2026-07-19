@@ -1981,6 +1981,7 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
     successReportNumbers,
     successSubmittedAt,
     persistedSubmission: true,
+    submittedReport: saved,
   };
 }
 
@@ -2417,5 +2418,16 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
     persistedSubmission: true,
     successReportNumbers,
     successSubmittedAt,
+    submittedReport: {
+      ...saved,
+      domain: domainKey,
+      domainKey,
+      report_domain: domainKey,
+      incident_id: String(saved?.incident_id || incidentId || "").trim(),
+      light_id: String(saved?.light_id || saved?.incident_id || incidentId || "").trim(),
+      lat: Number.isFinite(Number(saved?.lat)) ? Number(saved.lat) : Number(submitLat),
+      lng: Number.isFinite(Number(saved?.lng)) ? Number(saved.lng) : Number(submitLng),
+      ts: Number(saved?.ts || 0) || successSubmittedAt,
+    },
   };
 }

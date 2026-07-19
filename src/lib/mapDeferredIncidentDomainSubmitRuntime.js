@@ -199,6 +199,7 @@ export async function submitIncidentDomainReportRuntimeShared(state = {}, deps =
   let persistedSubmission = false;
   let successReportNumbers = [];
   let successSubmittedAt = 0;
+  let submittedReport = null;
   try {
     const boundaryLat = Number.isFinite(Number(target?.sourceLat)) ? Number(target.sourceLat) : Number(target?.lat);
     const boundaryLng = Number.isFinite(Number(target?.sourceLng)) ? Number(target.sourceLng) : Number(target?.lng);
@@ -291,6 +292,7 @@ export async function submitIncidentDomainReportRuntimeShared(state = {}, deps =
         : [];
       successSubmittedAt = Number(customSubmitResult?.successSubmittedAt || 0) || Date.now();
       persistedSubmission = Boolean(customSubmitResult?.persistedSubmission);
+      submittedReport = customSubmitResult?.submittedReport || null;
     } else {
       const genericSubmitResult = await submitGenericIncidentDomainReportShared({
         target,
@@ -346,6 +348,7 @@ export async function submitIncidentDomainReportRuntimeShared(state = {}, deps =
         : [];
       successSubmittedAt = Number(genericSubmitResult?.successSubmittedAt || 0) || Date.now();
       persistedSubmission = Boolean(genericSubmitResult?.persistedSubmission);
+      submittedReport = genericSubmitResult?.submittedReport || null;
     }
 
     deps.finalizeIncidentDomainSubmitSuccess({
@@ -355,6 +358,8 @@ export async function submitIncidentDomainReportRuntimeShared(state = {}, deps =
       message: "Your report is now visible on the map and in Reports. You can track it there anytime.",
       reportNumbers: successReportNumbers,
       submittedAt: successSubmittedAt,
+      submittedReport,
+      target,
     });
   } finally {
     if (!persistedSubmission && submitKey) {

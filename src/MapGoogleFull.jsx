@@ -139,6 +139,11 @@ import {
   dedupeIncidentMarkerRenderSourceShared,
   summarizeCanonicalIncidentMarkersInViewportShared,
 } from "./lib/mapIncidentMarkerSourceSupport.js";
+import {
+  buildSubmittedIncidentMapRowShared,
+  mergeSubmittedIncidentReportRowShared,
+  upsertSubmittedIncidentBaseMarkerShared,
+} from "./lib/mapIncidentSubmitMarkerSupport.js";
 import { resolveReportDomainLabelShared } from "./lib/mapReportDisplaySupport.js";
 import { createTenantScopedAuthedClient, createTenantScopedReadClient } from "./lib/tenantScopedSupabase";
 import { focusMapMarkerSelectionShared } from "./lib/mapMarkerSelectionInteractionSupport.js";
@@ -11046,7 +11051,41 @@ async function selectTenantScopedPublicRows(
     message = "",
     reportNumbers = [],
     submittedAt = 0,
+    submittedReport = null,
+    target = null,
   } = {}) {
+    const submittedMapRow = buildSubmittedIncidentMapRowShared({
+      domainKey,
+      submittedReport,
+      submittedAt,
+      target,
+    }, {
+      normalizeDomainKey: (value) => (
+        normalizeDomainKeyOrSlug(value, { allowUnknown: true }) || normalizeDomainKey(value)
+      ),
+      resolveIncidentId: (nextDomainKey, row) => incidentDomainCanonicalIncidentId(
+        nextDomainKey,
+        row,
+        row?.incident_id || row?.light_id || target?.incident_id || target?.lightId || ""
+      ),
+    });
+    if (submittedMapRow) {
+      const submittedDomainKey = submittedMapRow.domain;
+      setSharedIncidentReportRowsStateByDomain((prev) => ({
+        ...(prev || {}),
+        [submittedDomainKey]: mergeSubmittedIncidentReportRowShared(
+          prev?.[submittedDomainKey],
+          submittedMapRow
+        ),
+      }));
+      setSharedIncidentBaseMarkersStateByDomain((prev) => ({
+        ...(prev || {}),
+        [submittedDomainKey]: upsertSubmittedIncidentBaseMarkerShared(
+          prev?.[submittedDomainKey],
+          submittedMapRow
+        ),
+      }));
+    }
     if (!isAuthed) clearGuestContact();
     resetIncidentDomainReportDraft(domainKey);
     setDomainDisclosureGateTarget(null);
