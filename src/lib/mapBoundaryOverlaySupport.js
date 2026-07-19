@@ -1,4 +1,11 @@
-export function createPersistentBoundaryOverlay({ googleMaps, map, renderStateRef }) {
+import { createBoundaryFlashDiagnostics } from "./mapBoundaryFlashDiagnostics.js";
+
+export function createPersistentBoundaryOverlay({
+  googleMaps,
+  map,
+  renderStateRef,
+  diagnosticsEnabled = false,
+}) {
   return new (class PersistentBoundaryOverlay extends googleMaps.OverlayView {
     constructor() {
       super();
@@ -8,6 +15,9 @@ export function createPersistentBoundaryOverlay({ googleMaps, map, renderStateRe
       this.borderPath = null;
       this.mapListeners = [];
       this.drawFrame = null;
+      this.drawCount = 0;
+      this.requestedDrawCount = 0;
+      this.diagnostics = null;
     }
 
     onAdd() {
@@ -44,21 +54,40 @@ export function createPersistentBoundaryOverlay({ googleMaps, map, renderStateRe
       this.borderPath = borderPath;
       this.getPanes?.()?.overlayLayer?.appendChild(container);
 
-      const requestDraw = () => this.requestDraw();
+      this.diagnostics = createBoundaryFlashDiagnostics({
+        enabled: diagnosticsEnabled,
+        map,
+        getState: () => ({
+          container: this.container,
+          svg: this.svg,
+          shadePath: this.shadePath,
+          borderPath: this.borderPath,
+          overlayLayer: this.getPanes?.()?.overlayLayer || null,
+          renderState: renderStateRef.current,
+          drawCount: this.drawCount,
+          requestedDrawCount: this.requestedDrawCount,
+        }),
+      });
+      this.diagnostics.record("overlay:on-add");
+
+      const requestDraw = () => this.requestDraw("map:bounds_changed");
       this.mapListeners = ["bounds_changed"]
         .map((eventName) => map.addListener?.(eventName, requestDraw))
         .filter(Boolean);
     }
 
-    requestDraw() {
+    requestDraw(reason = "unspecified") {
+      this.requestedDrawCount += 1;
       if (this.drawFrame !== null) return;
       this.drawFrame = window.requestAnimationFrame(() => {
         this.drawFrame = null;
+        this.diagnostics?.record?.("overlay:draw-frame", { reason });
         this.draw();
       });
     }
 
     draw() {
+      this.drawCount += 1;
       if (!this.container || !this.svg || !this.shadePath || !this.borderPath) return;
       const projection = this.getProjection();
       const mapDiv = map.getDiv?.();
@@ -123,9 +152,19 @@ export function createPersistentBoundaryOverlay({ googleMaps, map, renderStateRe
         renderStateRef.current.showBorder ? renderStateRef.current.borderColor : "none",
       );
       this.borderPath.setAttribute("stroke-width", String(renderStateRef.current.borderWidth));
+      this.diagnostics?.record?.("overlay:draw-complete", {
+        originX,
+        originY,
+        width,
+        height,
+        holeRings: holeRings.length,
+      });
     }
 
     onRemove() {
+      this.diagnostics?.record?.("overlay:on-remove");
+      this.diagnostics?.destroy?.();
+      this.diagnostics = null;
       this.mapListeners.forEach((listener) => listener?.remove?.());
       this.mapListeners = [];
       if (this.drawFrame !== null) {

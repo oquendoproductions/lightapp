@@ -13774,6 +13774,7 @@ async function insertReportWithFallback(payload) {
             showCityBoundaryBorder={showCityBoundaryBorder}
             cityBoundaryBorderColor={cityBoundaryBorderColor}
             cityBoundaryBorderWidth={cityBoundaryBorderWidth}
+            boundaryDiagnosticsEnabled={isTenantBoundaryDebugEnabled()}
             tenantParksLoaded={tenantParksLoaded}
             tenantParkVisuals={tenantParkVisuals}
           />
