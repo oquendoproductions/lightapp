@@ -75,8 +75,6 @@ export function createPersistentBoundaryOverlay({
       container.style.position = "absolute";
       container.style.pointerEvents = "none";
       container.style.overflow = "hidden";
-      container.style.transform = "translate3d(0, 0, 0)";
-      container.style.willChange = "transform";
       container.setAttribute("aria-hidden", "true");
       container.setAttribute("data-cityreport-boundary-overlay", "true");
 
@@ -154,17 +152,16 @@ export function createPersistentBoundaryOverlay({
       const overscan = Math.max(512, width, height);
       const canvasWidth = width + (overscan * 2);
       const canvasHeight = height + (overscan * 2);
-      const topLeftLatLng = projection.fromContainerPixelToLatLng?.(
-        new googleMaps.Point(0, 0),
-        true,
-      );
-      const topLeftPixel = topLeftLatLng
-        ? projection.fromLatLngToDivPixel(topLeftLatLng)
-        : null;
-      const originX = Number.isFinite(Number(topLeftPixel?.x)) ? Number(topLeftPixel.x) : 0;
-      const originY = Number.isFinite(Number(topLeftPixel?.y)) ? Number(topLeftPixel.y) : 0;
-      const canvasOriginX = originX - overscan;
-      const canvasOriginY = originY - overscan;
+      const mapRect = mapDiv.getBoundingClientRect?.();
+      const hostRect = boundaryHost.getBoundingClientRect?.();
+      const hostOffsetX = Number.isFinite(Number(mapRect?.left)) && Number.isFinite(Number(hostRect?.left))
+        ? Number(mapRect.left) - Number(hostRect.left)
+        : 0;
+      const hostOffsetY = Number.isFinite(Number(mapRect?.top)) && Number.isFinite(Number(hostRect?.top))
+        ? Number(mapRect.top) - Number(hostRect.top)
+        : 0;
+      const canvasOriginX = hostOffsetX - overscan;
+      const canvasOriginY = hostOffsetY - overscan;
       const shadePathParts = [`M 0 0 H ${canvasWidth} V ${canvasHeight} H 0 Z`];
       const borderPathParts = [];
       const holeRings = (Array.isArray(renderStateRef.current.paths) ? renderStateRef.current.paths : []).slice(1);
@@ -175,9 +172,9 @@ export function createPersistentBoundaryOverlay({
             const lat = Number(point?.lat);
             const lng = Number(point?.lng);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-            const pixel = projection.fromLatLngToDivPixel(new googleMaps.LatLng(lat, lng));
+            const pixel = projection.fromLatLngToContainerPixel?.(new googleMaps.LatLng(lat, lng));
             if (!pixel) return null;
-            return { x: pixel.x - canvasOriginX, y: pixel.y - canvasOriginY };
+            return { x: pixel.x + overscan, y: pixel.y + overscan };
           })
           .filter(Boolean);
         if (projected.length < 3) return;
@@ -195,7 +192,8 @@ export function createPersistentBoundaryOverlay({
       this.svg.setAttribute("viewBox", `0 0 ${canvasWidth} ${canvasHeight}`);
       this.container.style.width = `${canvasWidth}px`;
       this.container.style.height = `${canvasHeight}px`;
-      this.container.style.transform = `translate3d(${canvasOriginX}px, ${canvasOriginY}px, 0)`;
+      this.container.style.left = `${canvasOriginX}px`;
+      this.container.style.top = `${canvasOriginY}px`;
       this.shadePath.setAttribute("d", shadePathParts.join(" "));
       this.shadePath.setAttribute(
         "fill-opacity",
@@ -208,8 +206,8 @@ export function createPersistentBoundaryOverlay({
       );
       this.borderPath.setAttribute("stroke-width", String(renderStateRef.current.borderWidth));
       this.diagnostics?.record?.("overlay:draw-complete", {
-        originX,
-        originY,
+        hostOffsetX,
+        hostOffsetY,
         width,
         height,
         overscan,

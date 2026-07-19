@@ -5,15 +5,6 @@ import { createPersistentBoundaryOverlay } from "../lib/mapBoundaryOverlaySuppor
 describe("persistent tenant boundary overlay", () => {
   it("stays mounted below markers while viewport coordinates update", () => {
     class OverlayView {}
-    class Point {
-      x: number;
-      y: number;
-
-      constructor(x: number, y: number) {
-        this.x = x;
-        this.y = y;
-      }
-    }
     class LatLng {
       lat: number;
       lng: number;
@@ -46,7 +37,7 @@ describe("persistent tenant boundary overlay", () => {
       }),
     };
     const overlay = createPersistentBoundaryOverlay({
-      googleMaps: { OverlayView, LatLng, Point },
+      googleMaps: { OverlayView, LatLng },
       map,
       renderStateRef: {
         current: {
@@ -72,10 +63,11 @@ describe("persistent tenant boundary overlay", () => {
       onRemove: () => void;
     };
 
+    const fromLatLngToDivPixel = vi.fn(() => ({ x: 100000, y: 100000 }));
     overlay.getPanes = () => ({ mapPane, overlayLayer, markerLayer });
     overlay.getProjection = () => ({
-      fromContainerPixelToLatLng: ({ x, y }: Point) => new LatLng(y + 100, x + 200),
-      fromLatLngToDivPixel: ({ lat, lng }: LatLng) => ({ x: lng + 10, y: lat + 20 }),
+      fromLatLngToContainerPixel: ({ lat, lng }: LatLng) => ({ x: lng, y: lat }),
+      fromLatLngToDivPixel,
     });
     overlay.onAdd();
     overlay.draw();
@@ -87,7 +79,9 @@ describe("persistent tenant boundary overlay", () => {
     expect(overlay.container.parentNode).not.toBe(markerLayer);
     expect(overlay.container.parentNode).not.toBe(overlayLayer);
     expect(overlay.container.style.zIndex).toBe("1");
-    expect(overlay.container.style.transform).toBe("translate3d(-430px, -520px, 0)");
+    expect(overlay.container.style.transform).toBe("");
+    expect(overlay.container.style.left).toBe("-640px");
+    expect(overlay.container.style.top).toBe("-640px");
     expect(overlay.container.style.width).toBe("1600px");
     expect(overlay.container.style.height).toBe("1920px");
     expect(listenerNames).toEqual([
@@ -99,8 +93,9 @@ describe("persistent tenant boundary overlay", () => {
       "zoom_changed",
     ]);
     const paths = overlay.container.querySelectorAll("path");
-    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M 460 550 L 480 570 L 500 590 Z"));
+    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M 660 650 L 680 670 L 700 690 Z"));
     expect(paths[1]).toHaveAttribute("stroke", "#2563eb");
+    expect(fromLatLngToDivPixel).not.toHaveBeenCalled();
 
     mapPane.style.display = "none";
     overlayLayer.style.display = "none";
