@@ -84,6 +84,7 @@ describe("tenant boundary flash diagnostics", () => {
 
     callbacks.get("dragstart")?.();
     callbacks.get("dragend")?.();
+    (window as any).__CITYREPORT_BOUNDARY_FLASH_DEBUG__.markFlash();
     diagnostics.record("test:snapshot");
 
     const trace = (window as any).__CITYREPORT_BOUNDARY_FLASH_TRACE__;
@@ -91,6 +92,7 @@ describe("tenant boundary flash diagnostics", () => {
       "diagnostics:ready",
       "map:dragstart",
       "map:dragend",
+      "manual:flash-marked",
       "test:snapshot",
     ]));
     expect(trace.at(-1).state).toMatchObject({
@@ -99,6 +101,12 @@ describe("tenant boundary flash diagnostics", () => {
       paneId: trace.at(-1).state.currentParentPaneId,
       anomalies: [],
     });
+    expect(trace.at(-1).state.ancestorChain.map((entry: any) => entry.label)).toEqual([
+      "div",
+      "div",
+      "div",
+    ]);
+    expect(trace.at(-1).state.gesturePhase).toBe("settling");
 
     diagnostics.destroy();
     expect(document.querySelector("[data-cityreport-boundary-debug-hud='true']")).toBeNull();

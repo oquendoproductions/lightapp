@@ -13902,7 +13902,13 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             showCityBoundaryBorder={showCityBoundaryBorder}
             cityBoundaryBorderColor={cityBoundaryBorderColor}
             cityBoundaryBorderWidth={cityBoundaryBorderWidth}
-            boundaryDiagnosticsEnabled={isTenantBoundaryDebugEnabled()}
+            boundaryDiagnosticsEnabled={
+              isTenantBoundaryDebugEnabled()
+              || (
+                isAdmin
+                && String(resolvedTenantBoundaryTenantKey || "").trim().toLowerCase() === "testcity1"
+              )
+            }
             tenantParksLoaded={tenantParksLoaded}
             tenantParkVisuals={tenantParkVisuals}
           />

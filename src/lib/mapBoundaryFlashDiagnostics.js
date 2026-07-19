@@ -1,6 +1,7 @@
 const TRACE_WINDOW_KEY = "__CITYREPORT_BOUNDARY_FLASH_TRACE__";
 const CONTROLLER_WINDOW_KEY = "__CITYREPORT_BOUNDARY_FLASH_DEBUG__";
-const MAX_TRACE_ENTRIES = 600;
+const MAX_TRACE_ENTRIES = 2400;
+const MAX_ANCESTOR_DEPTH = 12;
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -36,7 +37,71 @@ function styleSummary(element) {
     visibility: style.visibility,
     opacity: style.opacity,
     transform: style.transform,
+    left: style.left,
+    top: style.top,
+    width: style.width,
+    height: style.height,
+    zIndex: style.zIndex,
+    position: style.position,
+    overflow: style.overflow,
+    overflowX: style.overflowX,
+    overflowY: style.overflowY,
+    clipPath: style.clipPath,
+    maskImage: style.maskImage,
+    filter: style.filter,
+    contain: style.contain,
+    isolation: style.isolation,
+    backfaceVisibility: style.backfaceVisibility,
   };
+}
+
+function elementLabel(element) {
+  if (!element) return "none";
+  const tag = String(element.tagName || "node").toLowerCase();
+  const id = String(element.id || "").trim();
+  const classes = String(element.className?.baseVal || element.className || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(".");
+  const boundaryRole = element.getAttribute?.("data-cityreport-boundary-overlay") === "true"
+    ? "[boundary]"
+    : "";
+  return `${tag}${id ? `#${id}` : ""}${classes ? `.${classes}` : ""}${boundaryRole}`;
+}
+
+function ancestorChainSummary(element, stopAt) {
+  const chain = [];
+  let current = element;
+  while (current && chain.length < MAX_ANCESTOR_DEPTH) {
+    const rect = rectSummary(current);
+    const style = styleSummary(current);
+    chain.push({
+      label: elementLabel(current),
+      connected: Boolean(current.isConnected),
+      rect,
+      style,
+    });
+    if (current === stopAt || current === document.body || current === document.documentElement) break;
+    current = current.parentElement;
+  }
+  return chain;
+}
+
+function svgBoxSummary(element) {
+  if (!element?.getBBox) return null;
+  try {
+    const box = element.getBBox();
+    return {
+      x: rounded(box.x),
+      y: rounded(box.y),
+      width: rounded(box.width),
+      height: rounded(box.height),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function shortHash(value) {
@@ -73,7 +138,7 @@ function downloadTrace(trace) {
   URL.revokeObjectURL(url);
 }
 
-function createHud({ onCopy, onClear, onDownload }) {
+function createHud({ onCopy, onClear, onDownload, onMark }) {
   const hud = document.createElement("div");
   hud.setAttribute("data-cityreport-boundary-debug-hud", "true");
   Object.assign(hud.style, {
@@ -104,6 +169,7 @@ function createHud({ onCopy, onClear, onDownload }) {
     marginTop: "7px",
   });
   [
+    ["Mark flash", onMark],
     ["Copy trace", onCopy],
     ["Download", onDownload],
     ["Clear", onClear],
@@ -141,6 +207,7 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
   const trace = [];
   const listeners = [];
   const observers = [];
+  const cleanupCallbacks = [];
   const sampleFrames = new Set();
   const paneIds = new WeakMap();
   let nextPaneId = 1;
@@ -148,6 +215,13 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
   let anomalyCount = 0;
   let latestEntry = null;
   let hudParts = null;
+  let gesturePhase = "idle";
+  let intersectionRatio = null;
+  let resizeSequence = 0;
+  let lastHudRenderAt = -Infinity;
+  let gestureFrame = null;
+  let gestureSamplingUntil = 0;
+  let gestureSamplingLabel = "idle";
 
   const paneId = (pane) => {
     if (!pane) return "none";
@@ -159,6 +233,7 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     const state = getState?.() || {};
     const container = state.container || null;
     const overlayLayer = state.overlayLayer || null;
+    const mapDiv = map?.getDiv?.() || null;
     const renderState = state.renderState || {};
     const shadePathData = state.shadePath?.getAttribute?.("d") || "";
     const borderPathData = state.borderPath?.getAttribute?.("d") || "";
@@ -168,6 +243,17 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     const parentMatchesPane = Boolean(container && overlayLayer && container.parentNode === overlayLayer);
     const shadeOpacity = finiteNumber(state.shadePath?.getAttribute?.("fill-opacity"), 0);
     const borderStroke = String(state.borderPath?.getAttribute?.("stroke") || "");
+    const ancestorChain = ancestorChainSummary(container, mapDiv);
+    const hiddenAncestors = ancestorChain
+      .filter((entry) => (
+        entry.style?.display === "none"
+        || entry.style?.visibility === "hidden"
+        || opacityNumber(entry.style?.opacity) === 0
+        || !entry.rect
+        || entry.rect.width < 1
+        || entry.rect.height < 1
+      ))
+      .map((entry) => entry.label);
     const anomalies = [];
 
     if (!container?.isConnected) anomalies.push("container-detached");
@@ -179,6 +265,7 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     if (paneStyle?.display === "none" || paneStyle?.visibility === "hidden" || opacityNumber(paneStyle?.opacity) === 0) {
       anomalies.push("pane-hidden");
     }
+    if (hiddenAncestors.length) anomalies.push(`hidden-ancestor:${hiddenAncestors.join("|")}`);
     if (renderState.showShade && (shadePathData.length < 10 || shadeOpacity <= 0)) anomalies.push("shade-empty");
     if (renderState.showBorder && (borderPathData.length < 10 || !borderStroke || borderStroke === "none")) {
       anomalies.push("border-empty");
@@ -191,24 +278,42 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
       currentParentPaneId: paneId(container?.parentNode),
       mapZoom: finiteNumber(map?.getZoom?.(), null),
       mapCenter: map?.getCenter?.()?.toJSON?.() || null,
+      gesturePhase,
+      documentVisibility: document.visibilityState,
+      devicePixelRatio: finiteNumber(window.devicePixelRatio, 1),
+      visualViewport: window.visualViewport ? {
+        width: rounded(window.visualViewport.width),
+        height: rounded(window.visualViewport.height),
+        offsetLeft: rounded(window.visualViewport.offsetLeft),
+        offsetTop: rounded(window.visualViewport.offsetTop),
+        scale: rounded(window.visualViewport.scale),
+      } : null,
       containerRect,
       paneRect: rectSummary(overlayLayer),
+      mapRect: rectSummary(mapDiv),
       containerStyle,
       paneStyle,
+      ancestorChain,
+      hiddenAncestors,
+      intersectionRatio,
+      resizeSequence,
       svgSize: {
         width: state.svg?.getAttribute?.("width") || "",
         height: state.svg?.getAttribute?.("height") || "",
+        rect: rectSummary(state.svg),
       },
       shade: {
         expected: Boolean(renderState.showShade),
         opacity: state.shadePath?.getAttribute?.("fill-opacity") || "",
         path: shortHash(shadePathData),
+        box: svgBoxSummary(state.shadePath),
       },
       border: {
         expected: Boolean(renderState.showBorder),
         stroke: borderStroke,
         width: state.borderPath?.getAttribute?.("stroke-width") || "",
         path: shortHash(borderPathData),
+        box: svgBoxSummary(state.borderPath),
       },
       pathRingCount: Math.max(0, (Array.isArray(renderState.paths) ? renderState.paths.length : 0) - 1),
       drawCount: finiteNumber(state.drawCount),
@@ -224,9 +329,11 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     hudParts.hud.style.borderColor = state.anomalies.length ? "#ef4444" : "#22c55e";
     hudParts.output.textContent = [
       `Boundary diagnostics: ${status}`,
-      `event: ${entry.event}`,
+      "Reproduce flash, then tap Mark flash and Download.",
+      `event: ${entry.event} phase=${state.gesturePhase}`,
       `pane: ${state.currentParentPaneId}/${state.paneId} attached=${state.connected}`,
       `box: ${state.containerRect?.width || 0}x${state.containerRect?.height || 0} at ${state.containerRect?.x || 0},${state.containerRect?.y || 0}`,
+      `intersection: ${state.intersectionRatio ?? "n/a"} hidden ancestors=${state.hiddenAncestors.length}`,
       `shade: ${state.shade.path} opacity=${state.shade.opacity || "none"}`,
       `border: ${state.border.path} stroke=${state.border.stroke || "none"}`,
       `draws: ${state.drawCount}/${state.requestedDrawCount} trace=${trace.length} anomalies=${anomalyCount}`,
@@ -248,12 +355,16 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     if (trace.length > MAX_TRACE_ENTRIES) trace.splice(0, trace.length - MAX_TRACE_ENTRIES);
     latestEntry = entry;
     window[TRACE_WINDOW_KEY] = trace;
-    renderHud(entry);
+    const now = performance.now();
+    if (!entry.event.startsWith("frame:") || now - lastHudRenderAt >= 100 || state.anomalies.length) {
+      renderHud(entry);
+      lastHudRenderAt = now;
+    }
     if (state.anomalies.length) console.warn("[boundary flash diagnostic]", entry);
     return entry;
   };
 
-  const startFrameSampling = (label, durationMs = 900) => {
+  const startFrameSampling = (label, durationMs = 900, { everyFrame = false } = {}) => {
     const started = performance.now();
     let lastSignature = "";
     let lastRecordedAt = -Infinity;
@@ -269,13 +380,17 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
         containerRect: state.containerRect,
         containerStyle: state.containerStyle,
         paneStyle: state.paneStyle,
+        ancestorChain: state.ancestorChain,
         svgSize: state.svgSize,
         shade: state.shade,
         border: state.border,
         anomalies: state.anomalies,
       });
-      if (signature !== lastSignature || now - lastRecordedAt >= 120) {
-        record(`frame:${label}`, { frameElapsedMs: rounded(now - started) });
+      if (everyFrame || signature !== lastSignature || now - lastRecordedAt >= 120) {
+        record(`frame:${label}`, {
+          frameElapsedMs: rounded(now - started),
+          frameMode: everyFrame ? "every-frame" : "changes",
+        });
         lastSignature = signature;
         lastRecordedAt = now;
       }
@@ -288,6 +403,31 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     sampleFrames.add(frame);
   };
 
+  const startGestureSampling = (label, durationMs, { settle = false } = {}) => {
+    const now = performance.now();
+    gestureSamplingLabel = label;
+    gestureSamplingUntil = settle
+      ? now + durationMs
+      : Math.max(gestureSamplingUntil, now + durationMs);
+    if (gestureFrame !== null) return;
+
+    const tick = (frameNow) => {
+      if (gestureFrame !== null) sampleFrames.delete(gestureFrame);
+      record("frame:gesture", {
+        label: gestureSamplingLabel,
+        frameMode: "every-frame",
+      });
+      if (frameNow < gestureSamplingUntil) {
+        gestureFrame = window.requestAnimationFrame(tick);
+        sampleFrames.add(gestureFrame);
+      } else {
+        gestureFrame = null;
+      }
+    };
+    gestureFrame = window.requestAnimationFrame(tick);
+    sampleFrames.add(gestureFrame);
+  };
+
   const clear = () => {
     trace.length = 0;
     anomalyCount = 0;
@@ -298,44 +438,121 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     await writeClipboard(JSON.stringify(trace, null, 2));
     record("trace:copied", { entries: trace.length });
   };
+  const markFlash = () => {
+    record("manual:flash-marked", { traceEntriesBeforeMark: trace.length });
+    startFrameSampling("flash-mark", 1800, { everyFrame: true });
+  };
 
   hudParts = createHud({
     onCopy: () => copy().catch((error) => record("trace:copy-failed", { message: String(error?.message || error) })),
     onClear: clear,
     onDownload: () => downloadTrace(trace),
+    onMark: markFlash,
   });
 
   const eventNames = ["dragstart", "drag", "dragend", "bounds_changed", "idle", "zoom_changed", "tilesloaded"];
   eventNames.forEach((eventName) => {
     const listener = map?.addListener?.(eventName, () => {
-      record(`map:${eventName}`);
-      if (eventName === "dragstart" || eventName === "dragend" || eventName === "idle") {
-        startFrameSampling(eventName);
+      if (eventName === "dragstart") {
+        gesturePhase = "dragging";
+        startGestureSampling("drag", 30000);
+      } else if (eventName === "dragend") {
+        gesturePhase = "settling";
+        startGestureSampling("drag-settle", 1800, { settle: true });
+      } else if (eventName === "zoom_changed") {
+        if (gesturePhase !== "dragging") gesturePhase = "zooming";
+        startGestureSampling("zoom", 2200);
+      } else if (eventName === "idle") {
+        gesturePhase = "idle";
+        startGestureSampling("idle-settle", 1200, { settle: true });
       }
+      record(`map:${eventName}`);
     });
     if (listener) listeners.push(listener);
   });
 
   const initialState = getState?.() || {};
-  if (initialState.overlayLayer && typeof MutationObserver !== "undefined") {
+  const initialContainer = initialState.container || null;
+  const mapDiv = map?.getDiv?.() || null;
+  if (mapDiv && typeof MutationObserver !== "undefined") {
     const observer = new MutationObserver((mutations) => {
-      record("dom:pane-mutation", {
-        mutations: mutations.map((mutation) => ({
+      const currentContainer = getState?.()?.container || initialContainer;
+      const relevantMutations = mutations.filter((mutation) => {
+        const target = mutation.target;
+        if (target === currentContainer || target?.contains?.(currentContainer)) return true;
+        return [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])]
+          .some((node) => node === currentContainer || node?.contains?.(currentContainer));
+      });
+      if (!relevantMutations.length) return;
+      record("dom:boundary-ancestry-mutation", {
+        mutations: relevantMutations.slice(0, 20).map((mutation) => ({
           type: mutation.type,
+          target: elementLabel(mutation.target),
+          attributeName: mutation.attributeName || "",
           added: mutation.addedNodes?.length || 0,
           removed: mutation.removedNodes?.length || 0,
         })),
       });
-      startFrameSampling("pane-mutation", 300);
     });
-    observer.observe(initialState.overlayLayer, { childList: true });
+    observer.observe(mapDiv, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["style", "class", "hidden"],
+    });
     observers.push(observer);
   }
+
+  if (initialContainer && typeof IntersectionObserver !== "undefined") {
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries.at(-1);
+      intersectionRatio = entry ? rounded(entry.intersectionRatio) : null;
+      record("observer:intersection", {
+        isIntersecting: Boolean(entry?.isIntersecting),
+        intersectionRatio,
+        intersectionRect: entry?.intersectionRect ? {
+          x: rounded(entry.intersectionRect.x),
+          y: rounded(entry.intersectionRect.y),
+          width: rounded(entry.intersectionRect.width),
+          height: rounded(entry.intersectionRect.height),
+        } : null,
+      });
+    });
+    observer.observe(initialContainer);
+    observers.push(observer);
+  }
+
+  if (typeof ResizeObserver !== "undefined") {
+    const targets = [mapDiv, initialState.overlayLayer, initialContainer].filter(Boolean);
+    const observer = new ResizeObserver((entries) => {
+      resizeSequence += 1;
+      record("observer:resize", {
+        targets: entries.map((entry) => ({
+          target: elementLabel(entry.target),
+          width: rounded(entry.contentRect?.width),
+          height: rounded(entry.contentRect?.height),
+        })),
+      });
+    });
+    targets.forEach((target) => observer.observe(target));
+    observers.push(observer);
+  }
+
+  const recordViewportEvent = (event) => record(`viewport:${event.type}`);
+  window.visualViewport?.addEventListener?.("resize", recordViewportEvent);
+  window.visualViewport?.addEventListener?.("scroll", recordViewportEvent);
+  document.addEventListener("visibilitychange", recordViewportEvent);
+  cleanupCallbacks.push(() => {
+    window.visualViewport?.removeEventListener?.("resize", recordViewportEvent);
+    window.visualViewport?.removeEventListener?.("scroll", recordViewportEvent);
+    document.removeEventListener("visibilitychange", recordViewportEvent);
+  });
 
   const controller = {
     clear,
     copy,
     download: () => downloadTrace(trace),
+    markFlash,
     snapshot: () => record("manual:snapshot"),
     getLatest: () => latestEntry,
     getTrace: () => [...trace],
@@ -352,6 +569,7 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
       record("diagnostics:destroy");
       listeners.forEach((listener) => listener?.remove?.());
       observers.forEach((observer) => observer.disconnect());
+      cleanupCallbacks.forEach((cleanup) => cleanup());
       sampleFrames.forEach((frame) => window.cancelAnimationFrame(frame));
       hudParts?.hud?.remove();
       if (window[CONTROLLER_WINDOW_KEY] === controller) delete window[CONTROLLER_WINDOW_KEY];
