@@ -80,13 +80,15 @@ describe("persistent tenant boundary overlay", () => {
     expect(overlay.container.parentNode).toBe(overlayLayer);
     expect(overlay.container.parentNode).not.toBe(markerLayer);
     expect(overlay.container.style.zIndex).toBe("");
-    expect(overlay.container.style.transform).toBe("translate3d(210px, 120px, 0)");
-    expect(listenerNames).toEqual(["bounds_changed"]);
+    expect(overlay.container.style.transform).toBe("translate3d(-430px, -520px, 0)");
+    expect(overlay.container.style.width).toBe("1600px");
+    expect(overlay.container.style.height).toBe("1920px");
+    expect(listenerNames).toEqual(["idle", "zoom_changed"]);
     const paths = overlay.container.querySelectorAll("path");
-    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M -180 -90 L -160 -70 L -140 -50 Z"));
+    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M 460 550 L 480 570 L 500 590 Z"));
     expect(paths[1]).toHaveAttribute("stroke", "#2563eb");
 
-    listenerCallbacks.get("bounds_changed")?.();
+    listenerCallbacks.get("idle")?.();
     overlay.draw();
     expect(overlay.container).toBe(originalContainer);
     expect(overlay.shadePath).toBe(originalShadePath);

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { reverseGeocodeRoadLabelShared } from "../lib/mapDeferredGeoSupport.js";
+import {
+  reverseGeocodeRoadLabelRuntimeShared,
+  reverseGeocodeRoadLabelShared,
+} from "../lib/mapDeferredGeoSupport.js";
 
 describe("shared road validation", () => {
   it("uses the shared road function response for validation", async () => {
@@ -41,5 +44,73 @@ describe("shared road validation", () => {
     );
 
     expect(result.validationUnavailable).toBe(true);
+  });
+
+  it("sends the resolved tenant through the shared road-validation function", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        snappedPoints: [
+          { location: { latitude: 41.65, longitude: -80.83 } },
+        ],
+      }),
+    });
+
+    const result = await reverseGeocodeRoadLabelRuntimeShared(
+      41.65,
+      -80.83,
+      { useRoadsApi: true, validationOnly: true },
+      { reverseGeocodeInFlightMap: new Map() },
+      {
+        roadValidationFunctionUrl: "https://example.supabase.co/functions/v1/validate-road",
+        roadValidationPublishableKey: "publishable-key",
+        roadValidationTenantKey: "testcity1",
+        fetchImpl,
+        windowLike: {},
+      },
+    );
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [, request] = fetchImpl.mock.calls[0];
+    expect(request.headers["x-tenant-key"]).toBe("testcity1");
+    expect(JSON.parse(request.body)).toMatchObject({
+      tenant_key: "testcity1",
+      lat: 41.65,
+      lng: -80.83,
+    });
+    expect(result.isRoad).toBe(true);
+    expect(result.validationUnavailable).toBe(false);
+  });
+
+  it("returns validation unavailable and logs the function response on HTTP failure", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: vi.fn().mockResolvedValue('{"error":"tenant_mismatch"}'),
+    });
+
+    const result = await reverseGeocodeRoadLabelRuntimeShared(
+      41.65,
+      -80.83,
+      { useRoadsApi: true, validationOnly: true },
+      { reverseGeocodeInFlightMap: new Map() },
+      {
+        roadValidationFunctionUrl: "https://example.supabase.co/functions/v1/validate-road",
+        roadValidationPublishableKey: "publishable-key",
+        roadValidationTenantKey: "testcity1",
+        fetchImpl,
+        windowLike: {},
+      },
+    );
+
+    expect(result.validationUnavailable).toBe(true);
+    expect(warning).toHaveBeenCalledWith(
+      "[road-validation] function request failed",
+      expect.objectContaining({ status: 409, tenantKey: "testcity1" }),
+    );
+    warning.mockRestore();
   });
 });

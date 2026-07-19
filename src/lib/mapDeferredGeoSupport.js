@@ -1204,6 +1204,7 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
   const roadValidationFunctionUrl = String(deps?.roadValidationFunctionUrl || "").trim();
   const roadValidationPublishableKey = String(deps?.roadValidationPublishableKey || "").trim();
   const roadValidationTenantKey = String(deps?.roadValidationTenantKey || "").trim().toLowerCase();
+  const roadValidationTimeoutMs = Math.max(1000, Number(deps?.roadValidationTimeoutMs || 12000));
   const roadValidationRequest = (
     useRoadsApi
     && typeof deps?.fetchImpl === "function"
@@ -1212,22 +1213,47 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
     && roadValidationTenantKey
   )
     ? async (requestLat, requestLng) => {
-        const response = await deps.fetchImpl(roadValidationFunctionUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: roadValidationPublishableKey,
-            Authorization: `Bearer ${roadValidationPublishableKey}`,
-            "x-tenant-key": roadValidationTenantKey,
-          },
-          body: JSON.stringify({
-            tenant_key: roadValidationTenantKey,
-            lat: requestLat,
-            lng: requestLng,
-          }),
-        });
-        if (!response.ok) return null;
-        return response.json();
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        const timeoutId = controller
+          ? setTimeout(() => controller.abort(), roadValidationTimeoutMs)
+          : null;
+        try {
+          const response = await deps.fetchImpl(roadValidationFunctionUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: roadValidationPublishableKey,
+              Authorization: `Bearer ${roadValidationPublishableKey}`,
+              "x-tenant-key": roadValidationTenantKey,
+            },
+            body: JSON.stringify({
+              tenant_key: roadValidationTenantKey,
+              lat: requestLat,
+              lng: requestLng,
+            }),
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+          if (!response.ok) {
+            const responseText = typeof response.text === "function"
+              ? await response.text().catch(() => "")
+              : "";
+            console.warn("[road-validation] function request failed", {
+              status: response.status,
+              tenantKey: roadValidationTenantKey,
+              response: responseText.slice(0, 500),
+            });
+            return null;
+          }
+          return response.json();
+        } catch (error) {
+          console.warn("[road-validation] function request unavailable", {
+            tenantKey: roadValidationTenantKey,
+            error: String(error?.message || error || "unknown"),
+          });
+          return null;
+        } finally {
+          if (timeoutId !== null) clearTimeout(timeoutId);
+        }
       }
     : null;
 

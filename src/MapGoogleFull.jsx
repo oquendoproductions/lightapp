@@ -11126,7 +11126,9 @@ async function selectTenantScopedPublicRows(
       gmapsActiveKey: GMAPS_ACTIVE_KEY,
       roadValidationFunctionUrl: `${String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "")}/functions/v1/validate-road`,
       roadValidationPublishableKey: String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim(),
-      roadValidationTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+      roadValidationTenantKey: String(
+        tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
+      ).trim().toLowerCase(),
       enableLegacyPlacesService: ENABLE_LEGACY_PLACES_SERVICE,
       isAdmin,
       openConfiguredNotice,
@@ -11168,7 +11170,7 @@ async function selectTenantScopedPublicRows(
         ),
         emailLocationEnrichmentWaitMs: EMAIL_LOCATION_ENRICHMENT_WAIT_MS,
         setTimeoutImpl: window.setTimeout.bind(window),
-        tenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
+        tenantKey: String(args?.tenantKey || activeTenantKey() || "").trim().toLowerCase(),
         functionUrlBase: String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, ""),
         publishableKey: String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim(),
         fetchImpl: fetch,
@@ -11182,7 +11184,11 @@ async function selectTenantScopedPublicRows(
     });
   }
 
-  async function getAbuseSubmitRuntimeDeps() {
+  async function getAbuseSubmitRuntimeDeps({
+    tenantKey = "",
+    supabaseClient = supabase,
+  } = {}) {
+    const normalizedTenantKey = String(tenantKey || activeTenantKey() || "").trim().toLowerCase();
     const {
       registerAbuseEventWithServerRuntimeShared,
       openRateLimitNoticeRuntimeShared,
@@ -11193,8 +11199,8 @@ async function selectTenantScopedPublicRows(
         normalizePhone,
         reporterIdentityKey,
         normalizeDomainKeyOrSlug,
-        activeTenantKey,
-        supabase,
+        activeTenantKey: () => normalizedTenantKey,
+        supabase: supabaseClient,
         abuseGateFunction: ABUSE_GATE_FUNCTION,
         abuseWindowMs: ABUSE_WINDOW_MS,
         abuseMaxEventsPerWindow: ABUSE_MAX_EVENTS_PER_WINDOW,
@@ -11243,7 +11249,27 @@ async function selectTenantScopedPublicRows(
   }
 
   async function submitDomainReport() {
-    const abuseSubmitDeps = await getAbuseSubmitRuntimeDeps();
+    const submitTenantKey = String(
+      tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
+    ).trim().toLowerCase();
+    const submitSupabaseClient = (
+      session?.access_token
+        ? createTenantScopedAuthedClient(submitTenantKey, session.access_token)
+        : createTenantScopedReadClient(submitTenantKey)
+    );
+    if (!submitTenantKey || !submitSupabaseClient) {
+      openNotice(
+        "⚠️",
+        "Tenant unavailable",
+        "The reporting location is still loading. Please wait a moment and try again."
+      );
+      return;
+    }
+    const submitActiveTenantKey = () => submitTenantKey;
+    const abuseSubmitDeps = await getAbuseSubmitRuntimeDeps({
+      tenantKey: submitTenantKey,
+      supabaseClient: submitSupabaseClient,
+    });
     const [
       { submitIncidentDomainReportRuntimeShared },
       {
@@ -11337,8 +11363,8 @@ async function selectTenantScopedPublicRows(
       incidentDomainUpsertConfiguredSeededState,
       incidentDomainPrependConfiguredReportState,
       incidentDomainApplyPersistedLocationCacheState,
-      activeTenantKey,
-      supabase,
+      activeTenantKey: submitActiveTenantKey,
+      supabase: submitSupabaseClient,
       persistIncidentLocationCacheWithEnrichment,
       incidentDomainAllowsRepeatAfterArchive,
       getIncidentRepairSnapshot,
@@ -11347,12 +11373,15 @@ async function selectTenantScopedPublicRows(
       incidentDomainServiceSubmitFunctionName,
       incidentDomainShouldUseServiceSubmitFallback,
       refreshIncidentRepairProgress,
-      dispatchDomainSubmitEmailNotice,
+      dispatchDomainSubmitEmailNotice: (args = {}) => dispatchDomainSubmitEmailNotice({
+        ...args,
+        tenantKey: submitTenantKey,
+      }),
       notifyAsyncEmailDelivery,
       incidentDomainConfiguredSourceTable,
       incidentDomainConfiguredSelectFields,
       incidentDomainConfiguredLookupField,
-      createTenantScopedReadClient,
+      createTenantScopedReadClient: () => submitSupabaseClient,
       incidentDomainConfiguredLookupIdentityFields,
       incidentDomainSeededInsertLookupFailureMessage,
       incidentDomainBuildReportLookupFallbackData,
@@ -11367,7 +11396,10 @@ async function selectTenantScopedPublicRows(
       domainIssueNoteTag,
       incidentDomainPersistsSubmitIssueType,
       incidentDomainSubmitFallbackIncidentPrefix,
-      insertReportWithFallback,
+      insertReportWithFallback: (payload = {}) => insertReportWithFallback(
+        { ...payload, tenant_key: submitTenantKey },
+        submitSupabaseClient,
+      ),
       normalizeReportQuality,
       setReports,
       incidentDomainDefaultIssueLabel,
@@ -11381,13 +11413,13 @@ function isMissingTenantKeyColumnError(err) {
   return msg.includes("tenant_key") && (msg.includes("does not exist") || msg.includes("schema cache"));
 }
 
-async function insertReportWithFallback(payload) {
+async function insertReportWithFallback(payload, supabaseClient = supabase) {
     const {
       insertReportWithFallbackShared,
       canRetryInsertWithoutSelectShared,
     } = await loadDeferredReportSubmitSupportModule();
     return insertReportWithFallbackShared(payload, {
-      supabase,
+      supabase: supabaseClient,
       canRetryInsertWithoutSelect: canRetryInsertWithoutSelectShared,
     });
   }
