@@ -24,3 +24,6 @@ verify_jwt = false
 
 [functions.send-resident-notification]
 verify_jwt = false
+
+[functions.validate-road]
+verify_jwt = false

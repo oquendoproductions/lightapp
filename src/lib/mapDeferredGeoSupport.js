@@ -38,6 +38,10 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
       ? deps.fetchImpl
       : globalThis?.fetch;
   const windowLike = deps?.windowLike || globalThis?.window;
+  const roadValidationRequest =
+    typeof deps?.roadValidationRequest === "function"
+      ? deps.roadValidationRequest
+      : null;
 
   const buildUnavailableResult = () => ({
     isRoad: true,
@@ -841,19 +845,28 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
 
   if (useRoadsApi) {
     try {
-      if (!gmapsActiveKey || typeof resolvedFetch !== "function") {
+      if (!roadValidationRequest && (!gmapsActiveKey || typeof resolvedFetch !== "function")) {
         return buildUnavailableResult();
       }
-      const points = `${lat},${lng}`;
-      trace("roads-request", { lat, lng });
-      const resp = await resolvedFetch(
-        `https://roads.googleapis.com/v1/nearestRoads?points=${encodeURIComponent(points)}&key=${encodeURIComponent(gmapsActiveKey)}`
-      );
-      trace("roads-response", { ok: resp.ok, status: resp.status });
-      if (!resp.ok) {
-        return buildUnavailableResult();
+      let json = null;
+      if (roadValidationRequest) {
+        trace("road-validation-function-request", { lat, lng });
+        json = await roadValidationRequest(lat, lng);
+        trace("road-validation-function-response", {
+          ok: json?.ok === true,
+          results: Array.isArray(json?.snappedPoints) ? json.snappedPoints.length : 0,
+        });
+        if (json?.ok !== true) return buildUnavailableResult();
+      } else {
+        const points = `${lat},${lng}`;
+        trace("roads-request", { lat, lng });
+        const resp = await resolvedFetch(
+          `https://roads.googleapis.com/v1/nearestRoads?points=${encodeURIComponent(points)}&key=${encodeURIComponent(gmapsActiveKey)}`
+        );
+        trace("roads-response", { ok: resp.ok, status: resp.status });
+        if (!resp.ok) return buildUnavailableResult();
+        json = await resp.json();
       }
-      const json = await resp.json();
       const snapped = Array.isArray(json?.snappedPoints) ? json.snappedPoints : [];
       if (snapped.length) {
         let best = null;
@@ -1188,6 +1201,36 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
     return placesLibraryLoadPromiseRef.current;
   };
 
+  const roadValidationFunctionUrl = String(deps?.roadValidationFunctionUrl || "").trim();
+  const roadValidationPublishableKey = String(deps?.roadValidationPublishableKey || "").trim();
+  const roadValidationTenantKey = String(deps?.roadValidationTenantKey || "").trim().toLowerCase();
+  const roadValidationRequest = (
+    useRoadsApi
+    && typeof deps?.fetchImpl === "function"
+    && roadValidationFunctionUrl
+    && roadValidationPublishableKey
+    && roadValidationTenantKey
+  )
+    ? async (requestLat, requestLng) => {
+        const response = await deps.fetchImpl(roadValidationFunctionUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: roadValidationPublishableKey,
+            Authorization: `Bearer ${roadValidationPublishableKey}`,
+            "x-tenant-key": roadValidationTenantKey,
+          },
+          body: JSON.stringify({
+            tenant_key: roadValidationTenantKey,
+            lat: requestLat,
+            lng: requestLng,
+          }),
+        });
+        if (!response.ok) return null;
+        return response.json();
+      }
+    : null;
+
   const lookupKey = [
     mode,
     useRoadsApi ? "roads" : "geo",
@@ -1207,6 +1250,7 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
       trace,
       roadHitThresholdMeters: deps?.roadHitThresholdMeters,
       gmapsActiveKey: deps?.gmapsActiveKey,
+      roadValidationRequest,
       enableLegacyPlacesService: deps?.enableLegacyPlacesService,
       isGeocoderLookupTemporarilyBlocked,
       markGeocoderLookupBlocked,

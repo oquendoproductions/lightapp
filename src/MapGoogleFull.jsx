@@ -3403,7 +3403,7 @@ export default function App({
   const [toolHintIndex, setToolHintIndex] = useState(null);
   const toolHintTimerRef = useRef(null);
 
-  function openNotice(icon, title, message, opts = {}) {
+  const openNotice = useCallback((icon, title, message, opts = {}) => {
     const { autoCloseMs = 0, compact = false, iconKey = "" } = opts;
     const rawTitle = String(title ?? "").trim();
     const rawMessage = String(message ?? "").trim();
@@ -3438,7 +3438,7 @@ export default function App({
         noticeTimerRef.current = null;
       }, autoCloseMs);
     }
-  }
+  }, []);
 
   function closeNotice() {
     if (noticeTimerRef.current) {
@@ -11085,6 +11085,9 @@ async function selectTenantScopedPublicRows(
       nextTraceId: () => ++GEO_TRACE_SEQUENCE,
       roadHitThresholdMeters: ROAD_VALIDATION_HIT_METERS,
       gmapsActiveKey: GMAPS_ACTIVE_KEY,
+      roadValidationFunctionUrl: `${String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "")}/functions/v1/validate-road`,
+      roadValidationPublishableKey: String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim(),
+      roadValidationTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
       enableLegacyPlacesService: ENABLE_LEGACY_PLACES_SERVICE,
       isAdmin,
       openConfiguredNotice,

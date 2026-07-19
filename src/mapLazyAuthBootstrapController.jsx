@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { shouldOpenExpiredSessionPrompt } from "./lib/mapAuthBootstrapSupport.js";
 
 const loadCrossTenantAuthModule = () => import("./auth/crossTenantAuth");
@@ -27,6 +27,12 @@ export default function MapLazyAuthBootstrapController({
   openDeleteAccountFlow,
   wasUserInitiatedLogout,
 }) {
+  const openNoticeRef = useRef(openNotice);
+
+  useEffect(() => {
+    openNoticeRef.current = openNotice;
+  }, [openNotice]);
+
   useEffect(() => {
     const KEY = "sl_email_confirmed_flash_shown";
     if (sessionStorage.getItem(KEY)) return;
@@ -49,11 +55,11 @@ export default function MapLazyAuthBootstrapController({
       // ignore
     }
 
-    openNotice("✅", "Email confirmed", "You're all set.", {
+    openNoticeRef.current("✅", "Email confirmed", "You're all set.", {
       autoCloseMs: 2000,
       compact: true,
     });
-  }, [openNotice]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -187,7 +193,7 @@ export default function MapLazyAuthBootstrapController({
           shouldHydrateMapAuthEagerly,
           userInitiatedLogout: wasUserInitiatedLogout?.() === true,
         })) {
-          openNotice(
+          openNoticeRef.current(
             "Session expired",
             "Sign in again",
             "Your saved session is no longer valid. The map is currently showing public incident visibility."
@@ -268,7 +274,6 @@ export default function MapLazyAuthBootstrapController({
     setRecoveryPasswordValue,
     setRecoveryPasswordValue2,
     setSession,
-    openNotice,
     hydrateImmediately,
     shouldHydrateMapAuthEagerly,
     supabase,
