@@ -18,18 +18,11 @@ export default function MapLazyTenantRuntimeController({
   setTenantVisibilityLoaded,
   resolvedTenantMapFeaturesTenantKey,
   authReady,
-  activeTenantKey,
-  getSupabaseTenantKey,
   createTenantScopedReadClient,
   defaultTenantMapFeatures,
   tenantMapFeaturesSourceRef,
   setTenantMapFeatures,
   setTenantMapFeaturesLoaded,
-  pushTenantBoundaryDiagnostic,
-  summarizeTenantMapFeaturesRow,
-  sessionAccessToken,
-  tenantTenantKey,
-  tenantConfigTenantKey,
   shouldPrioritizeTenantParksLoad,
   tenantParksLoaded,
   loadTenantParksNow,
@@ -107,9 +100,6 @@ export default function MapLazyTenantRuntimeController({
       dispose = scheduleTenantMapFeaturesRuntimeShared({
         authReady,
         tenantKey: resolvedTenantMapFeaturesTenantKey,
-        resolvedTenantMapFeaturesTenantKey,
-        activeTenantKey,
-        getSupabaseTenantKey,
         tenantScopedReadClient,
         createTenantScopedReadClient,
         supabase,
@@ -117,8 +107,6 @@ export default function MapLazyTenantRuntimeController({
         tenantMapFeaturesSourceRef,
         setTenantMapFeatures,
         setTenantMapFeaturesLoaded,
-        pushTenantBoundaryDiagnostic,
-        summarizeTenantMapFeaturesRow,
         normalizeTenantMapFeaturesConfig: normalizeTenantMapFeaturesConfigShared,
         writeCachedTenantMapFeatures: (tenantKey, features) => (
           writeCachedTenantMapFeaturesShared(tenantKey, features, defaultTenantMapFeatures)
@@ -133,19 +121,14 @@ export default function MapLazyTenantRuntimeController({
       dispose();
     };
   }, [
-    activeTenantKey,
     authReady,
     createTenantScopedReadClient,
     defaultTenantMapFeatures,
-    getSupabaseTenantKey,
     loading,
-    pushTenantBoundaryDiagnostic,
     resolvedTenantMapFeaturesTenantKey,
-    sessionAccessToken,
     setTenantMapFeatures,
     setTenantMapFeaturesLoaded,
     startupWarmupReady,
-    summarizeTenantMapFeaturesRow,
     supabase,
     tenantMapFeaturesSourceRef,
     tenantScopedReadClient,
@@ -190,27 +173,6 @@ export default function MapLazyTenantRuntimeController({
     nonCriticalStartupReady,
     shouldPrioritizeTenantParksLoad,
     tenantParksLoaded,
-  ]);
-
-  useEffect(() => {
-    pushTenantBoundaryDiagnostic("tenant-switch", {
-      tenantTenantKey: String(tenantTenantKey || "").trim().toLowerCase(),
-      tenantConfigKey: String(tenantConfigTenantKey || "").trim().toLowerCase(),
-      resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey(),
-      hasSessionAccessToken: Boolean(String(sessionAccessToken || "").trim()),
-      tenantReady: tenantReady !== false,
-    });
-  }, [
-    activeTenantKey,
-    getSupabaseTenantKey,
-    pushTenantBoundaryDiagnostic,
-    resolvedTenantMapFeaturesTenantKey,
-    sessionAccessToken,
-    tenantConfigTenantKey,
-    tenantReady,
-    tenantTenantKey,
   ]);
 
   return null;

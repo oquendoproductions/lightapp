@@ -316,8 +316,6 @@ async function savePersistedIncidentRepairConfirmedKeysDeferred(tenantKey, keys 
 }
 
 const DEV_MAPS_HOST_SUFFIXES = [".ngrok-free.app", ".ngrok-free.dev", ".ngrok.io", ".ngrok.app"];
-const TENANT_BOUNDARY_DEBUG_STORAGE_KEY = "cityreport.debug.tenantBoundary";
-const TENANT_BOUNDARY_DEBUG_QUERY_PARAM = "debugTenantBoundary";
 
 function isPrivateIpv4Host(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
@@ -331,31 +329,6 @@ function isPrivateIpv4Host(hostname) {
   return false;
 }
 
-function isTenantBoundaryDebugEnabled() {
-  if (typeof window === "undefined") return false;
-  try {
-    const params = new URLSearchParams(window.location.search || "");
-    const queryValue = String(params.get(TENANT_BOUNDARY_DEBUG_QUERY_PARAM) || "").trim().toLowerCase();
-    if (queryValue === "1" || queryValue === "true" || queryValue === "yes") return true;
-  } catch {
-    // ignore query parsing issues
-  }
-  try {
-    const stored = String(window.localStorage.getItem(TENANT_BOUNDARY_DEBUG_STORAGE_KEY) || "").trim().toLowerCase();
-    return stored === "1" || stored === "true" || stored === "yes";
-  } catch {
-    return false;
-  }
-}
-
-function isTestCityBoundaryDebugTarget(tenantKey) {
-  const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
-  if (normalizedTenantKey === "testcity" || normalizedTenantKey === "testcity1") return true;
-  if (typeof window === "undefined") return false;
-  const hostname = String(window.location.hostname || "").trim().toLowerCase();
-  return hostname === "testcity.cityreport.io" || hostname.startsWith("testcity.");
-}
-
 function isAppleTouchBrowser() {
   if (typeof navigator === "undefined") return false;
   const ua = String(navigator.userAgent || "");
@@ -363,40 +336,6 @@ function isAppleTouchBrowser() {
   const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
   if (/iPad|iPhone|iPod/i.test(ua)) return true;
   return platform === "MacIntel" && maxTouchPoints > 1;
-}
-
-function summarizeTenantMapFeaturesRow(row) {
-  if (!row || typeof row !== "object") return null;
-  return {
-    show_boundary_border: row.show_boundary_border !== false,
-    shade_outside_boundary: row.shade_outside_boundary !== false,
-    show_alert_icon: row.show_alert_icon !== false,
-    show_event_icon: row.show_event_icon !== false,
-    outside_shade_opacity: row.outside_shade_opacity,
-    boundary_border_color: String(row.boundary_border_color || "").trim().toLowerCase() || "",
-    boundary_border_width: row.boundary_border_width,
-  };
-}
-
-function pushTenantBoundaryDiagnostic(event, payload, { forceWarn = false } = {}) {
-  const entry = {
-    ts: new Date().toISOString(),
-    event: String(event || "").trim() || "unknown",
-    payload: payload && typeof payload === "object" ? payload : { value: payload },
-  };
-  if (typeof window !== "undefined") {
-    try {
-      const prev = Array.isArray(window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__)
-        ? window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__
-        : [];
-      window.__CITYREPORT_TENANT_BOUNDARY_DEBUG__ = [...prev.slice(-49), entry];
-    } catch {
-      // ignore window instrumentation failures
-    }
-  }
-  if (forceWarn || isTenantBoundaryDebugEnabled()) {
-    console.warn("[tenant boundary debug]", entry);
-  }
 }
 
 function defaultIconSrcForDomain(domainKey) {
@@ -4235,7 +4174,6 @@ export default function App({
   const deferredIncidentStateRefreshContextKeyRef = useRef("");
   const deferredBoundaryRefreshContextKeyRef = useRef("");
   const tenantMapFeaturesSourceRef = useRef("initial");
-  const tenantBoundaryRenderSignatureRef = useRef("");
   const tenantRegistryIncidentDomainsRef = useRef([]);
   const visibleDomainOptionsRef = useRef([]);
   const tenantDomainConfigLoadedRef = useRef(false);
@@ -7406,22 +7344,6 @@ async function selectTenantScopedPublicRows(
         configuredPersistedRecordStateCountByDomain,
       });
       if (shouldRetrySparseFirstLoad) {
-        pushTenantBoundaryDiagnostic("map_data:sparse-first-load-retry", {
-          loadAttempt,
-          loadTenantKey,
-          runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
-          globalSupabaseTenantKey: getSupabaseTenantKey(),
-          registryDomainCount,
-          visibleDomainCount,
-          waitingForDomainConfigForRetry,
-          reportCount: Number(reportData?.length || 0),
-          officialLightCount: Number(officialData?.length || 0),
-          incidentStateCount: -1,
-          configuredIncidentSeededCountByDomain,
-          configuredIncidentReportCountByDomain,
-          configuredPersistedRecordStateCountByDomain,
-          usingSharedSupabaseClient: publicReadClient === supabase,
-        });
         await new Promise((resolve) => window.setTimeout(resolve, 250 * (loadAttempt + 1)));
         if (cancelled) return;
         return loadAll(loadAttempt + 1);
@@ -8829,38 +8751,6 @@ async function selectTenantScopedPublicRows(
     (lat, lng) => isPointInPolygons(Number(lat), Number(lng), cityLimitPolygons),
     [cityLimitPolygons]
   );
-
-  useEffect(() => {
-    if (!tenantMapFeaturesLoaded) return;
-    const payload = {
-      tenantKey: resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey(),
-      source: tenantMapFeaturesSourceRef.current,
-      showCityBoundaryBorder,
-      cityBoundaryBorderColor,
-      cityBoundaryBorderWidth,
-      showCityOutsideShade,
-      cityOutsideShadeOpacity,
-      hasBoundaryPolygons: cityBoundaryOuterRings.length > 0,
-    };
-    const signature = JSON.stringify(payload);
-    if (tenantBoundaryRenderSignatureRef.current === signature) return;
-    tenantBoundaryRenderSignatureRef.current = signature;
-    const isFallbackRed =
-      cityBoundaryBorderColor === DEFAULT_TENANT_MAP_FEATURES.boundary_border_color &&
-      tenantMapFeaturesSourceRef.current !== "db-row";
-    pushTenantBoundaryDiagnostic("tenant_map_features:render", payload, { forceWarn: isFallbackRed });
-  }, [
-    cityBoundaryBorderColor,
-    cityBoundaryBorderWidth,
-    cityBoundaryOuterRings.length,
-    cityOutsideShadeOpacity,
-    resolvedTenantMapFeaturesTenantKey,
-    showCityBoundaryBorder,
-    showCityOutsideShade,
-    tenantMapFeaturesLoaded,
-  ]);
 
   useEffect(() => {
     if (!showMapAlertIcon) setAlertsWindowOpen(false);
@@ -13364,18 +13254,11 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             setTenantVisibilityLoaded={setTenantVisibilityLoaded}
             resolvedTenantMapFeaturesTenantKey={resolvedTenantMapFeaturesTenantKey}
             authReady={publicReadAccessReady}
-            activeTenantKey={activeTenantKey}
-            getSupabaseTenantKey={getSupabaseTenantKey}
             createTenantScopedReadClient={createTenantScopedReadClient}
             defaultTenantMapFeatures={DEFAULT_TENANT_MAP_FEATURES}
             tenantMapFeaturesSourceRef={tenantMapFeaturesSourceRef}
             setTenantMapFeatures={setTenantMapFeatures}
             setTenantMapFeaturesLoaded={setTenantMapFeaturesLoaded}
-            pushTenantBoundaryDiagnostic={pushTenantBoundaryDiagnostic}
-            summarizeTenantMapFeaturesRow={summarizeTenantMapFeaturesRow}
-            sessionAccessToken={session?.access_token || ""}
-            tenantTenantKey={tenant?.tenantKey || ""}
-            tenantConfigTenantKey={tenant?.tenantConfig?.tenant_key || ""}
             shouldPrioritizeTenantParksLoad={shouldPrioritizeTenantParksLoad}
             tenantParksLoaded={tenantParksLoaded}
             loadTenantParksNow={loadTenantParksNow}
@@ -13912,10 +13795,6 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             showCityBoundaryBorder={showCityBoundaryBorder}
             cityBoundaryBorderColor={cityBoundaryBorderColor}
             cityBoundaryBorderWidth={cityBoundaryBorderWidth}
-            boundaryDiagnosticsEnabled={
-              isTenantBoundaryDebugEnabled()
-              || isTestCityBoundaryDebugTarget(resolvedTenantBoundaryTenantKey)
-            }
             tenantParksLoaded={tenantParksLoaded}
             tenantParkVisuals={tenantParkVisuals}
           />

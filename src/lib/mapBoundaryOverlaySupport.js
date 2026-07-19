@@ -1,10 +1,7 @@
-import { createBoundaryFlashDiagnostics } from "./mapBoundaryFlashDiagnostics.js";
-
 export function createPersistentBoundaryOverlay({
   googleMaps,
   map,
   renderStateRef,
-  diagnosticsEnabled = false,
 }) {
   return new (class PersistentBoundaryOverlay extends googleMaps.OverlayView {
     constructor() {
@@ -15,9 +12,6 @@ export function createPersistentBoundaryOverlay({
       this.borderPath = null;
       this.mapListeners = [];
       this.drawFrame = null;
-      this.drawCount = 0;
-      this.requestedDrawCount = 0;
-      this.diagnostics = null;
     }
 
     getBoundaryHost() {
@@ -103,22 +97,6 @@ export function createPersistentBoundaryOverlay({
       this.borderPath = borderPath;
       this.attachToBoundaryHost();
 
-      this.diagnostics = createBoundaryFlashDiagnostics({
-        enabled: diagnosticsEnabled,
-        map,
-        getState: () => ({
-          container: this.container,
-          svg: this.svg,
-          shadePath: this.shadePath,
-          borderPath: this.borderPath,
-          overlayLayer: this.getBoundaryHost().host,
-          renderState: renderStateRef.current,
-          drawCount: this.drawCount,
-          requestedDrawCount: this.requestedDrawCount,
-        }),
-      });
-      this.diagnostics.record("overlay:on-add");
-
       this.mapListeners = ["dragstart", "drag", "dragend", "bounds_changed", "idle", "zoom_changed"]
         .map((eventName) => map.addListener?.(
           eventName,
@@ -127,18 +105,15 @@ export function createPersistentBoundaryOverlay({
         .filter(Boolean);
     }
 
-    requestDraw(reason = "unspecified") {
-      this.requestedDrawCount += 1;
+    requestDraw() {
       if (this.drawFrame !== null) return;
       this.drawFrame = window.requestAnimationFrame(() => {
         this.drawFrame = null;
-        this.diagnostics?.record?.("overlay:draw-frame", { reason });
         this.draw();
       });
     }
 
     draw() {
-      this.drawCount += 1;
       if (!this.container || !this.svg || !this.shadePath || !this.borderPath) return;
       const projection = this.getProjection();
       const mapDiv = map.getDiv?.();
@@ -205,20 +180,9 @@ export function createPersistentBoundaryOverlay({
         renderStateRef.current.showBorder ? renderStateRef.current.borderColor : "none",
       );
       this.borderPath.setAttribute("stroke-width", String(renderStateRef.current.borderWidth));
-      this.diagnostics?.record?.("overlay:draw-complete", {
-        hostOffsetX,
-        hostOffsetY,
-        width,
-        height,
-        overscan,
-        holeRings: holeRings.length,
-      });
     }
 
     onRemove() {
-      this.diagnostics?.record?.("overlay:on-remove");
-      this.diagnostics?.destroy?.();
-      this.diagnostics = null;
       this.mapListeners.forEach((listener) => listener?.remove?.());
       this.mapListeners = [];
       if (this.drawFrame !== null) {

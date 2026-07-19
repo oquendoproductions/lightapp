@@ -235,9 +235,6 @@ export async function loadTenantVisibilityConfigShared({
 export async function loadTenantMapFeaturesShared({
   authReady,
   tenantKey,
-  resolvedTenantMapFeaturesTenantKey,
-  activeTenantKey,
-  getSupabaseTenantKey,
   tenantScopedReadClient,
   createTenantScopedReadClient,
   supabase,
@@ -245,8 +242,6 @@ export async function loadTenantMapFeaturesShared({
   tenantMapFeaturesSourceRef,
   setTenantMapFeatures,
   setTenantMapFeaturesLoaded,
-  pushTenantBoundaryDiagnostic,
-  summarizeTenantMapFeaturesRow,
   normalizeTenantMapFeaturesConfig = normalizeTenantMapFeaturesConfigShared,
   writeCachedTenantMapFeatures = writeCachedTenantMapFeaturesShared,
 }) {
@@ -255,11 +250,6 @@ export async function loadTenantMapFeaturesShared({
     tenantMapFeaturesSourceRef.current = "empty-tenant";
     setTenantMapFeatures({ ...defaultTenantMapFeatures });
     setTenantMapFeaturesLoaded(true);
-    pushTenantBoundaryDiagnostic?.("tenant_map_features:empty-tenant", {
-      resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-    }, { forceWarn: true });
     return;
   }
 
@@ -281,49 +271,19 @@ export async function loadTenantMapFeaturesShared({
 
   const scopedReadClient =
     tenantScopedReadClient || createTenantScopedReadClient?.(tenantKey) || supabase;
-  pushTenantBoundaryDiagnostic?.("tenant_map_features:fetch-start", {
-    tenantKey,
-    resolvedTenantMapFeaturesTenantKey,
-    runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-    globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-    usingMemoizedScopedClient: Boolean(tenantScopedReadClient),
-    usingSharedSupabaseClient: scopedReadClient === supabase,
-  });
 
   let { data, error } = await fetchTenantMapFeatures(scopedReadClient);
 
   if (!error && !data) {
-    pushTenantBoundaryDiagnostic?.("tenant_map_features:no-row-initial", {
-      tenantKey,
-      resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-      usingMemoizedScopedClient: Boolean(tenantScopedReadClient),
-      usingSharedSupabaseClient: scopedReadClient === supabase,
-    }, { forceWarn: true });
-
     const retryClient = createTenantScopedReadClient?.(tenantKey);
     if (retryClient) {
       const retryResult = await fetchTenantMapFeatures(retryClient);
       data = retryResult.data;
       error = retryResult.error;
-      pushTenantBoundaryDiagnostic?.("tenant_map_features:retry-result", {
-        tenantKey,
-        hasData: Boolean(retryResult.data),
-        row: summarizeTenantMapFeaturesRow?.(retryResult.data),
-        errorCode: String(retryResult.error?.code || "").trim(),
-        errorMessage: String(retryResult.error?.message || "").trim(),
-      }, { forceWarn: !retryResult.data || Boolean(retryResult.error) });
-    } else {
-      pushTenantBoundaryDiagnostic?.("tenant_map_features:retry-skipped", {
-        tenantKey,
-        reason: "fresh scoped client unavailable",
-      }, { forceWarn: true });
     }
   }
 
   if (error) {
-    const errCode = String(error?.code || "").trim();
     const errMsg = String(error?.message || "").trim();
     if (!isPermissionDeniedError(error) && !isMissingConfigError(error)) {
       console.warn("[tenant_map_features]", errMsg || error);
@@ -331,14 +291,6 @@ export async function loadTenantMapFeaturesShared({
     tenantMapFeaturesSourceRef.current = "fallback-error";
     setTenantMapFeatures({ ...defaultTenantMapFeatures });
     setTenantMapFeaturesLoaded(true);
-    pushTenantBoundaryDiagnostic?.("tenant_map_features:fallback-error", {
-      tenantKey,
-      resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-      errorCode: errCode,
-      errorMessage: errMsg,
-    }, { forceWarn: true });
     return;
   }
 
@@ -346,12 +298,6 @@ export async function loadTenantMapFeaturesShared({
     tenantMapFeaturesSourceRef.current = "fallback-no-row";
     setTenantMapFeatures({ ...defaultTenantMapFeatures });
     setTenantMapFeaturesLoaded(true);
-    pushTenantBoundaryDiagnostic?.("tenant_map_features:fallback-no-row", {
-      tenantKey,
-      resolvedTenantMapFeaturesTenantKey,
-      runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-      globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-    }, { forceWarn: true });
     return;
   }
 
@@ -360,13 +306,6 @@ export async function loadTenantMapFeaturesShared({
   tenantMapFeaturesSourceRef.current = "db-row";
   setTenantMapFeaturesLoaded(true);
   writeCachedTenantMapFeatures?.(tenantKey, normalizedFeatures);
-  pushTenantBoundaryDiagnostic?.("tenant_map_features:loaded", {
-    tenantKey,
-    resolvedTenantMapFeaturesTenantKey,
-    runtimeTenantKey: String(activeTenantKey?.() || "").trim().toLowerCase(),
-    globalSupabaseTenantKey: getSupabaseTenantKey?.(),
-    row: summarizeTenantMapFeaturesRow?.(normalizedFeatures),
-  });
 }
 
 function scheduleDeferredTenantUiRefreshShared(loadFn, {

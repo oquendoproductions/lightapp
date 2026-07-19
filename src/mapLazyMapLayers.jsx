@@ -107,7 +107,6 @@ const PersistentBoundaryLayer = memo(function PersistentBoundaryLayer({
   showBorder,
   borderColor,
   borderWidth,
-  boundaryDiagnosticsEnabled,
 }) {
   const map = useGoogleMap();
   const overlayRef = useRef(null);
@@ -126,7 +125,6 @@ const PersistentBoundaryLayer = memo(function PersistentBoundaryLayer({
       googleMaps: window.google.maps,
       map,
       renderStateRef,
-      diagnosticsEnabled: boundaryDiagnosticsEnabled,
     });
     overlayRef.current = overlay;
     overlay.setMap(map);
@@ -134,7 +132,7 @@ const PersistentBoundaryLayer = memo(function PersistentBoundaryLayer({
       overlay.setMap(null);
       if (overlayRef.current === overlay) overlayRef.current = null;
     };
-  }, [boundaryDiagnosticsEnabled, map]);
+  }, [map]);
 
   useEffect(() => {
     renderStateRef.current = {
@@ -158,7 +156,6 @@ export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
   showCityBoundaryBorder,
   cityBoundaryBorderColor,
   cityBoundaryBorderWidth,
-  boundaryDiagnosticsEnabled,
   tenantParksLoaded,
   tenantParkVisuals,
 }) {
@@ -172,7 +169,6 @@ export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
           showBorder={showCityBoundaryBorder}
           borderColor={cityBoundaryBorderColor}
           borderWidth={cityBoundaryBorderWidth}
-          boundaryDiagnosticsEnabled={boundaryDiagnosticsEnabled}
         />
       )}
       {tenantParksLoaded && tenantParkVisuals.map((park) => (
