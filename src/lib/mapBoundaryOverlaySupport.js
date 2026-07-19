@@ -20,6 +20,11 @@ export function createPersistentBoundaryOverlay({
       this.diagnostics = null;
     }
 
+    getBoundaryPane() {
+      const panes = this.getPanes?.();
+      return panes?.mapPane || panes?.overlayLayer || null;
+    }
+
     onAdd() {
       const container = document.createElement("div");
       container.style.position = "absolute";
@@ -53,7 +58,7 @@ export function createPersistentBoundaryOverlay({
       this.svg = svg;
       this.shadePath = shadePath;
       this.borderPath = borderPath;
-      this.getPanes?.()?.overlayLayer?.appendChild(container);
+      this.getBoundaryPane()?.appendChild(container);
 
       this.diagnostics = createBoundaryFlashDiagnostics({
         enabled: diagnosticsEnabled,
@@ -63,7 +68,7 @@ export function createPersistentBoundaryOverlay({
           svg: this.svg,
           shadePath: this.shadePath,
           borderPath: this.borderPath,
-          overlayLayer: this.getPanes?.()?.overlayLayer || null,
+          overlayLayer: this.getBoundaryPane(),
           renderState: renderStateRef.current,
           drawCount: this.drawCount,
           requestedDrawCount: this.requestedDrawCount,
@@ -96,10 +101,10 @@ export function createPersistentBoundaryOverlay({
       const mapDiv = map.getDiv?.();
       if (!projection || !mapDiv) return;
 
-      const overlayLayer = this.getPanes?.()?.overlayLayer;
-      if (!overlayLayer) return;
-      if (this.container.parentNode !== overlayLayer) {
-        overlayLayer.appendChild(this.container);
+      const boundaryPane = this.getBoundaryPane();
+      if (!boundaryPane) return;
+      if (this.container.parentNode !== boundaryPane) {
+        boundaryPane.appendChild(this.container);
       }
 
       const width = Math.max(1, Number(mapDiv.clientWidth || 0));

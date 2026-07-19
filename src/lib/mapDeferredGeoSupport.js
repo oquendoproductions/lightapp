@@ -1201,11 +1201,14 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
     return placesLibraryLoadPromiseRef.current;
   };
 
+  const suppliedRoadValidationRequest = typeof deps?.roadValidationRequest === "function"
+    ? deps.roadValidationRequest
+    : null;
   const roadValidationFunctionUrl = String(deps?.roadValidationFunctionUrl || "").trim();
   const roadValidationPublishableKey = String(deps?.roadValidationPublishableKey || "").trim();
   const roadValidationTenantKey = String(deps?.roadValidationTenantKey || "").trim().toLowerCase();
-  const roadValidationTimeoutMs = Math.max(1000, Number(deps?.roadValidationTimeoutMs || 12000));
-  const roadValidationRequest = (
+  const roadValidationTimeoutMs = Math.max(1000, Number(deps?.roadValidationTimeoutMs || 30000));
+  const directRoadValidationRequest = (
     useRoadsApi
     && typeof deps?.fetchImpl === "function"
     && roadValidationFunctionUrl
@@ -1254,6 +1257,22 @@ export async function reverseGeocodeRoadLabelRuntimeShared(
         } finally {
           if (timeoutId !== null) clearTimeout(timeoutId);
         }
+      }
+    : null;
+  const roadValidationRequest = useRoadsApi && (suppliedRoadValidationRequest || directRoadValidationRequest)
+    ? async (requestLat, requestLng) => {
+        if (suppliedRoadValidationRequest) {
+          try {
+            const suppliedResult = await suppliedRoadValidationRequest(requestLat, requestLng);
+            if (suppliedResult?.ok === true) return suppliedResult;
+          } catch (error) {
+            console.warn("[road-validation] scoped function invoke unavailable", {
+              tenantKey: roadValidationTenantKey,
+              error: String(error?.message || error || "unknown"),
+            });
+          }
+        }
+        return directRoadValidationRequest?.(requestLat, requestLng) || null;
       }
     : null;
 

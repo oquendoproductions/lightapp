@@ -11113,6 +11113,16 @@ async function selectTenantScopedPublicRows(
     const {
       reverseGeocodeRoadLabelRuntimeShared,
     } = await loadDeferredGeoSupportModule();
+    const roadValidationTenantKey = String(
+      tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
+    ).trim().toLowerCase();
+    const roadValidationClient = roadValidationTenantKey
+      ? (
+          createTenantScopedReadClient(roadValidationTenantKey)
+          || tenantScopedReadClient
+          || supabase
+        )
+      : null;
     return reverseGeocodeRoadLabelRuntimeShared(lat, lng, options, {
       reverseGeocodeInFlightMap: reverseGeocodeInFlightRef.current,
       placesLookupBlockedUntilRef,
@@ -11126,9 +11136,56 @@ async function selectTenantScopedPublicRows(
       gmapsActiveKey: GMAPS_ACTIVE_KEY,
       roadValidationFunctionUrl: `${String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/, "")}/functions/v1/validate-road`,
       roadValidationPublishableKey: String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim(),
-      roadValidationTenantKey: String(
-        tenant?.tenantKey || tenant?.tenantConfig?.tenant_key || activeTenantKey() || ""
-      ).trim().toLowerCase(),
+      roadValidationTenantKey,
+      roadValidationTimeoutMs: 30000,
+      roadValidationRequest: roadValidationClient && roadValidationTenantKey
+        ? async (requestLat, requestLng) => {
+            let lastError = null;
+            for (let attempt = 1; attempt <= 2; attempt += 1) {
+              const controller = typeof AbortController === "function" ? new AbortController() : null;
+              const timeoutId = controller
+                ? window.setTimeout(() => controller.abort(), 30000)
+                : null;
+              try {
+                const { data, error, response } = await roadValidationClient.functions.invoke(
+                  "validate-road",
+                  {
+                    body: {
+                      tenant_key: roadValidationTenantKey,
+                      lat: requestLat,
+                      lng: requestLng,
+                    },
+                    headers: { "x-tenant-key": roadValidationTenantKey },
+                    ...(controller ? { signal: controller.signal } : {}),
+                  }
+                );
+                if (!error && data?.ok === true) return data;
+                lastError = error || new Error(`Road validation returned HTTP ${response?.status || "unknown"}.`);
+                console.warn("[road-validation] scoped invoke failed", {
+                  attempt,
+                  tenantKey: roadValidationTenantKey,
+                  status: response?.status || null,
+                  error: String(lastError?.message || lastError || "unknown"),
+                  response: data || null,
+                });
+              } catch (error) {
+                lastError = error;
+                console.warn("[road-validation] scoped invoke unavailable", {
+                  attempt,
+                  tenantKey: roadValidationTenantKey,
+                  error: String(error?.message || error || "unknown"),
+                });
+              } finally {
+                if (timeoutId !== null) window.clearTimeout(timeoutId);
+              }
+              if (attempt < 2) {
+                await new Promise((resolve) => window.setTimeout(resolve, 400));
+              }
+            }
+            if (lastError) throw lastError;
+            return null;
+          }
+        : null,
       enableLegacyPlacesService: ENABLE_LEGACY_PLACES_SERVICE,
       isAdmin,
       openConfiguredNotice,

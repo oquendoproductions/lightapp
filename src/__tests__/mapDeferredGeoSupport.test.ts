@@ -84,6 +84,42 @@ describe("shared road validation", () => {
     expect(result.validationUnavailable).toBe(false);
   });
 
+  it("falls back to the direct function request when the scoped invoke is unavailable", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const roadValidationRequest = vi.fn().mockRejectedValue(new Error("mobile transport failed"));
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        snappedPoints: [
+          { location: { latitude: 41.65, longitude: -80.83 } },
+        ],
+      }),
+    });
+
+    const result = await reverseGeocodeRoadLabelRuntimeShared(
+      41.65,
+      -80.83,
+      { useRoadsApi: true, validationOnly: true },
+      { reverseGeocodeInFlightMap: new Map() },
+      {
+        roadValidationRequest,
+        roadValidationFunctionUrl: "https://example.supabase.co/functions/v1/validate-road",
+        roadValidationPublishableKey: "publishable-key",
+        roadValidationTenantKey: "testcity1",
+        fetchImpl,
+        windowLike: {},
+      },
+    );
+
+    expect(roadValidationRequest).toHaveBeenCalledWith(41.65, -80.83);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(result.isRoad).toBe(true);
+    expect(result.validationUnavailable).toBe(false);
+    warning.mockRestore();
+  });
+
   it("returns validation unavailable and logs the function response on HTTP failure", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchImpl = vi.fn().mockResolvedValue({

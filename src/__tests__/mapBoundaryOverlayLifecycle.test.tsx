@@ -25,9 +25,10 @@ describe("persistent tenant boundary overlay", () => {
     }
 
     const mapDiv = document.createElement("div");
+    const mapPane = document.createElement("div");
     const overlayLayer = document.createElement("div");
     const markerLayer = document.createElement("div");
-    mapDiv.append(overlayLayer, markerLayer);
+    mapDiv.append(mapPane, overlayLayer, markerLayer);
     Object.defineProperty(mapDiv, "clientWidth", { value: 320 });
     Object.defineProperty(mapDiv, "clientHeight", { value: 640 });
     const listenerNames: string[] = [];
@@ -67,7 +68,7 @@ describe("persistent tenant boundary overlay", () => {
       onRemove: () => void;
     };
 
-    overlay.getPanes = () => ({ overlayLayer, markerLayer });
+    overlay.getPanes = () => ({ mapPane, overlayLayer, markerLayer });
     overlay.getProjection = () => ({
       fromContainerPixelToLatLng: ({ x, y }: Point) => new LatLng(y + 100, x + 200),
       fromLatLngToDivPixel: ({ lat, lng }: LatLng) => ({ x: lng + 10, y: lat + 20 }),
@@ -77,8 +78,9 @@ describe("persistent tenant boundary overlay", () => {
 
     const originalContainer = overlay.container;
     const originalShadePath = overlay.shadePath;
-    expect(overlay.container.parentNode).toBe(overlayLayer);
+    expect(overlay.container.parentNode).toBe(mapPane);
     expect(overlay.container.parentNode).not.toBe(markerLayer);
+    expect(overlay.container.parentNode).not.toBe(overlayLayer);
     expect(overlay.container.style.zIndex).toBe("");
     expect(overlay.container.style.transform).toBe("translate3d(-430px, -520px, 0)");
     expect(overlay.container.style.width).toBe("1600px");
@@ -92,10 +94,10 @@ describe("persistent tenant boundary overlay", () => {
     overlay.draw();
     expect(overlay.container).toBe(originalContainer);
     expect(overlay.shadePath).toBe(originalShadePath);
-    expect(overlay.container.parentNode).toBe(overlayLayer);
+    expect(overlay.container.parentNode).toBe(mapPane);
 
     overlay.onRemove();
-    expect(overlayLayer.children).toHaveLength(0);
-    expect(mapDiv.children).toHaveLength(2);
+    expect(mapPane.children).toHaveLength(0);
+    expect(mapDiv.children).toHaveLength(3);
   });
 });
