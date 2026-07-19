@@ -10,7 +10,24 @@ export function TenantInitialSelectionScreen({
   loginBusy = false,
   loginError = "",
   onSignIn,
+  onOpenSignup,
   onContinueGuest,
+  signupName = "",
+  onSignupNameChange,
+  signupPhone = "",
+  onSignupPhoneChange,
+  signupEmail = "",
+  onSignupEmailChange,
+  signupPassword = "",
+  onSignupPasswordChange,
+  signupPasswordConfirmation = "",
+  onSignupPasswordConfirmationChange,
+  signupLegalAccepted = false,
+  onSignupLegalAcceptedChange,
+  signupBusy = false,
+  signupError = "",
+  onCreateAccount,
+  onReturnToSignIn,
   tenantSearch = "",
   onTenantSearchChange,
   tenantSearchTerm = "",
@@ -59,10 +76,135 @@ export function TenantInitialSelectionScreen({
           <button type="submit" disabled={loginBusy} style={launchPrimaryButtonStyle}>
             {loginBusy ? "Signing In..." : "Sign In"}
           </button>
+          <button type="button" onClick={() => onOpenSignup?.()} style={launchSecondaryButtonStyle}>
+            Create Account
+          </button>
           <button type="button" onClick={() => onContinueGuest?.()} style={launchTextButtonStyle}>
             Continue as Guest
           </button>
         </form>
+      </AppLaunchInteractiveScreen>
+    );
+  }
+
+  if (step === "signup") {
+    const passwordChecks = {
+      length: signupPassword.length >= 8,
+      uppercase: /[A-Z]/.test(signupPassword),
+      lowercase: /[a-z]/.test(signupPassword),
+      number: /[0-9]/.test(signupPassword),
+      special: /[^A-Za-z0-9]/.test(signupPassword),
+      match: Boolean(signupPasswordConfirmation) && signupPassword === signupPasswordConfirmation,
+    };
+    return (
+      <AppLaunchInteractiveScreen
+        eyebrow="Welcome"
+        title="Create Account"
+        subtitle="Create an account to save locations, reports, and notification preferences."
+        status=""
+      >
+        <form
+          style={{ display: "grid", gap: 11, textAlign: "left" }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onCreateAccount?.();
+          }}
+        >
+          <input
+            type="text"
+            value={signupName}
+            onChange={(event) => onSignupNameChange?.(event.target.value)}
+            placeholder="Full name"
+            autoComplete="name"
+            style={launchInputStyle}
+          />
+          <input
+            type="tel"
+            value={signupPhone}
+            onChange={(event) => onSignupPhoneChange?.(event.target.value)}
+            placeholder="Phone (optional)"
+            autoComplete="tel"
+            style={launchInputStyle}
+          />
+          <input
+            type="email"
+            value={signupEmail}
+            onChange={(event) => onSignupEmailChange?.(event.target.value)}
+            placeholder="Email address"
+            autoComplete="email"
+            inputMode="email"
+            style={launchInputStyle}
+          />
+          <input
+            type="password"
+            value={signupPassword}
+            onChange={(event) => onSignupPasswordChange?.(event.target.value)}
+            placeholder="Password"
+            autoComplete="new-password"
+            style={launchInputStyle}
+          />
+          <input
+            type="password"
+            value={signupPasswordConfirmation}
+            onChange={(event) => onSignupPasswordConfirmationChange?.(event.target.value)}
+            placeholder="Re-enter password"
+            autoComplete="new-password"
+            style={launchInputStyle}
+          />
+          <div style={{ display: "grid", gap: 3, fontSize: 12.5, lineHeight: 1.35 }}>
+            <PasswordCheck ok={passwordChecks.length}>8 or more characters</PasswordCheck>
+            <PasswordCheck ok={passwordChecks.uppercase}>1 uppercase letter</PasswordCheck>
+            <PasswordCheck ok={passwordChecks.lowercase}>1 lowercase letter</PasswordCheck>
+            <PasswordCheck ok={passwordChecks.number}>1 number</PasswordCheck>
+            <PasswordCheck ok={passwordChecks.special}>1 special character</PasswordCheck>
+            <PasswordCheck ok={passwordChecks.match}>Passwords match</PasswordCheck>
+          </div>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12.5, lineHeight: 1.4 }}>
+            <input
+              type="checkbox"
+              checked={Boolean(signupLegalAccepted)}
+              onChange={(event) => onSignupLegalAcceptedChange?.(event.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              I agree to the{" "}
+              <a href="https://cityreport.io/legal/terms.html" target="_blank" rel="noreferrer" style={launchLegalLinkStyle}>
+                Terms of Use
+              </a>{" "}
+              and{" "}
+              <a href="https://cityreport.io/legal/privacy.html" target="_blank" rel="noreferrer" style={launchLegalLinkStyle}>
+                Privacy Policy
+              </a>.
+            </span>
+          </label>
+          {signupError ? <div style={launchErrorStyle}>{signupError}</div> : null}
+          <button type="submit" disabled={signupBusy || !signupLegalAccepted} style={launchPrimaryButtonStyle}>
+            {signupBusy ? "Creating Account..." : "Create Account"}
+          </button>
+          <button type="button" onClick={() => onReturnToSignIn?.()} style={launchTextButtonStyle}>
+            Back to Sign In
+          </button>
+        </form>
+      </AppLaunchInteractiveScreen>
+    );
+  }
+
+  if (step === "signup-confirmation") {
+    return (
+      <AppLaunchInteractiveScreen
+        eyebrow="Almost There"
+        title="Check Your Email"
+        subtitle={`We sent a confirmation link to ${signupEmail}. Confirm your account, then return to sign in.`}
+        status=""
+      >
+        <div style={{ display: "grid", gap: 10 }}>
+          <button type="button" onClick={() => onReturnToSignIn?.()} style={launchPrimaryButtonStyle}>
+            Back to Sign In
+          </button>
+          <button type="button" onClick={() => onContinueGuest?.()} style={launchTextButtonStyle}>
+            Continue as Guest
+          </button>
+        </div>
       </AppLaunchInteractiveScreen>
     );
   }
@@ -162,6 +304,32 @@ const launchPrimaryButtonStyle = {
   cursor: "pointer",
   boxShadow: "0 14px 24px rgba(4, 10, 16, 0.18)",
 };
+
+const launchSecondaryButtonStyle = {
+  ...launchPrimaryButtonStyle,
+  background: "linear-gradient(180deg, rgba(36, 91, 137, 0.98) 0%, rgba(23, 61, 99, 0.98) 100%)",
+};
+
+const launchErrorStyle = {
+  color: "#ffd1d1",
+  fontSize: 13.5,
+  fontWeight: 750,
+  lineHeight: 1.4,
+  textAlign: "left",
+};
+
+const launchLegalLinkStyle = {
+  color: "#84e8df",
+  fontWeight: 900,
+};
+
+function PasswordCheck({ ok, children }) {
+  return (
+    <div style={{ color: ok ? "#88e8bd" : "rgba(228, 239, 249, 0.68)", fontWeight: 800 }}>
+      {ok ? "✓" : "-"} {children}
+    </div>
+  );
+}
 
 const launchTextButtonStyle = {
   width: "100%",

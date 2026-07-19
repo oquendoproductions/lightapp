@@ -12,6 +12,8 @@ import {
 } from "./publicOnboardingSupport.js";
 
 const loadNativeTenantSupportModule = () => import("./nativeTenantSupport.jsx");
+const loadDeferredAccountRuntimeModule = () => import("../lib/mapDeferredAccountRuntime.js");
+const loadReportParsingDeferredSupportModule = () => import("../lib/mapReportParsingDeferredSupport.js");
 
 const LazyTenantInitialSelectionScreen = React.lazy(() =>
   loadNativeTenantSupportModule().then((module) => ({ default: module.TenantInitialSelectionScreen }))
@@ -28,6 +30,14 @@ export function TenantGate({ children }) {
   const [initialLoginPassword, setInitialLoginPassword] = useState("");
   const [initialLoginBusy, setInitialLoginBusy] = useState(false);
   const [initialLoginError, setInitialLoginError] = useState("");
+  const [initialSignupName, setInitialSignupName] = useState("");
+  const [initialSignupPhone, setInitialSignupPhone] = useState("");
+  const [initialSignupEmail, setInitialSignupEmail] = useState("");
+  const [initialSignupPassword, setInitialSignupPassword] = useState("");
+  const [initialSignupPasswordConfirmation, setInitialSignupPasswordConfirmation] = useState("");
+  const [initialSignupLegalAccepted, setInitialSignupLegalAccepted] = useState(false);
+  const [initialSignupBusy, setInitialSignupBusy] = useState(false);
+  const [initialSignupError, setInitialSignupError] = useState("");
   const [followedTenantKeys, setFollowedTenantKeys] = useState([]);
   const [tenantSearch, setTenantSearch] = useState("");
   const [dismissedPublicOnboardingKeys, setDismissedPublicOnboardingKeys] = useState(() => new Set());
@@ -159,6 +169,81 @@ export function TenantGate({ children }) {
     setInitialLaunchStep("tenant");
   }, []);
 
+  const openInitialSignup = useCallback(() => {
+    setInitialSignupEmail((current) => current || String(initialLoginEmail || "").trim());
+    setInitialLoginError("");
+    setInitialSignupError("");
+    setInitialLaunchStep("signup");
+  }, [initialLoginEmail]);
+
+  const returnToInitialSignIn = useCallback(() => {
+    setInitialLoginEmail((current) => current || String(initialSignupEmail || "").trim());
+    setInitialSignupError("");
+    setInitialLaunchStep("login");
+  }, [initialSignupEmail]);
+
+  const createAccountForInitialLaunch = useCallback(async () => {
+    const fullName = String(initialSignupName || "").trim();
+    const phone = String(initialSignupPhone || "").trim();
+    const email = String(initialSignupEmail || "").trim().toLowerCase();
+    const password = String(initialSignupPassword || "");
+    if (!fullName) {
+      setInitialSignupError("Enter your full name.");
+      return;
+    }
+    if (!email) {
+      setInitialSignupError("Enter your email address.");
+      return;
+    }
+    const { validateStrongPassword } = await loadReportParsingDeferredSupportModule();
+    if (!validateStrongPassword(password)) {
+      setInitialSignupError("Use 8+ characters with uppercase, lowercase, number, and special character.");
+      return;
+    }
+    if (password !== initialSignupPasswordConfirmation) {
+      setInitialSignupError("Passwords do not match.");
+      return;
+    }
+    if (!initialSignupLegalAccepted) {
+      setInitialSignupError("Accept the Terms of Use and Privacy Policy to create an account.");
+      return;
+    }
+
+    setInitialSignupBusy(true);
+    setInitialSignupError("");
+    try {
+      const { userCreateAccountRuntimeShared } = await loadDeferredAccountRuntimeModule();
+      const result = await userCreateAccountRuntimeShared({
+        email,
+        password,
+        fullName,
+        phone,
+      }, { supabase });
+      if (!result?.ok) throw result?.error || new Error("Unable to create your account.");
+
+      const { data } = await supabase.auth.getSession();
+      const userId = String(data?.session?.user?.id || "").trim();
+      if (userId) {
+        await loadInitialSavedLocations(userId);
+        setInitialLaunchStep("tenant");
+      } else {
+        setInitialLaunchStep("signup-confirmation");
+      }
+    } catch (error) {
+      setInitialSignupError(String(error?.message || "Unable to create your account."));
+    } finally {
+      setInitialSignupBusy(false);
+    }
+  }, [
+    initialSignupEmail,
+    initialSignupLegalAccepted,
+    initialSignupName,
+    initialSignupPassword,
+    initialSignupPasswordConfirmation,
+    initialSignupPhone,
+    loadInitialSavedLocations,
+  ]);
+
   if (!tenant.isMunicipalityApp) return children;
 
   if (tenant.loading) {
@@ -193,7 +278,24 @@ export function TenantGate({ children }) {
           loginBusy={initialLoginBusy}
           loginError={initialLoginError}
           onSignIn={signInForInitialLaunch}
+          onOpenSignup={openInitialSignup}
           onContinueGuest={continueInitialLaunchAsGuest}
+          signupName={initialSignupName}
+          onSignupNameChange={setInitialSignupName}
+          signupPhone={initialSignupPhone}
+          onSignupPhoneChange={setInitialSignupPhone}
+          signupEmail={initialSignupEmail}
+          onSignupEmailChange={setInitialSignupEmail}
+          signupPassword={initialSignupPassword}
+          onSignupPasswordChange={setInitialSignupPassword}
+          signupPasswordConfirmation={initialSignupPasswordConfirmation}
+          onSignupPasswordConfirmationChange={setInitialSignupPasswordConfirmation}
+          signupLegalAccepted={initialSignupLegalAccepted}
+          onSignupLegalAcceptedChange={setInitialSignupLegalAccepted}
+          signupBusy={initialSignupBusy}
+          signupError={initialSignupError}
+          onCreateAccount={createAccountForInitialLaunch}
+          onReturnToSignIn={returnToInitialSignIn}
           tenantSearch={tenantSearch}
           onTenantSearchChange={setTenantSearch}
           tenantSearchTerm={tenantSearchTerm}
