@@ -28,13 +28,33 @@ export function createPersistentBoundaryOverlay({
       const host = markerLayer?.parentNode || overlayLayer?.parentNode || mapPane?.parentNode || null;
       return {
         host,
+        mapPane: mapPane?.parentNode === host ? mapPane : null,
+        overlayLayer: overlayLayer?.parentNode === host ? overlayLayer : null,
         markerLayer: markerLayer?.parentNode === host ? markerLayer : null,
       };
     }
 
+    readPaneZIndex(element) {
+      if (!element) return null;
+      const raw = window.getComputedStyle?.(element)?.zIndex || element.style?.zIndex || "";
+      const value = Number(raw);
+      return String(raw).trim() && Number.isFinite(value) ? value : null;
+    }
+
+    syncBoundaryZIndex({ mapPane, overlayLayer, markerLayer }) {
+      if (!this.container) return;
+      const mapZIndex = this.readPaneZIndex(mapPane);
+      const overlayZIndex = this.readPaneZIndex(overlayLayer);
+      const markerZIndex = this.readPaneZIndex(markerLayer);
+      let boundaryZIndex = overlayZIndex ?? (mapZIndex === null ? 1 : mapZIndex + 1);
+      if (markerZIndex !== null) boundaryZIndex = Math.min(boundaryZIndex, markerZIndex - 1);
+      this.container.style.zIndex = String(boundaryZIndex);
+    }
+
     attachToBoundaryHost() {
       if (!this.container) return null;
-      const { host, markerLayer } = this.getBoundaryHost();
+      const boundaryHost = this.getBoundaryHost();
+      const { host, markerLayer } = boundaryHost;
       if (!host) return null;
 
       // Google can hide or replace its lower map panes while Safari composites a
@@ -46,6 +66,7 @@ export function createPersistentBoundaryOverlay({
       } else if (this.container.parentNode !== host) {
         host.appendChild(this.container);
       }
+      this.syncBoundaryZIndex(boundaryHost);
       return host;
     }
 

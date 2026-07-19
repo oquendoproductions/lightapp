@@ -28,6 +28,9 @@ describe("persistent tenant boundary overlay", () => {
     const mapPane = document.createElement("div");
     const overlayLayer = document.createElement("div");
     const markerLayer = document.createElement("div");
+    mapPane.style.zIndex = "0";
+    overlayLayer.style.zIndex = "1";
+    markerLayer.style.zIndex = "2";
     mapDiv.append(mapPane, overlayLayer, markerLayer);
     document.body.appendChild(mapDiv);
     Object.defineProperty(mapDiv, "clientWidth", { value: 320 });
@@ -83,7 +86,7 @@ describe("persistent tenant boundary overlay", () => {
     expect(overlay.container.nextSibling).toBe(markerLayer);
     expect(overlay.container.parentNode).not.toBe(markerLayer);
     expect(overlay.container.parentNode).not.toBe(overlayLayer);
-    expect(overlay.container.style.zIndex).toBe("");
+    expect(overlay.container.style.zIndex).toBe("1");
     expect(overlay.container.style.transform).toBe("translate3d(-430px, -520px, 0)");
     expect(overlay.container.style.width).toBe("1600px");
     expect(overlay.container.style.height).toBe("1920px");
