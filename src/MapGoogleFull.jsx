@@ -8711,8 +8711,10 @@ async function selectTenantScopedPublicRows(
       .filter((ring) => ring.length >= 3);
     return [outerRing, ...holeRings];
   }, [cityBoundaryOuterRings]);
-  const showCityBoundaryBorder = tenantMapFeaturesLoaded && tenantMapFeatures?.show_boundary_border !== false;
-  const showCityOutsideShade = tenantMapFeaturesLoaded && tenantMapFeatures?.shade_outside_boundary !== false;
+  // A background refresh may temporarily mark the config as loading. Keep the
+  // last resolved presentation mounted until the replacement config arrives.
+  const showCityBoundaryBorder = tenantMapFeatures?.show_boundary_border !== false;
+  const showCityOutsideShade = tenantMapFeatures?.shade_outside_boundary !== false;
   const hasMapSession = Boolean(session?.user?.id);
   const showMapAlertIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_alert_icon !== false : true;
   const showMapEventIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_event_icon !== false : true;

@@ -53,7 +53,6 @@ export default function MapLazyTenantRuntimeController({
       const hasCachedVisibility = Boolean(
         readCachedTenantVisibilityConfigShared(resolvedTenantDomainConfigTenantKey),
       );
-      if (hasCachedVisibility && mapInteracting) return;
       const cachedRefreshIdleTimeoutMs = hasCachedVisibility ? 4000 : 1000;
       const cachedRefreshDelayMs = hasCachedVisibility ? 1200 : 240;
       dispose = scheduleTenantVisibilityConfigRuntimeShared({
@@ -78,7 +77,6 @@ export default function MapLazyTenantRuntimeController({
   }, [
     enableTenantVisibilityConfig,
     loading,
-    mapInteracting,
     resolvedTenantDomainConfigTenantKey,
     sessionUserId,
     setTenantVisibilityByDomain,
@@ -93,11 +91,6 @@ export default function MapLazyTenantRuntimeController({
     let cancelled = false;
     let dispose = () => {};
     const hasCachedTenantMapFeatures = tenantMapFeaturesSourceRef.current === "cache";
-    if (hasCachedTenantMapFeatures && mapInteracting) {
-      return () => {
-        cancelled = true;
-      };
-    }
     if (loading || !startupWarmupReady) {
       return () => {
         cancelled = true;
@@ -146,7 +139,6 @@ export default function MapLazyTenantRuntimeController({
     defaultTenantMapFeatures,
     getSupabaseTenantKey,
     loading,
-    mapInteracting,
     pushTenantBoundaryDiagnostic,
     resolvedTenantMapFeaturesTenantKey,
     sessionAccessToken,
