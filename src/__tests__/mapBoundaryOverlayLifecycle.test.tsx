@@ -3,8 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { createPersistentBoundaryOverlay } from "../lib/mapBoundaryOverlaySupport.js";
 
 describe("persistent tenant boundary overlay", () => {
-  it("mounts on the stable map root and uses container-relative projection", () => {
+  it("stays mounted below markers while viewport coordinates update", () => {
     class OverlayView {}
+    class Point {
+      x: number;
+      y: number;
+
+      constructor(x: number, y: number) {
+        this.x = x;
+        this.y = y;
+      }
+    }
     class LatLng {
       lat: number;
       lng: number;
@@ -16,18 +25,23 @@ describe("persistent tenant boundary overlay", () => {
     }
 
     const mapDiv = document.createElement("div");
+    const overlayLayer = document.createElement("div");
+    const markerLayer = document.createElement("div");
+    mapDiv.append(overlayLayer, markerLayer);
     Object.defineProperty(mapDiv, "clientWidth", { value: 320 });
     Object.defineProperty(mapDiv, "clientHeight", { value: 640 });
     const listenerNames: string[] = [];
+    const listenerCallbacks = new Map<string, () => void>();
     const map = {
       getDiv: () => mapDiv,
-      addListener: vi.fn((eventName: string) => {
+      addListener: vi.fn((eventName: string, callback: () => void) => {
         listenerNames.push(eventName);
+        listenerCallbacks.set(eventName, callback);
         return { remove: vi.fn() };
       }),
     };
     const overlay = createPersistentBoundaryOverlay({
-      googleMaps: { OverlayView, LatLng },
+      googleMaps: { OverlayView, LatLng, Point },
       map,
       renderStateRef: {
         current: {
@@ -45,26 +59,41 @@ describe("persistent tenant boundary overlay", () => {
       },
     }) as InstanceType<typeof OverlayView> & {
       container: HTMLDivElement;
+      shadePath: SVGPathElement;
+      getPanes: () => unknown;
       getProjection: () => unknown;
       onAdd: () => void;
       draw: () => void;
       onRemove: () => void;
     };
 
+    overlay.getPanes = () => ({ overlayLayer, markerLayer });
     overlay.getProjection = () => ({
-      fromLatLngToContainerPixel: ({ lat, lng }: LatLng) => ({ x: lng, y: lat }),
+      fromContainerPixelToLatLng: ({ x, y }: Point) => new LatLng(y + 100, x + 200),
+      fromLatLngToDivPixel: ({ lat, lng }: LatLng) => ({ x: lng + 10, y: lat + 20 }),
     });
     overlay.onAdd();
     overlay.draw();
 
-    expect(overlay.container.parentNode).toBe(mapDiv);
-    expect(overlay.container.style.inset).toBe("0");
-    expect(listenerNames).toEqual(["bounds_changed", "drag", "zoom_changed", "idle"]);
+    const originalContainer = overlay.container;
+    const originalShadePath = overlay.shadePath;
+    expect(overlay.container.parentNode).toBe(overlayLayer);
+    expect(overlay.container.parentNode).not.toBe(markerLayer);
+    expect(overlay.container.style.zIndex).toBe("");
+    expect(overlay.container.style.transform).toBe("translate3d(210px, 120px, 0)");
+    expect(listenerNames).toEqual(["bounds_changed"]);
     const paths = overlay.container.querySelectorAll("path");
-    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M 20 10 L 40 30 L 60 50 Z"));
+    expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M -180 -90 L -160 -70 L -140 -50 Z"));
     expect(paths[1]).toHaveAttribute("stroke", "#2563eb");
 
+    listenerCallbacks.get("bounds_changed")?.();
+    overlay.draw();
+    expect(overlay.container).toBe(originalContainer);
+    expect(overlay.shadePath).toBe(originalShadePath);
+    expect(overlay.container.parentNode).toBe(overlayLayer);
+
     overlay.onRemove();
-    expect(mapDiv.children).toHaveLength(0);
+    expect(overlayLayer.children).toHaveLength(0);
+    expect(mapDiv.children).toHaveLength(2);
   });
 });
