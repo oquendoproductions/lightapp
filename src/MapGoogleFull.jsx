@@ -348,6 +348,14 @@ function isTenantBoundaryDebugEnabled() {
   }
 }
 
+function isTestCityBoundaryDebugTarget(tenantKey) {
+  const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  if (normalizedTenantKey === "testcity" || normalizedTenantKey === "testcity1") return true;
+  if (typeof window === "undefined") return false;
+  const hostname = String(window.location.hostname || "").trim().toLowerCase();
+  return hostname === "testcity.cityreport.io" || hostname.startsWith("testcity.");
+}
+
 function isAppleTouchBrowser() {
   if (typeof navigator === "undefined") return false;
   const ua = String(navigator.userAgent || "");
@@ -13904,10 +13912,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             cityBoundaryBorderWidth={cityBoundaryBorderWidth}
             boundaryDiagnosticsEnabled={
               isTenantBoundaryDebugEnabled()
-              || (
-                isAdmin
-                && String(resolvedTenantBoundaryTenantKey || "").trim().toLowerCase() === "testcity1"
-              )
+              || isTestCityBoundaryDebugTarget(resolvedTenantBoundaryTenantKey)
             }
             tenantParksLoaded={tenantParksLoaded}
             tenantParkVisuals={tenantParkVisuals}

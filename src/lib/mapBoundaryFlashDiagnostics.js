@@ -1,5 +1,6 @@
 const TRACE_WINDOW_KEY = "__CITYREPORT_BOUNDARY_FLASH_TRACE__";
 const CONTROLLER_WINDOW_KEY = "__CITYREPORT_BOUNDARY_FLASH_DEBUG__";
+const SESSION_WINDOW_KEY = "__CITYREPORT_BOUNDARY_FLASH_SESSION__";
 const MAX_TRACE_ENTRIES = 2400;
 const MAX_ANCESTOR_DEPTH = 12;
 
@@ -15,6 +16,25 @@ function rounded(value) {
 function opacityNumber(value) {
   const text = String(value ?? "").trim();
   return text ? finiteNumber(text, 1) : 1;
+}
+
+function isClippingOverflow(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "hidden" || normalized === "clip";
+}
+
+function getBoundaryFlashSession() {
+  const existing = window[SESSION_WINDOW_KEY];
+  if (existing && Array.isArray(existing.trace)) return existing;
+  const session = {
+    trace: [],
+    sequence: 0,
+    anomalyCount: 0,
+    nextInstanceId: 1,
+    startedAt: performance.now(),
+  };
+  window[SESSION_WINDOW_KEY] = session;
+  return session;
 }
 
 function rectSummary(element) {
@@ -203,16 +223,16 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     };
   }
 
-  const startedAt = performance.now();
-  const trace = [];
+  const instanceStartedAt = performance.now();
+  const session = getBoundaryFlashSession();
+  const instanceId = session.nextInstanceId++;
+  const trace = session.trace;
   const listeners = [];
   const observers = [];
   const cleanupCallbacks = [];
   const sampleFrames = new Set();
   const paneIds = new WeakMap();
   let nextPaneId = 1;
-  let sequence = 0;
-  let anomalyCount = 0;
   let latestEntry = null;
   let hudParts = null;
   let gesturePhase = "idle";
@@ -245,14 +265,17 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
     const borderStroke = String(state.borderPath?.getAttribute?.("stroke") || "");
     const ancestorChain = ancestorChainSummary(container, mapDiv);
     const hiddenAncestors = ancestorChain
-      .filter((entry) => (
-        entry.style?.display === "none"
-        || entry.style?.visibility === "hidden"
-        || opacityNumber(entry.style?.opacity) === 0
-        || !entry.rect
-        || entry.rect.width < 1
-        || entry.rect.height < 1
-      ))
+      .filter((entry) => {
+        if (entry.style?.display === "none") return true;
+        if (entry.style?.visibility === "hidden") return true;
+        if (opacityNumber(entry.style?.opacity) === 0) return true;
+        if (!entry.rect) return true;
+        const hasZeroDimension = entry.rect.width < 1 || entry.rect.height < 1;
+        const clipsChildren = isClippingOverflow(entry.style?.overflow)
+          || isClippingOverflow(entry.style?.overflowX)
+          || isClippingOverflow(entry.style?.overflowY);
+        return hasZeroDimension && clipsChildren;
+      })
       .map((entry) => entry.label);
     const anomalies = [];
 
@@ -336,21 +359,24 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
       `intersection: ${state.intersectionRatio ?? "n/a"} hidden ancestors=${state.hiddenAncestors.length}`,
       `shade: ${state.shade.path} opacity=${state.shade.opacity || "none"}`,
       `border: ${state.border.path} stroke=${state.border.stroke || "none"}`,
-      `draws: ${state.drawCount}/${state.requestedDrawCount} trace=${trace.length} anomalies=${anomalyCount}`,
+      `instance: ${instanceId} draws=${state.drawCount}/${state.requestedDrawCount}`,
+      `trace: ${trace.length} anomalies=${session.anomalyCount}`,
     ].join("\n");
   };
 
   const record = (event, details = {}) => {
     const state = snapshot();
     const entry = {
-      sequence: ++sequence,
+      sequence: ++session.sequence,
+      instanceId,
       timestamp: new Date().toISOString(),
-      elapsedMs: rounded(performance.now() - startedAt),
+      elapsedMs: rounded(performance.now() - session.startedAt),
+      instanceElapsedMs: rounded(performance.now() - instanceStartedAt),
       event: String(event || "unknown"),
       details,
       state,
     };
-    if (state.anomalies.length) anomalyCount += 1;
+    if (state.anomalies.length) session.anomalyCount += 1;
     trace.push(entry);
     if (trace.length > MAX_TRACE_ENTRIES) trace.splice(0, trace.length - MAX_TRACE_ENTRIES);
     latestEntry = entry;
@@ -430,8 +456,9 @@ export function createBoundaryFlashDiagnostics({ enabled, map, getState }) {
 
   const clear = () => {
     trace.length = 0;
-    anomalyCount = 0;
-    sequence = 0;
+    session.anomalyCount = 0;
+    session.sequence = 0;
+    session.startedAt = performance.now();
     record("trace:cleared");
   };
   const copy = async () => {

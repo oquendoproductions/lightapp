@@ -7,6 +7,7 @@ describe("tenant boundary flash diagnostics", () => {
     document.body.innerHTML = "";
     delete (window as any).__CITYREPORT_BOUNDARY_FLASH_DEBUG__;
     delete (window as any).__CITYREPORT_BOUNDARY_FLASH_TRACE__;
+    delete (window as any).__CITYREPORT_BOUNDARY_FLASH_SESSION__;
     vi.restoreAllMocks();
   });
 
@@ -112,5 +113,43 @@ describe("tenant boundary flash diagnostics", () => {
     expect(document.querySelector("[data-cityreport-boundary-debug-hud='true']")).toBeNull();
     expect(removed).toHaveBeenCalledTimes(7);
     expect(container.parentNode).toBe(overlayLayer);
+  });
+
+  it("keeps one trace across boundary overlay lifetimes", () => {
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    const mapDiv = document.createElement("div");
+    document.body.appendChild(mapDiv);
+    const map = {
+      getDiv: () => mapDiv,
+      getZoom: () => 13,
+      getCenter: () => ({ toJSON: () => ({ lat: 41.6, lng: -80.8 }) }),
+      addListener: () => ({ remove: vi.fn() }),
+    };
+    const createDiagnostics = () => createBoundaryFlashDiagnostics({
+      enabled: true,
+      map,
+      getState: () => ({}),
+    });
+
+    const first = createDiagnostics();
+    first.record("test:first-instance");
+    first.destroy();
+    const second = createDiagnostics();
+    second.record("test:second-instance");
+
+    const trace = (window as any).__CITYREPORT_BOUNDARY_FLASH_TRACE__;
+    expect(trace.map((entry: any) => entry.event)).toEqual([
+      "diagnostics:ready",
+      "test:first-instance",
+      "diagnostics:destroy",
+      "diagnostics:ready",
+      "test:second-instance",
+    ]);
+    expect(trace.map((entry: any) => entry.sequence)).toEqual([1, 2, 3, 4, 5]);
+    expect(trace[0].instanceId).not.toBe(trace.at(-1).instanceId);
+
+    second.destroy();
   });
 });
