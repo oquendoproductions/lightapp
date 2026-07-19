@@ -29,6 +29,7 @@ describe("persistent tenant boundary overlay", () => {
     const overlayLayer = document.createElement("div");
     const markerLayer = document.createElement("div");
     mapDiv.append(mapPane, overlayLayer, markerLayer);
+    document.body.appendChild(mapDiv);
     Object.defineProperty(mapDiv, "clientWidth", { value: 320 });
     Object.defineProperty(mapDiv, "clientHeight", { value: 640 });
     const listenerNames: string[] = [];
@@ -78,26 +79,42 @@ describe("persistent tenant boundary overlay", () => {
 
     const originalContainer = overlay.container;
     const originalShadePath = overlay.shadePath;
-    expect(overlay.container.parentNode).toBe(mapPane);
+    expect(overlay.container.parentNode).toBe(mapDiv);
+    expect(overlay.container.nextSibling).toBe(markerLayer);
     expect(overlay.container.parentNode).not.toBe(markerLayer);
     expect(overlay.container.parentNode).not.toBe(overlayLayer);
     expect(overlay.container.style.zIndex).toBe("");
     expect(overlay.container.style.transform).toBe("translate3d(-430px, -520px, 0)");
     expect(overlay.container.style.width).toBe("1600px");
     expect(overlay.container.style.height).toBe("1920px");
-    expect(listenerNames).toEqual(["idle", "zoom_changed"]);
+    expect(listenerNames).toEqual([
+      "dragstart",
+      "drag",
+      "dragend",
+      "bounds_changed",
+      "idle",
+      "zoom_changed",
+    ]);
     const paths = overlay.container.querySelectorAll("path");
     expect(paths[0]).toHaveAttribute("d", expect.stringContaining("M 460 550 L 480 570 L 500 590 Z"));
     expect(paths[1]).toHaveAttribute("stroke", "#2563eb");
 
+    mapPane.style.display = "none";
+    overlayLayer.style.display = "none";
+    listenerCallbacks.get("dragstart")?.();
+    listenerCallbacks.get("drag")?.();
+    listenerCallbacks.get("dragend")?.();
     listenerCallbacks.get("idle")?.();
     overlay.draw();
     expect(overlay.container).toBe(originalContainer);
     expect(overlay.shadePath).toBe(originalShadePath);
-    expect(overlay.container.parentNode).toBe(mapPane);
+    expect(overlay.container.parentNode).toBe(mapDiv);
+    expect(overlay.container.nextSibling).toBe(markerLayer);
+    expect(overlay.container.isConnected).toBe(true);
 
     overlay.onRemove();
     expect(mapPane.children).toHaveLength(0);
     expect(mapDiv.children).toHaveLength(3);
+    mapDiv.remove();
   });
 });

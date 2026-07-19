@@ -20,9 +20,33 @@ export function createPersistentBoundaryOverlay({
       this.diagnostics = null;
     }
 
-    getBoundaryPane() {
+    getBoundaryHost() {
       const panes = this.getPanes?.();
-      return panes?.mapPane || panes?.overlayLayer || null;
+      const markerLayer = panes?.markerLayer || null;
+      const overlayLayer = panes?.overlayLayer || null;
+      const mapPane = panes?.mapPane || null;
+      const host = markerLayer?.parentNode || overlayLayer?.parentNode || mapPane?.parentNode || null;
+      return {
+        host,
+        markerLayer: markerLayer?.parentNode === host ? markerLayer : null,
+      };
+    }
+
+    attachToBoundaryHost() {
+      if (!this.container) return null;
+      const { host, markerLayer } = this.getBoundaryHost();
+      if (!host) return null;
+
+      // Google can hide or replace its lower map panes while Safari composites a
+      // gesture. Keep this node in their shared host, immediately below markers.
+      if (markerLayer) {
+        if (this.container.parentNode !== host || this.container.nextSibling !== markerLayer) {
+          host.insertBefore(this.container, markerLayer);
+        }
+      } else if (this.container.parentNode !== host) {
+        host.appendChild(this.container);
+      }
+      return host;
     }
 
     onAdd() {
@@ -58,7 +82,7 @@ export function createPersistentBoundaryOverlay({
       this.svg = svg;
       this.shadePath = shadePath;
       this.borderPath = borderPath;
-      this.getBoundaryPane()?.appendChild(container);
+      this.attachToBoundaryHost();
 
       this.diagnostics = createBoundaryFlashDiagnostics({
         enabled: diagnosticsEnabled,
@@ -68,7 +92,7 @@ export function createPersistentBoundaryOverlay({
           svg: this.svg,
           shadePath: this.shadePath,
           borderPath: this.borderPath,
-          overlayLayer: this.getBoundaryPane(),
+          overlayLayer: this.getBoundaryHost().host,
           renderState: renderStateRef.current,
           drawCount: this.drawCount,
           requestedDrawCount: this.requestedDrawCount,
@@ -76,7 +100,7 @@ export function createPersistentBoundaryOverlay({
       });
       this.diagnostics.record("overlay:on-add");
 
-      this.mapListeners = ["idle", "zoom_changed"]
+      this.mapListeners = ["dragstart", "drag", "dragend", "bounds_changed", "idle", "zoom_changed"]
         .map((eventName) => map.addListener?.(
           eventName,
           () => this.requestDraw(`map:${eventName}`),
@@ -101,11 +125,8 @@ export function createPersistentBoundaryOverlay({
       const mapDiv = map.getDiv?.();
       if (!projection || !mapDiv) return;
 
-      const boundaryPane = this.getBoundaryPane();
-      if (!boundaryPane) return;
-      if (this.container.parentNode !== boundaryPane) {
-        boundaryPane.appendChild(this.container);
-      }
+      const boundaryHost = this.attachToBoundaryHost();
+      if (!boundaryHost) return;
 
       const width = Math.max(1, Number(mapDiv.clientWidth || 0));
       const height = Math.max(1, Number(mapDiv.clientHeight || 0));
