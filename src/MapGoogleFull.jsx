@@ -13769,7 +13769,6 @@ async function insertReportWithFallback(payload) {
             cityOutsideMaskPaths={cityOutsideMaskPaths}
             cityOutsideShadeOpacity={cityOutsideShadeOpacity}
             showCityBoundaryBorder={showCityBoundaryBorder}
-            cityBoundaryOuterRings={cityBoundaryOuterRings}
             cityBoundaryBorderColor={cityBoundaryBorderColor}
             cityBoundaryBorderWidth={cityBoundaryBorderWidth}
             tenantParksLoaded={tenantParksLoaded}

@@ -263,12 +263,11 @@ export async function refreshDeferredBoundaryGeojsonShared(state = {}, deps = {}
     const boundaryResult = await state.fetchTenantBoundaryGeojson(state.readClient, state.loadTenantKey);
     if (state.isCancelled?.()) return false;
     const nextBoundaryGeojson = boundaryResult?.geojson || null;
+    // A passive refresh must never erase a boundary that already rendered.
+    // Empty reads can be transient while auth or tenant-scoped access settles.
+    if (!nextBoundaryGeojson) return false;
     state.setCityBoundaryGeojson?.(nextBoundaryGeojson);
-    if (nextBoundaryGeojson) {
-      deps.writeCachedTenantBoundaryGeojson(state.loadTenantKey, nextBoundaryGeojson);
-    } else {
-      deps.clearCachedTenantBoundaryGeojson(state.loadTenantKey);
-    }
+    deps.writeCachedTenantBoundaryGeojson(state.loadTenantKey, nextBoundaryGeojson);
     state.setHydrationKey?.(state.hydrationKey);
     return true;
   } catch (error) {

@@ -8,20 +8,21 @@ import {
   gmapsDotIcon,
 } from "./lib/mapMarkerIconSupport.js";
 
-function createPersistentBoundaryShadeOverlay({ googleMaps, map, renderStateRef }) {
-  return new (class PersistentBoundaryShadeOverlay extends googleMaps.OverlayView {
+function createPersistentBoundaryOverlay({ googleMaps, map, renderStateRef }) {
+  return new (class PersistentBoundaryOverlay extends googleMaps.OverlayView {
     constructor() {
       super();
       this.container = null;
       this.svg = null;
-      this.path = null;
+      this.shadePath = null;
+      this.borderPath = null;
     }
 
     onAdd() {
       const container = document.createElement("div");
       container.style.position = "absolute";
       container.style.pointerEvents = "none";
-      container.style.zIndex = "1";
+      container.style.zIndex = "2200";
       container.style.overflow = "visible";
 
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -29,29 +30,43 @@ function createPersistentBoundaryShadeOverlay({ googleMaps, map, renderStateRef 
       svg.style.overflow = "visible";
       svg.setAttribute("aria-hidden", "true");
 
-      const pathNode = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      pathNode.setAttribute("fill", "#0b0f17");
-      pathNode.setAttribute("fill-rule", "evenodd");
-      pathNode.setAttribute("clip-rule", "evenodd");
-      svg.appendChild(pathNode);
+      const shadePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      shadePath.setAttribute("fill", "#0b0f17");
+      shadePath.setAttribute("fill-rule", "evenodd");
+      shadePath.setAttribute("clip-rule", "evenodd");
+      shadePath.setAttribute("stroke", "none");
+      svg.appendChild(shadePath);
+
+      const borderPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      borderPath.setAttribute("fill", "none");
+      borderPath.setAttribute("stroke-linejoin", "round");
+      borderPath.setAttribute("stroke-linecap", "round");
+      svg.appendChild(borderPath);
       container.appendChild(svg);
 
       this.container = container;
       this.svg = svg;
-      this.path = pathNode;
+      this.shadePath = shadePath;
+      this.borderPath = borderPath;
       this.getPanes()?.overlayLayer?.appendChild(container);
     }
 
     draw() {
-      if (!this.container || !this.svg || !this.path) return;
+      if (!this.container || !this.svg || !this.shadePath || !this.borderPath) return;
       const projection = this.getProjection();
       const mapDiv = map.getDiv?.();
       if (!projection || !mapDiv) return;
 
+      const overlayLayer = this.getPanes()?.overlayLayer;
+      if (overlayLayer && this.container.parentNode !== overlayLayer) {
+        overlayLayer.appendChild(this.container);
+      }
+
       const buffer = 2048;
       const width = Math.max(1, Number(mapDiv.clientWidth || 0) + (buffer * 2));
       const height = Math.max(1, Number(mapDiv.clientHeight || 0) + (buffer * 2));
-      const pathParts = [`M 0 0 H ${width} V ${height} H 0 Z`];
+      const shadePathParts = [`M 0 0 H ${width} V ${height} H 0 Z`];
+      const borderPathParts = [];
       const holeRings = (Array.isArray(renderStateRef.current.paths) ? renderStateRef.current.paths : []).slice(1);
 
       holeRings.forEach((ring) => {
@@ -63,14 +78,16 @@ function createPersistentBoundaryShadeOverlay({ googleMaps, map, renderStateRef 
             const pixel = projection.fromLatLngToDivPixel(new googleMaps.LatLng(lat, lng));
             if (!pixel) return null;
             return { x: pixel.x + buffer, y: pixel.y + buffer };
-          })
+        })
           .filter(Boolean);
         if (projected.length < 3) return;
-        pathParts.push(`M ${projected[0].x} ${projected[0].y}`);
+        const ringPathParts = [`M ${projected[0].x} ${projected[0].y}`];
         for (let index = 1; index < projected.length; index += 1) {
-          pathParts.push(`L ${projected[index].x} ${projected[index].y}`);
+          ringPathParts.push(`L ${projected[index].x} ${projected[index].y}`);
         }
-        pathParts.push("Z");
+        ringPathParts.push("Z");
+        shadePathParts.push(...ringPathParts);
+        borderPathParts.push(...ringPathParts);
       });
 
       this.container.style.left = `${-buffer}px`;
@@ -78,15 +95,25 @@ function createPersistentBoundaryShadeOverlay({ googleMaps, map, renderStateRef 
       this.svg.setAttribute("width", String(width));
       this.svg.setAttribute("height", String(height));
       this.svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      this.path.setAttribute("d", pathParts.join(" "));
-      this.path.setAttribute("fill-opacity", String(renderStateRef.current.opacity));
+      this.shadePath.setAttribute("d", shadePathParts.join(" "));
+      this.shadePath.setAttribute(
+        "fill-opacity",
+        renderStateRef.current.showShade ? String(renderStateRef.current.opacity) : "0",
+      );
+      this.borderPath.setAttribute("d", borderPathParts.join(" "));
+      this.borderPath.setAttribute(
+        "stroke",
+        renderStateRef.current.showBorder ? renderStateRef.current.borderColor : "none",
+      );
+      this.borderPath.setAttribute("stroke-width", String(renderStateRef.current.borderWidth));
     }
 
     onRemove() {
       this.container?.remove();
       this.container = null;
       this.svg = null;
-      this.path = null;
+      this.shadePath = null;
+      this.borderPath = null;
     }
   })();
 }
@@ -182,17 +209,28 @@ export const IncidentDomainMarkersLayer = memo(function IncidentDomainMarkersLay
   );
 });
 
-const OutsideBoundaryShadeLayer = memo(function OutsideBoundaryShadeLayer({
+const PersistentBoundaryLayer = memo(function PersistentBoundaryLayer({
   paths,
   opacity,
+  showShade,
+  showBorder,
+  borderColor,
+  borderWidth,
 }) {
   const map = useGoogleMap();
   const overlayRef = useRef(null);
-  const renderStateRef = useRef({ paths, opacity });
+  const renderStateRef = useRef({
+    paths,
+    opacity,
+    showShade,
+    showBorder,
+    borderColor,
+    borderWidth,
+  });
 
   useEffect(() => {
     if (!map || !window?.google?.maps?.OverlayView) return undefined;
-    const overlay = createPersistentBoundaryShadeOverlay({
+    const overlay = createPersistentBoundaryOverlay({
       googleMaps: window.google.maps,
       map,
       renderStateRef,
@@ -206,9 +244,16 @@ const OutsideBoundaryShadeLayer = memo(function OutsideBoundaryShadeLayer({
   }, [map]);
 
   useEffect(() => {
-    renderStateRef.current = { paths, opacity };
+    renderStateRef.current = {
+      paths,
+      opacity,
+      showShade,
+      showBorder,
+      borderColor,
+      borderWidth,
+    };
     overlayRef.current?.draw?.();
-  }, [opacity, paths]);
+  }, [borderColor, borderWidth, opacity, paths, showBorder, showShade]);
 
   return null;
 });
@@ -218,7 +263,6 @@ export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
   cityOutsideMaskPaths,
   cityOutsideShadeOpacity,
   showCityBoundaryBorder,
-  cityBoundaryOuterRings,
   cityBoundaryBorderColor,
   cityBoundaryBorderWidth,
   tenantParksLoaded,
@@ -226,26 +270,16 @@ export const BoundaryAndParksLayer = memo(function BoundaryAndParksLayer({
 }) {
   return (
     <>
-      {showCityOutsideShade && cityOutsideMaskPaths.length > 0 && (
-        <OutsideBoundaryShadeLayer
+      {(showCityOutsideShade || showCityBoundaryBorder) && cityOutsideMaskPaths.length > 1 && (
+        <PersistentBoundaryLayer
           paths={cityOutsideMaskPaths}
           opacity={cityOutsideShadeOpacity}
+          showShade={showCityOutsideShade}
+          showBorder={showCityBoundaryBorder}
+          borderColor={cityBoundaryBorderColor}
+          borderWidth={cityBoundaryBorderWidth}
         />
       )}
-      {showCityBoundaryBorder && cityBoundaryOuterRings.map((ring, idx) => (
-        <PolygonF
-          key={`city-boundary-${idx}`}
-          paths={ring}
-          options={{
-            clickable: false,
-            strokeColor: cityBoundaryBorderColor,
-            strokeOpacity: 1,
-            strokeWeight: cityBoundaryBorderWidth,
-            fillOpacity: 0,
-            zIndex: 2200,
-          }}
-        />
-      ))}
       {tenantParksLoaded && tenantParkVisuals.map((park) => (
         <Fragment key={`tenant-park-${park.id || park.parkKey}`}>
           {park.polygons.map((polygon, polygonIndex) => (
