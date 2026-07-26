@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildSharedIncidentAuthorizationDisclosures,
@@ -12,6 +12,7 @@ import {
   buildSharedIncidentDrivenPopupVariant,
 } from "../lib/mapIncidentPopupVariantSupport";
 import {
+  buildIncidentPopupRenderModelShared,
   buildIncidentDrivenPopupVariantShared,
 } from "../lib/mapDeferredSelectionPopupRenderSupport";
 import {
@@ -21,6 +22,7 @@ import {
   buildSharedIncidentSubmitEmailNoticeArgs,
   buildSharedIncidentSubmitGeoCachePayload,
   buildSharedIncidentSubmitLocationFields,
+  sendIncidentDomainEmailNoticeShared,
 } from "../lib/mapDeferredIncidentSupport";
 
 describe("stripCanonicalIncidentPrefix", () => {
@@ -87,6 +89,25 @@ describe("resolveSharedIncidentPopupLocationEnsureMode", () => {
 });
 
 describe("shared incident builders", () => {
+  it("carries configured issue type names into the admin info-window model", () => {
+    const model = buildIncidentPopupRenderModelShared({
+      popupInfo: {
+        displayId: "PE-1",
+        typeOptionDetails: [{
+          key: "issue_type",
+          label: "Equipment Type",
+          valueLabel: "Playground",
+        }],
+      },
+    });
+
+    expect(model.adminDetailsProps.issueTypeDetails).toEqual([{
+      key: "issue_type",
+      label: "Equipment Type",
+      valueLabel: "Playground",
+    }]);
+  });
+
   it("builds a normalized popup variant config for shared incident domains", () => {
     expect(buildSharedIncidentPopupVariantConfig({
       title: "Pothole",
@@ -357,6 +378,7 @@ describe("shared incident builders", () => {
       domainLabel: "Potholes",
       issueTypeLabel: "",
       issueTypeFallback: "Pothole",
+      incidentId: "PH8247061025",
       reportNumber: "PH-R000000123",
       notes: "Large pothole in lane",
       lat: 41.61025,
@@ -372,6 +394,7 @@ describe("shared incident builders", () => {
       domainLabel: "Potholes",
       issueTypeLabel: "Pothole",
       typeOptions: [],
+      incidentId: "PH8247061025",
       reportNumber: "PH-R000000123",
       notes: "Large pothole in lane",
       lat: 41.61025,
@@ -383,6 +406,30 @@ describe("shared incident builders", () => {
       submittedAtIso: "2026-07-05T20:17:59.000Z",
       reporter: { name: "Test AccountA" },
     });
+  });
+
+  it("sends the public incident id separately from the report number", async () => {
+    const invokeDomainEmailFunction = vi.fn(async () => ({ ok: true }));
+
+    await sendIncidentDomainEmailNoticeShared({
+      domainKey: "potholes",
+      domainLabel: "Potholes",
+      issueTypeLabel: "Pothole",
+      incidentId: "PH8247061025",
+      reportNumber: "PH-R000000123",
+      lat: 41.61025,
+      lng: -80.8247,
+    }, {
+      invokeDomainEmailFunction,
+    });
+
+    expect(invokeDomainEmailFunction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        incidentId: "PH8247061025",
+        reportNumber: "PH-R000000123",
+      }),
+      "incident domain email notice",
+    );
   });
 
   it("builds shared location cache entry payloads", () => {

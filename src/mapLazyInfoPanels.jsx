@@ -49,6 +49,7 @@ export function AdminIncidentInfoWindowDetails({
   showReportCount = true,
   reportCount = 0,
   issueTypes = "",
+  issueTypeDetails = [],
   location = "",
   crossStreet = "",
   intersection = "",
@@ -62,6 +63,13 @@ export function AdminIncidentInfoWindowDetails({
   const safeSummaryLabel = String(summaryLabel || "").trim() || "State";
   const safeCount = Number.isFinite(Number(reportCount)) ? Number(reportCount) : 0;
   const safeIssueTypes = String(issueTypes || "").trim() || "Unavailable";
+  const configuredIssueTypeDetails = (Array.isArray(issueTypeDetails) ? issueTypeDetails : [])
+    .map((detail) => ({
+      key: String(detail?.key || "").trim(),
+      label: String(detail?.label || "").trim(),
+      valueLabel: String(detail?.valueLabel || "").trim(),
+    }))
+    .filter((detail) => detail.label && detail.valueLabel);
   const safeCoordinates = String(coordinates || "").trim() || "Unavailable";
   const safeCrossStreet =
     String(crossStreet || "").trim()
@@ -119,9 +127,19 @@ export function AdminIncidentInfoWindowDetails({
           ) : null}
         </div>
       </div>
-      <div style={inlineRowStyle}>
-        <span style={inlineLabelStyle}>{issueLabel}:</span> {safeIssueTypes}
-      </div>
+      {configuredIssueTypeDetails.length ? (
+        <div style={{ display: "grid", gap: 2, ...inlineRowStyle }}>
+          {configuredIssueTypeDetails.map((detail) => (
+            <div key={detail.key || detail.label}>
+              <span style={inlineLabelStyle}>{detail.label}:</span> {detail.valueLabel}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={inlineRowStyle}>
+          <span style={inlineLabelStyle}>{issueLabel}:</span> {safeIssueTypes}
+        </div>
+      )}
       <div style={{ display: "grid", gap: 4, width: "100%" }}>
         <div style={inlineRowStyle}>
           <span style={inlineLabelStyle}>Location:</span> {String(location || "").trim() || "Unavailable"}
@@ -188,10 +206,13 @@ export function InfoMenuModal({
   streetlightIconSrc = "",
   streetlightMarkerColor = "#234a72",
   streetlightHighConfidenceColor = "#234a72",
+  queuedAssetIconSrc = "",
+  queuedAssetDomainKey = "streetlights",
   mapMarkerSize = 24,
   mapMarkerStroke = 2,
   mapMarkerGlyphSize = 15,
   incidentDomainIconSize = 28,
+  showNavigationTool = true,
 }) {
   if (!open) return null;
   const [followCitySaving, setFollowCitySaving] = useState(false);
@@ -292,6 +313,27 @@ export function InfoMenuModal({
     </span>
   );
 
+  const navigationLocationSwatch = (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 34,
+        height: 34,
+        display: "grid",
+        placeItems: "center",
+        filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.24))",
+      }}
+    >
+      {AppIcon ? (
+        <AppIcon
+          src={uiIconSrc.navigationLocationMarker}
+          iconKey="navigationLocationMarker"
+          size={24}
+        />
+      ) : null}
+    </span>
+  );
+
   const legendSections = [
     {
       title: "Streetlights (Utility-owned)",
@@ -344,13 +386,17 @@ export function InfoMenuModal({
           label: "Blue ring means you reported this incident",
         },
         { swatch: currentLocationSwatch, label: "Your current location" },
+        { swatch: navigationLocationSwatch, label: "Navigation location and heading" },
       ],
     },
   ];
 
   const adminLegendRows = [
     {
-      swatch: markerSwatch("#2ecc71", { glyphSrc: uiIconSrc.streetlight }),
+      swatch: markerSwatch("#2ecc71", {
+        glyphSrc: queuedAssetIconSrc || uiIconSrc.mapping,
+        domainKey: queuedAssetDomainKey,
+      }),
       label: "Queued mapped asset",
     },
   ];
@@ -360,6 +406,7 @@ export function InfoMenuModal({
     { iconSrc: uiIconSrc.satellite, iconKey: "satellite", label: "Map View", desc: "Toggle street map and satellite imagery." },
     { iconSrc: uiIconSrc.headingReset, iconKey: "headingReset", label: "Reset Heading", desc: "Realign map orientation to north-up." },
     { iconSrc: uiIconSrc.location, iconKey: "location", label: "My Location", desc: "Center map on your current device location." },
+    ...(showNavigationTool ? [{ iconSrc: uiIconSrc.navigationArrow, iconKey: "navigationArrow", label: "Navigation", desc: "Start or stop turn-by-turn map following." }] : []),
     { iconSrc: uiIconSrc.homeRecenter, iconKey: "homeRecenter", label: "Home", desc: "Recenter the map over the active city boundary." },
     { iconSrc: uiIconSrc.notifications, iconKey: "notifications", label: "Notifications", desc: "Open the cross-tenant notifications inbox for followed locations." },
     { iconSrc: uiIconSrc.notification, iconKey: "notification", label: "Alerts", desc: "Open published location alerts from the hub." },

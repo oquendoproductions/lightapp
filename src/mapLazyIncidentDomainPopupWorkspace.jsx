@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "./supabaseClient";
 import {
   formattedIncidentDisplayIdShared,
 } from "./lib/mapIncidentDisplaySupport.js";
@@ -26,7 +27,7 @@ import {
   isPlaceholderLocationText,
   isUsableAddressText,
 } from "./lib/mapPopupTextSupport.js";
-import { normalizeDomainKey, normalizeDomainKeyOrSlug, singularizeDomainLabel } from "./lib/mapReportParsingSupport.js";
+import { activeTenantKey, normalizeDomainKey, normalizeDomainKeyOrSlug, singularizeDomainLabel } from "./lib/mapReportParsingSupport.js";
 import { repairActionButtonStyle } from "./lib/mapRepairActionStyleSupport.js";
 import { getIncidentDomainHelperShared } from "./lib/mapIncidentDomainConfig.js";
 import {
@@ -39,6 +40,7 @@ import {
   buildIncidentIssueStateByDomainShared,
 } from "./lib/mapDeferredIncidentWorkspaceStateSupport.js";
 import { isNativeAppRuntime } from "./platform/runtime.js";
+import { loadIncidentStateHistoryShared } from "./lib/mapIncidentStateReportSupport.js";
 
 const LazyIncidentLocationModal = lazy(() => import("./mapLazyReportInspectors.jsx").then((module) => ({ default: module.IncidentLocationModal })));
 const LazyAllReportsModal = lazy(() => import("./mapLazyReportInspectors.jsx").then((module) => ({ default: module.AllReportsModal })));
@@ -204,6 +206,9 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     geoLoading: false,
     currentState: "",
     lastChangedAt: "",
+    stateEvents: [],
+    stateEventsLoading: false,
+    stateEventsError: "",
     hideSubmittedBy: false,
     useSubmittedReportFormat: false,
   });
@@ -303,9 +308,11 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       getIncidentDisplaySupportDeps: () => incidentDisplaySupportDeps,
     });
     if (!modalPayload) return;
+    const incidentId = String(m?.incident_id || popupInfo?.incidentId || m?.id || "").trim();
+    const incidentKey = String(modalPayload?.options?.incidentKey || "").trim();
     setAllReportsModal({
       open: true,
-      incidentKey: String(modalPayload?.options?.incidentKey || "").trim(),
+      incidentKey,
       title: modalPayload.title || "All Reports",
       items: Array.isArray(modalPayload.items) ? modalPayload.items : [],
       reportRows: Array.isArray(modalPayload?.options?.reportRows) ? modalPayload.options.reportRows : [],
@@ -326,8 +333,28 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       geoLoading: Boolean(modalPayload?.options?.geoLoading),
       currentState: String(modalPayload?.options?.currentState || "").trim(),
       lastChangedAt: String(modalPayload?.options?.lastChangedAt || "").trim(),
+      stateEvents: [],
+      stateEventsLoading: Boolean(incidentId),
+      stateEventsError: "",
       hideSubmittedBy: Boolean(modalPayload?.options?.hideSubmittedBy),
       useSubmittedReportFormat: Boolean(modalPayload?.options?.useSubmittedReportFormat),
+    });
+
+    if (!incidentId) return;
+    const { events: stateEvents, error } = await loadIncidentStateHistoryShared({
+      supabase,
+      tenantKey: activeTenantKey(),
+      domainKey: normalizedDomainOverride,
+      incidentId,
+    });
+    setAllReportsModal((current) => {
+      if (!current?.open || String(current?.incidentKey || "").trim() !== incidentKey) return current;
+      return {
+        ...current,
+        stateEvents,
+        stateEventsLoading: false,
+        stateEventsError: error ? String(error?.message || "Could not load state updates.") : "",
+      };
     });
   }, [
     actionsByLightId,
@@ -945,6 +972,18 @@ export default function MapIncidentDomainPopupWorkspace(props) {
         || isPlaceholderLocationText(nearestIntersection)
         || isPlaceholderLocationText(nearestLandmark)
       );
+    const initialNearestAddress = shouldLookupGeo && !isUsableAddressText(nearestAddress)
+      ? "Loading"
+      : nearestAddress;
+    const initialNearestCrossStreet = shouldLookupGeo && isPlaceholderLocationText(nearestCrossStreet)
+      ? "Loading"
+      : nearestCrossStreet;
+    const initialNearestIntersection = shouldLookupGeo && isPlaceholderLocationText(nearestIntersection)
+      ? "Loading"
+      : nearestIntersection;
+    const initialNearestLandmark = shouldLookupGeo && isPlaceholderLocationText(nearestLandmark)
+      ? "Loading"
+      : nearestLandmark;
     const buildLocationRows = (addressValue, crossStreetValue, intersectionValue, landmarkValue) => ([
       { label: "Nearest address", value: addressValue },
       { label: "Closest cross street", value: crossStreetValue },
@@ -956,7 +995,12 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     setIncidentLocationModal({
       open: true,
       title: `${domainLabel} ${displayId}`.trim(),
-      rows: buildLocationRows(nearestAddress, nearestCrossStreet, nearestIntersection, nearestLandmark),
+      rows: buildLocationRows(
+        initialNearestAddress,
+        initialNearestCrossStreet,
+        initialNearestIntersection,
+        initialNearestLandmark
+      ),
       loading: shouldLookupGeo,
       incidentKey: incidentLocationKey,
       domainKey: normalizedDomainKey,
@@ -1006,6 +1050,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     domainIdFallback = "Incident",
     currentState = "",
     issueTypes = [],
+    issueTypeDetails = [],
     location = "Unavailable",
     coordinates = "Unavailable",
     landmark = "Unavailable",
@@ -1029,6 +1074,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
           showReportCount={isOrgManagedDomain}
           reportCount={Number(popupInfo?.openCount || 0)}
           issueTypes={issueTypes}
+          issueTypeDetails={issueTypeDetails}
           location={location || popupInfo?.locationDisplay || "Unavailable"}
           crossStreet={String(popupInfo?.nearestCrossStreet || "").trim() || "Unavailable"}
           intersection={String(popupInfo?.nearestIntersection || "").trim() || "Unavailable"}
@@ -1397,6 +1443,9 @@ export default function MapIncidentDomainPopupWorkspace(props) {
             geoLoading={Boolean(allReportsModal?.geoLoading)}
             currentState={allReportsModal?.currentState || ""}
             lastChangedAt={allReportsModal?.lastChangedAt || ""}
+            stateEvents={allReportsModal?.stateEvents || []}
+            stateEventsLoading={Boolean(allReportsModal?.stateEventsLoading)}
+            stateEventsError={allReportsModal?.stateEventsError || ""}
             onCopyField={copyIncidentPopupLocationField}
             onClose={() => setAllReportsModal((prev) => ({ ...prev, open: false }))}
             isMobile={Boolean(useAppShellLayout)}

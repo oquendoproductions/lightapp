@@ -245,6 +245,7 @@ export function buildIncidentPopupRenderModelShared({
       popupInfo: normalizedPopupInfo,
       currentState: String(popupInfo?.currentState || "").trim() || "reported",
       issueTypes: summarizeIssueTypes(typeOptionDetails, issueLabel) || issueLabel || "Unavailable",
+      issueTypeDetails: typeOptionDetails,
       location: nearestAddress,
       landmark: nearestLandmark,
       coordinates: coordsText,

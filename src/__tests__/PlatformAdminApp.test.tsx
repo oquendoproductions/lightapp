@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import PlatformAdminApp from "../PlatformAdminApp";
+import PlatformAdminApp, { buildStoredDomainTypeOptionConfigs } from "../PlatformAdminApp";
 
 const mockState = vi.hoisted(() => ({
   sessionUser: {
@@ -594,6 +594,22 @@ vi.mock("../supabaseClient", () => {
 });
 
 describe("PlatformAdminApp", () => {
+  it("preserves a tenant Issue Type Name when serializing reporting configuration", () => {
+    expect(buildStoredDomainTypeOptionConfigs([{
+      option_key: "issue_type",
+      option_label: "Equipment Type",
+      choices_input: "Playground\nBench",
+    }], "park_equipment")).toEqual([{
+      id: expect.any(String),
+      option_key: "issue_type",
+      option_label: "Equipment Type",
+      choices: [
+        { value: "playground", label: "Playground", sort_order: 10 },
+        { value: "bench", label: "Bench", sort_order: 20 },
+      ],
+    }]);
+  });
+
   beforeEach(() => {
     window.innerWidth = 1280;
     window.history.replaceState({}, "", "/");

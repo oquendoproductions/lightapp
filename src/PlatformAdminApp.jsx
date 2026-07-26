@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./headerStandards.css";
+import pcpEditIconSrc from "./assets/pcp-edit-icon.svg";
 import {
   STANDARD_LOGIN_EMAIL_INPUT_PROPS,
   STANDARD_LOGIN_FORM_PROPS,
@@ -46,6 +47,7 @@ import {
   resolveDomainMarkerIconTintColor,
 } from "./domainIconRendering";
 import { BUILT_IN_DOMAIN_OPTIONS, defaultDomainType } from "./lib/domainCatalog";
+import { DOMAIN_NOTIFICATION_TEMPLATE_TOKENS } from "./lib/domainNotificationTemplateSupport";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
@@ -123,6 +125,7 @@ const DOMAIN_NOTIFICATION_TEMPLATE_OPTIONS = [
 Tenant: {{tenant_key}}
 Domain: {{domain_label}}
 Issue Type: {{issue_type}}
+Incident ID: {{incident_id}}
 Report Number: {{report_number}}
 Closest Address: {{closest_address}}
 Cross Street: {{closest_cross_street}}
@@ -151,6 +154,7 @@ This report was submitted through CityReport.io and forwarded by our system as a
     body: `{{domain_label}} report for {{tenant_key}}.
 
 Issue Type: {{issue_type}}
+Incident ID: {{incident_id}}
 Address: {{closest_address}}
 Cross Street: {{closest_cross_street}}
 Location: {{location_text}}
@@ -170,6 +174,7 @@ Reporter:
     body: `CityReport.io forwarded a {{domain_label}} report for {{tenant_key}}.
 
 Report Number: {{report_number}}
+Incident ID: {{incident_id}}
 Issue Type: {{issue_type}}
 Closest Address: {{closest_address}}
 Closest Intersection: {{closest_intersection}}
@@ -187,25 +192,6 @@ Email: {{reporter_email}}
 Phone: {{reporter_phone}}
 Reporter Type: {{reporter_type}}`,
   },
-];
-
-const DOMAIN_NOTIFICATION_TEMPLATE_TOKENS = [
-  "{{tenant_key}}",
-  "{{domain_label}}",
-  "{{issue_type}}",
-  "{{report_number}}",
-  "{{closest_address}}",
-  "{{closest_cross_street}}",
-  "{{closest_intersection}}",
-  "{{closest_landmark}}",
-  "{{location_text}}",
-  "{{image_url}}",
-  "{{submitted_at_local}}",
-  "{{notes}}",
-  "{{reporter_type}}",
-  "{{reporter_name}}",
-  "{{reporter_email}}",
-  "{{reporter_phone}}",
 ];
 
 const DOMAIN_MARKER_COLOR_DEFAULTS = {
@@ -618,6 +604,38 @@ const alignedFormButton = {
   lineHeight: 1.2,
   whiteSpace: "nowrap",
 };
+
+const pcpEditButtonStyle = {
+  ...buttonAlt,
+  ...alignedFormButton,
+  width: 42,
+  minWidth: 42,
+  minHeight: 42,
+  padding: 0,
+  borderRadius: 12,
+  flexShrink: 0,
+};
+
+const pcpEditButtonIconStyle = {
+  width: 18,
+  height: 18,
+  display: "block",
+};
+
+function PcpEditButton({ label = "Edit", title, disabled = false, onClick, style }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      style={{ ...pcpEditButtonStyle, ...style }}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <img src={pcpEditIconSrc} alt="" aria-hidden="true" style={pcpEditButtonIconStyle} />
+    </button>
+  );
+}
 
 const authModalBackdrop = {
   position: "fixed",
@@ -1203,7 +1221,10 @@ function initialDomainConfigForm() {
       notification_subject_template: preset.subject,
       notification_body_template: preset.body,
       organization_monitored_repairs: true,
+      road_required: false,
       park_required: false,
+      allow_report_images: false,
+      report_image_required: false,
       public_visibility_min_reports: defaultDomainPublicVisibilityMinReports(d.key),
       high_confidence_min_reports: defaultDomainHighConfidenceMinReports(d.key),
       high_confidence_marker_color: defaultDomainHighConfidenceMarkerColor(d.key),
@@ -1426,16 +1447,29 @@ function buildEditableDomainTypeOptionConfigs(value, domainKey = "") {
   }).filter((row) => String(row?.option_label || "").trim() || String(row?.choices_input || "").trim());
 }
 
-function buildStoredDomainTypeOptionConfigs(value, domainKey = "") {
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildStoredDomainTypeOptionConfigs(value, domainKey = "") {
   return normalizeDomainTypeOptionConfigs(value, domainKey)
     .map((row, index) => {
-      const optionLabel = String(row?.option_label || "").replace(/\s+/g, " ").trim() || defaultDomainTypeOptionLabel(domainKey, index);
-      const optionKey = slugifyDomainKeyInput(row?.option_key || optionLabel || `type_option_${index + 1}`) || `type_option_${index + 1}`;
-      const choices = parseDomainTypeOptionChoicesInput(row?.choices_input || "").map((choice, choiceIndex) => ({
-        value: choice.value,
-        label: choice.label,
-        sort_order: (choiceIndex + 1) * 10,
-      }));
+      // normalizeDomainTypeOptionConfigs returns the runtime camelCase shape.
+      // Read that shape here so a PCP Issue Type Name (for example,
+      // "Equipment Type") is preserved when the tenant assignment is saved.
+      const optionLabel = String(row?.optionLabel || row?.option_label || "").replace(/\s+/g, " ").trim()
+        || defaultDomainTypeOptionLabel(domainKey, index);
+      const optionKey = slugifyDomainKeyInput(
+        row?.optionKey || row?.option_key || optionLabel || `type_option_${index + 1}`
+      ) || `type_option_${index + 1}`;
+      const normalizedChoices = Array.isArray(row?.choices) ? row.choices : [];
+      const choices = (normalizedChoices.length
+        ? normalizedChoices
+        : parseDomainTypeOptionChoicesInput(row?.choices_input || "")
+      ).map((choice, choiceIndex) => ({
+        value: String(choice?.value || choice?.type_key || "").trim().toLowerCase(),
+        label: String(choice?.label || choice?.type_label || "").trim(),
+        sort_order: Number.isFinite(Number(choice?.sortOrder ?? choice?.sort_order))
+          ? Number(choice.sortOrder ?? choice.sort_order)
+          : (choiceIndex + 1) * 10,
+      })).filter((choice) => choice.value && choice.label);
       if (!optionLabel && !choices.length) return null;
       return {
         id: String(row?.id || "").trim() || createDomainDisclosureId("type_option"),
@@ -1591,7 +1625,6 @@ function initialDomainRegistryForm() {
     ownership_model: "org_managed",
     report_prefix: "",
     allow_report_images: false,
-    road_required: false,
     type_options: [],
     report_disclosures: defaultDomainDisclosures(""),
   };
@@ -1615,7 +1648,6 @@ function buildDomainRegistryForm(row) {
     ownership_model: String(row?.ownership_model || "org_managed"),
     report_prefix: String(row?.report_prefix || "").trim().toUpperCase(),
     allow_report_images: row?.allow_report_images === true,
-    road_required: row?.road_required === true,
     type_options: normalizeDomainTypeOptionConfigs(row?.type_options, row?.key),
     report_disclosures: normalizeDomainDisclosureRows(row?.report_disclosures, row?.key, { fallbackToDefaults: true }),
   };
@@ -2071,7 +2103,10 @@ function initialTenantDomainAssignmentForm() {
     notification_subject_template: preset.subject,
     notification_body_template: preset.body,
     organization_monitored_repairs: true,
+    road_required: false,
     park_required: false,
+    allow_report_images: false,
+    report_image_required: false,
     billing_status: "not_applicable",
     billing_model: "included",
     billing_amount: "0",
@@ -2106,7 +2141,10 @@ function buildTenantDomainAssignmentForm(row) {
     notification_subject_template: String(row?.notification_subject_template || preset.subject || ""),
     notification_body_template: String(row?.notification_body_template || preset.body || ""),
     organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+    road_required: row?.road_required === true,
     park_required: row?.park_required === true,
+    allow_report_images: row?.allow_report_images === true,
+    report_image_required: row?.allow_report_images === true && row?.report_image_required === true,
     billing_status: String(row?.billing_status || "not_applicable"),
     billing_model: String(row?.billing_model || "included"),
     billing_amount: String(row?.billing_amount ?? "0"),
@@ -2874,6 +2912,9 @@ export default function PlatformAdminApp() {
   const [selectedAssignedDomainSectionKey, setSelectedAssignedDomainSectionKey] = useState(ASSIGNED_DOMAIN_SECTION_OPTIONS[0].key);
   const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
   const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
+  const [tenantRoutingDepartments, setTenantRoutingDepartments] = useState([]);
+  const [tenantDepartmentIdsByDomain, setTenantDepartmentIdsByDomain] = useState({});
+  const [tenantDepartmentRoutingSaving, setTenantDepartmentRoutingSaving] = useState(false);
   const [tenantParkSchemaReady, setTenantParkSchemaReady] = useState(true);
   const [tenantParkEditorOpen, setTenantParkEditorOpen] = useState(false);
   const [editingTenantParkId, setEditingTenantParkId] = useState("");
@@ -4421,7 +4462,7 @@ export default function PlatformAdminApp() {
     }
     const definitionsResult = await supabase
       .from("domain_definitions")
-      .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,report_disclosures,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+      .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,type_options,report_disclosures,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
       .order("sort_order", { ascending: true })
       .order("label", { ascending: true });
     let definitionsData = definitionsResult.data;
@@ -4429,7 +4470,7 @@ export default function PlatformAdminApp() {
     if (definitionsError && isMissingColumnError(definitionsError)) {
       const fallbackResult = await supabase
         .from("domain_definitions")
-        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,road_required,type_options,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
+        .select("id,key,label,description,domain_class,status,icon_key,icon_src,ownership_model,report_prefix,allow_report_images,type_options,default_visibility,default_notification_email,default_organization_monitored_repairs,sort_order,created_at,updated_at")
         .order("sort_order", { ascending: true })
         .order("label", { ascending: true });
       definitionsData = fallbackResult.data;
@@ -4537,7 +4578,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,park_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -6176,6 +6217,38 @@ export default function PlatformAdminApp() {
   }, [selectedTenantKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    if (!tenantKey || !canViewDomainRegistry) {
+      setTenantRoutingDepartments([]);
+      setTenantDepartmentIdsByDomain({});
+      return undefined;
+    }
+    async function loadDepartmentRouting() {
+      const [departmentsResult, routesResult] = await Promise.all([
+        supabase.from("tenant_departments").select("id,name,notification_email,active").eq("tenant_key", tenantKey).eq("active", true).order("name"),
+        supabase.from("tenant_domain_departments").select("domain_key,department_id").eq("tenant_key", tenantKey),
+      ]);
+      if (cancelled) return;
+      if (departmentsResult.error || routesResult.error) {
+        setTenantRoutingDepartments([]);
+        setTenantDepartmentIdsByDomain({});
+        return;
+      }
+      const nextRoutes = {};
+      for (const row of routesResult.data || []) {
+        const domainKey = String(row?.domain_key || "").trim().toLowerCase();
+        if (!domainKey || !row?.department_id) continue;
+        nextRoutes[domainKey] = [...(nextRoutes[domainKey] || []), row.department_id];
+      }
+      setTenantRoutingDepartments(departmentsResult.data || []);
+      setTenantDepartmentIdsByDomain(nextRoutes);
+    }
+    void loadDepartmentRouting();
+    return () => { cancelled = true; };
+  }, [canViewDomainRegistry, selectedTenantKey]);
+
+  useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) return;
 
@@ -6252,7 +6325,10 @@ export default function PlatformAdminApp() {
         organization_monitored_repairs: typeof assignment?.organization_monitored_repairs === "boolean"
           ? assignment.organization_monitored_repairs
           : configured?.organization_monitored_repairs !== false,
+        road_required: assignment?.road_required === true,
         park_required: assignment?.park_required === true,
+        allow_report_images: assignment?.allow_report_images === true,
+        report_image_required: assignment?.allow_report_images === true && assignment?.report_image_required === true,
         public_visibility_min_reports: sanitizePositiveIntegerSetting(
           assignment?.public_visibility_min_reports ?? configured?.public_visibility_min_reports,
           defaultDomainPublicVisibilityMinReports(d.key),
@@ -7708,8 +7784,6 @@ export default function PlatformAdminApp() {
       icon_src: resolvedIconSrc,
       ownership_model: String(domainRegistryForm?.ownership_model || "org_managed").trim().toLowerCase(),
       report_prefix: String(domainRegistryForm?.report_prefix || "").trim().toUpperCase() || null,
-      allow_report_images: domainRegistryForm?.allow_report_images === true,
-      road_required: domainRegistryForm?.road_required === true,
       type_options: buildStoredDomainTypeOptionConfigs(domainRegistryForm?.type_options, key),
       report_disclosures: normalizeDomainDisclosureRows(domainRegistryForm?.report_disclosures, key),
       updated_by: sessionUserId || null,
@@ -7829,6 +7903,38 @@ export default function PlatformAdminApp() {
     setTenantDomainAssignmentEditorOpen(false);
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
   }, []);
+
+  const saveTenantDomainDepartmentRouting = useCallback(async (domainKey, departmentIds) => {
+    if (!canManageDomainRegistry || tenantDepartmentRoutingSaving) return;
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    const normalizedDomainKey = String(domainKey || "").trim().toLowerCase();
+    if (!tenantKey || !normalizedDomainKey) return;
+    const nextIds = [...new Set((departmentIds || []).filter(Boolean))];
+    setTenantDepartmentRoutingSaving(true);
+    setStatus((prev) => ({ ...prev, domainAssignments: "" }));
+    const removeResult = await supabase
+      .from("tenant_domain_departments")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("domain_key", normalizedDomainKey);
+    if (removeResult.error) {
+      setTenantDepartmentRoutingSaving(false);
+      setStatus((prev) => ({ ...prev, domainAssignments: statusText(removeResult.error, "") }));
+      return;
+    }
+    if (nextIds.length) {
+      const insertResult = await supabase.from("tenant_domain_departments").insert(
+        nextIds.map((departmentId) => ({ tenant_key: tenantKey, domain_key: normalizedDomainKey, department_id: departmentId }))
+      );
+      if (insertResult.error) {
+        setTenantDepartmentRoutingSaving(false);
+        setStatus((prev) => ({ ...prev, domainAssignments: statusText(insertResult.error, "") }));
+        return;
+      }
+    }
+    setTenantDepartmentIdsByDomain((prev) => ({ ...prev, [normalizedDomainKey]: nextIds }));
+    setTenantDepartmentRoutingSaving(false);
+  }, [canManageDomainRegistry, selectedTenantKey, tenantDepartmentRoutingSaving]);
 
   const beginCreateTenantPark = useCallback(() => {
     if (!canEditTenantDomains) return;
@@ -8346,7 +8452,12 @@ export default function PlatformAdminApp() {
       notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
       notification_body_template: cleanOptional(domainConfigForm?.[d.key]?.notification_body_template),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      road_required: domainConfigForm?.[d.key]?.road_required === true,
       park_required: domainConfigForm?.[d.key]?.park_required === true,
+      allow_report_images: domainConfigForm?.[d.key]?.allow_report_images === true,
+      report_image_required:
+        domainConfigForm?.[d.key]?.allow_report_images === true
+        && domainConfigForm?.[d.key]?.report_image_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
         defaultDomainPublicVisibilityMinReports(d.key),
@@ -8506,7 +8617,12 @@ export default function PlatformAdminApp() {
               notification_subject_template: savedAssignment.notification_subject_template || "",
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
+              road_required: savedAssignment.road_required === true,
               park_required: savedAssignment.park_required === true,
+              allow_report_images: savedAssignment.allow_report_images === true,
+              report_image_required:
+                savedAssignment.allow_report_images === true
+                && savedAssignment.report_image_required === true,
               type_options: normalizeDomainTypeOptionConfigs(savedAssignment.type_options, closingDomainKey),
               report_disclosures: normalizeDomainDisclosureRows(savedAssignment.report_disclosures, closingDomainKey),
             } : {}),
@@ -9360,38 +9476,6 @@ export default function PlatformAdminApp() {
             {ownershipModelDescription}
           </div>
         </label>
-        <div style={{ ...responsiveActionGrid, gridColumn: "1 / -1" }}>
-          <div style={{ ...modalField, justifyContent: "start" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content" }}>
-              <span>Allow Photos</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={domainRegistryForm.allow_report_images === true}
-                  onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, allow_report_images: e.target.checked }))}
-                />
-              </label>
-            </div>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Allow residents to capture or upload a photo with this domain's report.
-            </div>
-          </div>
-          <div style={{ ...modalField, justifyContent: "start" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content" }}>
-              <span>Road Required</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: palette.text, flexShrink: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={domainRegistryForm.road_required === true}
-                  onChange={(e) => setDomainRegistryForm((prev) => ({ ...prev, road_required: e.target.checked }))}
-                />
-              </label>
-            </div>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 6 }}>
-              Require the public reporting modal pin to land on a road before submission.
-            </div>
-          </div>
-        </div>
         {!editingDomainDefinitionKey ? (
           <>
             <label style={modalField}>
@@ -9781,11 +9865,11 @@ export default function PlatformAdminApp() {
           </select>
         </label>
         <label style={modalField}>
-          <span>Notification Email</span>
+          <span>Fallback Notification Email</span>
           <input
             value={tenantDomainAssignmentForm.notification_email}
             onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, notification_email: e.target.value }))}
-            placeholder="notifications@examplecity.gov"
+            placeholder="Used only when no department email is routed"
             style={modalInput}
           />
         </label>
@@ -9856,7 +9940,7 @@ export default function PlatformAdminApp() {
         </div>
       </div>
       <div style={{ fontSize: 12, color: palette.textMuted }}>
-        Report email templates are configured from <b>Manage Organizations → Domains</b> after the domain is enabled.
+        Department routing is configured from this domain’s <b>Reporting</b> section. This legacy address is only used when no routed department has an email.
       </div>
       <label style={{ ...modalField, gridColumn: "1 / -1" }}>
         <span>Billing Notes</span>
@@ -11990,9 +12074,7 @@ export default function PlatformAdminApp() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      style={buttonAlt}
+                    <PcpEditButton
                       onClick={() => {
                         setPlatformAccountEditMode(true);
                         setPlatformAccountDraft({
@@ -12001,9 +12083,7 @@ export default function PlatformAdminApp() {
                         });
                         setPlatformAccountStatus("");
                       }}
-                    >
-                      Edit
-                    </button>
+                    />
                   )}
                 </div>
                 {platformAccountStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformAccountStatus}</div> : null}
@@ -12077,9 +12157,9 @@ export default function PlatformAdminApp() {
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                      <PcpEditButton
+                        label="Edit PIN"
+                        style={{ opacity: canManagePlatformSecurity ? 1 : 0.55 }}
                         disabled={!canManagePlatformSecurity}
                         onClick={() => {
                           setPlatformSecurityPinEditMode(true);
@@ -12087,9 +12167,7 @@ export default function PlatformAdminApp() {
                           setPlatformSecurityStatus("");
                         }}
                         title={canManagePlatformSecurity ? "Edit PIN" : "You need the Security edit permission"}
-                      >
-                        Edit PIN
-                      </button>
+                      />
                     )}
                   </div>
                   {platformSecurityStatus ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{platformSecurityStatus}</div> : null}
@@ -12360,8 +12438,6 @@ export default function PlatformAdminApp() {
                             <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                               <code>{domain.key}</code>
                               {domain.report_prefix ? ` • Prefix ${domain.report_prefix}` : ""}
-                              {domain.allow_report_images ? " • Photos enabled" : ""}
-                              {domain.road_required ? " • Road required" : ""}
                               {(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0) ? ` • ${(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0)} disclosure${(Array.isArray(domain.report_disclosures) ? domain.report_disclosures.length : 0) === 1 ? "" : "s"}` : ""}
                               {domain.icon_key ? ` • Icon ${domain.icon_key}` : domain.icon_src ? " • Custom Icon" : ""}
                             </div>
@@ -12372,14 +12448,11 @@ export default function PlatformAdminApp() {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {isExpanded ? null : (
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                            <PcpEditButton
+                              style={{ opacity: canManageDomainRegistry ? 1 : 0.55 }}
                               disabled={!canManageDomainRegistry}
                               onClick={() => beginEditDomainDefinition(domain.key)}
-                            >
-                              Edit
-                            </button>
+                            />
                           )}
                           {domain.status !== "archived" ? (
                             <button
@@ -12651,15 +12724,12 @@ export default function PlatformAdminApp() {
                               </span>
                             </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canManageDomainRegistry && (!themeEntry.is_default || isPlatformOwner) ? 1 : 0.55 }}
+                              <PcpEditButton
+                                style={{ opacity: canManageDomainRegistry && (!themeEntry.is_default || isPlatformOwner) ? 1 : 0.55 }}
                                 disabled={!canManageDomainRegistry || (themeEntry.is_default && !isPlatformOwner)}
                                 onClick={() => openMapUiThemeEditor(themeEntry.id)}
                                 title={themeEntry.is_default && !isPlatformOwner ? "Only PCP super users can edit the default theme." : "Edit theme"}
-                              >
-                                Edit
-                              </button>
+                              />
                               {!themeEntry.is_default ? (
                                 <button
                                   type="button"
@@ -13331,17 +13401,14 @@ export default function PlatformAdminApp() {
                                 </>
                               ) : (
                                 <>
-                                  <button
-                                    type="button"
-                                    style={{ ...buttonAlt, opacity: canManagePlatformUsers ? 1 : 0.55 }}
+                                  <PcpEditButton
+                                    style={{ opacity: canManagePlatformUsers ? 1 : 0.55 }}
                                     disabled={!canManagePlatformUsers}
                                     onClick={() => {
                                       setEditingPlatformAssignmentKey(rowKey);
                                       setEditingPlatformAssignmentRole(String(row?.role || "").trim());
                                     }}
-                                  >
-                                    Edit
-                                  </button>
+                                  />
                                   <button
                                     type="button"
                                     style={{ ...buttonAlt, opacity: canRemovePlatformUsers ? 1 : 0.55 }}
@@ -13421,14 +13488,11 @@ export default function PlatformAdminApp() {
                       </div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {!platformRoleEditMode ? (
-                          <button
-                            type="button"
-                            style={{ ...buttonAlt, opacity: canManagePlatformRoles ? 1 : 0.55 }}
+                          <PcpEditButton
+                            style={{ opacity: canManagePlatformRoles ? 1 : 0.55 }}
                             disabled={!canManagePlatformRoles}
                             onClick={() => setPlatformRoleEditMode(true)}
-                          >
-                            Edit
-                          </button>
+                          />
                         ) : (
                           <button
                             type="button"
@@ -13556,14 +13620,11 @@ export default function PlatformAdminApp() {
                     </p>
                   </div>
                   {!platformSecurityChecksEditMode ? (
-                    <button
-                      type="button"
-                      style={{ ...buttonAlt, opacity: canManagePlatformSecurity ? 1 : 0.55 }}
+                    <PcpEditButton
+                      style={{ opacity: canManagePlatformSecurity ? 1 : 0.55 }}
                       onClick={() => setPlatformSecurityChecksEditMode(true)}
                       disabled={!canManagePlatformSecurity}
-                    >
-                      Edit
-                    </button>
+                    />
                   ) : null}
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
@@ -14041,15 +14102,13 @@ export default function PlatformAdminApp() {
                   </div>
                   {!inAddTenantFlow ? (
                     tenantReadOnly ? (
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                      <PcpEditButton
+                        label="Edit Organization Setup"
+                        style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
                         onClick={() => setIsEditingTenant(true)}
                         disabled={!canEditTenantSetup}
                         title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
-                      >
-                        Edit Organization Setup
-                      </button>
+                      />
                     ) : (
                       <button
                         type="button"
@@ -14260,14 +14319,11 @@ export default function PlatformAdminApp() {
                     </div>
                     {!inAddTenantFlow ? (
                       organizationSectionReadOnly("identity") ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                        <PcpEditButton
+                          style={{ opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
                           onClick={() => setEditingOrganizationSection("identity")}
                           disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
-                        >
-                          Edit
-                        </button>
+                        />
                       ) : (
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
@@ -14328,14 +14384,11 @@ export default function PlatformAdminApp() {
                     </div>
                     {!inAddTenantFlow ? (
                       organizationSectionReadOnly("address") ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                        <PcpEditButton
+                          style={{ opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
                           onClick={() => setEditingOrganizationSection("address")}
                           disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
-                        >
-                          Edit
-                        </button>
+                        />
                       ) : (
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
@@ -14390,14 +14443,11 @@ export default function PlatformAdminApp() {
                     </div>
                     {!inAddTenantFlow ? (
                       organizationSectionReadOnly("contract") ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                        <PcpEditButton
+                          style={{ opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
                           onClick={() => setEditingOrganizationSection("contract")}
                           disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
-                        >
-                          Edit
-                        </button>
+                        />
                       ) : (
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
@@ -14458,14 +14508,11 @@ export default function PlatformAdminApp() {
                     </div>
                     {!inAddTenantFlow ? (
                       organizationSectionReadOnly("notes") ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
+                        <PcpEditButton
+                          style={{ opacity: canEditTenantSetup && !editingOrganizationSection ? 1 : 0.55 }}
                           onClick={() => setEditingOrganizationSection("notes")}
                           disabled={!canEditTenantSetup || Boolean(editingOrganizationSection)}
-                        >
-                          Edit
-                        </button>
+                        />
                       ) : (
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
@@ -14510,9 +14557,12 @@ export default function PlatformAdminApp() {
                     {inAddTenantFlow ? "Primary + Additional Contacts" : "Primary + Additional Contacts"}
                   </h2>
                   {!inAddTenantFlow && profileReadOnly ? (
-                    <button type="button" style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }} onClick={() => setIsEditingProfile(true)} disabled={!canEditTenantSetup}>
-                      Edit Contacts
-                    </button>
+                    <PcpEditButton
+                      label="Edit Contacts"
+                      style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
+                      onClick={() => setIsEditingProfile(true)}
+                      disabled={!canEditTenantSetup}
+                    />
                   ) : null}
                 </div>
                 <section style={{ ...subPanel, display: "grid", gap: 8 }}>
@@ -14623,17 +14673,14 @@ export default function PlatformAdminApp() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 900, color: palette.navy900 }}>Primary Contact</div>
                   {!editingPrimaryContact ? (
-                    <button
-                      type="button"
-                      style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                    <PcpEditButton
+                      style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
                       disabled={!canEditTenantSetup}
                       onClick={() => {
                         setEditingAdditionalContactIndex(null);
                         setEditingPrimaryContact(true);
                       }}
-                    >
-                      Edit
-                    </button>
+                    />
                   ) : (
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button
@@ -14736,17 +14783,14 @@ export default function PlatformAdminApp() {
                               </button>
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            <PcpEditButton
+                              style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
                               disabled={!canEditTenantSetup}
                               onClick={() => {
                                 setEditingPrimaryContact(false);
                                 setEditingAdditionalContactIndex(index);
                               }}
-                            >
-                              Edit
-                            </button>
+                            />
                           )}
                         </div>
                         <div style={contactFieldGrid}>
@@ -14893,18 +14937,15 @@ export default function PlatformAdminApp() {
                             </div>
                           ) : (
                             <>
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                              <PcpEditButton
+                                style={{ opacity: canManageTenantUsers ? 1 : 0.55 }}
                                 onClick={() => {
                                   setEditingAssignmentKey(rowKey);
                                   setEditingAssignmentRole(String(row?.role || "").trim());
                                 }}
                                 disabled={!canManageTenantUsers}
                                 title={canManageTenantUsers ? "Edit role" : "You need the Users edit permission"}
-                              >
-                                Edit
-                              </button>
+                              />
                               <button
                                 type="button"
                                 style={{ ...buttonAlt, opacity: canDeleteTenantUsers ? 1 : 0.55 }}
@@ -14977,14 +15018,11 @@ export default function PlatformAdminApp() {
                     </div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {!tenantRoleEditMode ? (
-                        <button
-                          type="button"
-                          style={{ ...buttonAlt, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                        <PcpEditButton
+                          style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
                           disabled={!canManageTenantRoles}
                           onClick={() => setTenantRoleEditMode(true)}
-                        >
-                          Edit
-                        </button>
+                        />
                       ) : (
                         <button
                           type="button"
@@ -15435,14 +15473,11 @@ export default function PlatformAdminApp() {
                             </div>
                           </div>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
+                            <PcpEditButton
+                              style={{ opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
                               disabled={!canEditTenantDomains || tenantParkSaving}
                               onClick={() => beginEditTenantPark(park.id)}
-                            >
-                              Edit
-                            </button>
+                            />
                             <button
                               type="button"
                               style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
@@ -15642,9 +15677,9 @@ export default function PlatformAdminApp() {
                                 </div>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   {!isEditingAssignment ? (
-                                    <button
-                                      type="button"
-                                      style={{ ...buttonAlt, opacity: canManageDomainRegistry && !tenantDomainAssignmentSaving && !isEditingDomain && !editLockedByOtherDomain ? 1 : 0.55 }}
+                                    <PcpEditButton
+                                      label="Edit Assignment"
+                                      style={{ opacity: canManageDomainRegistry && !tenantDomainAssignmentSaving && !isEditingDomain && !editLockedByOtherDomain ? 1 : 0.55 }}
                                       disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving || isEditingDomain || editLockedByOtherDomain || assignmentEditLockedByOtherDomain}
                                       onClick={() => beginEditTenantDomainAssignment(assignment.domain_key)}
                                       title={
@@ -15656,9 +15691,7 @@ export default function PlatformAdminApp() {
                                               ? `Edit ${d.label} assignment`
                                               : "You need the Domains edit permission"
                                       }
-                                    >
-                                      Edit Assignment
-                                    </button>
+                                    />
                                   ) : (
                                     <>
                                       <button
@@ -15810,9 +15843,9 @@ export default function PlatformAdminApp() {
                                 </div>
                                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   {!isEditingMarkerIconSection ? (
-                                    <button
-                                      type="button"
-                                      style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
+                                    <PcpEditButton
+                                      label="Edit Settings"
+                                      style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
                                       disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment}
                                       onClick={() => beginDomainEdit(d.key, "marker-icon")}
                                       title={
@@ -15824,9 +15857,7 @@ export default function PlatformAdminApp() {
                                               ? `Edit ${d.label}`
                                               : "You need the Domains edit permission"
                                       }
-                                    >
-                                      Edit Settings
-                                    </button>
+                                    />
                                   ) : (
                                     <>
                                       <button
@@ -16202,9 +16233,9 @@ export default function PlatformAdminApp() {
                                   </div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                     {!isEditingReportingSection ? (
-                                      <button
-                                        type="button"
-                                        style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                      <PcpEditButton
+                                        label="Edit Reporting"
+                                        style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                         disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
                                         onClick={() => beginDomainEdit(d.key, "reporting")}
                                         title={
@@ -16218,9 +16249,7 @@ export default function PlatformAdminApp() {
                                                   ? `Edit ${d.label} reporting`
                                                   : "You need the Domains edit permission"
                                         }
-                                      >
-                                        Edit Reporting
-                                      </button>
+                                      />
                                     ) : (
                                       <>
                                         <button
@@ -16242,8 +16271,78 @@ export default function PlatformAdminApp() {
                                     )}
                                   </div>
                                 </div>
+                                <div style={{ ...modalField, gap: 8 }}>
+                                  <span>Departments receiving this domain’s reports</span>
+                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                    Each selected department receives the central report email, and every active employee assigned to it receives an in-app notification.
+                                  </div>
+                                  {tenantRoutingDepartments.length ? (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                                      {tenantRoutingDepartments.map((department) => {
+                                        const selectedDepartmentIds = tenantDepartmentIdsByDomain[d.key] || [];
+                                        const checked = selectedDepartmentIds.includes(department.id);
+                                        return (
+                                          <label key={department.id} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 10px", border: "1px solid rgba(17,36,69,0.14)", borderRadius: 10, background: "#fff", fontSize: 12.5, fontWeight: 700, color: palette.navy900 }}>
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              disabled={!canManageDomainRegistry || tenantDepartmentRoutingSaving}
+                                              onChange={(event) => void saveTenantDomainDepartmentRouting(
+                                                d.key,
+                                                event.target.checked
+                                                  ? [...selectedDepartmentIds, department.id]
+                                                  : selectedDepartmentIds.filter((id) => id !== department.id)
+                                              )}
+                                            />
+                                            {department.name}{department.notification_email ? ` · ${department.notification_email}` : ""}
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Create a department first in the tenant hub. Until one is routed here, reports continue to notify active tenant admins.
+                                    </div>
+                                  )}
+                                </div>
                                 <div style={{ display: "grid", gap: 10 }}>
                                 <div style={responsiveActionGrid}>
+                                  <div style={{ ...modalField, justifyContent: "center" }}>
+                                    <span>Road Required</span>
+                                    <label
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        minHeight: 48,
+                                        padding: "0 14px",
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(17, 36, 69, 0.14)",
+                                        background: "rgba(255,255,255,0.92)",
+                                        color: palette.navy900,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={domainConfigForm?.[d.key]?.road_required === true}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            road_required: e.target.checked,
+                                          },
+                                        }))}
+                                      />
+                                      <span style={{ display: "grid", gap: 2 }}>
+                                        <span style={{ fontWeight: 800 }}>Require road placement?</span>
+                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                          {domainConfigForm?.[d.key]?.road_required === true ? "Reports must land on a road" : "Reports can be placed anywhere allowed"}
+                                        </span>
+                                      </span>
+                                    </label>
+                                  </div>
                                   <div style={{ ...modalField, justifyContent: "center" }}>
                                     <span>Park Required</span>
                                     <label
@@ -16276,6 +16375,80 @@ export default function PlatformAdminApp() {
                                         <span style={{ fontWeight: 800 }}>Require park placement?</span>
                                         <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
                                           {domainConfigForm?.[d.key]?.park_required === true ? "Reports must land inside a park boundary" : "Reports can be placed anywhere allowed"}
+                                        </span>
+                                      </span>
+                                    </label>
+                                  </div>
+                                  <div style={{ ...modalField, justifyContent: "center" }}>
+                                    <span>Allow Photos</span>
+                                    <label
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        minHeight: 48,
+                                        padding: "0 14px",
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(17, 36, 69, 0.14)",
+                                        background: "rgba(255,255,255,0.92)",
+                                        color: palette.navy900,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={domainConfigForm?.[d.key]?.allow_report_images === true}
+                                        disabled={domainFieldsReadOnly}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            allow_report_images: e.target.checked,
+                                            ...(e.target.checked ? {} : { report_image_required: false }),
+                                          },
+                                        }))}
+                                      />
+                                      <span style={{ display: "grid", gap: 2 }}>
+                                        <span style={{ fontWeight: 800 }}>Accept a report photo?</span>
+                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                          {domainConfigForm?.[d.key]?.allow_report_images === true ? "Photo collection is enabled" : "Reports will not request a photo"}
+                                        </span>
+                                      </span>
+                                    </label>
+                                  </div>
+                                  <div style={{ ...modalField, justifyContent: "center" }}>
+                                    <span>Photo Required</span>
+                                    <label
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        minHeight: 48,
+                                        padding: "0 14px",
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(17, 36, 69, 0.14)",
+                                        background: "rgba(255,255,255,0.92)",
+                                        color: palette.navy900,
+                                        fontWeight: 700,
+                                        opacity: domainConfigForm?.[d.key]?.allow_report_images === true ? 1 : 0.58,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={domainConfigForm?.[d.key]?.report_image_required === true}
+                                        disabled={domainFieldsReadOnly || domainConfigForm?.[d.key]?.allow_report_images !== true}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            report_image_required: e.target.checked,
+                                          },
+                                        }))}
+                                      />
+                                      <span style={{ display: "grid", gap: 2 }}>
+                                        <span style={{ fontWeight: 800 }}>Require a photo to submit?</span>
+                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                          {domainConfigForm?.[d.key]?.report_image_required === true ? "Residents must attach a photo" : "Photo attachment is optional"}
                                         </span>
                                       </span>
                                     </label>
@@ -16750,9 +16923,9 @@ export default function PlatformAdminApp() {
                                   </div>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                     {!isEditingReportEmailSection ? (
-                                      <button
-                                        type="button"
-                                        style={{ ...buttonAlt, opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                      <PcpEditButton
+                                        label="Edit Email Template"
+                                        style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                         disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
                                         onClick={() => beginDomainEdit(d.key, "report-email-template")}
                                         title={
@@ -16766,9 +16939,7 @@ export default function PlatformAdminApp() {
                                                   ? `Edit ${d.label} report email template`
                                                   : "You need the Domains edit permission"
                                         }
-                                      >
-                                        Edit Email Template
-                                      </button>
+                                      />
                                     ) : (
                                       <>
                                         <button
@@ -16925,15 +17096,13 @@ export default function PlatformAdminApp() {
                       </div>
                     </div>
                     {!mapFeaturesEditMode ? (
-                      <button
-                        type="button"
-                        style={{ ...buttonAlt, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                      <PcpEditButton
+                        label="Edit Map Features"
+                        style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
                         disabled={!canEditTenantDomains}
                         onClick={beginMapFeaturesEdit}
                         title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
-                      >
-                        Edit Map Features
-                      </button>
+                      />
                     ) : (
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <button
