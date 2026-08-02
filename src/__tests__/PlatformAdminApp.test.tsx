@@ -683,7 +683,7 @@ describe("PlatformAdminApp", () => {
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
     await chooseWorkspaceSection(user, /^domains$/i);
 
-    await screen.findByRole("combobox", { name: /assigned domain/i });
+    await screen.findByRole("button", { name: /select assigned domain/i });
     return { user };
   }
 
@@ -796,7 +796,7 @@ describe("PlatformAdminApp", () => {
   it("keeps assigned-domain controls in a fixed rail above domain content", async () => {
     await openDomains();
 
-    const assignedDomainSelector = screen.getByRole("combobox", { name: /assigned domain/i });
+    const assignedDomainSelector = screen.getByRole("button", { name: /select assigned domain/i });
     expect(screen.getByText(/^assigned domains$/i)).toBeInTheDocument();
     expect(assignedDomainSelector.closest("header")).toHaveStyle({ position: "sticky" });
     expect(screen.getByRole("button", { name: /add domain/i })).toBeInTheDocument();

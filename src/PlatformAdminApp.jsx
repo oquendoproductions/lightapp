@@ -8,6 +8,7 @@ import pcpOpenHubIconSrc from "./assets/pcp-open-hub-icon.svg";
 import pcpWorkspaceSectionIconSrc from "./assets/pcp-workspace-section-icon.svg";
 import pcpTrashIconSrc from "./assets/pcp-trash-icon.svg";
 import pcpSearchIconSrc from "./assets/pcp-search-icon.svg";
+import pcpLayersIconSrc from "./assets/pcp-layers-icon.svg";
 import {
   STANDARD_LOGIN_EMAIL_INPUT_PROPS,
   STANDARD_LOGIN_FORM_PROPS,
@@ -54,6 +55,8 @@ import {
   resolveDomainMarkerIconTintColor,
 } from "./domainIconRendering";
 import { BUILT_IN_DOMAIN_OPTIONS, defaultDomainType } from "./lib/domainCatalog";
+import { DomainSelectorListIcon } from "./mapDomainIconComponentsSupport.jsx";
+import { RUNTIME_UI_ICON_SRC as mapUiIconSrc } from "./mapUiIconRuntimeSupport.js";
 import {
   DOMAIN_NOTIFICATION_TEMPLATE_TOKENS,
   domainReportingFieldTemplateTokens,
@@ -79,6 +82,13 @@ function fallbackRegistryDomainRows() {
     default_visibility: "enabled",
     sort_order: (index + 1) * 10,
   }));
+}
+
+function resolvePcpDomainIconSrc(domain = {}) {
+  const key = String(domain?.key || domain?.domain_key || "").trim().toLowerCase();
+  const configuredSrc = String(domain?.icon_src || domain?.iconSrc || "").trim();
+  if (configuredSrc) return configuredSrc;
+  return String(BUILT_IN_DOMAIN_OPTIONS.find((option) => option.key === key)?.iconSrc || mapUiIconSrc.incidentReportingLayer || "").trim();
 }
 
 const DOMAIN_TYPE_OPTIONS = [
@@ -2830,9 +2840,11 @@ export default function PlatformAdminApp() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const [workspaceSectionMenuOpen, setWorkspaceSectionMenuOpen] = useState(false);
+  const [assignedDomainSelectorOpen, setAssignedDomainSelectorOpen] = useState(false);
   const bannerMenuRef = useRef(null);
   const controlPlaneNavRef = useRef(null);
   const workspaceSectionMenuRef = useRef(null);
+  const assignedDomainSelectorRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
@@ -4993,6 +5005,27 @@ export default function PlatformAdminApp() {
     window.addEventListener("pointerdown", closeOnOutsideClick);
     return () => window.removeEventListener("pointerdown", closeOnOutsideClick);
   }, [workspaceSectionMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !assignedDomainSelectorOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (assignedDomainSelectorRef.current?.contains(event.target)) return;
+      setAssignedDomainSelectorOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setAssignedDomainSelectorOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsideClick);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsideClick);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [assignedDomainSelectorOpen]);
+
+  useEffect(() => {
+    if (activeTab !== "domains") setAssignedDomainSelectorOpen(false);
+  }, [activeTab]);
 
   useEffect(() => {
     let mounted = true;
@@ -14490,31 +14523,78 @@ export default function PlatformAdminApp() {
                 borderTop: "1px solid rgba(23, 49, 79, 0.14)",
               }}
             >
-              <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>Assigned Domains</div>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "end", gap: 8 }}>
-                <select
-                  aria-label="Assigned Domain"
-                  value={selectedAssignedDomainRow?.domain?.key || ""}
-                  onChange={(event) => toggleAssignedDomainCard(event.target.value)}
-                  disabled={!selectedTenantAssignedDomainRows.length}
-                  style={{ ...inputBase, minWidth: 0, opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55 }}
-                >
-                  {selectedTenantAssignedDomainRows.length ? (
-                    selectedTenantAssignedDomainRows.map((row) => (
-                      <option key={row.domain.key} value={row.domain.key}>{row.domain.label}</option>
-                    ))
-                  ) : (
-                    <option value="">No assigned domains</option>
-                  )}
-                </select>
-                <PcpActionIconButton
-                  label="Add Domain"
-                  src={pcpAddIconSrc}
-                  style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                  disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                  onClick={beginCreateTenantDomainAssignment}
-                  title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
-                />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900, whiteSpace: "nowrap" }}>Assigned Domains</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <div ref={assignedDomainSelectorRef} style={{ position: "relative", display: "inline-flex" }}>
+                    <button
+                      type="button"
+                      aria-label="Select assigned domain"
+                      aria-haspopup="menu"
+                      aria-expanded={assignedDomainSelectorOpen}
+                      title={selectedAssignedDomainRow?.domain?.label ? `Assigned domain: ${selectedAssignedDomainRow.domain.label}` : "No assigned domains"}
+                      disabled={!selectedTenantAssignedDomainRows.length}
+                      onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
+                      style={{
+                        ...pcpActionIconButtonStyle,
+                        width: 48,
+                        minWidth: 48,
+                        minHeight: 48,
+                        borderRadius: 13,
+                        opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
+                        background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
+                        borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
+                      }}
+                    >
+                      <img src={pcpLayersIconSrc} alt="" aria-hidden="true" style={{ width: 25, height: 25, display: "block" }} />
+                    </button>
+                    {assignedDomainSelectorOpen ? (
+                      <div
+                        role="menu"
+                        aria-label="Assigned domains"
+                        style={{ ...controlPlaneSubmenu, left: "auto", right: 0, minWidth: 220, zIndex: 45 }}
+                      >
+                        {selectedTenantAssignedDomainRows.map((row) => {
+                          const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
+                          return (
+                            <button
+                              key={row.domain.key}
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                toggleAssignedDomainCard(row.domain.key);
+                                setAssignedDomainSelectorOpen(false);
+                              }}
+                              style={{
+                                ...controlPlaneSubmenuItem,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
+                              }}
+                            >
+                              <DomainSelectorListIcon
+                                domainKey={row.domain.key}
+                                src={resolvePcpDomainIconSrc(row.domain)}
+                                size={18}
+                                containerSize={22}
+                              />
+                              <span>{row.domain.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                  <PcpActionIconButton
+                    label="Add Domain"
+                    src={pcpAddIconSrc}
+                    style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                    disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                    onClick={beginCreateTenantDomainAssignment}
+                    title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                  />
+                </div>
               </div>
               <label style={{ display: "grid", gap: 4, maxWidth: 360, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
                 <span>Domain Section</span>
