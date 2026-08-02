@@ -616,17 +616,22 @@ describe("PlatformAdminApp", () => {
     mockState.resetData();
   });
 
+  async function chooseWorkspaceSection(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+    await user.click(screen.getByRole("button", { name: /workspace section:/i }));
+    await user.click(await screen.findByRole("menuitem", { name }));
+  }
+
   async function openUsersAndAdmins() {
     const user = userEvent.setup();
     const { container } = render(<PlatformAdminApp />);
 
     await screen.findByRole("heading", { name: /organization reports/i });
     await user.click(screen.getByRole("button", { name: /manage organizations/i }));
-    await screen.findByRole("heading", { name: /start here/i });
+    await screen.findByPlaceholderText(/search organizations by name, key, or subdomain/i);
 
     await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
-    await user.selectOptions(screen.getByLabelText(/workspace section/i), "users");
+    await chooseWorkspaceSection(user, /users\/?admins/i);
 
     await screen.findByRole("heading", { name: /current organization users and admins/i });
     await user.click(screen.getByRole("button", { name: /add user\/admin/i }));
@@ -640,11 +645,11 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /organization reports/i });
     await user.click(screen.getByRole("button", { name: /manage organizations/i }));
-    await screen.findByRole("heading", { name: /start here/i });
+    await screen.findByPlaceholderText(/search organizations by name, key, or subdomain/i);
 
     await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
-    await user.selectOptions(screen.getByLabelText(/workspace section/i), "roles");
+    await chooseWorkspaceSection(user, /roles \+ permissions/i);
 
     await screen.findByRole("heading", { name: /roles and permissions/i });
     return { user };
@@ -656,11 +661,11 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /organization reports/i });
     await user.click(screen.getByRole("button", { name: /manage organizations/i }));
-    await screen.findByRole("heading", { name: /start here/i });
+    await screen.findByPlaceholderText(/search organizations by name, key, or subdomain/i);
 
     await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
-    await user.selectOptions(screen.getByLabelText(/workspace section/i), "map-features");
+    await chooseWorkspaceSection(user, /map features/i);
 
     await screen.findByText(/^map features$/i, { selector: "div" });
     return { user };
@@ -816,17 +821,15 @@ describe("PlatformAdminApp", () => {
 
     render(<PlatformAdminApp />);
 
-    await screen.findByRole("heading", { name: /manage organizations/i });
-    expect(screen.getByLabelText(/workspace section/i)).toHaveValue("roles");
+    await screen.findByRole("button", { name: /workspace section: roles \+ permissions/i });
     expect(screen.getByText(/choose role/i)).toBeInTheDocument();
-    expect(screen.getAllByRole("combobox").length).toBeGreaterThan(1);
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
   });
 
   it("shows a confirmation popup before deleting a custom role", async () => {
     const { user } = await openRolesAndPermissions();
 
-    const selects = screen.getAllByRole("combobox");
-    await user.selectOptions(selects[1], "field_supervisor");
+    await user.selectOptions(screen.getByRole("combobox"), "field_supervisor");
     await user.click(screen.getByRole("button", { name: /^edit$/i }));
     await user.click(screen.getByRole("button", { name: /delete role/i }));
 
@@ -1001,8 +1004,8 @@ describe("PlatformAdminApp", () => {
 
     await screen.findByRole("heading", { name: /organization reports/i });
     await user.click(screen.getByRole("button", { name: /manage organizations/i }));
-    await screen.findByRole("heading", { name: /start here/i });
-    await user.click(screen.getAllByRole("button", { name: /^add organization$/i })[0]);
+    await screen.findByPlaceholderText(/search organizations by name, key, or subdomain/i);
+    await user.click(screen.getByRole("button", { name: /^add organization$/i }));
 
     await screen.findByRole("heading", { name: /organization information/i });
     expect(screen.getByText(/1\. organization contact information/i)).toBeInTheDocument();
