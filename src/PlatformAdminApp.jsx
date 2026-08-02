@@ -3015,8 +3015,8 @@ export default function PlatformAdminApp() {
   const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
-  const [tenantUserSearchOpen, setTenantUserSearchOpen] = useState(false);
   const [tenantUserSearch, setTenantUserSearch] = useState("");
+  const [tenantUserSearchApplied, setTenantUserSearchApplied] = useState("");
   const [tenantRoleManagementView, setTenantRoleManagementView] = useState("list");
   const [tenantAssetsManagementView, setTenantAssetsManagementView] = useState("list");
   const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
@@ -3493,8 +3493,8 @@ export default function PlatformAdminApp() {
     [tenantAdmins, selectedTenantKey]
   );
   useEffect(() => {
-    setTenantUserSearchOpen(false);
     setTenantUserSearch("");
+    setTenantUserSearchApplied("");
   }, [selectedTenantKey]);
   const platformRoleAssignmentCounts = useMemo(() => {
     const counts = {};
@@ -3985,7 +3985,7 @@ export default function PlatformAdminApp() {
     return formatUserSummaryLabel(summary);
   }, [formatUserSummaryLabel, resolveKnownUserSummary]);
   const filteredTenantRoleAssignments = useMemo(() => {
-    const query = tenantUserSearch.trim().toLowerCase();
+    const query = tenantUserSearchApplied.trim().toLowerCase();
     if (!query) return selectedTenantRoleAssignments;
     return selectedTenantRoleAssignments.filter((row) => {
       const summary = resolveKnownUserSummary(row?.user_id);
@@ -4001,7 +4001,7 @@ export default function PlatformAdminApp() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [formatKnownUserLabel, resolveKnownUserSummary, selectedTenantRoleAssignments, tenantUserSearch]);
+  }, [formatKnownUserLabel, resolveKnownUserSummary, selectedTenantRoleAssignments, tenantUserSearchApplied]);
   const formatPlatformUserLabel = useCallback((userId) => {
     const key = String(userId || "").trim();
     if (!key) return "Selected account";
@@ -14508,6 +14508,113 @@ export default function PlatformAdminApp() {
                         rel="noopener noreferrer"
                       />
                     ) : null}
+                    {activeTab === "domains" ? (
+                      <>
+                        <div ref={assignedDomainSelectorRef} style={{ position: "relative", display: "inline-flex" }}>
+                          <button
+                            type="button"
+                            aria-label="Select assigned domain"
+                            aria-haspopup="menu"
+                            aria-expanded={assignedDomainSelectorOpen}
+                            title={selectedAssignedDomainRow?.domain?.label ? `Assigned domain: ${selectedAssignedDomainRow.domain.label}` : "No assigned domains"}
+                            disabled={!selectedTenantAssignedDomainRows.length}
+                            onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
+                            style={{
+                              ...pcpActionIconButtonStyle,
+                              opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
+                              background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
+                              borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
+                            }}
+                          >
+                            {selectedAssignedDomainRow?.domain ? (
+                              <DomainSelectorListIcon
+                                domainKey={selectedAssignedDomainRow.domain.key}
+                                src={resolvePcpDomainIconSrc(selectedAssignedDomainRow.domain)}
+                                size={20}
+                                containerSize={22}
+                              />
+                            ) : (
+                              <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>—</span>
+                            )}
+                          </button>
+                          {assignedDomainSelectorOpen ? (
+                            <div
+                              role="menu"
+                              aria-label="Assigned domains"
+                              style={{
+                                ...controlPlaneSubmenu,
+                                left: "auto",
+                                right: 0,
+                                minWidth: 220,
+                                maxHeight: "min(360px, calc(100dvh - 180px))",
+                                overflowY: "auto",
+                                overscrollBehavior: "contain",
+                                WebkitOverflowScrolling: "touch",
+                                touchAction: "pan-y",
+                                zIndex: 45,
+                              }}
+                            >
+                              {selectedTenantAssignedDomainRows.map((row) => {
+                                const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
+                                return (
+                                  <button
+                                    key={row.domain.key}
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      toggleAssignedDomainCard(row.domain.key);
+                                      setAssignedDomainSelectorOpen(false);
+                                    }}
+                                    style={{
+                                      ...controlPlaneSubmenuItem,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
+                                    }}
+                                  >
+                                    <DomainSelectorListIcon
+                                      domainKey={row.domain.key}
+                                      src={resolvePcpDomainIconSrc(row.domain)}
+                                      size={18}
+                                      containerSize={22}
+                                    />
+                                    <span>{row.domain.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                        <PcpActionIconButton
+                          label="Add Domain"
+                          src={pcpAddIconSrc}
+                          style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                          disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                          onClick={beginCreateTenantDomainAssignment}
+                          title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                        />
+                      </>
+                    ) : null}
+                    {activeTab === "parks" ? (
+                      <PcpActionIconButton
+                        label="Add Park"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
+                        disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
+                        onClick={beginCreateTenantPark}
+                      />
+                    ) : null}
+                    {activeTab === "files" ? (
+                      <PcpActionIconButton
+                        label="Add Asset"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
+                        disabled={!canEditTenantFiles}
+                        onClick={() => openTenantAssetModal()}
+                        title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
+                      />
+                    ) : null}
                   </div>
             </div>
           ) : null}
@@ -14522,95 +14629,6 @@ export default function PlatformAdminApp() {
                 borderTop: "1px solid rgba(23, 49, 79, 0.14)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900, whiteSpace: "nowrap" }}>Assigned Domains</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                  <div ref={assignedDomainSelectorRef} style={{ position: "relative", display: "inline-flex" }}>
-                    <button
-                      type="button"
-                      aria-label="Select assigned domain"
-                      aria-haspopup="menu"
-                      aria-expanded={assignedDomainSelectorOpen}
-                      title={selectedAssignedDomainRow?.domain?.label ? `Assigned domain: ${selectedAssignedDomainRow.domain.label}` : "No assigned domains"}
-                      disabled={!selectedTenantAssignedDomainRows.length}
-                      onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
-                      style={{
-                        ...pcpActionIconButtonStyle,
-                        opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
-                        background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
-                        borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
-                      }}
-                    >
-                      {selectedAssignedDomainRow?.domain ? (
-                        <DomainSelectorListIcon
-                          domainKey={selectedAssignedDomainRow.domain.key}
-                          src={resolvePcpDomainIconSrc(selectedAssignedDomainRow.domain)}
-                          size={20}
-                          containerSize={22}
-                        />
-                      ) : (
-                        <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>—</span>
-                      )}
-                    </button>
-                    {assignedDomainSelectorOpen ? (
-                      <div
-                        role="menu"
-                        aria-label="Assigned domains"
-                        style={{
-                          ...controlPlaneSubmenu,
-                          left: "auto",
-                          right: 0,
-                          minWidth: 220,
-                          maxHeight: "min(360px, calc(100dvh - 180px))",
-                          overflowY: "auto",
-                          overscrollBehavior: "contain",
-                          WebkitOverflowScrolling: "touch",
-                          touchAction: "pan-y",
-                          zIndex: 45,
-                        }}
-                      >
-                        {selectedTenantAssignedDomainRows.map((row) => {
-                          const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
-                          return (
-                            <button
-                              key={row.domain.key}
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                toggleAssignedDomainCard(row.domain.key);
-                                setAssignedDomainSelectorOpen(false);
-                              }}
-                              style={{
-                                ...controlPlaneSubmenuItem,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
-                              }}
-                            >
-                              <DomainSelectorListIcon
-                                domainKey={row.domain.key}
-                                src={resolvePcpDomainIconSrc(row.domain)}
-                                size={18}
-                                containerSize={22}
-                              />
-                              <span>{row.domain.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                  <PcpActionIconButton
-                    label="Add Domain"
-                    src={pcpAddIconSrc}
-                    style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                    disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                    onClick={beginCreateTenantDomainAssignment}
-                    title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
-                  />
-                </div>
-              </div>
               <label style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 280px)", justifyContent: "start", alignItems: "center", gap: 8, width: "100%", maxWidth: 420, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
                 <span>Domain Section</span>
                 <select
@@ -15389,15 +15407,23 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <PcpActionIconButton
-                  label={tenantUserSearchOpen ? "Close user search" : "Search users/admins"}
-                  src={pcpSearchIconSrc}
-                  onClick={() => {
-                    const nextOpen = !tenantUserSearchOpen;
-                    setTenantUserSearchOpen(nextOpen);
-                    if (!nextOpen) setTenantUserSearch("");
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", alignItems: "center", gap: 8 }}>
+                <input
+                  value={tenantUserSearch}
+                  onChange={(event) => setTenantUserSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    setTenantUserSearchApplied(tenantUserSearch);
                   }}
+                  placeholder="Search users and admins"
+                  aria-label="Search users and admins"
+                  style={{ ...inputBase, minWidth: 0 }}
+                />
+                <PcpActionIconButton
+                  label="Search users/admins"
+                  src={pcpSearchIconSrc}
+                  onClick={() => setTenantUserSearchApplied(tenantUserSearch)}
                 />
                 <PcpActionIconButton
                   label="Add User/Admin"
@@ -15407,16 +15433,6 @@ export default function PlatformAdminApp() {
                   onClick={() => setTenantUsersManagementView("add")}
                 />
               </div>
-              {tenantUserSearchOpen ? (
-                <input
-                  autoFocus
-                  value={tenantUserSearch}
-                  onChange={(event) => setTenantUserSearch(event.target.value)}
-                  placeholder="Search users and admins"
-                  aria-label="Search users and admins"
-                  style={inputBase}
-                />
-              ) : null}
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -15529,10 +15545,10 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
               <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "end", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", justifyContent: "space-between", alignItems: "end", gap: 8 }}>
                   <label style={{ display: "grid", gap: 4, minWidth: 0, fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>
                     <span>Roles</span>
-                    <select aria-label="Choose Role" value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
+                    <select aria-label="Choose Role" value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={{ ...inputBase, width: "100%" }}>
                       {sortedTenantRoleDefinitions.map((row) => {
                         const role = String(row?.role || "").trim();
                         if (!role) return null;
@@ -15551,22 +15567,6 @@ export default function PlatformAdminApp() {
                       style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
                       disabled={!canManageTenantRoles}
                       onClick={() => setTenantRoleManagementView("add")}
-                    />
-                    <PcpActionIconButton
-                      label="Delete Role"
-                      src={pcpTrashIconSrc}
-                      style={{ opacity: canDeleteTenantRoles && selectedRoleDefinition?.is_system !== true && selectedRoleAssignmentCount === 0 ? 1 : 0.55 }}
-                      disabled={!canDeleteTenantRoles || selectedRoleDefinition?.is_system === true || selectedRoleAssignmentCount > 0}
-                      title={
-                        selectedRoleDefinition?.is_system === true
-                          ? "System roles cannot be removed."
-                          : selectedRoleAssignmentCount > 0
-                            ? "Remove assignments before deleting this role."
-                            : canDeleteTenantRoles
-                              ? "Delete role"
-                              : "You need the Roles delete permission"
-                      }
-                      onClick={() => setTenantRoleDeleteConfirmOpen(true)}
                     />
                   </div>
                 </div>
@@ -15681,15 +15681,6 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             {activeTab === "parks" ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <PcpActionIconButton
-                    label="Add Park"
-                    src={pcpAddIconSrc}
-                    style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
-                    disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
-                    onClick={beginCreateTenantPark}
-                  />
-                </div>
                 {status.parks ? (
                   <div style={{ fontSize: 12.5, color: String(status.parks || "").startsWith("Error:") ? palette.red600 : palette.textMuted }}>
                     {status.parks}
@@ -17613,30 +17604,7 @@ export default function PlatformAdminApp() {
 
             {activeTab === "map-features" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                    {!mapFeaturesEditMode ? (
-                      <PcpEditButton
-                        label="Edit Map Features"
-                        style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
-                        disabled={!canEditTenantDomains}
-                        onClick={beginMapFeaturesEdit}
-                        title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
-                      />
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
-                          disabled={!canEditTenantDomains}
-                          onClick={() => void saveMapFeaturesSettings()}
-                        >
-                          Save
-                        </button>
-                        <button type="button" style={buttonAlt} onClick={cancelMapFeaturesEdit}>Cancel</button>
-                      </>
-                    )}
-                  </div>
+              <div style={{ display: "grid", gap: 10 }}>
                   {(() => {
                     const mapFeaturesReadOnly = !canEditTenantDomains || !mapFeaturesEditMode;
                     const borderEnabled = !mapFeaturesReadOnly && Boolean(mapFeaturesForm.show_boundary_border);
@@ -17657,15 +17625,40 @@ export default function PlatformAdminApp() {
                     };
                     return (
                       <>
-                        <label style={checkboxFieldStyle}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(mapFeaturesForm.show_boundary_border)}
-                            disabled={mapFeaturesReadOnly}
-                            onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
-                          />
-                          Show boundary border
-                        </label>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                          <label style={checkboxFieldStyle}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(mapFeaturesForm.show_boundary_border)}
+                              disabled={mapFeaturesReadOnly}
+                              onChange={(e) => setMapFeaturesForm((prev) => ({ ...prev, show_boundary_border: e.target.checked }))}
+                            />
+                            Show boundary border
+                          </label>
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                            {!mapFeaturesEditMode ? (
+                              <PcpEditButton
+                                label="Edit Map Features"
+                                style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                disabled={!canEditTenantDomains}
+                                onClick={beginMapFeaturesEdit}
+                                title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
+                              />
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                  disabled={!canEditTenantDomains}
+                                  onClick={() => void saveMapFeaturesSettings()}
+                                >
+                                  Save
+                                </button>
+                                <button type="button" style={buttonAlt} onClick={cancelMapFeaturesEdit}>Cancel</button>
+                              </>
+                            )}
+                          </div>
+                        </div>
                         <label style={{ fontSize: 12.5, display: "grid", gap: 4, maxWidth: 240, opacity: borderEnabled ? 1 : 0.65 }}>
                           <span>Boundary border color</span>
                           <div style={{ display: "grid", gridTemplateColumns: "56px minmax(0, 1fr)", gap: 8, alignItems: "center" }}>
@@ -17779,16 +17772,6 @@ export default function PlatformAdminApp() {
 
             {activeTab === "files" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <PcpActionIconButton
-                  label="Add Asset"
-                  src={pcpAddIconSrc}
-                  style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
-                  disabled={!canEditTenantFiles}
-                  onClick={() => openTenantAssetModal()}
-                  title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
-                />
-              </div>
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
               <div style={{ display: "grid", gap: 12 }}>
                 {TENANT_ASSET_CATEGORIES.map((category) => {

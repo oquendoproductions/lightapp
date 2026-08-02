@@ -793,13 +793,12 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByLabelText(/show event icon on map/i)).toBeInTheDocument();
   });
 
-  it("keeps assigned-domain controls in a fixed rail above domain content", async () => {
+  it("keeps domain actions in the sticky workspace title rail", async () => {
     await openDomains();
 
     const assignedDomainSelector = screen.getByRole("button", { name: /select assigned domain/i });
-    expect(screen.getByText(/^assigned domains$/i)).toBeInTheDocument();
     expect(assignedDomainSelector.closest("header")).toHaveStyle({ position: "sticky" });
-    expect(screen.getByRole("button", { name: /add domain/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add domain/i }).closest("header")).toBe(assignedDomainSelector.closest("header"));
     expect(screen.getByRole("combobox", { name: /domain section/i })).toBeInTheDocument();
   });
 
@@ -837,8 +836,8 @@ describe("PlatformAdminApp", () => {
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
     await chooseWorkspaceSection(user, /users\/?admins/i);
 
-    await user.click(screen.getByRole("button", { name: /search users\/admins/i }));
     await user.type(screen.getByRole("textbox", { name: /search users and admins/i }), "no matching person");
+    await user.click(screen.getByRole("button", { name: /search users\/admins/i }));
 
     expect(await screen.findByText(/no users or admins match this search/i)).toBeInTheDocument();
   });
@@ -910,16 +909,10 @@ describe("PlatformAdminApp", () => {
     expect(screen.queryByText(/^identity \+ routing$/i)).not.toBeInTheDocument();
   });
 
-  it("shows a confirmation popup before deleting a custom role", async () => {
-    const { user } = await openRolesAndPermissions();
+  it("keeps role deletion out of the role selector controls", async () => {
+    await openRolesAndPermissions();
 
-    await user.selectOptions(screen.getByRole("combobox"), "field_supervisor");
-    await user.click(screen.getByRole("button", { name: /edit role permissions/i }));
-    await user.click(screen.getByRole("button", { name: /delete role/i }));
-
-    await screen.findByRole("heading", { name: /delete role/i });
-    expect(screen.getByText(/remove field supervisor from this organization\?/i)).toBeInTheDocument();
-    expect(screen.getByText(/role key:/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete role/i })).not.toBeInTheDocument();
   });
 
   it("opens add team member in a modal from the current platform team section", async () => {
