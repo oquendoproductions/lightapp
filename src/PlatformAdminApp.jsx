@@ -14449,25 +14449,6 @@ export default function PlatformAdminApp() {
                       >
                         {activeTenantWorkspaceTab?.label || "Organization Workspace"}
                       </div>
-                      {activeTab === "parks" ? (
-                        <PcpActionIconButton
-                          label="Add Park"
-                          src={pcpAddIconSrc}
-                          style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55, flexShrink: 0 }}
-                          disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
-                          onClick={beginCreateTenantPark}
-                        />
-                      ) : null}
-                      {activeTab === "files" ? (
-                        <PcpActionIconButton
-                          label="Add Asset"
-                          src={pcpAddIconSrc}
-                          style={{ opacity: canEditTenantFiles ? 1 : 0.55, flexShrink: 0 }}
-                          disabled={!canEditTenantFiles}
-                          onClick={() => openTenantAssetModal()}
-                          title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
-                        />
-                      ) : null}
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
@@ -14479,6 +14460,25 @@ export default function PlatformAdminApp() {
                         disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
                         onClick={beginCreateTenantDomainAssignment}
                         title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                      />
+                    ) : null}
+                    {activeTab === "parks" ? (
+                      <PcpActionIconButton
+                        label="Add Park"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
+                        disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
+                        onClick={beginCreateTenantPark}
+                      />
+                    ) : null}
+                    {activeTab === "files" ? (
+                      <PcpActionIconButton
+                        label="Add Asset"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
+                        disabled={!canEditTenantFiles}
+                        onClick={() => openTenantAssetModal()}
+                        title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
                       />
                     ) : null}
                     <div ref={workspaceSectionMenuRef} style={{ position: "relative" }}>
