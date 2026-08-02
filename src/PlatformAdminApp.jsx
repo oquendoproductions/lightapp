@@ -14417,7 +14417,7 @@ export default function PlatformAdminApp() {
             </div>
           ) : null}
           {inTenantWorkspace ? (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "end", gap: 8 }}>
                   <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
                     <div
                       title={selectedTenantOrganizationName || selectedTenantKey}
@@ -15574,7 +15574,7 @@ export default function PlatformAdminApp() {
                   </div>
                 </div>
                 {selectedRoleDefinition ? (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", paddingTop: 10, borderTop: "1px solid rgba(23, 49, 79, 0.14)" }}>
                     <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>Permissions</div>
                     <PcpEditButton
                       label="Edit Role Permissions"
