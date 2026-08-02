@@ -14479,6 +14479,58 @@ export default function PlatformAdminApp() {
                   </div>
             </div>
           ) : null}
+          {inTenantWorkspace && activeTab === "domains" ? (
+            <div
+              aria-label="Assigned domains workspace rail"
+              style={{
+                display: "grid",
+                gap: 8,
+                marginTop: 12,
+                paddingTop: 12,
+                borderTop: "1px solid rgba(23, 49, 79, 0.14)",
+              }}
+            >
+              <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>Assigned Domains</div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "end", gap: 8 }}>
+                <select
+                  aria-label="Assigned Domain"
+                  value={selectedAssignedDomainRow?.domain?.key || ""}
+                  onChange={(event) => toggleAssignedDomainCard(event.target.value)}
+                  disabled={!selectedTenantAssignedDomainRows.length}
+                  style={{ ...inputBase, minWidth: 0, opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55 }}
+                >
+                  {selectedTenantAssignedDomainRows.length ? (
+                    selectedTenantAssignedDomainRows.map((row) => (
+                      <option key={row.domain.key} value={row.domain.key}>{row.domain.label}</option>
+                    ))
+                  ) : (
+                    <option value="">No assigned domains</option>
+                  )}
+                </select>
+                <PcpActionIconButton
+                  label="Add Domain"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                  disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                  onClick={beginCreateTenantDomainAssignment}
+                  title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                />
+              </div>
+              <label style={{ display: "grid", gap: 4, maxWidth: 360, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
+                <span>Domain Section</span>
+                <select
+                  aria-label="Domain Section"
+                  value={selectedAssignedDomainSectionKey}
+                  onChange={(event) => selectAssignedDomainSection(event.target.value)}
+                  style={inputBase}
+                >
+                  {ASSIGNED_DOMAIN_SECTION_OPTIONS.map((option) => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
           {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{toOrganizationLanguage(status.hydrate)}</div> : null}
         </header>
 
@@ -15901,22 +15953,6 @@ export default function PlatformAdminApp() {
               <div style={{ display: "grid", gap: 12 }}>
                 {canViewDomainRegistry && inTenantWorkspace ? (
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-                      <div style={{ display: "grid", gap: 3 }}>
-                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Assigned Domains</div>
-                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                          Select an assigned domain and the section you want to review or edit.
-                        </div>
-                      </div>
-                      <PcpActionIconButton
-                        label="Add Domain"
-                        src={pcpAddIconSrc}
-                        style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                        disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                        onClick={beginCreateTenantDomainAssignment}
-                        title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
-                      />
-                    </div>
                     {status.domainAssignments ? (
                       <div style={{ fontSize: 12.5, color: status.domainAssignments.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
                         {status.domainAssignments}
@@ -15931,32 +15967,6 @@ export default function PlatformAdminApp() {
                     <div style={{ display: "grid", gap: 10 }}>
                       {selectedTenantAssignedDomainRows.length ? (
                         <>
-                          <div style={{ display: "grid", gap: 10 }}>
-                            <label style={{ ...modalField, maxWidth: 360 }}>
-                              <span>Assigned Domain</span>
-                              <select
-                                value={selectedAssignedDomainRow?.domain?.key || ""}
-                                onChange={(event) => toggleAssignedDomainCard(event.target.value)}
-                                style={modalInput}
-                              >
-                                {selectedTenantAssignedDomainRows.map((row) => (
-                                  <option key={row.domain.key} value={row.domain.key}>{row.domain.label}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label style={{ ...modalField, maxWidth: 360 }}>
-                              <span>Domain Section</span>
-                              <select
-                                value={selectedAssignedDomainSectionKey}
-                                onChange={(event) => selectAssignedDomainSection(event.target.value)}
-                                style={modalInput}
-                              >
-                                {ASSIGNED_DOMAIN_SECTION_OPTIONS.map((option) => (
-                                  <option key={option.key} value={option.key}>{option.label}</option>
-                                ))}
-                              </select>
-                            </label>
-                          </div>
                           {(() => {
                         const assignment = selectedAssignedDomainRow;
                         if (!assignment) return null;

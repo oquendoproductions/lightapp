@@ -671,6 +671,22 @@ describe("PlatformAdminApp", () => {
     return { user };
   }
 
+  async function openDomains() {
+    const user = userEvent.setup();
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("heading", { name: /organization reports/i });
+    await user.click(screen.getByRole("button", { name: /manage organizations/i }));
+    await screen.findByPlaceholderText(/search organizations by name, key, or subdomain/i);
+
+    await user.type(screen.getByPlaceholderText(/search organizations by name, key, or subdomain/i), "ashtabula");
+    await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
+    await chooseWorkspaceSection(user, /^domains$/i);
+
+    await screen.findByRole("combobox", { name: /assigned domain/i });
+    return { user };
+  }
+
 
   async function openManageTeam() {
     const user = userEvent.setup();
@@ -775,6 +791,16 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/show alert icon on map/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/show event icon on map/i)).toBeInTheDocument();
+  });
+
+  it("keeps assigned-domain controls in a fixed rail above domain content", async () => {
+    await openDomains();
+
+    const assignedDomainSelector = screen.getByRole("combobox", { name: /assigned domain/i });
+    expect(screen.getByText(/^assigned domains$/i)).toBeInTheDocument();
+    expect(assignedDomainSelector.closest("header")).toHaveStyle({ position: "sticky" });
+    expect(screen.getByRole("button", { name: /add domain/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /domain section/i })).toBeInTheDocument();
   });
 
   it("updates a tenant role with plain-language status messaging", async () => {
