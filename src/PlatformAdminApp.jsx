@@ -14,6 +14,7 @@ import {
 } from "./auth/loginFieldStandards";
 import { getAuthRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
+import { isNativeAppRuntime } from "./platform/runtime.js";
 import {
   MAP_UI_ICON_ACCEPT,
   MAP_UI_ICON_BUCKET,
@@ -9511,15 +9512,37 @@ export default function PlatformAdminApp() {
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const activeTenantWorkspaceTab = availableTenantWorkspaceTabs.find((tab) => tab.key === activeTab) || null;
   const isCompactViewport = viewportWidth <= 760;
-  const compactPcpHeaderHeight = "calc(var(--mobile-header-height) + env(safe-area-inset-top) + var(--mobile-header-overlay-min-height-extra))";
+  // Browser chrome already keeps web content below the phone status bar. Reserve
+  // safe-area headroom only in a native shell, where the PCP can render behind it.
+  const pcpUsesNativeSafeArea = isNativeAppRuntime();
+  const compactPcpHeaderTopInset = pcpUsesNativeSafeArea
+    ? "calc(env(safe-area-inset-top) + var(--mobile-header-overlay-top-content-inset))"
+    : "8px";
+  const compactPcpHeaderBottomInset = pcpUsesNativeSafeArea
+    ? "var(--mobile-header-overlay-bottom-inset)"
+    : "8px";
+  const compactPcpHeaderHeight = pcpUsesNativeSafeArea
+    ? "calc(var(--mobile-header-height) + env(safe-area-inset-top) + var(--mobile-header-overlay-min-height-extra))"
+    : "var(--mobile-header-height)";
+  const workspaceBodyCard = inTenantWorkspace && isCompactViewport
+    ? {
+        ...card,
+        background: "linear-gradient(180deg, #f8fbff 0%, #f2f7fb 100%)",
+        borderRadius: 0,
+        borderLeft: 0,
+        borderRight: 0,
+        boxShadow: "none",
+        padding: "20px 16px",
+      }
+    : card;
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
     ? {
         ...shell,
         padding: controlPlanePage === "manage-organizations"
-          ? `${compactPcpHeaderHeight} 8px calc(env(safe-area-inset-bottom, 0px) + 76px)`
-          : `calc(${compactPcpHeaderHeight} + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 76px)`,
+          ? `${compactPcpHeaderHeight} 0 calc(env(safe-area-inset-bottom, 0px) + 76px)`
+          : `calc(${compactPcpHeaderHeight} + 18px) 0 calc(env(safe-area-inset-bottom, 0px) + 76px)`,
       }
     : shell;
   const bannerStyle = isCompactViewport
@@ -9534,7 +9557,7 @@ export default function PlatformAdminApp() {
         gridTemplateColumns: "1fr",
         height: "auto",
         minHeight: compactPcpHeaderHeight,
-        padding: "calc(env(safe-area-inset-top) + var(--mobile-header-overlay-top-content-inset)) 16px var(--mobile-header-overlay-bottom-inset)",
+        padding: `${compactPcpHeaderTopInset} 16px ${compactPcpHeaderBottomInset}`,
         border: 0,
         borderBottom: "var(--mobile-header-border)",
         borderRadius: 0,
@@ -10136,7 +10159,7 @@ export default function PlatformAdminApp() {
           ...(isCompactViewport ? {
             position: "absolute",
             left: 16,
-            bottom: "var(--mobile-header-overlay-bottom-inset)",
+            bottom: compactPcpHeaderBottomInset,
             width: "var(--mobile-header-side-column)",
           } : null),
           justifySelf: "start",
@@ -10160,7 +10183,7 @@ export default function PlatformAdminApp() {
           boxSizing: "border-box",
           paddingInline: isCompactViewport ? 20 : 0,
           paddingBlock: 0,
-          paddingBottom: isCompactViewport ? 6 : 0,
+          paddingBottom: isCompactViewport ? 0 : 0,
           minWidth: 0,
           gridColumn: isCompactViewport ? 1 : undefined,
           justifySelf: "center",
@@ -10186,7 +10209,7 @@ export default function PlatformAdminApp() {
           ref={bannerMenuRef}
           style={{
             position: isCompactViewport ? "absolute" : "relative",
-            ...(isCompactViewport ? { right: 16, bottom: "var(--mobile-header-overlay-bottom-inset)" } : null),
+            ...(isCompactViewport ? { right: 16, bottom: compactPcpHeaderBottomInset } : null),
             zIndex: 1,
             justifySelf: "end",
             width: isCompactViewport ? 42 : undefined,
@@ -14220,7 +14243,7 @@ export default function PlatformAdminApp() {
         </section>
       ) : null}
       {controlPlanePage === "manage-organizations" ? (
-      <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
+      <section style={{ ...fullWidthSection, display: "grid", gap: inTenantWorkspace && isCompactViewport ? 0 : 14 }}>
         <header
           style={{
             ...card,
@@ -14231,6 +14254,15 @@ export default function PlatformAdminApp() {
               top: isCompactViewport ? compactPcpHeaderHeight : "calc(var(--desktop-header-height) + 54px)",
               zIndex: 24,
               alignSelf: "start",
+            } : null),
+            ...(inTenantWorkspace && isCompactViewport ? {
+              background: "linear-gradient(112deg, #d9edf0 0%, #cce5dc 100%)",
+              borderRadius: 0,
+              borderTop: 0,
+              borderLeft: 0,
+              borderRight: 0,
+              boxShadow: "0 5px 14px rgba(16, 43, 70, 0.12)",
+              padding: "14px 16px",
             } : null),
             minHeight: inEntryPrompt
               ? (isCompactViewport
@@ -14408,7 +14440,7 @@ export default function PlatformAdminApp() {
         {showTenantsSection ? (
           <section style={{ display: "grid", gap: 14 }}>
             {(inAddTenantFlow ? addTenantStep === "setup" : true) ? (
-              <div style={{ ...card, display: "grid", gap: 12 }}>
+              <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 4 }}>
                     <h2 style={{ margin: 0, color: palette.navy900 }}>
@@ -14618,7 +14650,7 @@ export default function PlatformAdminApp() {
             ) : null}
 
             {(inAddTenantFlow ? addTenantStep === "organization" : true) ? (
-              <div style={{ ...card, display: "grid", gap: 12 }}>
+              <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gap: 4 }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
                     {inAddTenantFlow ? "Organization Information" : "Organization Information"}
@@ -14869,7 +14901,7 @@ export default function PlatformAdminApp() {
             ) : null}
 
             {(inAddTenantFlow ? addTenantStep === "contacts" : false) ? (
-              <div style={{ ...card, display: "grid", gap: 10 }}>
+              <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
                     {inAddTenantFlow ? "Primary + Additional Contacts" : "Primary + Additional Contacts"}
@@ -14976,7 +15008,7 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "contacts" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 12 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
                 <PcpActionIconButton
@@ -15172,7 +15204,7 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Users and Admins</h2>
                 <PcpActionIconButton
@@ -15289,7 +15321,7 @@ export default function PlatformAdminApp() {
 
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
-            <div style={{ ...card, display: "grid", gap: 12 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Roles and Permissions</h2>
                 <PcpActionIconButton
@@ -15441,7 +15473,7 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && ["domains", "parks", "map-features", "files"].includes(activeTab) ? (
           <section style={{ display: "grid", gap: 14 }}>
             {activeTab === "parks" ? (
-              <div style={{ ...card, display: "grid", gap: 10 }}>
+              <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 3 }}>
                     <h2 style={{ margin: 0, color: palette.navy900 }}>Parks</h2>
@@ -15816,7 +15848,7 @@ export default function PlatformAdminApp() {
               </div>
             ) : null}
             {activeTab === "domains" ? (
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 3 }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Domains</h2>
                 <p style={{ margin: 0, color: palette.textMuted }}>
@@ -17442,7 +17474,7 @@ export default function PlatformAdminApp() {
             ) : null}
 
             {activeTab === "map-features" ? (
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: 3 }}>
@@ -17620,7 +17652,7 @@ export default function PlatformAdminApp() {
             ) : null}
 
             {activeTab === "files" ? (
-            <div style={{ ...card, display: "grid", gap: 10 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                 <div style={{ display: "grid", gap: 3 }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>
@@ -17708,7 +17740,7 @@ export default function PlatformAdminApp() {
         ) : null}
 
         {inTenantWorkspace && activeTab === "audit" ? (
-          <section style={{ ...card, display: "grid", gap: 8 }}>
+          <section style={{ ...workspaceBodyCard, display: "grid", gap: 8 }}>
             <h2 style={{ margin: 0, color: palette.navy900 }}>Recent Organization Audit ({selectedTenantKey})</h2>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
