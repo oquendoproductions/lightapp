@@ -8,7 +8,6 @@ import pcpOpenHubIconSrc from "./assets/pcp-open-hub-icon.svg";
 import pcpWorkspaceSectionIconSrc from "./assets/pcp-workspace-section-icon.svg";
 import pcpTrashIconSrc from "./assets/pcp-trash-icon.svg";
 import pcpSearchIconSrc from "./assets/pcp-search-icon.svg";
-import pcpLayersIconSrc from "./assets/pcp-layers-icon.svg";
 import {
   STANDARD_LOGIN_EMAIL_INPUT_PROPS,
   STANDARD_LOGIN_FORM_PROPS,
@@ -14537,22 +14536,38 @@ export default function PlatformAdminApp() {
                       onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
                       style={{
                         ...pcpActionIconButtonStyle,
-                        width: 48,
-                        minWidth: 48,
-                        minHeight: 48,
-                        borderRadius: 13,
                         opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
                         background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
                         borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
                       }}
                     >
-                      <img src={pcpLayersIconSrc} alt="" aria-hidden="true" style={{ width: 25, height: 25, display: "block" }} />
+                      {selectedAssignedDomainRow?.domain ? (
+                        <DomainSelectorListIcon
+                          domainKey={selectedAssignedDomainRow.domain.key}
+                          src={resolvePcpDomainIconSrc(selectedAssignedDomainRow.domain)}
+                          size={20}
+                          containerSize={22}
+                        />
+                      ) : (
+                        <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>—</span>
+                      )}
                     </button>
                     {assignedDomainSelectorOpen ? (
                       <div
                         role="menu"
                         aria-label="Assigned domains"
-                        style={{ ...controlPlaneSubmenu, left: "auto", right: 0, minWidth: 220, zIndex: 45 }}
+                        style={{
+                          ...controlPlaneSubmenu,
+                          left: "auto",
+                          right: 0,
+                          minWidth: 220,
+                          maxHeight: "min(360px, calc(100dvh - 180px))",
+                          overflowY: "auto",
+                          overscrollBehavior: "contain",
+                          WebkitOverflowScrolling: "touch",
+                          touchAction: "pan-y",
+                          zIndex: 45,
+                        }}
                       >
                         {selectedTenantAssignedDomainRows.map((row) => {
                           const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
@@ -14596,13 +14611,13 @@ export default function PlatformAdminApp() {
                   />
                 </div>
               </div>
-              <label style={{ display: "grid", gap: 4, maxWidth: 360, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
+              <label style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 280px)", justifyContent: "start", alignItems: "center", gap: 8, width: "100%", maxWidth: 420, fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>
                 <span>Domain Section</span>
                 <select
                   aria-label="Domain Section"
                   value={selectedAssignedDomainSectionKey}
                   onChange={(event) => selectAssignedDomainSection(event.target.value)}
-                  style={inputBase}
+                  style={{ ...inputBase, minWidth: 0, width: "100%" }}
                 >
                   {ASSIGNED_DOMAIN_SECTION_OPTIONS.map((option) => (
                     <option key={option.key} value={option.key}>{option.label}</option>
