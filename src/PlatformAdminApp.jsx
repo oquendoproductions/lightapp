@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import "./headerStandards.css";
 import pcpEditIconSrc from "./assets/pcp-edit-icon.svg";
+import pcpAddIconSrc from "./assets/pcp-add-icon.svg";
+import pcpSwitchOrganizationIconSrc from "./assets/pcp-switch-organization-icon.svg";
+import pcpOpenHubIconSrc from "./assets/pcp-open-hub-icon.svg";
+import pcpWorkspaceSectionIconSrc from "./assets/pcp-workspace-section-icon.svg";
+import pcpTrashIconSrc from "./assets/pcp-trash-icon.svg";
 import {
   STANDARD_LOGIN_EMAIL_INPUT_PROPS,
   STANDARD_LOGIN_FORM_PROPS,
@@ -47,7 +52,10 @@ import {
   resolveDomainMarkerIconTintColor,
 } from "./domainIconRendering";
 import { BUILT_IN_DOMAIN_OPTIONS, defaultDomainType } from "./lib/domainCatalog";
-import { DOMAIN_NOTIFICATION_TEMPLATE_TOKENS } from "./lib/domainNotificationTemplateSupport";
+import {
+  DOMAIN_NOTIFICATION_TEMPLATE_TOKENS,
+  domainReportingFieldTemplateTokens,
+} from "./lib/domainNotificationTemplateSupport";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 
 const TITLE_LOGO_SRC = import.meta.env.VITE_TITLE_LOGO_SRC || "/Logos/cityreport_logo.svg";
@@ -476,6 +484,9 @@ const FIXED_BANNER_HEIGHT = "var(--desktop-header-height)";
 const shell = {
   minHeight: "100vh",
   padding: `calc(${FIXED_BANNER_HEIGHT} + ${FIXED_BANNER_TOP}) 18px 42px`,
+  // Keep wide child content (notably data tables) inside its own scroll area
+  // instead of allowing it to widen the entire mobile document.
+  overflowX: "clip",
   fontFamily: "Manrope, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
   color: palette.text,
@@ -508,6 +519,11 @@ const card = {
   border: `1px solid ${palette.border}`,
   boxShadow: "0 16px 34px rgba(16,43,70,0.08)",
   padding: 16,
+  // Cards are commonly paired with fullWidthSection. Without border-box,
+  // their padding extends past a 100% width container on narrow screens.
+  boxSizing: "border-box",
+  minWidth: 0,
+  maxWidth: "100%",
 };
 
 const inputBase = {
@@ -621,6 +637,37 @@ const pcpEditButtonIconStyle = {
   height: 18,
   display: "block",
 };
+
+const pcpActionIconButtonStyle = {
+  ...buttonAlt,
+  width: 42,
+  minWidth: 42,
+  minHeight: 42,
+  padding: 0,
+  borderRadius: 12,
+  display: "inline-grid",
+  placeItems: "center",
+  flexShrink: 0,
+};
+
+function PcpActionIconButton({ label, title, src, disabled = false, onClick, style, href, target, rel }) {
+  const sharedProps = {
+    "aria-label": label,
+    title: title || label,
+    style: { ...pcpActionIconButtonStyle, ...style },
+  };
+  const icon = <img src={src} alt="" aria-hidden="true" style={pcpEditButtonIconStyle} />;
+
+  if (href) {
+    return <a {...sharedProps} href={href} target={target} rel={rel}>{icon}</a>;
+  }
+
+  return (
+    <button type="button" {...sharedProps} disabled={disabled} onClick={onClick}>
+      {icon}
+    </button>
+  );
+}
 
 function PcpEditButton({ label = "Edit", title, disabled = false, onClick, style }) {
   return (
@@ -800,6 +847,9 @@ const tabSelectBase = {
 const fullWidthSection = {
   width: "100%",
   margin: "0 auto",
+  minWidth: 0,
+  maxWidth: "100%",
+  boxSizing: "border-box",
 };
 
 const controlPlaneTabsRail = {
@@ -872,11 +922,14 @@ const controlPlaneSubmenu = {
 };
 
 const controlPlaneMobileTabsShell = {
-  padding: 8,
-  border: "1px solid rgba(23, 49, 79, 0.12)",
-  borderRadius: 28,
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "4px 6px calc(12px + env(safe-area-inset-bottom))",
+  border: 0,
+  borderTop: "1px solid rgba(23, 49, 79, 0.12)",
+  borderRadius: 0,
   background: "rgba(255, 255, 255, 0.96)",
-  boxShadow: "0 18px 36px rgba(17, 49, 79, 0.16)",
+  boxShadow: "none",
   backdropFilter: "blur(14px)",
 };
 
@@ -1221,6 +1274,7 @@ function initialDomainConfigForm() {
       notification_subject_template: preset.subject,
       notification_body_template: preset.body,
       organization_monitored_repairs: true,
+      public_repair_confirmation_threshold: 5,
       road_required: false,
       park_required: false,
       allow_report_images: false,
@@ -1481,20 +1535,15 @@ export function buildStoredDomainTypeOptionConfigs(value, domainKey = "") {
     .filter(Boolean);
 }
 
-function domainTypeOptionMacroToken(optionKey = "") {
-  const key = slugifyDomainKeyInput(optionKey);
-  if (!key) return "";
-  return `{{type_option_${key}}}`;
-}
-
 function domainNotificationTemplateTokens(typeOptions = []) {
   const tokens = [...DOMAIN_NOTIFICATION_TEMPLATE_TOKENS];
   const normalized = buildStoredDomainTypeOptionConfigs(typeOptions);
   if (normalized.length) {
     tokens.push("{{type_options_summary}}");
-    for (const row of normalized) {
-      const token = domainTypeOptionMacroToken(row?.option_key);
-      if (token && !tokens.includes(token)) tokens.push(token);
+    for (const [index, row] of normalized.entries()) {
+      for (const token of domainReportingFieldTemplateTokens(index + 1)) {
+        if (token && !tokens.includes(token)) tokens.push(token);
+      }
     }
   }
   return tokens;
@@ -2103,6 +2152,7 @@ function initialTenantDomainAssignmentForm() {
     notification_subject_template: preset.subject,
     notification_body_template: preset.body,
     organization_monitored_repairs: true,
+    public_repair_confirmation_threshold: 5,
     road_required: false,
     park_required: false,
     allow_report_images: false,
@@ -2141,6 +2191,11 @@ function buildTenantDomainAssignmentForm(row) {
     notification_subject_template: String(row?.notification_subject_template || preset.subject || ""),
     notification_body_template: String(row?.notification_body_template || preset.body || ""),
     organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+    public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+      row?.public_repair_confirmation_threshold,
+      5,
+      { min: 1, max: 25 }
+    ),
     road_required: row?.road_required === true,
     park_required: row?.park_required === true,
     allow_report_images: row?.allow_report_images === true,
@@ -2770,8 +2825,10 @@ export default function PlatformAdminApp() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
+  const [workspaceSectionMenuOpen, setWorkspaceSectionMenuOpen] = useState(false);
   const bannerMenuRef = useRef(null);
   const controlPlaneNavRef = useRef(null);
+  const workspaceSectionMenuRef = useRef(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
@@ -4367,7 +4424,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_configs")
-      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_visibility_min_reports,high_confidence_min_reports,high_confidence_marker_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color");
+      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_repair_confirmation_threshold,public_visibility_min_reports,high_confidence_min_reports,high_confidence_marker_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color");
     if (error && isMissingColumnError(error)) {
       const fallback = await supabase
         .from("tenant_domain_configs")
@@ -4392,6 +4449,11 @@ export default function PlatformAdminApp() {
         domain_type: String(row?.domain_type || defaultDomainType(domain)).trim().toLowerCase() || defaultDomainType(domain),
         notification_email: String(row?.notification_email || "").trim(),
         organization_monitored_repairs: row?.organization_monitored_repairs !== false,
+        public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+          row?.public_repair_confirmation_threshold,
+          5,
+          { min: 1, max: 25 }
+        ),
         public_visibility_min_reports: sanitizePositiveIntegerSetting(
           row?.public_visibility_min_reports,
           defaultDomainPublicVisibilityMinReports(domain),
@@ -4578,7 +4640,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_repair_confirmation_threshold,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -4893,6 +4955,16 @@ export default function PlatformAdminApp() {
     window.addEventListener("pointerdown", closeOnOutsideClick);
     return () => window.removeEventListener("pointerdown", closeOnOutsideClick);
   }, [openControlPlaneDropdown]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !workspaceSectionMenuOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (workspaceSectionMenuRef.current?.contains(event.target)) return;
+      setWorkspaceSectionMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => window.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [workspaceSectionMenuOpen]);
 
   useEffect(() => {
     let mounted = true;
@@ -5241,7 +5313,10 @@ export default function PlatformAdminApp() {
     if (!nextPage || !canAccessControlPlanePage(nextPage.key)) return;
     setControlPlaneSection(nextPage.section);
     setControlPlanePage(nextPage.key);
-    if (nextPage.key === "manage-organizations") {
+    const canResumeOrganizationWorkspace = nextPage.key === "manage-organizations"
+      && entryStep === "tenant"
+      && Boolean(sanitizeTenantKey(selectedTenantKey));
+    if (nextPage.key === "manage-organizations" && !canResumeOrganizationWorkspace) {
       setEntryStep("start");
       setTenantSearch("");
       setIsEditingTenant(false);
@@ -5250,7 +5325,7 @@ export default function PlatformAdminApp() {
       setTenantRoleManagementView("list");
     }
     setOpenControlPlaneDropdown("");
-  }, [canAccessControlPlanePage]);
+  }, [canAccessControlPlanePage, entryStep, selectedTenantKey]);
 
   const openLeadDetailPage = useCallback((leadId) => {
     const key = String(leadId || "").trim();
@@ -6325,6 +6400,11 @@ export default function PlatformAdminApp() {
         organization_monitored_repairs: typeof assignment?.organization_monitored_repairs === "boolean"
           ? assignment.organization_monitored_repairs
           : configured?.organization_monitored_repairs !== false,
+        public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+          assignment?.public_repair_confirmation_threshold ?? configured?.public_repair_confirmation_threshold,
+          5,
+          { min: 1, max: 25 }
+        ),
         road_required: assignment?.road_required === true,
         park_required: assignment?.park_required === true,
         allow_report_images: assignment?.allow_report_images === true,
@@ -8078,6 +8158,11 @@ export default function PlatformAdminApp() {
       notification_subject_template: String(tenantDomainAssignmentForm?.notification_subject_template || "").trim() || null,
       notification_body_template: String(tenantDomainAssignmentForm?.notification_body_template || "").trim() || null,
       organization_monitored_repairs: tenantDomainAssignmentForm?.organization_monitored_repairs !== false,
+      public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+        tenantDomainAssignmentForm?.public_repair_confirmation_threshold,
+        5,
+        { min: 1, max: 25 }
+      ),
       billing_status: String(tenantDomainAssignmentForm?.billing_status || "not_applicable").trim().toLowerCase(),
       billing_model: String(tenantDomainAssignmentForm?.billing_model || "included").trim().toLowerCase(),
       billing_amount: Number.isFinite(Number(tenantDomainAssignmentForm?.billing_amount))
@@ -8400,6 +8485,11 @@ export default function PlatformAdminApp() {
       domain_type: String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key),
       notification_email: cleanOptional(domainConfigForm?.[d.key]?.notification_email),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_repair_confirmation_threshold,
+        5,
+        { min: 1, max: 25 }
+      ),
       park_required: domainConfigForm?.[d.key]?.park_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
@@ -8452,6 +8542,11 @@ export default function PlatformAdminApp() {
       notification_subject_template: cleanOptional(domainConfigForm?.[d.key]?.notification_subject_template),
       notification_body_template: cleanOptional(domainConfigForm?.[d.key]?.notification_body_template),
       organization_monitored_repairs: domainConfigForm?.[d.key]?.organization_monitored_repairs !== false,
+      public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_repair_confirmation_threshold,
+        5,
+        { min: 1, max: 25 }
+      ),
       road_required: domainConfigForm?.[d.key]?.road_required === true,
       park_required: domainConfigForm?.[d.key]?.park_required === true,
       allow_report_images: domainConfigForm?.[d.key]?.allow_report_images === true,
@@ -8543,20 +8638,9 @@ export default function PlatformAdminApp() {
       return;
     }
 
-    await logAudit({
-      tenant_key: key,
-      action: "tenant_domain_settings_upsert",
-      entity_type: "tenant_config",
-      entity_id: key,
-      details: {
-        visibility: visibilityRows,
-        domain_configurations: domainConfigRows,
-        domain_assignments: assignmentRows,
-        notification_emails: tenantPayload,
-      },
-    });
-
-    setStatus((prev) => ({ ...prev, domains: `Saved domain settings, notification routing, and email templates for ${key}.` }));
+    // The edit session belongs to the successful domain write above.  Do not
+    // leave it open while audit logging or the follow-up refresh runs: either
+    // can be slow or unavailable independently of the saved settings.
     if (closingDomainKey) {
       pendingAssignedDomainFocusKeyRef.current = closingDomainKey;
       const savedAssignment = assignmentRows.find((row) => row.domain_key === closingDomainKey) || null;
@@ -8576,6 +8660,7 @@ export default function PlatformAdminApp() {
               domain_type: savedConfig.domain_type,
               notification_email: savedConfig.notification_email || "",
               organization_monitored_repairs: savedConfig.organization_monitored_repairs !== false,
+              public_repair_confirmation_threshold: savedConfig.public_repair_confirmation_threshold,
               public_visibility_min_reports: savedConfig.public_visibility_min_reports,
               high_confidence_min_reports: savedConfig.high_confidence_min_reports,
               high_confidence_marker_color: savedConfig.high_confidence_marker_color || defaultDomainHighConfidenceMarkerColor(closingDomainKey),
@@ -8617,6 +8702,7 @@ export default function PlatformAdminApp() {
               notification_subject_template: savedAssignment.notification_subject_template || "",
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
+              public_repair_confirmation_threshold: savedAssignment.public_repair_confirmation_threshold,
               road_required: savedAssignment.road_required === true,
               park_required: savedAssignment.park_required === true,
               allow_report_images: savedAssignment.allow_report_images === true,
@@ -8634,6 +8720,21 @@ export default function PlatformAdminApp() {
       setEditingDomainSnapshot(null);
       setExpandedAssignedDomainCardKey((prev) => (prev === closingDomainKey ? "" : prev));
     }
+
+    await logAudit({
+      tenant_key: key,
+      action: "tenant_domain_settings_upsert",
+      entity_type: "tenant_config",
+      entity_id: key,
+      details: {
+        visibility: visibilityRows,
+        domain_configurations: domainConfigRows,
+        domain_assignments: assignmentRows,
+        notification_emails: tenantPayload,
+      },
+    });
+
+    setStatus((prev) => ({ ...prev, domains: `Saved domain settings, notification routing, and email templates for ${key}.` }));
     await refreshControlPlaneData();
   }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot, activeManageableTenantDomainRows, selectedTenantDomainAssignments, editingDomainKey, manageableTenantDomainRowByKey]);
 
@@ -9239,6 +9340,42 @@ export default function PlatformAdminApp() {
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
 
+  const selectAssignedDomainSection = useCallback((sectionKey) => {
+    const nextSectionKey = String(sectionKey || "").trim();
+    if (!ASSIGNED_DOMAIN_SECTION_OPTIONS.some((option) => option.key === nextSectionKey)) return;
+
+    // An assignment edit and a domain-settings edit each have their own Save/Cancel
+    // controls. Do not let the section selector hide an active editor. For domain
+    // settings, however, the same edit session can safely move between its sections:
+    // all fields belong to the same domain draft and are saved together.
+    if (editingTenantDomainAssignmentKey) {
+      if (nextSectionKey !== "tenant-assignment") {
+        setStatus((prev) => ({
+          ...prev,
+          domainAssignments: "Save or cancel the tenant assignment edit before opening another domain section.",
+        }));
+      }
+      setSelectedAssignedDomainSectionKey("tenant-assignment");
+      return;
+    }
+
+    if (editingDomainKey) {
+      if (nextSectionKey === "tenant-assignment") {
+        setStatus((prev) => ({
+          ...prev,
+          domains: "Save or cancel the current domain settings edit before opening Tenant Assignment.",
+        }));
+        setSelectedAssignedDomainSectionKey(editingAssignedDomainSectionKey || "marker-icon");
+        return;
+      }
+      setSelectedAssignedDomainSectionKey(nextSectionKey);
+      setEditingAssignedDomainSectionKey(nextSectionKey);
+      return;
+    }
+
+    setSelectedAssignedDomainSectionKey(nextSectionKey);
+  }, [editingAssignedDomainSectionKey, editingDomainKey, editingTenantDomainAssignmentKey]);
+
   const toggleDomainRegistryCard = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
@@ -9372,25 +9509,35 @@ export default function PlatformAdminApp() {
   const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
+  const activeTenantWorkspaceTab = availableTenantWorkspaceTabs.find((tab) => tab.key === activeTab) || null;
   const isCompactViewport = viewportWidth <= 760;
+  const compactPcpHeaderHeight = "calc(var(--mobile-header-height) + env(safe-area-inset-top) + var(--mobile-header-overlay-min-height-extra))";
   const showBannerMenu = Boolean(sessionUserId);
   const bannerMenuLabel = menuOpen ? "Close menu" : "Open menu";
   const shellStyle = isCompactViewport
-    ? { ...shell, padding: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 108px)" }
+    ? {
+        ...shell,
+        padding: controlPlanePage === "manage-organizations"
+          ? `${compactPcpHeaderHeight} 8px calc(env(safe-area-inset-bottom, 0px) + 76px)`
+          : `calc(${compactPcpHeaderHeight} + 18px) 8px calc(env(safe-area-inset-bottom, 0px) + 76px)`,
+      }
     : shell;
   const bannerStyle = isCompactViewport
     ? {
         ...stickyBanner,
-        top: "var(--mobile-header-top-offset)",
-        left: "var(--mobile-header-horizontal-inset)",
-        right: "var(--mobile-header-horizontal-inset)",
-        width: "auto",
-        gridTemplateColumns: "var(--mobile-header-side-column) 1fr var(--mobile-header-side-column)",
-        height: "var(--mobile-header-height)",
-        minHeight: "var(--mobile-header-height)",
-        padding: "var(--mobile-header-padding-y) var(--mobile-header-padding-x)",
-        border: "var(--mobile-header-border)",
-        borderRadius: "var(--mobile-header-radius)",
+        top: 0,
+        left: 0,
+        right: 0,
+        width: "100%",
+        // The map header keeps its title in one full-width center layer while
+        // its logo and menu are absolutely anchored over the edges.
+        gridTemplateColumns: "1fr",
+        height: "auto",
+        minHeight: compactPcpHeaderHeight,
+        padding: "calc(env(safe-area-inset-top) + var(--mobile-header-overlay-top-content-inset)) 16px var(--mobile-header-overlay-bottom-inset)",
+        border: 0,
+        borderBottom: "var(--mobile-header-border)",
+        borderRadius: 0,
         background: "var(--mobile-header-background)",
         boxShadow: "var(--mobile-header-shadow)",
       }
@@ -9402,11 +9549,15 @@ export default function PlatformAdminApp() {
   const bannerMenuButtonStyle = isCompactViewport
     ? {
         ...menuToggleButton,
-        width: "var(--mobile-header-menu-size)",
-        height: "var(--mobile-header-menu-size)",
+        width: 42,
+        height: 42,
+        borderRadius: 14,
         border: "var(--mobile-header-menu-border)",
         background: "var(--mobile-header-menu-background)",
         boxShadow: "var(--mobile-header-menu-shadow)",
+        fontSize: 22,
+        fontWeight: 900,
+        lineHeight: 1,
       }
     : menuToggleButton;
   const menuLineWidth = isCompactViewport ? "var(--mobile-header-menu-line-width)" : 18;
@@ -9982,7 +10133,12 @@ export default function PlatformAdminApp() {
         }}
         style={{
           ...brandResetButton,
-          width: isCompactViewport ? "var(--mobile-header-side-column)" : undefined,
+          ...(isCompactViewport ? {
+            position: "absolute",
+            left: 16,
+            bottom: "var(--mobile-header-overlay-bottom-inset)",
+            width: "var(--mobile-header-side-column)",
+          } : null),
           justifySelf: "start",
           zIndex: 1,
         }}
@@ -10000,13 +10156,17 @@ export default function PlatformAdminApp() {
           ...brandResetButton,
           ...brandTitleStack,
           gap: isCompactViewport ? "var(--mobile-header-stack-gap)" : brandTitleStack.gap,
-          width: isCompactViewport ? "100%" : "min(640px, calc(100vw - 320px))",
-          paddingInline: isCompactViewport ? "var(--mobile-header-title-padding-inline)" : 0,
-          paddingBlock: isCompactViewport ? "var(--mobile-header-title-padding-block)" : 0,
+          width: isCompactViewport ? "min(420px, calc(100vw - 132px))" : "min(640px, calc(100vw - 320px))",
+          boxSizing: "border-box",
+          paddingInline: isCompactViewport ? 20 : 0,
+          paddingBlock: 0,
+          paddingBottom: isCompactViewport ? 6 : 0,
           minWidth: 0,
+          gridColumn: isCompactViewport ? 1 : undefined,
           justifySelf: "center",
-          alignContent: isCompactViewport ? "center" : undefined,
-          transform: isCompactViewport ? "translateY(var(--mobile-header-title-shift-y))" : undefined,
+          alignSelf: isCompactViewport ? "end" : undefined,
+          alignContent: isCompactViewport ? "end" : undefined,
+          transform: isCompactViewport ? undefined : undefined,
         }}
       >
         <span className="app-header-eyebrow">
@@ -10022,7 +10182,16 @@ export default function PlatformAdminApp() {
         </span>
       </button>
       {showBannerMenu ? (
-        <div ref={bannerMenuRef} style={{ position: "relative", zIndex: 1, justifySelf: "end", width: isCompactViewport ? "var(--mobile-header-side-column)" : undefined }}>
+        <div
+          ref={bannerMenuRef}
+          style={{
+            position: isCompactViewport ? "absolute" : "relative",
+            ...(isCompactViewport ? { right: 16, bottom: "var(--mobile-header-overlay-bottom-inset)" } : null),
+            zIndex: 1,
+            justifySelf: "end",
+            width: isCompactViewport ? 42 : undefined,
+          }}
+        >
           <button
             type="button"
             aria-label={bannerMenuLabel}
@@ -10030,11 +10199,13 @@ export default function PlatformAdminApp() {
             onClick={() => setMenuOpen((prev) => !prev)}
             style={bannerMenuButtonStyle}
           >
-            <span style={{ display: "grid", gap: menuLineGap }}>
-              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
-              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
-              <span style={{ width: menuLineWidth, height: isCompactViewport ? "var(--mobile-header-menu-line-height)" : 2, borderRadius: 999, background: isCompactViewport ? "var(--mobile-header-menu-line-color)" : palette.navy900, display: "block" }} />
-            </span>
+            {isCompactViewport ? "☰" : (
+              <span style={{ display: "grid", gap: menuLineGap }}>
+                <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+                <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+                <span style={{ width: menuLineWidth, height: 2, borderRadius: 999, background: palette.navy900, display: "block" }} />
+              </span>
+            )}
           </button>
           {menuOpen ? (
             <div className="workspace-menu-panel" style={menuSheet}>
@@ -10472,17 +10643,24 @@ export default function PlatformAdminApp() {
       Add Lead
     </button>
   ) : controlPlanePage === "manage-organizations" ? (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <button type="button" style={headerActionButton} onClick={openOrganizationSwitcher}>Switch Organization</button>
-      <button
-        type="button"
-        style={{ ...headerActionButton, opacity: canCreateOrganizations ? 1 : 0.55 }}
+    <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
+      <PcpActionIconButton
+        label="Switch Organization"
+        src={pcpSwitchOrganizationIconSrc}
+        style={isCompactViewport ? { width: 38, minWidth: 38, minHeight: 38 } : undefined}
+        onClick={openOrganizationSwitcher}
+      />
+      <PcpActionIconButton
+        label="Add Organization"
+        src={pcpAddIconSrc}
+        style={{
+          ...(isCompactViewport ? { width: 38, minWidth: 38, minHeight: 38 } : null),
+          opacity: canCreateOrganizations ? 1 : 0.55,
+        }}
         onClick={openAddTenantStep}
         disabled={!canCreateOrganizations}
         title={canCreateOrganizations ? "Create organization" : "You need the Organizations edit permission"}
-      >
-        Add Organization
-      </button>
+      />
     </div>
   ) : controlPlanePage === "domain-registry" ? null : (
     controlPlanePage === "map-ui-theme" ? (
@@ -10642,6 +10820,33 @@ export default function PlatformAdminApp() {
     )
   ) : null;
 
+  const organizationActionsOpen = openControlPlaneDropdown === "organization-actions";
+  const organizationActionsMenu = (
+    <div
+      style={{
+        ...controlPlaneSubmenu,
+        ...(isCompactViewport
+          ? { top: "auto", bottom: "calc(100% + 8px)", left: 0, right: "auto", width: "min(292px, calc(100vw - 48px))" }
+          : { left: "auto", right: 0, minWidth: 260 }),
+      }}
+    >
+      <button
+        type="button"
+        onClick={openOrganizationSwitcher}
+        style={controlPlaneSubmenuItem}
+      >
+        Search or Switch Organization
+      </button>
+      <button
+        type="button"
+        onClick={openAddTenantStep}
+        disabled={!canCreateOrganizations}
+        style={{ ...controlPlaneSubmenuItem, opacity: canCreateOrganizations ? 1 : 0.55 }}
+      >
+        Add Organization
+      </button>
+    </div>
+  );
   const controlPlaneTabsNavigation = sessionUserId && isPlatformAdmin ? (
     <div
       ref={controlPlaneNavRef}
@@ -10649,9 +10854,9 @@ export default function PlatformAdminApp() {
         isCompactViewport
           ? {
               position: "fixed",
-              left: 12,
-              right: 12,
-              bottom: "max(12px, env(safe-area-inset-bottom))",
+              left: 0,
+              right: 0,
+              bottom: 0,
               zIndex: 34,
             }
           : {
@@ -10670,7 +10875,7 @@ export default function PlatformAdminApp() {
               ? {
                   display: "grid",
                   gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                  gap: 8,
+                  gap: 2,
                 }
               : controlPlaneTabsBar
           }
@@ -10679,14 +10884,50 @@ export default function PlatformAdminApp() {
           {visibleControlPlaneTopNavItems.map((item) => {
             if (item.type === "page") {
               const active = item.key === controlPlanePage;
+              const isOrganizationsTab = item.key === "manage-organizations";
+              const tabButtonStyle = isCompactViewport
+                ? (active ? controlPlaneMobileTabButtonActive : controlPlaneMobileTabButton)
+                : (active ? controlPlaneTabButtonActive : controlPlaneTabButton);
+              if (isOrganizationsTab) {
+                return (
+                  <div
+                    key={item.key}
+                    style={{ position: "relative", minWidth: 0, display: "grid", gridTemplateColumns: isCompactViewport ? "minmax(0, 1fr) 30px" : "minmax(0, 1fr) 32px", gap: 4 }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openControlPlanePage(item.key)}
+                      style={tabButtonStyle}
+                    >
+                      <span>{item.label}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Organization actions"
+                      aria-expanded={organizationActionsOpen}
+                      title="Organization actions"
+                      onClick={() => setOpenControlPlaneDropdown((prev) => (prev === "organization-actions" ? "" : "organization-actions"))}
+                      style={{
+                        ...tabButtonStyle,
+                        minWidth: 0,
+                        padding: isCompactViewport ? "8px 2px" : "0 6px",
+                        fontSize: isCompactViewport ? 16 : 18,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ▾
+                    </button>
+                    {organizationActionsOpen ? organizationActionsMenu : null}
+                  </div>
+                );
+              }
               return (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => openControlPlanePage(item.key)}
-                  style={isCompactViewport
-                    ? (active ? controlPlaneMobileTabButtonActive : controlPlaneMobileTabButton)
-                    : (active ? controlPlaneTabButtonActive : controlPlaneTabButton)}
+                  style={tabButtonStyle}
                 >
                   <span>{item.label}</span>
                 </button>
@@ -10744,8 +10985,17 @@ export default function PlatformAdminApp() {
       </div>
     </div>
   ) : null;
-  const controlPlanePageHeader = sessionUserId && isPlatformAdmin && controlPlanePage !== "manage-leads" && !settingsPageActive ? (
-    <section style={{ ...fullWidthSection, display: "grid", gap: 12, marginTop: isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)" }}>
+  const controlPlanePageHeader = sessionUserId
+    && isPlatformAdmin
+    && controlPlanePage !== "manage-leads"
+    && !settingsPageActive
+    && !(controlPlanePage === "manage-organizations" && inTenantWorkspace) ? (
+    <section style={{
+      ...fullWidthSection,
+      display: "grid",
+      gap: 12,
+      marginTop: controlPlanePage === "manage-organizations" ? 0 : (isCompactViewport ? 12 : "var(--app-tab-rail-title-gap)"),
+    }}>
       <div
         style={{
           ...card,
@@ -10753,9 +11003,22 @@ export default function PlatformAdminApp() {
           gap: 6,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "grid", gap: 6 }}>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900, color: palette.navy900 }}>
+        <div
+          style={controlPlanePage === "manage-organizations"
+            ? { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 8 }
+            : { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}
+        >
+          <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: controlPlanePage === "manage-organizations" ? "clamp(15px, 5.5vw, 24px)" : 24,
+                fontWeight: 900,
+                color: palette.navy900,
+                lineHeight: 1.1,
+                whiteSpace: controlPlanePage === "manage-organizations" ? "nowrap" : undefined,
+              }}
+            >
               {controlPlanePageLabel}
             </h1>
           </div>
@@ -11875,8 +12138,8 @@ export default function PlatformAdminApp() {
           </div>
         </div>
       ) : null}
-      {controlPlaneTabsNavigation}
       {controlPlanePageHeader}
+      {controlPlaneTabsNavigation}
       {controlPlanePage === "organization-reports" ? (
         <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
           <div style={{ ...card, display: "grid", gap: 12 }}>
@@ -13958,23 +14221,34 @@ export default function PlatformAdminApp() {
       ) : null}
       {controlPlanePage === "manage-organizations" ? (
       <section style={{ ...fullWidthSection, display: "grid", gap: 14 }}>
-        <header style={{ ...card, display: "grid", gap: 12 }}>
+        <header
+          style={{
+            ...card,
+            display: "grid",
+            gap: inTenantWorkspace ? 0 : 12,
+            ...(inTenantWorkspace ? {
+              position: "sticky",
+              top: isCompactViewport ? compactPcpHeaderHeight : "calc(var(--desktop-header-height) + 54px)",
+              zIndex: 24,
+              alignSelf: "start",
+            } : null),
+            minHeight: inEntryPrompt
+              ? (isCompactViewport
+                ? "calc(100dvh - var(--mobile-header-top-offset) - var(--mobile-header-height) - 132px)"
+                : "calc(100dvh - var(--desktop-header-height) - 116px)")
+              : undefined,
+          }}
+        >
           {inEntryPrompt ? (
-            <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-              <h2 style={{ margin: 0, fontSize: 20, color: palette.navy900 }}>Start Here</h2>
-              <p style={{ margin: 0, fontSize: 13.5, color: palette.textMuted }}>
-                Add a new organization, or search and open an existing organization workspace.
-              </p>
-              <button type="button" style={{ ...buttonBase, width: "fit-content" }} onClick={openAddTenantStep}>
-                Add Organization
-              </button>
+            <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 14, minHeight: 0 }}>
               <input
                 value={tenantSearch}
                 onChange={(e) => setTenantSearch(e.target.value)}
                 placeholder="Search organizations by name, key, or subdomain"
-                style={{ ...inputBase, maxWidth: 620, fontSize: 16 }}
+                aria-label="Search organizations"
+                style={{ ...inputBase, fontSize: 16 }}
               />
-              <div style={{ display: "grid", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
+              <div style={{ display: "grid", alignContent: "start", gap: 6, minHeight: 0, overflowY: "auto", paddingRight: 2 }}>
                 {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
                   const key = String(row?.tenant_key || "").trim();
                   if (!key) return null;
@@ -14001,8 +14275,8 @@ export default function PlatformAdminApp() {
                     </button>
                   );
                 }) : (
-                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                    Search results will appear after you enter an organization name, key, or subdomain.
+                  <div style={{ fontSize: 13.5, color: palette.textMuted, padding: "6px 0" }}>
+                    Search organizations to see results.
                   </div>
                 )}
                 {hasTenantSearchQuery && !filteredTenantRows.length ? (
@@ -14050,39 +14324,83 @@ export default function PlatformAdminApp() {
             </div>
           ) : null}
           {inTenantWorkspace ? (
-            <>
-              <div style={{ ...subPanel, display: "grid", gap: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: palette.textMuted }}>
-                      Organization
-                    </div>
-                    <div style={{ fontSize: 19, fontWeight: 900, color: palette.navy900 }}>
-                      {selectedTenantOrganizationName || selectedTenantKey}
-                    </div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      Display Name: {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
-                    </div>
-                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                      URL: {normalizePrimarySubdomain(selectedTenant?.primary_subdomain) || `${sanitizeTenantKey(selectedTenantKey)}.cityreport.io`}
-                    </div>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 8 }}>
+                  <div
+                    title={selectedTenantOrganizationName || selectedTenantKey}
+                    style={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontSize: "clamp(14px, 4.5vw, 19px)",
+                      fontWeight: 900,
+                      color: palette.navy900,
+                    }}
+                  >
+                    {selectedTenantOrganizationName || selectedTenantKey}
                   </div>
-                  {selectedTenantHubUrl ? (
-                    <a href={selectedTenantHubUrl} target="_blank" rel="noopener noreferrer" style={{ ...buttonBase, textDecoration: "none" }}>
-                      Open Organization Hub
-                    </a>
-                  ) : null}
-                </div>
-                <label style={{ fontSize: 12.5, display: "grid", gap: 6, maxWidth: 360 }}>
-                  <span style={{ color: palette.textMuted }}>Workspace Section</span>
-                  <select value={activeTab} onChange={(e) => setActiveTab(e.target.value)} style={tabSelectBase}>
-                    {availableTenantWorkspaceTabs.map((tab) => (
-                      <option key={tab.key} value={tab.key}>{tab.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
+                    <div ref={workspaceSectionMenuRef} style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        aria-label={`Workspace Section: ${activeTenantWorkspaceTab?.label || "Choose section"}`}
+                        aria-haspopup="menu"
+                        aria-expanded={workspaceSectionMenuOpen}
+                        title={`Workspace Section: ${activeTenantWorkspaceTab?.label || "Choose section"}`}
+                        onClick={() => setWorkspaceSectionMenuOpen((open) => !open)}
+                        style={{
+                          ...pcpActionIconButtonStyle,
+                          width: "auto",
+                          minWidth: 42,
+                          padding: "0 8px 0 10px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <img src={pcpWorkspaceSectionIconSrc} alt="" aria-hidden="true" style={{ ...pcpEditButtonIconStyle, width: 20, height: 20 }} />
+                        <span aria-hidden="true" style={{ fontSize: 16, lineHeight: 1, transform: workspaceSectionMenuOpen ? "rotate(180deg)" : undefined }}>⌄</span>
+                      </button>
+                      {workspaceSectionMenuOpen ? (
+                        <div
+                          role="menu"
+                          aria-label="Workspace sections"
+                          style={{ ...controlPlaneSubmenu, top: "calc(100% + 8px)", left: "auto", right: 0, minWidth: 240, zIndex: 40 }}
+                        >
+                          {availableTenantWorkspaceTabs.map((tab) => {
+                            const active = tab.key === activeTab;
+                            return (
+                              <button
+                                key={tab.key}
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setActiveTab(tab.key);
+                                  setWorkspaceSectionMenuOpen(false);
+                                }}
+                                style={{
+                                  ...controlPlaneSubmenuItem,
+                                  ...(active ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)" } : null),
+                                }}
+                              >
+                                {tab.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                    {selectedTenantHubUrl ? (
+                      <PcpActionIconButton
+                        label="Open Organization Hub"
+                        src={pcpOpenHubIconSrc}
+                        href={selectedTenantHubUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      />
+                    ) : null}
+                  </div>
+            </div>
           ) : null}
           {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{toOrganizationLanguage(status.hydrate)}</div> : null}
         </header>
@@ -14590,9 +14908,11 @@ export default function PlatformAdminApp() {
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                     <h3 style={{ margin: 0, color: palette.navy900 }}>Additional Contacts</h3>
                     {!profileReadOnly ? (
-                      <button type="button" style={buttonAlt} onClick={addAdditionalContact}>
-                        Add Contact
-                      </button>
+                      <PcpActionIconButton
+                        label="Add Contact"
+                        src={pcpAddIconSrc}
+                        onClick={addAdditionalContact}
+                      />
                     ) : null}
                   </div>
                   {Array.isArray(profileForm.additional_contacts) && profileForm.additional_contacts.length ? (
@@ -14659,14 +14979,13 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
-                <button
-                  type="button"
-                  style={{ ...buttonBase, opacity: canEditTenantSetup ? 1 : 0.55 }}
+                <PcpActionIconButton
+                  label="Add Contact"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
                   disabled={!canEditTenantSetup}
                   onClick={addAdditionalContactFromContactsPage}
-                >
-                  Add Contact
-                </button>
+                />
               </div>
 
               <div style={{ ...subPanel, display: "grid", gap: 8 }}>
@@ -14856,14 +15175,13 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Users and Admins</h2>
-                <button
-                  type="button"
-                  style={{ ...buttonBase, opacity: canManageTenantUsers ? 1 : 0.55 }}
+                <PcpActionIconButton
+                  label="Add User/Admin"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canManageTenantUsers ? 1 : 0.55 }}
                   disabled={!canManageTenantUsers}
                   onClick={() => setTenantUsersManagementView("add")}
-                >
-                  Add User/Admin
-                </button>
+                />
               </div>
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
               <div style={{ overflowX: "auto" }}>
@@ -14872,7 +15190,6 @@ export default function PlatformAdminApp() {
                     <tr>
                       <th style={tableHeadCell}>User</th>
                       <th style={tableHeadCell}>Role</th>
-                      <th style={tableHeadCell}>Created</th>
                       <th style={tableHeadCell}>Actions</th>
                     </tr>
                   </thead>
@@ -14911,7 +15228,6 @@ export default function PlatformAdminApp() {
                             roleLabelByKey?.[row.role] || roleKeyToLabel(row.role)
                           )}
                         </td>
-                        <td style={{ padding: "8px 0" }}>{row.created_at ? new Date(row.created_at).toLocaleString() : "-"}</td>
                         <td style={{ padding: "8px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {isEditingRole ? (
                             <div style={{ display: "grid", gap: 10 }}>
@@ -14946,15 +15262,14 @@ export default function PlatformAdminApp() {
                                 disabled={!canManageTenantUsers}
                                 title={canManageTenantUsers ? "Edit role" : "You need the Users edit permission"}
                               />
-                              <button
-                                type="button"
-                                style={{ ...buttonAlt, opacity: canDeleteTenantUsers ? 1 : 0.55 }}
+                              <PcpActionIconButton
+                                label="Remove organization role"
+                                src={pcpTrashIconSrc}
+                                style={{ opacity: canDeleteTenantUsers ? 1 : 0.55 }}
                                 onClick={() => void removeTenantAdmin(row)}
                                 disabled={!canDeleteTenantUsers}
                                 title={canDeleteTenantUsers ? "Remove role" : "You need the Users delete permission"}
-                              >
-                                Remove
-                              </button>
+                              />
                             </>
                           )}
                         </td>
@@ -14962,7 +15277,7 @@ export default function PlatformAdminApp() {
                     )})}
                     {!selectedTenantRoleAssignments.length ? (
                       <tr>
-                        <td colSpan={4} style={{ padding: "10px 0", opacity: 0.75 }}>No organization users have been assigned yet.</td>
+                        <td colSpan={3} style={{ padding: "10px 0", opacity: 0.75 }}>No organization users have been assigned yet.</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -14977,14 +15292,13 @@ export default function PlatformAdminApp() {
             <div style={{ ...card, display: "grid", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <h2 style={{ margin: 0, color: palette.navy900 }}>Roles and Permissions</h2>
-                <button
-                  type="button"
-                  style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                <PcpActionIconButton
+                  label="Add Role"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
                   disabled={!canManageTenantRoles}
                   onClick={() => setTenantRoleManagementView("add")}
-                >
-                  Add Role
-                </button>
+                />
               </div>
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
               <div style={{ display: "grid", gap: 6, maxWidth: 360 }}>
@@ -15569,7 +15883,7 @@ export default function PlatformAdminApp() {
                               <span>Domain Section</span>
                               <select
                                 value={selectedAssignedDomainSectionKey}
-                                onChange={(event) => setSelectedAssignedDomainSectionKey(event.target.value)}
+                                onChange={(event) => selectAssignedDomainSection(event.target.value)}
                                 style={modalInput}
                               >
                                 {ASSIGNED_DOMAIN_SECTION_OPTIONS.map((option) => (
@@ -16455,6 +16769,43 @@ export default function PlatformAdminApp() {
                                   </div>
                                   {!isAssetBacked ? (
                                     <label style={modalField}>
+                                      <span>Public Repair Confirmations</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="25"
+                                        step="1"
+                                        readOnly={domainFieldsReadOnly || domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
+                                        value={domainConfigForm?.[d.key]?.public_repair_confirmation_threshold ?? 5}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            public_repair_confirmation_threshold: e.target.value,
+                                          },
+                                        }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({
+                                          ...prev,
+                                          [d.key]: {
+                                            ...(prev?.[d.key] || {}),
+                                            public_repair_confirmation_threshold: sanitizePositiveIntegerSetting(
+                                              e.target.value,
+                                              5,
+                                              { min: 1, max: 25 }
+                                            ),
+                                          },
+                                        }))}
+                                        style={{ ...modalInput, background: (domainFieldsReadOnly || domainConfigForm?.[d.key]?.organization_monitored_repairs !== false) ? "#eef4fb" : modalInput.background }}
+                                      />
+                                      <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                        {domainConfigForm?.[d.key]?.organization_monitored_repairs !== false
+                                          ? "Enable public repair monitoring to use this setting."
+                                          : "Unique community confirmations required before the incident is likely fixed."}
+                                      </span>
+                                    </label>
+                                  ) : null}
+                                  {!isAssetBacked ? (
+                                    <label style={modalField}>
                                       <span>Public Visibility Threshold</span>
                                       <input
                                         type="number"
@@ -16537,7 +16888,7 @@ export default function PlatformAdminApp() {
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
                                   <div style={{ display: "grid", gap: 3 }}>
-                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Issue Types</div>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Reporting Fields</div>
                                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                                       Configure tenant-specific issue type groups and choices for this domain. These options render everywhere in this saved order across the report flow, info windows, reports, and email macros.
                                     </div>
@@ -16562,7 +16913,7 @@ export default function PlatformAdminApp() {
                                       },
                                     }))}
                                   >
-                                    Add Issue Type
+                                    Add Reporting Field
                                   </button>
                                 </div>
                                 {domainTypeOptionRows.length ? (
@@ -16582,11 +16933,16 @@ export default function PlatformAdminApp() {
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                             <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
-                                              Issue Type {typeIndex + 1}
+                                              Reporting Field {typeIndex + 1}
                                             </span>
-                                            <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                              {domainTypeOptionMacroToken(typeOption.option_key || typeOption.option_label || `type_option_${typeIndex + 1}`)}
-                                            </span>
+                                            {domainReportingFieldTemplateTokens(typeIndex + 1).map((token) => (
+                                              <span
+                                                key={token}
+                                                style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}
+                                              >
+                                                {token}
+                                              </span>
+                                            ))}
                                           </div>
                                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                             <button
@@ -16645,7 +17001,7 @@ export default function PlatformAdminApp() {
                                           </div>
                                         </div>
                                         <label style={modalField}>
-                                          <span>Issue Type Name</span>
+                                          <span>Field Label</span>
                                           <input
                                             readOnly={domainFieldsReadOnly}
                                             value={typeOption.option_label || ""}
@@ -16665,7 +17021,7 @@ export default function PlatformAdminApp() {
                                           />
                                         </label>
                                         <label style={{ ...modalField, gridColumn: "1 / -1" }}>
-                                          <span>Issue Type Choices</span>
+                                          <span>Field Choices</span>
                                           <textarea
                                             readOnly={domainFieldsReadOnly}
                                             value={typeOption.choices_input || ""}
@@ -16693,7 +17049,7 @@ export default function PlatformAdminApp() {
                                   </div>
                                 ) : (
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    No issue types configured for this domain yet.
+                                    No reporting fields configured for this domain yet.
                                   </div>
                                 )}
                               </div>
@@ -17274,15 +17630,14 @@ export default function PlatformAdminApp() {
                     Upload and organize domain-related source files like prior report exports, coordinate files, and boundary or location data.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  style={{ ...buttonBase, opacity: canEditTenantFiles ? 1 : 0.55 }}
+                <PcpActionIconButton
+                  label="Add Asset"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
                   disabled={!canEditTenantFiles}
                   onClick={() => openTenantAssetModal()}
                   title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
-                >
-                  Add Asset
-                </button>
+                />
               </div>
               {status.files ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.files)}</div> : null}
               <div style={{ display: "grid", gap: 12 }}>
