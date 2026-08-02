@@ -7,6 +7,7 @@ import pcpSwitchOrganizationIconSrc from "./assets/pcp-switch-organization-icon.
 import pcpOpenHubIconSrc from "./assets/pcp-open-hub-icon.svg";
 import pcpWorkspaceSectionIconSrc from "./assets/pcp-workspace-section-icon.svg";
 import pcpTrashIconSrc from "./assets/pcp-trash-icon.svg";
+import pcpSearchIconSrc from "./assets/pcp-search-icon.svg";
 import {
   STANDARD_LOGIN_EMAIL_INPUT_PROPS,
   STANDARD_LOGIN_FORM_PROPS,
@@ -3003,6 +3004,8 @@ export default function PlatformAdminApp() {
   const [mapFeaturesSnapshot, setMapFeaturesSnapshot] = useState(null);
   const [assignForm, setAssignForm] = useState({ tenant_key: "", user_id: "", role: "tenant_employee" });
   const [tenantUsersManagementView, setTenantUsersManagementView] = useState("list");
+  const [tenantUserSearchOpen, setTenantUserSearchOpen] = useState(false);
+  const [tenantUserSearch, setTenantUserSearch] = useState("");
   const [tenantRoleManagementView, setTenantRoleManagementView] = useState("list");
   const [tenantAssetsManagementView, setTenantAssetsManagementView] = useState("list");
   const [userAssignmentMode, setUserAssignmentMode] = useState("existing");
@@ -3478,6 +3481,10 @@ export default function PlatformAdminApp() {
     () => (tenantAdmins || []).filter((row) => String(row?.tenant_key || "") === String(selectedTenantKey || "")),
     [tenantAdmins, selectedTenantKey]
   );
+  useEffect(() => {
+    setTenantUserSearchOpen(false);
+    setTenantUserSearch("");
+  }, [selectedTenantKey]);
   const platformRoleAssignmentCounts = useMemo(() => {
     const counts = {};
     for (const row of platformTeamAssignments || []) {
@@ -3966,6 +3973,24 @@ export default function PlatformAdminApp() {
     const summary = resolveKnownUserSummary(userId);
     return formatUserSummaryLabel(summary);
   }, [formatUserSummaryLabel, resolveKnownUserSummary]);
+  const filteredTenantRoleAssignments = useMemo(() => {
+    const query = tenantUserSearch.trim().toLowerCase();
+    if (!query) return selectedTenantRoleAssignments;
+    return selectedTenantRoleAssignments.filter((row) => {
+      const summary = resolveKnownUserSummary(row?.user_id);
+      const haystack = [
+        formatKnownUserLabel(row?.user_id),
+        summary?.email,
+        summary?.phone,
+        row?.user_id,
+        roleKeyToLabel(row?.role),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [formatKnownUserLabel, resolveKnownUserSummary, selectedTenantRoleAssignments, tenantUserSearch]);
   const formatPlatformUserLabel = useCallback((userId) => {
     const key = String(userId || "").trim();
     if (!key) return "Selected account";
@@ -14461,42 +14486,36 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             {(inAddTenantFlow ? addTenantStep === "setup" : activeTab === "setup") ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                {inAddTenantFlow ? (
                   <div style={{ display: "grid", gap: 4 }}>
-                    <h2 style={{ margin: 0, color: palette.navy900 }}>
-                      {inAddTenantFlow ? "Basic Setup" : "Organization Setup"}
-                    </h2>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Basic Setup</h2>
                     <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
                       Core organization routing, status, and launch settings.
                     </p>
                   </div>
-                  {!inAddTenantFlow ? (
-                    tenantReadOnly ? (
-                      <PcpEditButton
-                        label="Edit Organization Setup"
-                        style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
-                        onClick={() => setIsEditingTenant(true)}
-                        disabled={!canEditTenantSetup}
-                        title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        style={buttonAlt}
-                        onClick={cancelTenantEditing}
-                      >
-                        Cancel
-                      </button>
-                    )
-                  ) : null}
-                </div>
+                ) : null}
                 <form onSubmit={inAddTenantFlow ? finishAddTenantSetup : saveTenant} style={{ display: "grid", gap: 12 }}>
                   <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                    <div style={{ display: "grid", gap: 3 }}>
-                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Identity + Routing</div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Stable keys and URL settings used for this organization across the platform.
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                      <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, color: palette.navy900 }}>Identity + Routing</div>
+                        <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                          Stable keys and URL settings used for this organization across the platform.
+                        </div>
                       </div>
+                      {!inAddTenantFlow ? (
+                        tenantReadOnly ? (
+                          <PcpEditButton
+                            label="Edit Organization Setup"
+                            style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
+                            onClick={() => setIsEditingTenant(true)}
+                            disabled={!canEditTenantSetup}
+                            title={canEditTenantSetup ? "Edit organization setup" : "You need the Organizations edit permission"}
+                          />
+                        ) : (
+                          <button type="button" style={buttonAlt} onClick={cancelTenantEditing}>Cancel</button>
+                        )
+                      ) : null}
                     </div>
                     <div style={responsiveTwoColGrid}>
                       <label style={{ fontSize: 12.5, display: "grid", gap: 4 }}>
@@ -14671,17 +14690,17 @@ export default function PlatformAdminApp() {
 
             {(inAddTenantFlow ? addTenantStep === "organization" : activeTab === "tenants") ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gap: 4 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    {inAddTenantFlow ? "Organization Information" : "Organization Information"}
-                  </h2>
-                  <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
-                    Public identity, mailing address, billing, and contract details for the organization.
-                  </p>
-                </div>
+                {inAddTenantFlow ? (
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <h2 style={{ margin: 0, color: palette.navy900 }}>Organization Information</h2>
+                    <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
+                      Public identity, mailing address, billing, and contract details for the organization.
+                    </p>
+                  </div>
+                ) : null}
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: palette.navy900 }}>Naming + Identity</div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                         Names and outward-facing profile details used across CityReport surfaces.
@@ -14745,8 +14764,8 @@ export default function PlatformAdminApp() {
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: palette.navy900 }}>Mailing Address</div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                         Primary mailing and billing address information for the organization.
@@ -14804,8 +14823,8 @@ export default function PlatformAdminApp() {
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: palette.navy900 }}>Contract + Billing</div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                         Billing and agreement details used for operations and account management.
@@ -14869,8 +14888,8 @@ export default function PlatformAdminApp() {
                   </div>
                 </section>
                 <section style={{ ...subPanel, display: "grid", gap: 8 }}>
-                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 8 }}>
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: palette.navy900 }}>Operational Notes</div>
                       <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                         Internal onboarding, operations, or account notes for this organization.
@@ -15029,17 +15048,6 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "contacts" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Points of Contact</h2>
-                <PcpActionIconButton
-                  label="Add Contact"
-                  src={pcpAddIconSrc}
-                  style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
-                  disabled={!canEditTenantSetup}
-                  onClick={addAdditionalContactFromContactsPage}
-                />
-              </div>
-
               <div style={{ ...subPanel, display: "grid", gap: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 900, color: palette.navy900 }}>Primary Contact</div>
@@ -15117,7 +15125,16 @@ export default function PlatformAdminApp() {
               </div>
 
               <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Additional Contacts</div>
+                  <PcpActionIconButton
+                    label="Add Contact"
+                    src={pcpAddIconSrc}
+                    style={{ opacity: canEditTenantSetup ? 1 : 0.55 }}
+                    disabled={!canEditTenantSetup}
+                    onClick={addAdditionalContactFromContactsPage}
+                  />
+                </div>
                 {Array.isArray(profileForm.additional_contacts) && profileForm.additional_contacts.length ? (
                   <div style={{ display: "grid", gap: 10 }}>
                     {profileForm.additional_contacts.map((contact, index) => {
@@ -15225,8 +15242,16 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "users" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Current Organization Users and Admins</h2>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <PcpActionIconButton
+                  label={tenantUserSearchOpen ? "Close user search" : "Search users/admins"}
+                  src={pcpSearchIconSrc}
+                  onClick={() => {
+                    const nextOpen = !tenantUserSearchOpen;
+                    setTenantUserSearchOpen(nextOpen);
+                    if (!nextOpen) setTenantUserSearch("");
+                  }}
+                />
                 <PcpActionIconButton
                   label="Add User/Admin"
                   src={pcpAddIconSrc}
@@ -15235,6 +15260,16 @@ export default function PlatformAdminApp() {
                   onClick={() => setTenantUsersManagementView("add")}
                 />
               </div>
+              {tenantUserSearchOpen ? (
+                <input
+                  autoFocus
+                  value={tenantUserSearch}
+                  onChange={(event) => setTenantUserSearch(event.target.value)}
+                  placeholder="Search users and admins"
+                  aria-label="Search users and admins"
+                  style={inputBase}
+                />
+              ) : null}
               {status.users ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.users)}</div> : null}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -15246,7 +15281,7 @@ export default function PlatformAdminApp() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedTenantRoleAssignments.map((row) => {
+                    {filteredTenantRoleAssignments.map((row) => {
                       const rowKey = buildAssignmentRowKey(row);
                       const isEditingRole = editingAssignmentKey === rowKey;
                       const userLabel = formatKnownUserLabel(row.user_id);
@@ -15331,6 +15366,10 @@ export default function PlatformAdminApp() {
                       <tr>
                         <td colSpan={3} style={{ padding: "10px 0", opacity: 0.75 }}>No organization users have been assigned yet.</td>
                       </tr>
+                    ) : !filteredTenantRoleAssignments.length ? (
+                      <tr>
+                        <td colSpan={3} style={{ padding: "10px 0", opacity: 0.75 }}>No users or admins match this search.</td>
+                      </tr>
                     ) : null}
                   </tbody>
                 </table>
@@ -15342,20 +15381,8 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Roles and Permissions</h2>
-                <PcpActionIconButton
-                  label="Add Role"
-                  src={pcpAddIconSrc}
-                  style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
-                  disabled={!canManageTenantRoles}
-                  onClick={() => setTenantRoleManagementView("add")}
-                />
-              </div>
-              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
-              <div style={{ display: "grid", gap: 6, maxWidth: 360 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Choose Role</div>
-                <select value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <select aria-label="Choose Role" value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
                   {sortedTenantRoleDefinitions.map((row) => {
                     const role = String(row?.role || "").trim();
                     if (!role) return null;
@@ -15366,55 +15393,44 @@ export default function PlatformAdminApp() {
                     );
                   })}
                 </select>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                  {!tenantRoleEditMode ? (
+                    <PcpEditButton
+                      label="Edit Role Permissions"
+                      style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
+                      disabled={!canManageTenantRoles}
+                      onClick={() => setTenantRoleEditMode(true)}
+                    />
+                  ) : (
+                    <PcpActionIconButton
+                      label="Delete Role"
+                      src={pcpTrashIconSrc}
+                      style={{ opacity: canDeleteTenantRoles && selectedRoleDefinition?.is_system !== true && selectedRoleAssignmentCount === 0 ? 1 : 0.55 }}
+                      disabled={!canDeleteTenantRoles || selectedRoleDefinition?.is_system === true || selectedRoleAssignmentCount > 0}
+                      title={
+                        selectedRoleDefinition?.is_system === true
+                          ? "System roles cannot be removed."
+                          : selectedRoleAssignmentCount > 0
+                            ? "Remove assignments before deleting this role."
+                            : canDeleteTenantRoles
+                              ? "Delete role"
+                              : "You need the Roles delete permission"
+                      }
+                      onClick={() => setTenantRoleDeleteConfirmOpen(true)}
+                    />
+                  )}
+                  <PcpActionIconButton
+                    label="Add Role"
+                    src={pcpAddIconSrc}
+                    style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
+                    disabled={!canManageTenantRoles}
+                    onClick={() => setTenantRoleManagementView("add")}
+                  />
+                </div>
               </div>
+              {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
               {selectedRoleDefinition ? (
                 <>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
-                      <h2 style={{ margin: 0, color: palette.navy900 }}>
-                        Manage Role Permission ({toOrganizationLanguage(String(selectedRoleDefinition.role_label || selectedRoleDefinition.role))})
-                      </h2>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        {selectedRoleDefinition?.is_system ? "System role" : "Custom role"}
-                        {" • "}
-                        {selectedRoleDefinition?.active === false ? "Disabled" : "Active"}
-                        {" • "}
-                        {selectedRoleAssignmentCount} assignment{selectedRoleAssignmentCount === 1 ? "" : "s"}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {!tenantRoleEditMode ? (
-                        <PcpEditButton
-                          style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
-                          disabled={!canManageTenantRoles}
-                          onClick={() => setTenantRoleEditMode(true)}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          style={{
-                            ...buttonAlt,
-                            borderColor: palette.red600,
-                            color: palette.red600,
-                            opacity: canDeleteTenantRoles && selectedRoleDefinition?.is_system !== true && selectedRoleAssignmentCount === 0 ? 1 : 0.55,
-                          }}
-                          disabled={!canDeleteTenantRoles || selectedRoleDefinition?.is_system === true || selectedRoleAssignmentCount > 0}
-                          title={
-                            selectedRoleDefinition?.is_system === true
-                              ? "System roles cannot be removed."
-                              : selectedRoleAssignmentCount > 0
-                                ? "Remove assignments before deleting this role."
-                                : canDeleteTenantRoles
-                                  ? "Delete role"
-                                  : "You need the Roles delete permission"
-                          }
-                          onClick={() => setTenantRoleDeleteConfirmOpen(true)}
-                        >
-                          Delete Role
-                        </button>
-                      )}
-                    </div>
-                  </div>
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                       <thead>
@@ -15461,7 +15477,7 @@ export default function PlatformAdminApp() {
                         setTenantRoleEditMode(false);
                       }}
                     >
-                      Save Permission Changes
+                      Save
                     </button>
                     <button
                       type="button"
@@ -15477,7 +15493,7 @@ export default function PlatformAdminApp() {
                       }}
                       disabled={!rolePermissionDirty && !tenantRoleEditMode}
                     >
-                      {tenantRoleEditMode ? "Cancel" : "Reset Changes"}
+                      Reset
                     </button>
                   </div>
                 </>
@@ -15494,21 +15510,14 @@ export default function PlatformAdminApp() {
           <section style={{ display: "grid", gap: 14 }}>
             {activeTab === "parks" ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
-                  <div style={{ display: "grid", gap: 3 }}>
-                    <h2 style={{ margin: 0, color: palette.navy900 }}>Parks</h2>
-                    <p style={{ margin: 0, color: palette.textMuted }}>
-                      Add park boundaries for this organization so park-only domains can be enforced on the public map.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    style={{ ...buttonBase, opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <PcpActionIconButton
+                    label="Add Park"
+                    src={pcpAddIconSrc}
+                    style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
                     disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
                     onClick={beginCreateTenantPark}
-                  >
-                    Add Park
-                  </button>
+                  />
                 </div>
                 {status.parks ? (
                   <div style={{ fontSize: 12.5, color: String(status.parks || "").startsWith("Error:") ? palette.red600 : palette.textMuted }}>
@@ -15737,14 +15746,13 @@ export default function PlatformAdminApp() {
                                 </div>
                                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                                   <button type="button" style={buttonAlt} onClick={() => void openTenantFile(row)}>Open</button>
-                                  <button
-                                    type="button"
-                                    style={{ ...buttonAlt, opacity: canEditTenantFiles ? 1 : 0.55 }}
+                                  <PcpActionIconButton
+                                    label="Remove parcel file"
+                                    src={pcpTrashIconSrc}
+                                    style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
                                     disabled={!canEditTenantFiles || tenantParkSaving}
                                     onClick={() => void removeTenantFile(row)}
-                                  >
-                                    Remove
-                                  </button>
+                                  />
                                 </div>
                               </div>
                             ))}
@@ -15772,14 +15780,12 @@ export default function PlatformAdminApp() {
                                     {formatBytes(entry?.file?.size || 0)}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  style={buttonAlt}
+                                <PcpActionIconButton
+                                  label="Remove parcel file"
+                                  src={pcpTrashIconSrc}
                                   disabled={tenantParkSaving}
                                   onClick={() => removeTenantParkBoundaryUpload(entry.id)}
-                                >
-                                  Remove
-                                </button>
+                                />
                               </div>
                             ))}
                           </div>
@@ -15844,14 +15850,13 @@ export default function PlatformAdminApp() {
                               disabled={!canEditTenantDomains || tenantParkSaving}
                               onClick={() => beginEditTenantPark(park.id)}
                             />
-                            <button
-                              type="button"
-                              style={{ ...buttonAlt, borderColor: palette.red600, color: palette.red600, opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
+                            <PcpActionIconButton
+                              label="Remove Park"
+                              src={pcpTrashIconSrc}
+                              style={{ opacity: canEditTenantDomains && !tenantParkSaving ? 1 : 0.55 }}
                               disabled={!canEditTenantDomains || tenantParkSaving}
                               onClick={() => void deleteTenantPark(park.id)}
-                            >
-                              Remove
-                            </button>
+                            />
                           </div>
                         </div>
                         <div style={{ fontSize: 12.5, color: palette.textMuted }}>
@@ -15869,31 +15874,16 @@ export default function PlatformAdminApp() {
             ) : null}
             {activeTab === "domains" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gap: 3 }}>
-                <h2 style={{ margin: 0, color: palette.navy900 }}>Domains</h2>
-                <p style={{ margin: 0, color: palette.textMuted }}>
-                  Assign platform-defined domains to this organization, then manage each assigned domain&apos;s routing, reporting, notification, and marker settings here.
-                </p>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <PcpActionIconButton
+                  label="Add Domain"
+                  src={pcpAddIconSrc}
+                  style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                  disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                  onClick={beginCreateTenantDomainAssignment}
+                />
               </div>
               <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    style={{
-                      ...buttonBase,
-                      marginLeft: "auto",
-                      alignSelf: "flex-start",
-                      opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55,
-                      background: `linear-gradient(180deg, ${palette.mint600} 0%, ${palette.mint700} 100%)`,
-                      border: `1px solid ${palette.mint700}`,
-                      boxShadow: "0 10px 20px rgba(15,110,92,0.24)",
-                    }}
-                    disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                    onClick={beginCreateTenantDomainAssignment}
-                  >
-                    Assign Global Domain
-                  </button>
-                </div>
                 {canViewDomainRegistry && inTenantWorkspace ? (
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -17495,42 +17485,30 @@ export default function PlatformAdminApp() {
 
             {activeTab === "map-features" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                {!mapFeaturesEditMode ? (
+                  <PcpEditButton
+                    label="Edit Map Features"
+                    style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
+                    disabled={!canEditTenantDomains}
+                    onClick={beginMapFeaturesEdit}
+                    title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
+                  />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                      disabled={!canEditTenantDomains}
+                      onClick={() => void saveMapFeaturesSettings()}
+                    >
+                      Save
+                    </button>
+                    <button type="button" style={buttonAlt} onClick={cancelMapFeaturesEdit}>Cancel</button>
+                  </>
+                )}
+              </div>
                 <div style={{ ...subPanel, display: "grid", gap: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                    <div style={{ display: "grid", gap: 3 }}>
-                      <div style={{ fontWeight: 900, color: palette.navy900 }}>Map Features</div>
-                      <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                        Configure how the organization boundary and map framing behave for the public map and the hub.
-                      </div>
-                    </div>
-                    {!mapFeaturesEditMode ? (
-                      <PcpEditButton
-                        label="Edit Map Features"
-                        style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
-                        disabled={!canEditTenantDomains}
-                        onClick={beginMapFeaturesEdit}
-                        title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
-                      />
-                    ) : (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
-                          disabled={!canEditTenantDomains}
-                          onClick={() => void saveMapFeaturesSettings()}
-                        >
-                          Save Map Features
-                        </button>
-                        <button
-                          type="button"
-                          style={buttonAlt}
-                          onClick={cancelMapFeaturesEdit}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
                   {(() => {
                     const mapFeaturesReadOnly = !canEditTenantDomains || !mapFeaturesEditMode;
                     const borderEnabled = !mapFeaturesReadOnly && Boolean(mapFeaturesForm.show_boundary_border);
@@ -17673,15 +17651,7 @@ export default function PlatformAdminApp() {
 
             {activeTab === "files" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                <div style={{ display: "grid", gap: 3 }}>
-                  <h2 style={{ margin: 0, color: palette.navy900 }}>
-                    Assets for {selectedTenantPublicDisplayName || selectedTenantOrganizationName || selectedTenantKey}
-                  </h2>
-                  <p style={{ margin: 0, color: palette.textMuted }}>
-                    Upload and organize domain-related source files like prior report exports, coordinate files, and boundary or location data.
-                  </p>
-                </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <PcpActionIconButton
                   label="Add Asset"
                   src={pcpAddIconSrc}
