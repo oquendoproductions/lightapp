@@ -56,6 +56,19 @@ test("dev slug hub path resolves to staging municipality hub", () => {
   assert.equal(res.appScope, "hub");
 });
 
+test("Pages hub preview resolves directly to the isolated tenant hub", () => {
+  const res = resolveTenantRequest({
+    hostname: "cityreport-hub-staging.pages.dev",
+    pathname: "/",
+    search: "",
+    hubPreviewTenant: "ashtabulacity",
+  });
+  assert.equal(res.mode, "municipality_app");
+  assert.equal(res.tenantKey, "ashtabulacity");
+  assert.equal(res.env, "staging");
+  assert.equal(res.appScope, "hub");
+});
+
 test("legacy gmaps path redirects to Ashtabula during transition", () => {
   const res = resolveTenantRequest({
     hostname: "cityreport.io",

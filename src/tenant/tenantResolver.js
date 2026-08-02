@@ -101,6 +101,9 @@ function isLocalDevHost(hostname) {
   if (!host) return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
   if (host.endsWith(".local")) return true;
+  // Cloudflare Pages preview hosts are non-production review surfaces. Treat
+  // them like local development so `/platform/` opens the PCP for review.
+  if (host.endsWith(".pages.dev")) return true;
   if (isPrivateIpv4Host(host)) return true;
   return LOCAL_DEV_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 }
@@ -111,6 +114,19 @@ export function resolveTenantRequest(input = {}) {
   const search = String(input.search || "");
   const defaultTenant = getDefaultTenantKey();
   const segment = leadingPathSegment(pathname);
+  const hubPreviewTenant = sanitizeSlug(input.hubPreviewTenant || import.meta.env?.VITE_HUB_PREVIEW_TENANT_KEY || "");
+
+  // The isolated Pages deployment sets this build-time value. Restricting it
+  // to pages.dev keeps the preview-only entry point unavailable on live hosts.
+  if (hubPreviewTenant && hostname.endsWith(".pages.dev")) {
+    return makeResult({
+      mode: "municipality_app",
+      tenantKey: hubPreviewTenant,
+      env: "staging",
+      reason: "pages_hub_preview",
+      appScope: "hub",
+    });
+  }
 
   if (!hostname) {
     return makeResult({
