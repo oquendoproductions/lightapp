@@ -218,6 +218,7 @@ const DOMAIN_MARKER_COLOR_DEFAULTS = {
 
 const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
+  { key: "setup", label: "Organization Setup" },
   { key: "contacts", label: "Points of Contact" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
@@ -448,6 +449,7 @@ const CONTROL_PLANE_PAGE_PERMISSIONS = {
 
 const TENANT_WORKSPACE_TAB_PERMISSIONS = {
   tenants: "organizations.access",
+  setup: "organizations.access",
   contacts: "organizations.access",
   users: "users.access",
   roles: "roles.access",
@@ -9507,7 +9509,9 @@ export default function PlatformAdminApp() {
   const inTenantWorkspace = entryStep === "tenant";
   const inAddTenantFlow = entryStep === "add";
   const inEntryPrompt = entryStep === "start";
-  const showTenantsSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+  const showTenantSetupSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "setup");
+  const showOrganizationInfoSection = inAddTenantFlow || (inTenantWorkspace && activeTab === "tenants");
+  const showOrganizationWorkspaceSection = showTenantSetupSection || showOrganizationInfoSection;
   const tenantReadOnly = inTenantWorkspace && !isEditingTenant;
   const profileReadOnly = inTenantWorkspace && !isEditingProfile;
   const activeTenantWorkspaceTab = availableTenantWorkspaceTabs.find((tab) => tab.key === activeTab) || null;
@@ -14357,19 +14361,35 @@ export default function PlatformAdminApp() {
           ) : null}
           {inTenantWorkspace ? (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 8 }}>
-                  <div
-                    title={selectedTenantOrganizationName || selectedTenantKey}
-                    style={{
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontSize: "clamp(14px, 4.5vw, 19px)",
-                      fontWeight: 900,
-                      color: palette.navy900,
-                    }}
-                  >
-                    {selectedTenantOrganizationName || selectedTenantKey}
+                  <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+                    <div
+                      title={selectedTenantOrganizationName || selectedTenantKey}
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: "clamp(10px, 3vw, 11.5px)",
+                        fontWeight: 900,
+                        letterSpacing: "0.11em",
+                        textTransform: "uppercase",
+                        color: palette.mint700,
+                      }}
+                    >
+                      {selectedTenantOrganizationName || selectedTenantKey}
+                    </div>
+                    <div
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: "clamp(16px, 5vw, 21px)",
+                        lineHeight: 1.08,
+                        fontWeight: 900,
+                        color: palette.navy900,
+                      }}
+                    >
+                      {activeTenantWorkspaceTab?.label || "Organization Workspace"}
+                    </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
                     <div ref={workspaceSectionMenuRef} style={{ position: "relative" }}>
@@ -14437,9 +14457,9 @@ export default function PlatformAdminApp() {
           {status.hydrate ? <div style={{ fontSize: 12.5, color: palette.red600 }}>{toOrganizationLanguage(status.hydrate)}</div> : null}
         </header>
 
-        {showTenantsSection ? (
+        {showOrganizationWorkspaceSection ? (
           <section style={{ display: "grid", gap: 14 }}>
-            {(inAddTenantFlow ? addTenantStep === "setup" : true) ? (
+            {(inAddTenantFlow ? addTenantStep === "setup" : activeTab === "setup") ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 4 }}>
@@ -14649,7 +14669,7 @@ export default function PlatformAdminApp() {
               </div>
             ) : null}
 
-            {(inAddTenantFlow ? addTenantStep === "organization" : true) ? (
+            {(inAddTenantFlow ? addTenantStep === "organization" : activeTab === "tenants") ? (
               <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gap: 4 }}>
                   <h2 style={{ margin: 0, color: palette.navy900 }}>

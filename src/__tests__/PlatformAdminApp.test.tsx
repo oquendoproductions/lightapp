@@ -667,7 +667,7 @@ describe("PlatformAdminApp", () => {
     await user.click(await screen.findByRole("button", { name: /ashtabula city/i }));
     await chooseWorkspaceSection(user, /map features/i);
 
-    await screen.findByText(/^map features$/i, { selector: "div" });
+    await screen.findAllByText(/^map features$/i);
     return { user };
   }
 
@@ -824,6 +824,27 @@ describe("PlatformAdminApp", () => {
     await screen.findByRole("button", { name: /workspace section: roles \+ permissions/i });
     expect(screen.getByText(/choose role/i)).toBeInTheDocument();
     expect(screen.getByRole("combobox")).toBeInTheDocument();
+  });
+
+  it("keeps organization setup and organization information in separate workspaces", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(
+      {},
+      "",
+      "/?pcp_section=organizations&pcp_page=manage-organizations&pcp_entry=tenant&pcp_tenant=ashtabulacity&pcp_tab=setup"
+    );
+
+    render(<PlatformAdminApp />);
+
+    await screen.findByRole("button", { name: /workspace section: organization setup/i });
+    expect(screen.getByRole("heading", { name: /^organization setup$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /^organization information$/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /workspace section: organization setup/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^organization info$/i }));
+
+    await screen.findByRole("heading", { name: /^organization information$/i });
+    expect(screen.queryByRole("heading", { name: /^organization setup$/i })).not.toBeInTheDocument();
   });
 
   it("shows a confirmation popup before deleting a custom role", async () => {
