@@ -841,6 +841,28 @@ describe("PlatformAdminApp", () => {
     expect(screen.getByRole("combobox", { name: /choose role/i })).toBeInTheDocument();
   });
 
+  it("separates role selection from permissions and only shows permission controls while editing", async () => {
+    const { user } = await openRolesAndPermissions();
+
+    expect(screen.getByText(/^roles$/i, { selector: "label span" })).toBeInTheDocument();
+    expect(screen.getByText(/^permissions$/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reset$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+
+    const editButton = screen.getByRole("button", { name: /edit role permissions/i });
+    await user.click(editButton);
+
+    expect(editButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^reset$/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reset$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+  });
+
   it("keeps organization setup and organization information in separate workspaces", async () => {
     const user = userEvent.setup();
     window.history.replaceState(

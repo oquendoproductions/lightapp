@@ -15381,27 +15381,30 @@ export default function PlatformAdminApp() {
         {inTenantWorkspace && activeTab === "roles" ? (
           <section style={{ display: "grid", gap: 14 }}>
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <select aria-label="Choose Role" value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
-                  {sortedTenantRoleDefinitions.map((row) => {
-                    const role = String(row?.role || "").trim();
-                    if (!role) return null;
-                    return (
-                      <option key={role} value={role}>
-                        {toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role))}
-                      </option>
-                    );
-                  })}
-                </select>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                  {!tenantRoleEditMode ? (
-                    <PcpEditButton
-                      label="Edit Role Permissions"
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 360px) auto", justifyContent: "space-between", alignItems: "end", gap: 8 }}>
+                  <label style={{ display: "grid", gap: 4, minWidth: 0, fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>
+                    <span>Roles</span>
+                    <select aria-label="Choose Role" value={selectedRoleKey} onChange={(e) => setSelectedRoleKey(e.target.value)} style={inputBase}>
+                      {sortedTenantRoleDefinitions.map((row) => {
+                        const role = String(row?.role || "").trim();
+                        if (!role) return null;
+                        return (
+                          <option key={role} value={role}>
+                            {toOrganizationLanguage(String(row?.role_label || "").trim() || roleKeyToLabel(role))}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                    <PcpActionIconButton
+                      label="Add Role"
+                      src={pcpAddIconSrc}
                       style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
                       disabled={!canManageTenantRoles}
-                      onClick={() => setTenantRoleEditMode(true)}
+                      onClick={() => setTenantRoleManagementView("add")}
                     />
-                  ) : (
                     <PcpActionIconButton
                       label="Delete Role"
                       src={pcpTrashIconSrc}
@@ -15418,15 +15421,20 @@ export default function PlatformAdminApp() {
                       }
                       onClick={() => setTenantRoleDeleteConfirmOpen(true)}
                     />
-                  )}
-                  <PcpActionIconButton
-                    label="Add Role"
-                    src={pcpAddIconSrc}
-                    style={{ opacity: canManageTenantRoles ? 1 : 0.55 }}
-                    disabled={!canManageTenantRoles}
-                    onClick={() => setTenantRoleManagementView("add")}
-                  />
+                  </div>
                 </div>
+                {selectedRoleDefinition ? (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 900, color: palette.navy900 }}>Permissions</div>
+                    <PcpEditButton
+                      label="Edit Role Permissions"
+                      style={{ opacity: canManageTenantRoles && !tenantRoleEditMode ? 1 : 0.55 }}
+                      disabled={!canManageTenantRoles || tenantRoleEditMode}
+                      onClick={() => setTenantRoleEditMode(true)}
+                      title={tenantRoleEditMode ? "Permission editing is already enabled" : "Edit role permissions"}
+                    />
+                  </div>
+                ) : null}
               </div>
               {status.roles ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.roles)}</div> : null}
               {selectedRoleDefinition ? (
@@ -15467,35 +15475,51 @@ export default function PlatformAdminApp() {
                       </tbody>
                     </table>
                   </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
-                      disabled={!canManageTenantRoles || !tenantRoleEditMode || !rolePermissionDirty}
-                      onClick={() => {
-                        void saveRolePermissions();
-                        setTenantRoleEditMode(false);
-                      }}
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      style={buttonAlt}
-                      onClick={() => {
-                        const resetDraft = {};
-                        for (const permissionKey of DEFAULT_TENANT_PERMISSION_KEYS) {
-                          resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedRoleKey}:${permissionKey}`]);
-                        }
-                        setRolePermissionDraft(resetDraft);
-                        setRolePermissionDirty(false);
-                        setTenantRoleEditMode(false);
-                      }}
-                      disabled={!rolePermissionDirty && !tenantRoleEditMode}
-                    >
-                      Reset
-                    </button>
-                  </div>
+                  {tenantRoleEditMode ? (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...buttonBase, opacity: canManageTenantRoles ? 1 : 0.55 }}
+                        disabled={!canManageTenantRoles || !rolePermissionDirty}
+                        onClick={() => {
+                          void saveRolePermissions();
+                          setTenantRoleEditMode(false);
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={() => {
+                          const resetDraft = {};
+                          for (const permissionKey of DEFAULT_TENANT_PERMISSION_KEYS) {
+                            resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedRoleKey}:${permissionKey}`]);
+                          }
+                          setRolePermissionDraft(resetDraft);
+                          setRolePermissionDirty(false);
+                        }}
+                        disabled={!rolePermissionDirty}
+                      >
+                        Reset
+                      </button>
+                      <button
+                        type="button"
+                        style={buttonAlt}
+                        onClick={() => {
+                          const resetDraft = {};
+                          for (const permissionKey of DEFAULT_TENANT_PERMISSION_KEYS) {
+                            resetDraft[permissionKey] = Boolean(rolePermissionMap[`${selectedRoleKey}:${permissionKey}`]);
+                          }
+                          setRolePermissionDraft(resetDraft);
+                          setRolePermissionDirty(false);
+                          setTenantRoleEditMode(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <p style={{ margin: 0, fontSize: 12.5, color: palette.textMuted }}>
@@ -15874,15 +15898,6 @@ export default function PlatformAdminApp() {
             ) : null}
             {activeTab === "domains" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <PcpActionIconButton
-                  label="Add Domain"
-                  src={pcpAddIconSrc}
-                  style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                  disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                  onClick={beginCreateTenantDomainAssignment}
-                />
-              </div>
               <div style={{ display: "grid", gap: 12 }}>
                 {canViewDomainRegistry && inTenantWorkspace ? (
                   <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
@@ -15893,6 +15908,14 @@ export default function PlatformAdminApp() {
                           Select an assigned domain and the section you want to review or edit.
                         </div>
                       </div>
+                      <PcpActionIconButton
+                        label="Add Domain"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
+                        disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                        onClick={beginCreateTenantDomainAssignment}
+                        title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                      />
                     </div>
                     {status.domainAssignments ? (
                       <div style={{ fontSize: 12.5, color: status.domainAssignments.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
@@ -17485,30 +17508,30 @@ export default function PlatformAdminApp() {
 
             {activeTab === "map-features" ? (
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                {!mapFeaturesEditMode ? (
-                  <PcpEditButton
-                    label="Edit Map Features"
-                    style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
-                    disabled={!canEditTenantDomains}
-                    onClick={beginMapFeaturesEdit}
-                    title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
-                  />
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
-                      disabled={!canEditTenantDomains}
-                      onClick={() => void saveMapFeaturesSettings()}
-                    >
-                      Save
-                    </button>
-                    <button type="button" style={buttonAlt} onClick={cancelMapFeaturesEdit}>Cancel</button>
-                  </>
-                )}
-              </div>
-                <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+              <div style={{ ...subPanel, display: "grid", gap: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                    {!mapFeaturesEditMode ? (
+                      <PcpEditButton
+                        label="Edit Map Features"
+                        style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
+                        disabled={!canEditTenantDomains}
+                        onClick={beginMapFeaturesEdit}
+                        title={canEditTenantDomains ? "Edit map features" : "You need the Domains edit permission"}
+                      />
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                          disabled={!canEditTenantDomains}
+                          onClick={() => void saveMapFeaturesSettings()}
+                        >
+                          Save
+                        </button>
+                        <button type="button" style={buttonAlt} onClick={cancelMapFeaturesEdit}>Cancel</button>
+                      </>
+                    )}
+                  </div>
                   {(() => {
                     const mapFeaturesReadOnly = !canEditTenantDomains || !mapFeaturesEditMode;
                     const borderEnabled = !mapFeaturesReadOnly && Boolean(mapFeaturesForm.show_boundary_border);
