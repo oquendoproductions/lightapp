@@ -14434,18 +14434,128 @@ export default function PlatformAdminApp() {
                     >
                       {selectedTenantOrganizationName || selectedTenantKey}
                     </div>
-                    <div
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontSize: "clamp(16px, 5vw, 21px)",
-                        lineHeight: 1.08,
-                        fontWeight: 900,
-                        color: palette.navy900,
-                      }}
-                    >
-                      {activeTenantWorkspaceTab?.label || "Organization Workspace"}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <div
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontSize: "clamp(16px, 5vw, 21px)",
+                          lineHeight: 1.08,
+                          fontWeight: 900,
+                          color: palette.navy900,
+                        }}
+                      >
+                        {activeTenantWorkspaceTab?.label || "Organization Workspace"}
+                      </div>
+                      {activeTab === "domains" ? (
+                        <>
+                          <div ref={assignedDomainSelectorRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              aria-label="Select assigned domain"
+                              aria-haspopup="menu"
+                              aria-expanded={assignedDomainSelectorOpen}
+                              title={selectedAssignedDomainRow?.domain?.label ? `Assigned domain: ${selectedAssignedDomainRow.domain.label}` : "No assigned domains"}
+                              disabled={!selectedTenantAssignedDomainRows.length}
+                              onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
+                              style={{
+                                ...pcpActionIconButtonStyle,
+                                opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
+                                background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
+                                borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
+                              }}
+                            >
+                              {selectedAssignedDomainRow?.domain ? (
+                                <DomainSelectorListIcon
+                                  domainKey={selectedAssignedDomainRow.domain.key}
+                                  src={resolvePcpDomainIconSrc(selectedAssignedDomainRow.domain)}
+                                  size={20}
+                                  containerSize={22}
+                                />
+                              ) : (
+                                <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>—</span>
+                              )}
+                            </button>
+                            {assignedDomainSelectorOpen ? (
+                              <div
+                                role="menu"
+                                aria-label="Assigned domains"
+                                style={{
+                                  ...controlPlaneSubmenu,
+                                  left: 0,
+                                  right: "auto",
+                                  minWidth: 220,
+                                  maxHeight: "min(360px, calc(100dvh - 180px))",
+                                  overflowY: "auto",
+                                  overscrollBehavior: "contain",
+                                  WebkitOverflowScrolling: "touch",
+                                  touchAction: "pan-y",
+                                  zIndex: 45,
+                                }}
+                              >
+                                {selectedTenantAssignedDomainRows.map((row) => {
+                                  const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
+                                  return (
+                                    <button
+                                      key={row.domain.key}
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                        toggleAssignedDomainCard(row.domain.key);
+                                        setAssignedDomainSelectorOpen(false);
+                                      }}
+                                      style={{
+                                        ...controlPlaneSubmenuItem,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
+                                      }}
+                                    >
+                                      <DomainSelectorListIcon
+                                        domainKey={row.domain.key}
+                                        src={resolvePcpDomainIconSrc(row.domain)}
+                                        size={18}
+                                        containerSize={22}
+                                      />
+                                      <span>{row.domain.label}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                          <PcpActionIconButton
+                            label="Add Domain"
+                            src={pcpAddIconSrc}
+                            style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55, flexShrink: 0 }}
+                            disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
+                            onClick={beginCreateTenantDomainAssignment}
+                            title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
+                          />
+                        </>
+                      ) : null}
+                      {activeTab === "parks" ? (
+                        <PcpActionIconButton
+                          label="Add Park"
+                          src={pcpAddIconSrc}
+                          style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55, flexShrink: 0 }}
+                          disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
+                          onClick={beginCreateTenantPark}
+                        />
+                      ) : null}
+                      {activeTab === "files" ? (
+                        <PcpActionIconButton
+                          label="Add Asset"
+                          src={pcpAddIconSrc}
+                          style={{ opacity: canEditTenantFiles ? 1 : 0.55, flexShrink: 0 }}
+                          disabled={!canEditTenantFiles}
+                          onClick={() => openTenantAssetModal()}
+                          title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
+                        />
+                      ) : null}
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
@@ -14506,113 +14616,6 @@ export default function PlatformAdminApp() {
                         href={selectedTenantHubUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                      />
-                    ) : null}
-                    {activeTab === "domains" ? (
-                      <>
-                        <div ref={assignedDomainSelectorRef} style={{ position: "relative", display: "inline-flex" }}>
-                          <button
-                            type="button"
-                            aria-label="Select assigned domain"
-                            aria-haspopup="menu"
-                            aria-expanded={assignedDomainSelectorOpen}
-                            title={selectedAssignedDomainRow?.domain?.label ? `Assigned domain: ${selectedAssignedDomainRow.domain.label}` : "No assigned domains"}
-                            disabled={!selectedTenantAssignedDomainRows.length}
-                            onClick={() => setAssignedDomainSelectorOpen((open) => !open)}
-                            style={{
-                              ...pcpActionIconButtonStyle,
-                              opacity: selectedTenantAssignedDomainRows.length ? 1 : 0.55,
-                              background: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.14)" : pcpActionIconButtonStyle.background,
-                              borderColor: assignedDomainSelectorOpen ? "rgba(18, 128, 106, 0.42)" : pcpActionIconButtonStyle.border,
-                            }}
-                          >
-                            {selectedAssignedDomainRow?.domain ? (
-                              <DomainSelectorListIcon
-                                domainKey={selectedAssignedDomainRow.domain.key}
-                                src={resolvePcpDomainIconSrc(selectedAssignedDomainRow.domain)}
-                                size={20}
-                                containerSize={22}
-                              />
-                            ) : (
-                              <span aria-hidden="true" style={{ fontSize: 18, lineHeight: 1 }}>—</span>
-                            )}
-                          </button>
-                          {assignedDomainSelectorOpen ? (
-                            <div
-                              role="menu"
-                              aria-label="Assigned domains"
-                              style={{
-                                ...controlPlaneSubmenu,
-                                left: "auto",
-                                right: 0,
-                                minWidth: 220,
-                                maxHeight: "min(360px, calc(100dvh - 180px))",
-                                overflowY: "auto",
-                                overscrollBehavior: "contain",
-                                WebkitOverflowScrolling: "touch",
-                                touchAction: "pan-y",
-                                zIndex: 45,
-                              }}
-                            >
-                              {selectedTenantAssignedDomainRows.map((row) => {
-                                const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
-                                return (
-                                  <button
-                                    key={row.domain.key}
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      toggleAssignedDomainCard(row.domain.key);
-                                      setAssignedDomainSelectorOpen(false);
-                                    }}
-                                    style={{
-                                      ...controlPlaneSubmenuItem,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 8,
-                                      ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
-                                    }}
-                                  >
-                                    <DomainSelectorListIcon
-                                      domainKey={row.domain.key}
-                                      src={resolvePcpDomainIconSrc(row.domain)}
-                                      size={18}
-                                      containerSize={22}
-                                    />
-                                    <span>{row.domain.label}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                        <PcpActionIconButton
-                          label="Add Domain"
-                          src={pcpAddIconSrc}
-                          style={{ opacity: canManageDomainRegistry && tenantDomainAssignmentSchemaReady && !tenantDomainAssignmentSaving ? 1 : 0.55 }}
-                          disabled={!canManageDomainRegistry || !tenantDomainAssignmentSchemaReady || tenantDomainAssignmentSaving}
-                          onClick={beginCreateTenantDomainAssignment}
-                          title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
-                        />
-                      </>
-                    ) : null}
-                    {activeTab === "parks" ? (
-                      <PcpActionIconButton
-                        label="Add Park"
-                        src={pcpAddIconSrc}
-                        style={{ opacity: canEditTenantDomains && tenantParkSchemaReady && !tenantParkSaving ? 1 : 0.55 }}
-                        disabled={!canEditTenantDomains || !tenantParkSchemaReady || tenantParkSaving}
-                        onClick={beginCreateTenantPark}
-                      />
-                    ) : null}
-                    {activeTab === "files" ? (
-                      <PcpActionIconButton
-                        label="Add Asset"
-                        src={pcpAddIconSrc}
-                        style={{ opacity: canEditTenantFiles ? 1 : 0.55 }}
-                        disabled={!canEditTenantFiles}
-                        onClick={() => openTenantAssetModal()}
-                        title={canEditTenantFiles ? "Add a new organization asset" : "You need the Files edit permission"}
                       />
                     ) : null}
                   </div>
