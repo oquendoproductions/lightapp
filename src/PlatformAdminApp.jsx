@@ -14635,7 +14635,7 @@ export default function PlatformAdminApp() {
                             ...controlPlaneSubmenu,
                             left: 0,
                             right: "auto",
-                            minWidth: 220,
+                            minWidth: 290,
                             height: selectedTenantAssignedDomainRows.length > 9 ? "min(420px, calc(100dvh - 180px))" : undefined,
                             maxHeight: "min(420px, calc(100dvh - 180px))",
                             overflow: "hidden",
@@ -14664,6 +14664,8 @@ export default function PlatformAdminApp() {
                           >
                             {selectedTenantAssignedDomainRows.map((row) => {
                               const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
+                              const isEnabled = row.active !== false && String(row.visibility || "enabled").trim().toLowerCase() !== "disabled";
+                              const isOrgManaged = row.organization_monitored_repairs !== false;
                               return (
                                 <button
                                   key={row.domain.key}
@@ -14678,6 +14680,7 @@ export default function PlatformAdminApp() {
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 8,
+                                    minWidth: 0,
                                     ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
                                   }}
                                 >
@@ -14687,7 +14690,21 @@ export default function PlatformAdminApp() {
                                     size={18}
                                     containerSize={22}
                                   />
-                                  <span>{row.domain.label}</span>
+                                  <span style={{ display: "flex", flex: 1, minWidth: 0, alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.domain.label}</span>
+                                    <span style={{ display: "inline-flex", flexShrink: 0, gap: 4, alignItems: "center" }}>
+                                      {isEnabled ? (
+                                        <span style={{ borderRadius: 999, padding: "3px 6px", fontSize: 10, fontWeight: 800, lineHeight: 1.1, color: palette.mint700, background: "rgba(18,128,106,0.12)", whiteSpace: "nowrap" }}>
+                                          Enabled
+                                        </span>
+                                      ) : null}
+                                      {isOrgManaged ? (
+                                        <span style={{ borderRadius: 999, padding: "3px 6px", fontSize: 10, fontWeight: 800, lineHeight: 1.1, color: palette.navy500, background: "rgba(46,98,143,0.12)", whiteSpace: "nowrap" }}>
+                                          Org managed
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </span>
                                 </button>
                               );
                             })}
@@ -16134,7 +16151,7 @@ export default function PlatformAdminApp() {
             <div style={{ ...workspaceBodyCard, display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 12 }}>
                 {canViewDomainRegistry && inTenantWorkspace ? (
-                  <div style={{ ...subPanel, display: "grid", gap: 12, background: "rgba(255,255,255,0.78)" }}>
+                  <div style={{ display: "grid", gap: 12 }}>
                     {status.domainAssignments ? (
                       <div style={{ fontSize: 12.5, color: status.domainAssignments.startsWith("Error:") ? palette.red600 : palette.mint700 }}>
                         {status.domainAssignments}
@@ -16153,11 +16170,6 @@ export default function PlatformAdminApp() {
                         const assignment = selectedAssignedDomainRow;
                         if (!assignment) return null;
                         const d = assignment.domain;
-                        const isExpanded =
-                          selectedAssignedDomainKey === d.key
-                          || expandedAssignedDomainCardKey === d.key
-                          || editingTenantDomainAssignmentKey === d.key
-                          || editingDomainKey === d.key;
                         const domainType = String(domainConfigForm?.[d.key]?.domain_type || defaultDomainType(d.key)).trim().toLowerCase() || defaultDomainType(d.key);
                         const coordinateFiles = domainCoordinateFiles?.[d.key] || [];
                         const isAssetBacked = domainType === "asset_backed";
@@ -16184,59 +16196,13 @@ export default function PlatformAdminApp() {
                               if (node) assignedDomainCardRefs.current[d.key] = node;
                               else delete assignedDomainCardRefs.current[d.key];
                             }}
-                            style={{
-                              ...subPanel,
-                              display: "grid",
-                              gap: 10,
-                              background: "rgba(255,255,255,0.7)",
-                              borderColor: "rgba(17,36,69,0.12)",
-                            }}
+                            style={{ display: "grid", gap: 12 }}
                           >
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                              <div style={{ display: "grid", gap: 4 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                  <strong style={{ color: palette.navy900 }}>{d.label}</strong>
-                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: assignment.active ? palette.mint700 : palette.red600, background: assignment.active ? "rgba(18,128,106,0.12)" : "rgba(209,67,67,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                    {assignment.active ? "Assignment Active" : "Assignment Inactive"}
-                                  </span>
-                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                    {d.domain_class === "asset_backed" ? "Asset-Backed" : "Incident-Driven"}
-                                  </span>
-                                  <span style={{
-                                    borderRadius: 999,
-                                    padding: "4px 10px",
-                                    fontSize: 11.5,
-                                    fontWeight: 800,
-                                    color: domainVisibilityForm[d.key] === "disabled" ? palette.red600 : palette.navy500,
-                                    background: domainVisibilityForm[d.key] === "disabled" ? "rgba(209,67,67,0.12)" : "rgba(46,98,143,0.12)",
-                                  }}>
-                                    {domainVisibilityForm[d.key] === "disabled" ? "Disabled" : "Enabled"}
-                                  </span>
-                                  {assignment.organization_monitored_repairs !== false ? (
-                                    <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.mint700, background: "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                      Managed by Organization
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                  <code>{assignment.domain_key}</code>
-                                  {assignment.notification_email ? ` • ${assignment.notification_email}` : ""}
-                                  {assignment.billing_status ? ` • Billing Status ${assignment.billing_status}` : ""}
-                                  {assignment.billing_model ? ` • Billing ${assignment.billing_model}` : ""}
-                                </div>
-                                {assignment.billing_notes ? (
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>Billing notes: {assignment.billing_notes}</div>
-                                ) : null}
-                              </div>
-                            </div>
                                 {selectedAssignedDomainSectionKey === "tenant-assignment" ? (
                                 <div
                               style={{
-                                ...subPanel,
                                 display: "grid",
                                 gap: 10,
-                                background: "rgba(46,98,143,0.08)",
-                                borderColor: "rgba(46,98,143,0.2)",
                               }}
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
@@ -16396,11 +16362,8 @@ export default function PlatformAdminApp() {
                                 {selectedAssignedDomainSectionKey === "marker-icon" ? (
                             <div
                               style={{
-                                ...subPanel,
                                 display: "grid",
                                 gap: 10,
-                                background: "linear-gradient(180deg, rgba(18,128,106,0.14) 0%, rgba(18,128,106,0.09) 100%)",
-                                borderColor: "rgba(18,128,106,0.26)",
                               }}
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
@@ -16735,7 +16698,7 @@ export default function PlatformAdminApp() {
                                 ) : null}
                               </div>
                               {isAssetBacked ? (
-                                <div style={{ ...subPanel, display: "grid", gap: 8, background: "rgba(255,255,255,0.72)" }}>
+                                <div style={{ display: "grid", gap: 8 }}>
                                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                     <div style={{ display: "grid", gap: 3 }}>
                                       <div style={{ fontSize: 12.5, fontWeight: 800, color: palette.navy900 }}>Coordinate Files</div>
@@ -16788,11 +16751,8 @@ export default function PlatformAdminApp() {
                                 {selectedAssignedDomainSectionKey === "reporting" ? (
                               <div
                                 style={{
-                                  ...subPanel,
                                   display: "grid",
                                   gap: 10,
-                                  background: "rgba(255,255,255,0.78)",
-                                  borderColor: "rgba(17,36,69,0.12)",
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
@@ -17136,11 +17096,8 @@ export default function PlatformAdminApp() {
                                 </div>
                               <div
                                 style={{
-                                  ...subPanel,
                                   display: "grid",
                                   gap: 10,
-                                  background: "rgba(255,255,255,0.78)",
-                                  borderColor: "rgba(17,36,69,0.12)",
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -17312,11 +17269,8 @@ export default function PlatformAdminApp() {
                               </div>
                               <div
                                 style={{
-                                  ...subPanel,
                                   display: "grid",
                                   gap: 10,
-                                  background: "rgba(255,255,255,0.78)",
-                                  borderColor: "rgba(17,36,69,0.12)",
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -17515,11 +17469,8 @@ export default function PlatformAdminApp() {
                                 {selectedAssignedDomainSectionKey === "report-email-template" ? (
                               <div
                                 style={{
-                                  ...subPanel,
                                   display: "grid",
                                   gap: 10,
-                                  background: "rgba(255,255,255,0.78)",
-                                  borderColor: "rgba(17,36,69,0.12)",
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
