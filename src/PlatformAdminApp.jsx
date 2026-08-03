@@ -17730,8 +17730,8 @@ export default function PlatformAdminApp() {
                                   gap: 10,
                                 }}
                               >
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                                  <div style={{ display: "grid", gap: 3 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "nowrap" }}>
+                                  <div style={{ display: "grid", gap: 3, minWidth: 0, flex: "1 1 0" }}>
                                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Notifications</div>
                                     <div style={{ fontSize: 11.5, color: palette.textMuted }}>
                                       Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
@@ -17739,7 +17739,7 @@ export default function PlatformAdminApp() {
                                       {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
                                     </div>
                                   </div>
-                                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+                                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "nowrap", marginLeft: "auto", flexShrink: 0 }}>
                                     {!isEditingReportEmailSection ? (
                                       <PcpEditButton
                                         label="Edit Notifications"
