@@ -11374,9 +11374,9 @@ export default function PlatformAdminApp() {
           ? {
               padding: "16px 12px 14px",
               margin: "0 -12px -12px",
-              background: "linear-gradient(135deg, rgba(218, 233, 244, 0.92), rgba(239, 246, 250, 0.96))",
-              borderTop: "1px solid rgba(23, 49, 79, 0.24)",
-              boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 12px 18px -20px rgba(23, 49, 79, 0.7)",
+              background: "linear-gradient(135deg, rgba(237, 239, 241, 0.98), rgba(247, 248, 249, 0.98))",
+              borderTop: "1px solid rgba(52, 61, 70, 0.22)",
+              boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.88), inset 0 12px 18px -20px rgba(52, 61, 70, 0.56)",
             }
           : {}),
         ...style,
