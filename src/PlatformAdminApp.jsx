@@ -17555,6 +17555,7 @@ export default function PlatformAdminApp() {
                                                   style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
                                                   disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
                                                   onClick={() => {
+                                                    if (typeof window !== "undefined" && !window.confirm(`Remove Field ${typeIndex + 1}? You will still need to save this change.`)) return;
                                                     setDomainConfigForm((prev) => ({
                                                       ...prev,
                                                       [d.key]: {
@@ -17715,6 +17716,7 @@ export default function PlatformAdminApp() {
                                                 style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
                                                 disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
                                                 onClick={() => {
+                                                  if (typeof window !== "undefined" && !window.confirm(`Remove Disclosure ${disclosureIndex + 1}? You will still need to save this change.`)) return;
                                                   setDomainConfigForm((prev) => ({
                                                     ...prev,
                                                     [d.key]: {
