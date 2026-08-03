@@ -10134,6 +10134,35 @@ export default function PlatformAdminApp() {
             ))}
           </select>
         </label>
+        <div style={{ ...modalField, justifyContent: "start" }}>
+          <span>Repair Monitoring</span>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minHeight: 48,
+              padding: "0 14px",
+              borderRadius: 14,
+              border: "1px solid rgba(17, 36, 69, 0.14)",
+              background: "rgba(255,255,255,0.92)",
+              color: palette.navy900,
+              fontWeight: 700,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
+              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
+            />
+            <span style={{ display: "grid", gap: 2 }}>
+              <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+              <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                {tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "Yes" : "No"}
+              </span>
+            </span>
+          </label>
+        </div>
         <label style={modalField}>
           <span>Fallback Notification Email</span>
           <input
@@ -10179,35 +10208,6 @@ export default function PlatformAdminApp() {
             style={modalInput}
           />
         </label>
-        <div style={{ ...modalField, justifyContent: "center" }}>
-          <span>Repair Monitoring</span>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              minHeight: 48,
-              padding: "0 14px",
-              borderRadius: 14,
-              border: "1px solid rgba(17, 36, 69, 0.14)",
-              background: "rgba(255,255,255,0.92)",
-              color: palette.navy900,
-              fontWeight: 700,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
-              onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
-            />
-            <span style={{ display: "grid", gap: 2 }}>
-              <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
-              <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                {tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "Yes" : "No"}
-              </span>
-            </span>
-          </label>
-        </div>
       </div>
       <div style={{ fontSize: 12, color: palette.textMuted }}>
         Department routing is configured from this domain’s <b>Reporting</b> section. This legacy address is only used when no routed department has an email.
@@ -16208,11 +16208,8 @@ export default function PlatformAdminApp() {
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
                                   <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Tenant Assignment</div>
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    Activation, routing, billing, and operational ownership for this tenant/domain assignment.
-                                  </div>
                                 </div>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                   {!isEditingAssignment ? (
                                     <PcpEditButton
                                       label="Edit Assignment"
@@ -16277,6 +16274,36 @@ export default function PlatformAdminApp() {
                                     ))}
                                   </select>
                                 </label>
+                                <div style={{ ...modalField, justifyContent: "start" }}>
+                                  <span>Repair Monitoring</span>
+                                  <label
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                      minHeight: 48,
+                                      padding: "0 14px",
+                                      borderRadius: 14,
+                                      border: "1px solid rgba(17, 36, 69, 0.14)",
+                                      background: "#eef4fb",
+                                      color: palette.navy900,
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false}
+                                      disabled={assignmentFieldsReadOnly}
+                                      onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
+                                    />
+                                    <span style={{ display: "grid", gap: 2 }}>
+                                      <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
+                                      <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
+                                        {(isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false) ? "Yes" : "No"}
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
                                 <label style={modalField}>
                                   <span>Billing Status</span>
                                   <select
@@ -16315,36 +16342,6 @@ export default function PlatformAdminApp() {
                                     style={{ ...modalInput, background: assignmentFieldsReadOnly ? "#eef4fb" : modalInput.background }}
                                   />
                                 </label>
-                                <div style={{ ...modalField, justifyContent: "center" }}>
-                                  <span>Repair Monitoring</span>
-                                  <label
-                                    style={{
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 8,
-                                      minHeight: 48,
-                                      padding: "0 14px",
-                                      borderRadius: 14,
-                                      border: "1px solid rgba(17, 36, 69, 0.14)",
-                                      background: "#eef4fb",
-                                      color: palette.navy900,
-                                      fontWeight: 700,
-                                    }}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false}
-                                      disabled={assignmentFieldsReadOnly}
-                                      onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, organization_monitored_repairs: e.target.checked }))}
-                                    />
-                                    <span style={{ display: "grid", gap: 2 }}>
-                                      <span style={{ fontWeight: 800 }}>Managed by Organization?</span>
-                                      <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                        {(isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false) ? "Yes" : "No"}
-                                      </span>
-                                    </span>
-                                  </label>
-                                </div>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                   <span>Billing Notes</span>
                                   <textarea
@@ -16369,13 +16366,8 @@ export default function PlatformAdminApp() {
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
                                   <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Marker and Icon Settings</div>
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    {isAssetBacked
-                                      ? "Persistent mapped assets can be seeded with coordinates and also route notifications."
-                                      : "Resident and staff reports create incidents in this domain and route to the selected notification inbox."}
-                                  </div>
                                 </div>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                   {!isEditingMarkerIconSection ? (
                                     <PcpEditButton
                                       label="Edit Settings"
@@ -16758,11 +16750,8 @@ export default function PlatformAdminApp() {
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                   <div style={{ display: "grid", gap: 4 }}>
                                     <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Reporting</div>
-                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Configure placement rules, visibility thresholds, type options, and report disclosures for this tenant.
-                                    </div>
                                   </div>
-                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                     {!isEditingReportingSection ? (
                                       <PcpEditButton
                                         label="Edit Reporting"
@@ -17476,16 +17465,13 @@ export default function PlatformAdminApp() {
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                   <div style={{ display: "grid", gap: 3 }}>
                                     <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
-                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Start from a preset, then edit the subject and body. Macros are replaced with report details when the notification email is sent.
-                                    </div>
                                     <div style={{ fontSize: 11.5, color: palette.textMuted }}>
                                       Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
                                       {" • "}
                                       {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).description}
                                     </div>
                                   </div>
-                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                     {!isEditingReportEmailSection ? (
                                       <PcpEditButton
                                         label="Edit Email Template"
