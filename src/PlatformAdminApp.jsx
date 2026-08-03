@@ -11201,16 +11201,42 @@ export default function PlatformAdminApp() {
                 ? (active ? controlPlaneMobileTabButtonActive : controlPlaneMobileTabButton)
                 : (active ? controlPlaneTabButtonActive : controlPlaneTabButton);
               if (isOrganizationsTab) {
+                const organizationTabGroupStyle = {
+                  position: "relative",
+                  minWidth: 0,
+                  display: "grid",
+                  gridTemplateColumns: isCompactViewport ? "minmax(0, 1fr) 30px" : "minmax(0, 1fr) 32px",
+                  gap: 0,
+                  overflow: "hidden",
+                  borderRadius: isCompactViewport ? 18 : 999,
+                  ...(isCompactViewport
+                    ? (active ? { background: "rgba(23, 109, 120, 0.14)" } : null)
+                    : (active
+                      ? {
+                          border: "1px solid transparent",
+                          background: "linear-gradient(135deg, #113d5f 0%, #176d78 100%)",
+                        }
+                      : {
+                          border: "1px solid rgba(23, 49, 79, 0.15)",
+                          background: "rgba(255, 255, 255, 0.92)",
+                        })),
+                };
+                const organizationTabButtonStyle = {
+                  ...tabButtonStyle,
+                  background: "transparent",
+                  border: 0,
+                  borderRadius: 0,
+                };
                 return (
                   <div
                     key={item.key}
-                    style={{ position: "relative", minWidth: 0, display: "grid", gridTemplateColumns: isCompactViewport ? "minmax(0, 1fr) 30px" : "minmax(0, 1fr) 32px", gap: 4 }}
+                    style={organizationTabGroupStyle}
                     onClick={(event) => event.stopPropagation()}
                   >
                     <button
                       type="button"
                       onClick={() => openControlPlanePage(item.key)}
-                      style={tabButtonStyle}
+                      style={organizationTabButtonStyle}
                     >
                       <span>{item.label}</span>
                     </button>
@@ -11221,7 +11247,7 @@ export default function PlatformAdminApp() {
                       title="Organization actions"
                       onClick={() => setOpenControlPlaneDropdown((prev) => (prev === "organization-actions" ? "" : "organization-actions"))}
                       style={{
-                        ...tabButtonStyle,
+                        ...organizationTabButtonStyle,
                         minWidth: 0,
                         padding: isCompactViewport ? "8px 2px" : "0 6px",
                         fontSize: isCompactViewport ? 16 : 18,
