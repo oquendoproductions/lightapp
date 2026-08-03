@@ -11365,7 +11365,23 @@ export default function PlatformAdminApp() {
     </section>
   ) : null;
   const renderTenantDepartmentEditor = (style = {}) => (
-    <form onSubmit={(event) => void saveTenantDepartment(event)} style={{ display: "grid", gap: 10, ...style }}>
+    <form
+      onSubmit={(event) => void saveTenantDepartment(event)}
+      style={{
+        display: "grid",
+        gap: 10,
+        ...(editingTenantDepartmentId
+          ? {
+              padding: "16px 12px 14px",
+              margin: "0 -12px -12px",
+              background: "linear-gradient(135deg, rgba(218, 233, 244, 0.92), rgba(239, 246, 250, 0.96))",
+              borderTop: "1px solid rgba(23, 49, 79, 0.24)",
+              boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 12px 18px -20px rgba(23, 49, 79, 0.7)",
+            }
+          : {}),
+        ...style,
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 900, color: palette.navy900 }}>
           {editingTenantDepartmentId ? "Edit Department" : "Add Department"}
@@ -15858,7 +15874,7 @@ export default function PlatformAdminApp() {
                       />
                     </div>
                     {tenantDepartmentEditorOpen && String(editingTenantDepartmentId) === String(department.id) ? (
-                      renderTenantDepartmentEditor({ gridColumn: "1 / -1", paddingTop: 12, borderTop: "1px solid rgba(23, 49, 79, 0.14)" })
+                      renderTenantDepartmentEditor({ gridColumn: "1 / -1" })
                     ) : null}
                   </div>
                 ))}
