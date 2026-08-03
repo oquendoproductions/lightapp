@@ -14591,14 +14591,41 @@ export default function PlatformAdminApp() {
                         left: 0,
                         right: "auto",
                         minWidth: 220,
-                        maxHeight: "min(360px, calc(100dvh - 180px))",
-                        overflowY: "auto",
+                        maxHeight: "min(520px, calc(100dvh - 172px))",
+                        overflowX: "hidden",
+                        overflowY: "scroll",
                         overscrollBehavior: "contain",
+                        scrollbarGutter: "stable",
+                        scrollbarWidth: "thin",
                         WebkitOverflowScrolling: "touch",
                         touchAction: "pan-y",
                         zIndex: 45,
                       }}
                     >
+                      {selectedTenantAssignedDomainRows.length > 6 ? (
+                        <div
+                          aria-hidden="true"
+                          style={{
+                            position: "sticky",
+                            top: 0,
+                            zIndex: 1,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                            margin: "-8px -8px 2px",
+                            padding: "7px 10px",
+                            borderBottom: "1px solid rgba(23, 49, 79, 0.12)",
+                            background: "rgba(247, 251, 255, 0.98)",
+                            color: palette.textMuted,
+                            fontSize: 11,
+                            fontWeight: 800,
+                          }}
+                        >
+                          <span>{selectedTenantAssignedDomainRows.length} assigned domains</span>
+                          <span>Scroll for more ↓</span>
+                        </div>
+                      ) : null}
                       {selectedTenantAssignedDomainRows.map((row) => {
                         const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
                         return (
