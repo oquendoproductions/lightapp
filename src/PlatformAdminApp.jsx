@@ -3085,6 +3085,7 @@ export default function PlatformAdminApp() {
   const [domainConfigForm, setDomainConfigForm] = useState(initialDomainConfigForm);
   const [editingDomainKey, setEditingDomainKey] = useState("");
   const [editingAssignedDomainSectionKey, setEditingAssignedDomainSectionKey] = useState("");
+  const [editingDomainSectionCardId, setEditingDomainSectionCardId] = useState("");
   const [editingOrganizationSection, setEditingOrganizationSection] = useState("");
   const [editingDomainSnapshot, setEditingDomainSnapshot] = useState(null);
   const [mapFeaturesForm, setMapFeaturesForm] = useState(initialMapFeaturesForm);
@@ -6424,6 +6425,7 @@ export default function PlatformAdminApp() {
 
   useEffect(() => {
     setEditingDomainKey("");
+    setEditingDomainSectionCardId("");
     setEditingDomainSnapshot(null);
   }, [selectedTenantKey]);
 
@@ -6738,6 +6740,7 @@ export default function PlatformAdminApp() {
     }
     if (activeTab !== "domains") {
       setEditingDomainKey("");
+      setEditingDomainSectionCardId("");
       setEditingDomainSnapshot(null);
       setMapFeaturesEditMode(false);
       setMapFeaturesSnapshot(null);
@@ -9016,6 +9019,7 @@ export default function PlatformAdminApp() {
       }
       setEditingDomainKey("");
       setEditingAssignedDomainSectionKey("");
+      setEditingDomainSectionCardId("");
       setEditingDomainSnapshot(null);
       setExpandedAssignedDomainCardKey((prev) => (prev === closingDomainKey ? "" : prev));
     }
@@ -9611,7 +9615,7 @@ export default function PlatformAdminApp() {
     setTenantAssetsManagementView("add");
   }, []);
 
-  const beginDomainEdit = useCallback((domainKey, sectionKey = "marker-icon") => {
+  const beginDomainEdit = useCallback((domainKey, sectionKey = "marker-icon", cardId = "") => {
     const key = String(domainKey || "").trim().toLowerCase();
     if (!key) return;
     setExpandedAssignedDomainCardKey(key);
@@ -9619,6 +9623,7 @@ export default function PlatformAdminApp() {
     setSelectedAssignedDomainSectionKey(sectionKey);
     setEditingDomainKey(key);
     setEditingAssignedDomainSectionKey(sectionKey);
+    setEditingDomainSectionCardId(String(cardId || ""));
     setEditingDomainSnapshot({
       key,
       visibility: String(domainVisibilityForm?.[key] || "enabled"),
@@ -9653,6 +9658,7 @@ export default function PlatformAdminApp() {
     }
     setEditingDomainKey("");
     setEditingAssignedDomainSectionKey("");
+    setEditingDomainSectionCardId("");
     setEditingDomainSnapshot(null);
   }, [editingDomainSnapshot]);
 
@@ -9676,6 +9682,14 @@ export default function PlatformAdminApp() {
     }
 
     if (editingDomainKey) {
+      if (editingDomainSectionCardId && nextSectionKey !== editingAssignedDomainSectionKey) {
+        setStatus((prev) => ({
+          ...prev,
+          domains: "Save or cancel the current card edit before opening another domain section.",
+        }));
+        setSelectedAssignedDomainSectionKey(editingAssignedDomainSectionKey || "reporting-fields");
+        return;
+      }
       if (nextSectionKey === "tenant-assignment") {
         setStatus((prev) => ({
           ...prev,
@@ -9690,7 +9704,7 @@ export default function PlatformAdminApp() {
     }
 
     setSelectedAssignedDomainSectionKey(nextSectionKey);
-  }, [editingAssignedDomainSectionKey, editingDomainKey, editingTenantDomainAssignmentKey]);
+  }, [editingAssignedDomainSectionKey, editingDomainKey, editingDomainSectionCardId, editingTenantDomainAssignmentKey]);
 
   const toggleDomainRegistryCard = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
@@ -16585,6 +16599,8 @@ export default function PlatformAdminApp() {
                         const isReportingSection = reportingSectionKeys.includes(selectedAssignedDomainSectionKey);
                         const isEditingReportingSection = reportingSectionKeys.includes(activeDomainEditSectionKey);
                         const isEditingReportEmailSection = activeDomainEditSectionKey === "report-email-template";
+                        const isCardBasedReportingSection = isReportingFieldsSection || isReportDisclosuresSection;
+                        const isEditingReportingCard = isEditingReportingSection && Boolean(editingDomainSectionCardId);
                         const domainFieldsReadOnly = !canEditTenantDomains || (
                           activeDomainEditSectionKey !== selectedAssignedDomainSectionKey
                           && !(isReportingSection && isEditingReportingSection)
@@ -17155,9 +17171,9 @@ export default function PlatformAdminApp() {
                                     </div>
                                   </div>
                                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
-                                    {!isEditingReportingSection ? (
+                                    {isCardBasedReportingSection ? (
                                       <>
-                                        {isReportingFieldsSection ? (
+                                        {!isEditingReportingSection && isReportingFieldsSection ? (
                                           <PcpActionIconButton
                                             label="Add Reporting Field"
                                             title="Add reporting field"
@@ -17165,7 +17181,8 @@ export default function PlatformAdminApp() {
                                             style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                             disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
                                             onClick={() => {
-                                              beginDomainEdit(d.key, "reporting-fields");
+                                              const fieldId = createDomainDisclosureId("type_option");
+                                              beginDomainEdit(d.key, "reporting-fields", fieldId);
                                               setDomainConfigForm((prev) => ({
                                                 ...prev,
                                                 [d.key]: {
@@ -17173,7 +17190,7 @@ export default function PlatformAdminApp() {
                                                   type_options: [
                                                     ...(Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []),
                                                     {
-                                                      id: createDomainDisclosureId("type_option"),
+                                                      id: fieldId,
                                                       option_key: "",
                                                       option_label: defaultDomainTypeOptionLabel(d.key, Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options.length : 0),
                                                       choices_input: "",
@@ -17184,7 +17201,7 @@ export default function PlatformAdminApp() {
                                             }}
                                           />
                                         ) : null}
-                                        {isReportDisclosuresSection ? (
+                                        {!isEditingReportingSection && isReportDisclosuresSection ? (
                                           <PcpActionIconButton
                                             label="Add Disclosure"
                                             title="Add disclosure"
@@ -17192,7 +17209,8 @@ export default function PlatformAdminApp() {
                                             style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                             disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
                                             onClick={() => {
-                                              beginDomainEdit(d.key, "report-disclosures");
+                                              const disclosureId = createDomainDisclosureId("report_disclosure");
+                                              beginDomainEdit(d.key, "report-disclosures", disclosureId);
                                               setDomainConfigForm((prev) => ({
                                                 ...prev,
                                                 [d.key]: {
@@ -17200,7 +17218,7 @@ export default function PlatformAdminApp() {
                                                   report_disclosures: [
                                                     ...(Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []),
                                                     {
-                                                      id: createDomainDisclosureId("report_disclosure"),
+                                                      id: disclosureId,
                                                       title: "",
                                                       body: "",
                                                       required_acknowledgement: false,
@@ -17212,24 +17230,41 @@ export default function PlatformAdminApp() {
                                             }}
                                           />
                                         ) : null}
-                                        <PcpEditButton
-                                          label={`Edit ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}`}
-                                          style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
-                                          disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
-                                          onClick={() => beginDomainEdit(d.key, selectedAssignedDomainSectionKey)}
-                                          title={
-                                            isEditingDomain && !isEditingReportingSection
-                                              ? "Finish the current domain section edit before opening another one."
-                                              : editLockedByOtherDomain
-                                                ? "Finish the current domain edit before opening another domain."
-                                                : isEditingAssignment
-                                                  ? "Finish editing assignment before editing this report section."
-                                                  : canEditTenantDomains
-                                                    ? `Edit ${d.label} ${isReportingFieldsSection ? "reporting fields" : isReportDisclosuresSection ? "report disclosures" : "report settings"}`
-                                                    : "You need the Domains edit permission"
-                                          }
-                                        />
+                                        {isEditingReportingSection && !isEditingReportingCard ? (
+                                          <>
+                                            <PcpCancelButton
+                                              label={`Cancel ${isReportingFieldsSection ? "Reporting Fields" : "Report Disclosures"} edits`}
+                                              title="Cancel"
+                                              onClick={() => cancelDomainEdit(d.key)}
+                                            />
+                                            <PcpConfirmButton
+                                              label={`Save ${isReportingFieldsSection ? "Reporting Fields" : "Report Disclosures"}`}
+                                              title="Save"
+                                              style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                              disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                              onClick={() => void saveReportNotifications(d.key)}
+                                            />
+                                          </>
+                                        ) : null}
                                       </>
+                                    ) : !isEditingReportingSection ? (
+                                      <PcpEditButton
+                                        label="Edit Report Settings"
+                                        style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                        disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                        onClick={() => beginDomainEdit(d.key, selectedAssignedDomainSectionKey)}
+                                        title={
+                                          isEditingDomain && !isEditingReportingSection
+                                            ? "Finish the current domain section edit before opening another one."
+                                            : editLockedByOtherDomain
+                                              ? "Finish the current domain edit before opening another domain."
+                                              : isEditingAssignment
+                                                ? "Finish editing assignment before editing this report section."
+                                                : canEditTenantDomains
+                                                  ? `Edit ${d.label} report settings`
+                                                  : "You need the Domains edit permission"
+                                        }
+                                      />
                                     ) : (
                                       <>
                                         <PcpConfirmButton
@@ -17476,9 +17511,13 @@ export default function PlatformAdminApp() {
                               >
                                 {domainTypeOptionRows.length ? (
                                   <div style={{ display: "grid", gap: 10 }}>
-                                    {domainTypeOptionRows.map((typeOption, typeIndex) => (
+                                    {domainTypeOptionRows.map((typeOption, typeIndex) => {
+                                      const fieldCardId = String(typeOption.id || `${d.key}:type-option:${typeIndex}`);
+                                      const fieldCardEditing = isEditingReportingSection && editingDomainSectionCardId === fieldCardId;
+                                      const fieldCardReadOnly = domainFieldsReadOnly || !fieldCardEditing;
+                                      return (
                                       <div
-                                        key={typeOption.id || `${d.key}:type-option:${typeIndex}`}
+                                        key={fieldCardId}
                                         style={{
                                           display: "grid",
                                           gap: 10,
@@ -17491,77 +17530,58 @@ export default function PlatformAdminApp() {
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                             <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
-                                              Reporting Field {typeIndex + 1}
+                                              Field {typeIndex + 1}
                                             </span>
-                                            {domainReportingFieldTemplateTokens(typeIndex + 1).map((token) => (
-                                              <span
-                                                key={token}
-                                                style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}
-                                              >
-                                                {token}
-                                              </span>
-                                            ))}
                                           </div>
                                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                            <button
-                                              type="button"
-                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly || typeIndex === 0 ? 0.55 : 1 }}
-                                              disabled={domainFieldsReadOnly || typeIndex === 0}
-                                              onClick={() => setDomainConfigForm((prev) => {
-                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
-                                                if (!(typeIndex > 0) || !rows[typeIndex]) return prev;
-                                                [rows[typeIndex - 1], rows[typeIndex]] = [rows[typeIndex], rows[typeIndex - 1]];
-                                                return {
-                                                  ...prev,
-                                                  [d.key]: {
-                                                    ...(prev?.[d.key] || {}),
-                                                    type_options: rows,
-                                                  },
-                                                };
-                                              })}
-                                            >
-                                              Move Up
-                                            </button>
-                                            <button
-                                              type="button"
-                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly || typeIndex >= domainTypeOptionRows.length - 1 ? 0.55 : 1 }}
-                                              disabled={domainFieldsReadOnly || typeIndex >= domainTypeOptionRows.length - 1}
-                                              onClick={() => setDomainConfigForm((prev) => {
-                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
-                                                if (typeIndex >= rows.length - 1 || !rows[typeIndex]) return prev;
-                                                [rows[typeIndex], rows[typeIndex + 1]] = [rows[typeIndex + 1], rows[typeIndex]];
-                                                return {
-                                                  ...prev,
-                                                  [d.key]: {
-                                                    ...(prev?.[d.key] || {}),
-                                                    type_options: rows,
-                                                  },
-                                                };
-                                              })}
-                                            >
-                                              Move Down
-                                            </button>
-                                            <button
-                                              type="button"
-                                              style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
-                                              disabled={domainFieldsReadOnly}
-                                              onClick={() => setDomainConfigForm((prev) => ({
-                                                ...prev,
-                                                [d.key]: {
-                                                  ...(prev?.[d.key] || {}),
-                                                  type_options: (Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : [])
-                                                    .filter((row, rowIndex) => rowIndex !== typeIndex),
-                                                },
-                                              }))}
-                                            >
-                                              Remove
-                                            </button>
+                                            {fieldCardEditing ? (
+                                              <>
+                                                <PcpCancelButton
+                                                  label={`Cancel Field ${typeIndex + 1} edits`}
+                                                  title="Cancel"
+                                                  onClick={() => cancelDomainEdit(d.key)}
+                                                />
+                                                <PcpConfirmButton
+                                                  label={`Save Field ${typeIndex + 1}`}
+                                                  title="Save"
+                                                  style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                                  disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                                  onClick={() => void saveReportNotifications(d.key)}
+                                                />
+                                                <PcpActionIconButton
+                                                  label={`Remove Field ${typeIndex + 1}`}
+                                                  title={`Remove Field ${typeIndex + 1}`}
+                                                  src={pcpTrashIconSrc}
+                                                  style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                                  disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                                  onClick={() => {
+                                                    setDomainConfigForm((prev) => ({
+                                                      ...prev,
+                                                      [d.key]: {
+                                                        ...(prev?.[d.key] || {}),
+                                                        type_options: (Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : [])
+                                                          .filter((row) => String(row?.id || "") !== fieldCardId),
+                                                      },
+                                                    }));
+                                                    setEditingDomainSectionCardId("");
+                                                  }}
+                                                />
+                                              </>
+                                            ) : (
+                                              <PcpEditButton
+                                                label={`Edit Field ${typeIndex + 1}`}
+                                                style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                                disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                                onClick={() => beginDomainEdit(d.key, "reporting-fields", fieldCardId)}
+                                                title={`Edit Field ${typeIndex + 1}`}
+                                              />
+                                            )}
                                           </div>
                                         </div>
                                         <label style={modalField}>
                                           <span>Field Label</span>
                                           <input
-                                            readOnly={domainFieldsReadOnly}
+                                            readOnly={fieldCardReadOnly}
                                             value={typeOption.option_label || ""}
                                             onChange={(e) => setDomainConfigForm((prev) => ({
                                               ...prev,
@@ -17575,13 +17595,13 @@ export default function PlatformAdminApp() {
                                               },
                                             }))}
                                             placeholder={defaultDomainTypeOptionLabel(d.key, typeIndex)}
-                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                            style={{ ...modalInput, background: fieldCardReadOnly ? "#eef4fb" : modalInput.background }}
                                           />
                                         </label>
                                         <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                           <span>Field Choices</span>
                                           <textarea
-                                            readOnly={domainFieldsReadOnly}
+                                            readOnly={fieldCardReadOnly}
                                             value={typeOption.choices_input || ""}
                                             onChange={(e) => setDomainConfigForm((prev) => ({
                                               ...prev,
@@ -17596,14 +17616,45 @@ export default function PlatformAdminApp() {
                                             }))}
                                             rows={4}
                                             placeholder={"Choice 1\nChoice 2\nChoice 3"}
-                                            style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                            style={{ ...modalInput, minHeight: 110, resize: "vertical", background: fieldCardReadOnly ? "#eef4fb" : modalInput.background }}
                                           />
                                           <div style={{ fontSize: 11.5, color: palette.textMuted, marginTop: 6 }}>
                                             One choice per line. These choices appear in the report modal under this type option.
                                           </div>
                                         </label>
+                                        {fieldCardEditing ? (
+                                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                            <button
+                                              type="button"
+                                              style={{ ...buttonAlt, opacity: typeIndex === 0 ? 0.55 : 1 }}
+                                              disabled={typeIndex === 0}
+                                              onClick={() => setDomainConfigForm((prev) => {
+                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
+                                                if (!(typeIndex > 0) || !rows[typeIndex]) return prev;
+                                                [rows[typeIndex - 1], rows[typeIndex]] = [rows[typeIndex], rows[typeIndex - 1]];
+                                                return { ...prev, [d.key]: { ...(prev?.[d.key] || {}), type_options: rows } };
+                                              })}
+                                            >
+                                              Move Up
+                                            </button>
+                                            <button
+                                              type="button"
+                                              style={{ ...buttonAlt, opacity: typeIndex >= domainTypeOptionRows.length - 1 ? 0.55 : 1 }}
+                                              disabled={typeIndex >= domainTypeOptionRows.length - 1}
+                                              onClick={() => setDomainConfigForm((prev) => {
+                                                const rows = Array.isArray(prev?.[d.key]?.type_options) ? [...prev[d.key].type_options] : [];
+                                                if (typeIndex >= rows.length - 1 || !rows[typeIndex]) return prev;
+                                                [rows[typeIndex], rows[typeIndex + 1]] = [rows[typeIndex + 1], rows[typeIndex]];
+                                                return { ...prev, [d.key]: { ...(prev?.[d.key] || {}), type_options: rows } };
+                                              })}
+                                            >
+                                              Move Down
+                                            </button>
+                                          </div>
+                                        ) : null}
                                       </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 ) : (
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
@@ -17620,9 +17671,13 @@ export default function PlatformAdminApp() {
                                 }}
                               >
                                 <div style={{ display: "grid", gap: 10 }}>
-                                  {domainDisclosureRows.length ? domainDisclosureRows.map((disclosure, disclosureIndex) => (
+                                  {domainDisclosureRows.length ? domainDisclosureRows.map((disclosure, disclosureIndex) => {
+                                    const disclosureCardId = String(disclosure.id || `${d.key}:disclosure:${disclosureIndex}`);
+                                    const disclosureCardEditing = isEditingReportingSection && editingDomainSectionCardId === disclosureCardId;
+                                    const disclosureCardReadOnly = domainFieldsReadOnly || !disclosureCardEditing;
+                                    return (
                                     <div
-                                      key={disclosure.id || `${d.key}:disclosure:${disclosureIndex}`}
+                                      key={disclosureCardId}
                                       style={{
                                         display: "grid",
                                         gap: 10,
@@ -17644,27 +17699,56 @@ export default function PlatformAdminApp() {
                                             {disclosure.required_acknowledgement ? "Required acknowledgment" : "Informational"}
                                           </span>
                                         </div>
-                                        <button
-                                          type="button"
-                                          style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
-                                          disabled={domainFieldsReadOnly}
-                                          onClick={() => setDomainConfigForm((prev) => ({
-                                            ...prev,
-                                            [d.key]: {
-                                              ...(prev?.[d.key] || {}),
-                                              report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : [])
-                                                .filter((row, rowIndex) => rowIndex !== disclosureIndex),
-                                            },
-                                          }))}
-                                        >
-                                          Remove
-                                        </button>
+                                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                          {disclosureCardEditing ? (
+                                            <>
+                                              <PcpCancelButton
+                                                label={`Cancel Disclosure ${disclosureIndex + 1} edits`}
+                                                title="Cancel"
+                                                onClick={() => cancelDomainEdit(d.key)}
+                                              />
+                                              <PcpConfirmButton
+                                                label={`Save Disclosure ${disclosureIndex + 1}`}
+                                                title="Save"
+                                                style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                                disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                                onClick={() => void saveReportNotifications(d.key)}
+                                              />
+                                              <PcpActionIconButton
+                                                label={`Remove Disclosure ${disclosureIndex + 1}`}
+                                                title={`Remove Disclosure ${disclosureIndex + 1}`}
+                                                src={pcpTrashIconSrc}
+                                                style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                                disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                                onClick={() => {
+                                                  setDomainConfigForm((prev) => ({
+                                                    ...prev,
+                                                    [d.key]: {
+                                                      ...(prev?.[d.key] || {}),
+                                                      report_disclosures: (Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : [])
+                                                        .filter((row) => String(row?.id || "") !== disclosureCardId),
+                                                    },
+                                                  }));
+                                                  setEditingDomainSectionCardId("");
+                                                }}
+                                              />
+                                            </>
+                                          ) : (
+                                            <PcpEditButton
+                                              label={`Edit Disclosure ${disclosureIndex + 1}`}
+                                              style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                              disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                              onClick={() => beginDomainEdit(d.key, "report-disclosures", disclosureCardId)}
+                                              title={`Edit Disclosure ${disclosureIndex + 1}`}
+                                            />
+                                          )}
+                                        </div>
                                       </div>
                                       <div style={responsiveActionGrid}>
                                         <label style={modalField}>
                                           <span>Title</span>
                                           <input
-                                            readOnly={domainFieldsReadOnly}
+                                            readOnly={disclosureCardReadOnly}
                                             value={disclosure.title || ""}
                                             onChange={(e) => setDomainConfigForm((prev) => ({
                                               ...prev,
@@ -17678,14 +17762,14 @@ export default function PlatformAdminApp() {
                                               },
                                             }))}
                                             placeholder="Disclosure title"
-                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                            style={{ ...modalInput, background: disclosureCardReadOnly ? "#eef4fb" : modalInput.background }}
                                           />
                                         </label>
                                         <label style={modalField}>
                                           <span>Display Position</span>
                                           <select
                                             value={disclosure.display_position || "inside_form"}
-                                            disabled={domainFieldsReadOnly}
+                                            disabled={disclosureCardReadOnly}
                                             onChange={(e) => setDomainConfigForm((prev) => ({
                                               ...prev,
                                               [d.key]: {
@@ -17697,7 +17781,7 @@ export default function PlatformAdminApp() {
                                                 )),
                                               },
                                             }))}
-                                            style={{ ...modalInput, background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                            style={{ ...modalInput, background: disclosureCardReadOnly ? "#eef4fb" : modalInput.background }}
                                           >
                                             <option value="inside_form">Inside form</option>
                                             <option value="before_form">Before form</option>
@@ -17722,7 +17806,7 @@ export default function PlatformAdminApp() {
                                             <input
                                               type="checkbox"
                                               checked={disclosure.required_acknowledgement === true}
-                                              disabled={domainFieldsReadOnly}
+                                              disabled={disclosureCardReadOnly}
                                               onChange={(e) => setDomainConfigForm((prev) => ({
                                                 ...prev,
                                                 [d.key]: {
@@ -17747,7 +17831,7 @@ export default function PlatformAdminApp() {
                                       <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                         <span>Body Text</span>
                                         <textarea
-                                          readOnly={domainFieldsReadOnly}
+                                          readOnly={disclosureCardReadOnly}
                                           value={disclosure.body || ""}
                                           onChange={(e) => setDomainConfigForm((prev) => ({
                                             ...prev,
@@ -17762,11 +17846,12 @@ export default function PlatformAdminApp() {
                                           }))}
                                           rows={4}
                                           placeholder="Disclosure text shown to the reporter."
-                                          style={{ ...modalInput, minHeight: 110, resize: "vertical", background: domainFieldsReadOnly ? "#eef4fb" : modalInput.background }}
+                                          style={{ ...modalInput, minHeight: 110, resize: "vertical", background: disclosureCardReadOnly ? "#eef4fb" : modalInput.background }}
                                         />
                                       </label>
                                     </div>
-                                  )) : (
+                                    );
+                                  }) : (
                                     <div style={{ fontSize: 12.5, color: palette.textMuted }}>
                                       No disclosures configured for this domain.
                                     </div>
