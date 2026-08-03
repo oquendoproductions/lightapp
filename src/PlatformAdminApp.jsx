@@ -2840,10 +2840,27 @@ export default function PlatformAdminApp() {
   const [openControlPlaneDropdown, setOpenControlPlaneDropdown] = useState("");
   const [workspaceSectionMenuOpen, setWorkspaceSectionMenuOpen] = useState(false);
   const [assignedDomainSelectorOpen, setAssignedDomainSelectorOpen] = useState(false);
+  const [assignedDomainMenuScroll, setAssignedDomainMenuScroll] = useState({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
   const bannerMenuRef = useRef(null);
   const controlPlaneNavRef = useRef(null);
   const workspaceSectionMenuRef = useRef(null);
   const assignedDomainSelectorRef = useRef(null);
+  const assignedDomainMenuRef = useRef(null);
+  const syncAssignedDomainMenuScroll = useCallback((node) => {
+    if (!node) return;
+    const next = {
+      scrollTop: Number(node.scrollTop || 0),
+      scrollHeight: Number(node.scrollHeight || 0),
+      clientHeight: Number(node.clientHeight || 0),
+    };
+    setAssignedDomainMenuScroll((current) => (
+      current.scrollTop === next.scrollTop
+      && current.scrollHeight === next.scrollHeight
+      && current.clientHeight === next.clientHeight
+        ? current
+        : next
+    ));
+  }, []);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [platformAccessRole, setPlatformAccessRole] = useState("");
@@ -5025,6 +5042,24 @@ export default function PlatformAdminApp() {
   useEffect(() => {
     if (activeTab !== "domains") setAssignedDomainSelectorOpen(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !assignedDomainSelectorOpen) {
+      setAssignedDomainMenuScroll((current) => (
+        current.scrollTop || current.scrollHeight || current.clientHeight
+          ? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 }
+          : current
+      ));
+      return undefined;
+    }
+    const sync = () => syncAssignedDomainMenuScroll(assignedDomainMenuRef.current);
+    const frame = window.requestAnimationFrame(sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", sync);
+    };
+  }, [assignedDomainSelectorOpen, selectedTenantAssignedDomainRows.length, syncAssignedDomainMenuScroll]);
 
   useEffect(() => {
     let mounted = true;
@@ -14583,79 +14618,111 @@ export default function PlatformAdminApp() {
                     )}
                   </button>
                   {assignedDomainSelectorOpen ? (
-                    <div
-                      role="menu"
-                      aria-label="Assigned domains"
-                      style={{
-                        ...controlPlaneSubmenu,
-                        left: 0,
-                        right: "auto",
-                        minWidth: 220,
-                        maxHeight: "min(420px, calc(100dvh - 180px))",
-                        overflowX: "hidden",
-                        overflowY: "auto",
-                        overscrollBehavior: "contain",
-                        scrollbarGutter: "stable",
-                        scrollbarWidth: "thin",
-                        WebkitOverflowScrolling: "touch",
-                        touchAction: "pan-y",
-                        zIndex: 45,
-                      }}
-                    >
-                      {selectedTenantAssignedDomainRows.length > 6 ? (
+                    (() => {
+                      const domainMenuOverflow = Math.max(0, assignedDomainMenuScroll.scrollHeight - assignedDomainMenuScroll.clientHeight);
+                      const hasScrollableDomainMenu = domainMenuOverflow > 1;
+                      const scrollThumbHeight = hasScrollableDomainMenu
+                        ? Math.max(18, Math.min(100, (assignedDomainMenuScroll.clientHeight / assignedDomainMenuScroll.scrollHeight) * 100))
+                        : 100;
+                      const scrollThumbTop = hasScrollableDomainMenu
+                        ? Math.max(0, Math.min(100 - scrollThumbHeight, (assignedDomainMenuScroll.scrollTop / domainMenuOverflow) * (100 - scrollThumbHeight)))
+                        : 0;
+                      return (
                         <div
-                          aria-hidden="true"
+                          role="menu"
+                          aria-label="Assigned domains"
                           style={{
-                            position: "sticky",
-                            top: 0,
-                            zIndex: 1,
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 8,
-                            margin: "-8px -8px 2px",
-                            padding: "7px 10px",
-                            borderBottom: "1px solid rgba(23, 49, 79, 0.12)",
-                            background: "rgba(247, 251, 255, 0.98)",
-                            color: palette.textMuted,
-                            fontSize: 11,
-                            fontWeight: 800,
+                            ...controlPlaneSubmenu,
+                            left: 0,
+                            right: "auto",
+                            minWidth: 220,
+                            height: selectedTenantAssignedDomainRows.length > 9 ? "min(420px, calc(100dvh - 180px))" : undefined,
+                            maxHeight: "min(420px, calc(100dvh - 180px))",
+                            overflow: "hidden",
+                            padding: 0,
+                            display: "block",
+                            zIndex: 45,
                           }}
                         >
-                          <span>{selectedTenantAssignedDomainRows.length} assigned domains</span>
-                          <span>Scroll for more ↓</span>
-                        </div>
-                      ) : null}
-                      {selectedTenantAssignedDomainRows.map((row) => {
-                        const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
-                        return (
-                          <button
-                            key={row.domain.key}
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              toggleAssignedDomainCard(row.domain.key);
-                              setAssignedDomainSelectorOpen(false);
-                            }}
+                          <div
+                            ref={assignedDomainMenuRef}
+                            onScroll={(event) => syncAssignedDomainMenuScroll(event.currentTarget)}
                             style={{
-                              ...controlPlaneSubmenuItem,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
+                              height: "100%",
+                              maxHeight: "min(420px, calc(100dvh - 180px))",
+                              display: "grid",
+                              gap: 6,
+                              overflowX: "hidden",
+                              overflowY: "auto",
+                              overscrollBehavior: "contain",
+                              padding: 8,
+                              paddingRight: hasScrollableDomainMenu ? 16 : 8,
+                              boxSizing: "border-box",
+                              WebkitOverflowScrolling: "touch",
+                              touchAction: "pan-y",
                             }}
                           >
-                            <DomainSelectorListIcon
-                              domainKey={row.domain.key}
-                              src={resolvePcpDomainIconSrc(row.domain)}
-                              size={18}
-                              containerSize={22}
-                            />
-                            <span>{row.domain.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                            {selectedTenantAssignedDomainRows.map((row) => {
+                              const isSelected = row.domain.key === selectedAssignedDomainRow?.domain?.key;
+                              return (
+                                <button
+                                  key={row.domain.key}
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    toggleAssignedDomainCard(row.domain.key);
+                                    setAssignedDomainSelectorOpen(false);
+                                  }}
+                                  style={{
+                                    ...controlPlaneSubmenuItem,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    ...(isSelected ? { border: "1px solid rgba(18, 128, 106, 0.28)", background: "rgba(229, 247, 243, 0.98)", color: palette.mint700 } : null),
+                                  }}
+                                >
+                                  <DomainSelectorListIcon
+                                    domainKey={row.domain.key}
+                                    src={resolvePcpDomainIconSrc(row.domain)}
+                                    size={18}
+                                    containerSize={22}
+                                  />
+                                  <span>{row.domain.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {hasScrollableDomainMenu ? (
+                            <div
+                              aria-hidden="true"
+                              style={{
+                                position: "absolute",
+                                top: 12,
+                                right: 5,
+                                bottom: 12,
+                                width: 4,
+                                borderRadius: 999,
+                                background: "rgba(23, 49, 79, 0.14)",
+                                pointerEvents: "none",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  top: `${scrollThumbTop}%`,
+                                  left: 0,
+                                  width: "100%",
+                                  height: `${scrollThumbHeight}%`,
+                                  minHeight: 18,
+                                  borderRadius: 999,
+                                  background: palette.mint700,
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()
                   ) : null}
                 </div>
                 <label htmlFor="assigned-domain-section">Domain Section</label>
