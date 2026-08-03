@@ -15772,54 +15772,38 @@ export default function PlatformAdminApp() {
                   </div>
                 </form>
               ) : null}
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={tableHeadCell}>Department</th>
-                      <th style={tableHeadCell}>Central Email</th>
-                      <th style={tableHeadCell}>Status</th>
-                      <th style={tableHeadCell}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tenantDepartments.map((department) => (
-                      <tr key={department.id}>
-                        <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{department.name}</td>
-                        <td style={{ padding: "10px 0", color: palette.textMuted }}>{department.notification_email || "—"}</td>
-                        <td style={{ padding: "10px 0" }}>
-                          <span style={{ fontSize: 11.5, fontWeight: 800, color: department.active === false ? palette.red600 : palette.mint700, background: department.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                            {department.active === false ? "Inactive" : "Active"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "10px 0" }}>
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                            <PcpEditButton
-                              label={`Edit ${department.name}`}
-                              style={{ opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
-                              disabled={!canManageTenantDepartments || tenantDepartmentSaving}
-                              onClick={() => beginEditTenantDepartment(department.id)}
-                            />
-                            <PcpActionIconButton
-                              label={`Remove ${department.name}`}
-                              src={pcpTrashIconSrc}
-                              style={{ opacity: canDeleteTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
-                              disabled={!canDeleteTenantDepartments || tenantDepartmentSaving}
-                              onClick={() => void deleteTenantDepartment(department.id)}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!tenantDepartments.length ? (
-                      <tr>
-                        <td colSpan={4} style={{ padding: "10px 0", color: palette.textMuted }}>
-                          No departments configured yet.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <div style={{ display: "grid" }}>
+                {tenantDepartments.map((department) => (
+                  <div key={department.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 10, padding: "12px 0", borderBottom: "1px solid rgba(23, 49, 79, 0.14)" }}>
+                    <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                      <strong style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: palette.navy900 }}>{department.name}</strong>
+                      <span style={{ overflowWrap: "anywhere", color: palette.textMuted }}>{department.notification_email || "No central email configured"}</span>
+                      <span style={{ justifySelf: "start", fontSize: 11.5, fontWeight: 800, color: department.active === false ? palette.red600 : palette.mint700, background: department.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                        {department.active === false ? "Inactive" : "Active"}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <PcpEditButton
+                        label={`Edit ${department.name}`}
+                        style={{ opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
+                        disabled={!canManageTenantDepartments || tenantDepartmentSaving}
+                        onClick={() => beginEditTenantDepartment(department.id)}
+                      />
+                      <PcpActionIconButton
+                        label={`Remove ${department.name}`}
+                        src={pcpTrashIconSrc}
+                        style={{ opacity: canDeleteTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
+                        disabled={!canDeleteTenantDepartments || tenantDepartmentSaving}
+                        onClick={() => void deleteTenantDepartment(department.id)}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {!tenantDepartments.length ? (
+                  <div style={{ padding: "10px 0", color: palette.textMuted }}>
+                    No departments configured yet.
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
