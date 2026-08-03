@@ -8792,6 +8792,7 @@ export default function PlatformAdminApp() {
         5,
         { min: 1, max: 25 }
       ),
+      public_inactivity_archive_days: sanitizePositiveIntegerSetting(domainConfigForm?.[d.key]?.public_inactivity_archive_days, 14, { min: 1, max: 365 }),
       park_required: domainConfigForm?.[d.key]?.park_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
@@ -17424,6 +17425,18 @@ export default function PlatformAdminApp() {
                                           ? "Enable public repair monitoring to use this setting."
                                           : "Unique community confirmations required before the incident is likely fixed."}
                                       </span>
+                                    </label>
+                                  ) : null}
+                                  {!isAssetBacked ? (
+                                    <label style={modalField}>
+                                      <span>Inactivity Auto-Archive (days)</span>
+                                      <input type="number" min="1" max="365" step="1"
+                                        readOnly={domainFieldsReadOnly || domainConfigForm?.[d.key]?.organization_monitored_repairs !== false}
+                                        value={domainConfigForm?.[d.key]?.public_inactivity_archive_days ?? 14}
+                                        onChange={(e) => setDomainConfigForm((prev) => ({ ...prev, [d.key]: { ...(prev?.[d.key] || {}), public_inactivity_archive_days: e.target.value } }))}
+                                        onBlur={(e) => setDomainConfigForm((prev) => ({ ...prev, [d.key]: { ...(prev?.[d.key] || {}), public_inactivity_archive_days: sanitizePositiveIntegerSetting(e.target.value, 14, { min: 1, max: 365 }) } }))}
+                                        style={{ ...modalInput, background: (domainFieldsReadOnly || domainConfigForm?.[d.key]?.organization_monitored_repairs !== false) ? "#eef4fb" : modalInput.background }} />
+                                      <span style={{ fontSize: 12, color: palette.textMuted }}>{domainConfigForm?.[d.key]?.organization_monitored_repairs !== false ? "Organization-managed incidents are never auto-archived." : "Unmanaged incidents leave the map after this many inactive days."}</span>
                                     </label>
                                   ) : null}
                                   {!isAssetBacked ? (
