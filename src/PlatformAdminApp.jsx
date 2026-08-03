@@ -406,7 +406,9 @@ const TENANT_PERMISSION_MODULES = [
 const ASSIGNED_DOMAIN_SECTION_OPTIONS = [
   { key: "tenant-assignment", label: "Tenant Assignment" },
   { key: "marker-icon", label: "Marker and Icon Settings" },
-  { key: "reporting", label: "Reporting" },
+  { key: "reporting", label: "Report Settings" },
+  { key: "reporting-fields", label: "Reporting Fields" },
+  { key: "report-disclosures", label: "Report Disclosures" },
   { key: "report-email-template", label: "Report Email Template" },
 ];
 
@@ -16179,9 +16181,17 @@ export default function PlatformAdminApp() {
                           ? (editingAssignedDomainSectionKey || "marker-icon")
                           : "";
                         const isEditingMarkerIconSection = activeDomainEditSectionKey === "marker-icon";
-                        const isEditingReportingSection = activeDomainEditSectionKey === "reporting";
+                        const reportingSectionKeys = ["reporting", "reporting-fields", "report-disclosures"];
+                        const isReportingSettingsSection = selectedAssignedDomainSectionKey === "reporting";
+                        const isReportingFieldsSection = selectedAssignedDomainSectionKey === "reporting-fields";
+                        const isReportDisclosuresSection = selectedAssignedDomainSectionKey === "report-disclosures";
+                        const isReportingSection = reportingSectionKeys.includes(selectedAssignedDomainSectionKey);
+                        const isEditingReportingSection = reportingSectionKeys.includes(activeDomainEditSectionKey);
                         const isEditingReportEmailSection = activeDomainEditSectionKey === "report-email-template";
-                        const domainFieldsReadOnly = !canEditTenantDomains || activeDomainEditSectionKey !== selectedAssignedDomainSectionKey;
+                        const domainFieldsReadOnly = !canEditTenantDomains || (
+                          activeDomainEditSectionKey !== selectedAssignedDomainSectionKey
+                          && !(isReportingSection && isEditingReportingSection)
+                        );
                         const assignmentFieldsReadOnly = !canManageDomainRegistry || !isEditingAssignment;
                         const editLockedByOtherDomain = Boolean(editingDomainKey) && !isEditingDomain;
                         const assignmentEditLockedByOtherDomain = Boolean(editingTenantDomainAssignmentKey) && !isEditingAssignment;
@@ -16207,7 +16217,7 @@ export default function PlatformAdminApp() {
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Tenant Assignment</div>
+                                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Tenant Assignment</div>
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                   {!isEditingAssignment ? (
@@ -16365,7 +16375,7 @@ export default function PlatformAdminApp() {
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                 <div style={{ display: "grid", gap: 4 }}>
-                                  <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Marker and Icon Settings</div>
+                                  <div style={{ fontWeight: 900, color: palette.navy900 }}>Marker and Icon Settings</div>
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                   {!isEditingMarkerIconSection ? (
@@ -16740,7 +16750,7 @@ export default function PlatformAdminApp() {
                               ) : null}
                             </div>
                                 ) : null}
-                                {selectedAssignedDomainSectionKey === "reporting" ? (
+                                {isReportingSection ? (
                               <div
                                 style={{
                                   display: "grid",
@@ -16749,24 +16759,26 @@ export default function PlatformAdminApp() {
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                   <div style={{ display: "grid", gap: 4 }}>
-                                    <div style={{ fontSize: 13, fontWeight: 900, color: palette.navy900 }}>Reporting</div>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                                      {isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}
+                                    </div>
                                   </div>
                                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                     {!isEditingReportingSection ? (
                                       <PcpEditButton
-                                        label="Edit Reporting"
+                                        label={`Edit ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}`}
                                         style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                         disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
-                                        onClick={() => beginDomainEdit(d.key, "reporting")}
+                                        onClick={() => beginDomainEdit(d.key, selectedAssignedDomainSectionKey)}
                                         title={
                                           isEditingDomain && !isEditingReportingSection
                                             ? "Finish the current domain section edit before opening another one."
                                             : editLockedByOtherDomain
                                               ? "Finish the current domain edit before opening another domain."
                                               : isEditingAssignment
-                                                ? "Finish editing assignment before editing reporting."
-                                                : canEditTenantDomains
-                                                  ? `Edit ${d.label} reporting`
+                                                ? "Finish editing assignment before editing this report section."
+                                              : canEditTenantDomains
+                                                  ? `Edit ${d.label} ${isReportingFieldsSection ? "reporting fields" : isReportDisclosuresSection ? "report disclosures" : "report settings"}`
                                                   : "You need the Domains edit permission"
                                         }
                                       />
@@ -16778,7 +16790,7 @@ export default function PlatformAdminApp() {
                                           disabled={!canEditTenantDomains}
                                           onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
                                         >
-                                          Save Reporting
+                                          Save {isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}
                                         </button>
                                         <button
                                           type="button"
@@ -16791,6 +16803,8 @@ export default function PlatformAdminApp() {
                                     )}
                                   </div>
                                 </div>
+                                {isReportingSettingsSection ? (
+                                  <>
                                 <div style={{ ...modalField, gap: 8 }}>
                                   <span>Departments receiving this domain’s reports</span>
                                   <div style={{ fontSize: 12.5, color: palette.textMuted }}>
@@ -17083,6 +17097,10 @@ export default function PlatformAdminApp() {
                                     />
                                   </label>
                                 </div>
+                                </div>
+                                  </>
+                                ) : null}
+                                {isReportingFieldsSection ? (
                               <div
                                 style={{
                                   display: "grid",
@@ -17090,12 +17108,6 @@ export default function PlatformAdminApp() {
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                                  <div style={{ display: "grid", gap: 3 }}>
-                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Reporting Fields</div>
-                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Configure tenant-specific issue type groups and choices for this domain. These options render everywhere in this saved order across the report flow, info windows, reports, and email macros.
-                                    </div>
-                                  </div>
                                   <button
                                     type="button"
                                     style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
@@ -17256,6 +17268,8 @@ export default function PlatformAdminApp() {
                                   </div>
                                 )}
                               </div>
+                                ) : null}
+                                {isReportDisclosuresSection ? (
                               <div
                                 style={{
                                   display: "grid",
@@ -17263,12 +17277,6 @@ export default function PlatformAdminApp() {
                                 }}
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                                  <div style={{ display: "grid", gap: 3 }}>
-                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Disclosures</div>
-                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Add tenant-specific notices or required acknowledgements for this domain. Any global disclosures configured in the domain registry are also shown to reporters across all tenants.
-                                    </div>
-                                  </div>
                                   <button
                                     type="button"
                                     style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
@@ -17447,12 +17455,14 @@ export default function PlatformAdminApp() {
                                   )}
                                 </div>
                               </div>
-                              </div>
+                                ) : null}
+                                {isReportingSettingsSection ? (
                               <div style={{ fontSize: 12.5, color: palette.textMuted, lineHeight: 1.45 }}>
                                 {isAssetBacked
                                   ? "Asset-backed domains do not use public incident confidence thresholds."
                                   : "Confidence rules: the public visibility threshold controls when an incident becomes visible to everyone on the map. The high confidence threshold is stored per tenant/domain so future scoring, alerting, and operations workflows can follow local reporting patterns."}
                               </div>
+                                ) : null}
                               </div>
                                 ) : null}
                                 {selectedAssignedDomainSectionKey === "report-email-template" ? (
