@@ -14588,20 +14588,10 @@ export default function PlatformAdminApp() {
                       aria-label="Assigned domains"
                       style={{
                         ...controlPlaneSubmenu,
-                        ...(isCompactViewport ? {
-                          position: "fixed",
-                          top: "calc(var(--mobile-header-top-offset) + var(--mobile-header-height) + 8px)",
-                          right: 12,
-                          bottom: "calc(72px + env(safe-area-inset-bottom))",
-                          left: 12,
-                          minWidth: 0,
-                          maxHeight: "none",
-                        } : {
-                          left: 0,
-                          right: "auto",
-                          minWidth: 220,
-                          maxHeight: "min(560px, calc(100dvh - 132px))",
-                        }),
+                        left: 0,
+                        right: "auto",
+                        minWidth: 220,
+                        maxHeight: "min(420px, calc(100dvh - 180px))",
                         overflowX: "hidden",
                         overflowY: "auto",
                         overscrollBehavior: "contain",
@@ -14633,7 +14623,7 @@ export default function PlatformAdminApp() {
                           }}
                         >
                           <span>{selectedTenantAssignedDomainRows.length} assigned domains</span>
-                          {!isCompactViewport ? <span>Scroll for more ↓</span> : null}
+                          <span>Scroll for more ↓</span>
                         </div>
                       ) : null}
                       {selectedTenantAssignedDomainRows.map((row) => {
