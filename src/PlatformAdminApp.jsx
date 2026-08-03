@@ -17159,7 +17159,7 @@ export default function PlatformAdminApp() {
                                           disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
                                           onClick={() => void saveReportNotifications(d.key)}
                                         >
-                                          Save {isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}
+                                          Save
                                         </button>
                                         <button
                                           type="button"
