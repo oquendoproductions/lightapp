@@ -410,7 +410,7 @@ const ASSIGNED_DOMAIN_SECTION_OPTIONS = [
   { key: "reporting", label: "Report Settings" },
   { key: "reporting-fields", label: "Reporting Fields" },
   { key: "report-disclosures", label: "Report Disclosures" },
-  { key: "report-email-template", label: "Report Email Template" },
+  { key: "report-email-template", label: "Report Notifications" },
 ];
 
 const DEFAULT_PLATFORM_PERMISSION_KEYS = PLATFORM_PERMISSION_MODULES.flatMap((module) =>
@@ -17097,40 +17097,6 @@ export default function PlatformAdminApp() {
                                 </div>
                                 {isReportingSettingsSection ? (
                                   <>
-                                <div style={{ ...modalField, gap: 8 }}>
-                                  <span>Departments receiving this domain’s reports</span>
-                                  <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                    Each selected department receives the central report email, and every active employee assigned to it receives an in-app notification.
-                                  </div>
-                                  {tenantRoutingDepartments.length ? (
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                                      {tenantRoutingDepartments.map((department) => {
-                                        const selectedDepartmentIds = tenantDepartmentIdsByDomain[d.key] || [];
-                                        const checked = selectedDepartmentIds.includes(department.id);
-                                        return (
-                                          <label key={department.id} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 10px", border: "1px solid rgba(17,36,69,0.14)", borderRadius: 10, background: "#fff", fontSize: 12.5, fontWeight: 700, color: palette.navy900 }}>
-                                            <input
-                                              type="checkbox"
-                                              checked={checked}
-                                              disabled={!canManageDomainRegistry || tenantDepartmentRoutingSaving}
-                                              onChange={(event) => void saveTenantDomainDepartmentRouting(
-                                                d.key,
-                                                event.target.checked
-                                                  ? [...selectedDepartmentIds, department.id]
-                                                  : selectedDepartmentIds.filter((id) => id !== department.id)
-                                              )}
-                                            />
-                                            {department.name}{department.notification_email ? ` · ${department.notification_email}` : ""}
-                                          </label>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : (
-                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
-                                      Create a department first in the tenant hub. Until one is routed here, reports continue to notify active tenant admins.
-                                    </div>
-                                  )}
-                                </div>
                                 <div style={{ display: "grid", gap: 10 }}>
                                 <div style={responsiveActionGrid}>
                                   <div style={{ ...modalField, justifyContent: "center" }}>
@@ -17766,7 +17732,7 @@ export default function PlatformAdminApp() {
                               >
                                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
                                   <div style={{ display: "grid", gap: 3 }}>
-                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Email Template</div>
+                                    <div style={{ fontWeight: 900, color: palette.navy900 }}>Report Notifications</div>
                                     <div style={{ fontSize: 11.5, color: palette.textMuted }}>
                                       Preset: {domainNotificationTemplateOption(domainConfigForm?.[d.key]?.notification_template_key).label}
                                       {" • "}
@@ -17776,7 +17742,7 @@ export default function PlatformAdminApp() {
                                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                     {!isEditingReportEmailSection ? (
                                       <PcpEditButton
-                                        label="Edit Email Template"
+                                        label="Edit Notifications"
                                         style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
                                         disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
                                         onClick={() => beginDomainEdit(d.key, "report-email-template")}
@@ -17786,9 +17752,9 @@ export default function PlatformAdminApp() {
                                             : editLockedByOtherDomain
                                               ? "Finish the current domain edit before opening another domain."
                                               : isEditingAssignment
-                                                ? "Finish editing assignment before editing the email template."
+                                                ? "Finish editing assignment before editing notifications."
                                                 : canEditTenantDomains
-                                                  ? `Edit ${d.label} report email template`
+                                                  ? `Edit ${d.label} report notifications`
                                                   : "You need the Domains edit permission"
                                         }
                                       />
@@ -17800,7 +17766,7 @@ export default function PlatformAdminApp() {
                                           disabled={!canEditTenantDomains}
                                           onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
                                         >
-                                          Save Email Template
+                                          Save Notifications
                                         </button>
                                         <button
                                           type="button"
@@ -17812,6 +17778,37 @@ export default function PlatformAdminApp() {
                                       </>
                                     )}
                                   </div>
+                                </div>
+                                <div style={{ ...modalField, gap: 8 }}>
+                                  <span>Departments receiving this domain’s reports</span>
+                                  {tenantRoutingDepartments.length ? (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                                      {tenantRoutingDepartments.map((department) => {
+                                        const selectedDepartmentIds = tenantDepartmentIdsByDomain[d.key] || [];
+                                        const checked = selectedDepartmentIds.includes(department.id);
+                                        return (
+                                          <label key={department.id} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 10px", border: "1px solid rgba(17,36,69,0.14)", borderRadius: 10, background: "#fff", fontSize: 12.5, fontWeight: 700, color: palette.navy900 }}>
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              disabled={!canManageDomainRegistry || tenantDepartmentRoutingSaving}
+                                              onChange={(event) => void saveTenantDomainDepartmentRouting(
+                                                d.key,
+                                                event.target.checked
+                                                  ? [...selectedDepartmentIds, department.id]
+                                                  : selectedDepartmentIds.filter((id) => id !== department.id)
+                                              )}
+                                            />
+                                            {department.name}
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div style={{ fontSize: 12.5, color: palette.textMuted }}>
+                                      Create a department in the Departments workspace, then return here to route this domain’s notifications.
+                                    </div>
+                                  )}
                                 </div>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                   <span>Email Template Preset</span>
