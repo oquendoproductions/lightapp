@@ -17529,7 +17529,7 @@ export default function PlatformAdminApp() {
                                       >
                                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                            <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                                            <span style={{ fontSize: 17, lineHeight: 1.15, fontWeight: 900, color: palette.navy900 }}>
                                               Field {typeIndex + 1}
                                             </span>
                                           </div>
@@ -17689,14 +17689,8 @@ export default function PlatformAdminApp() {
                                     >
                                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                                          <span style={{ fontSize: 12, fontWeight: 800, color: palette.navy900 }}>
+                                          <span style={{ fontSize: 17, lineHeight: 1.15, fontWeight: 900, color: palette.navy900 }}>
                                             Disclosure {disclosureIndex + 1}
-                                          </span>
-                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: palette.navy500, background: "rgba(46,98,143,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                            {domainDisclosurePositionLabel(disclosure.display_position)}
-                                          </span>
-                                          <span style={{ fontSize: 11.5, fontWeight: 800, color: disclosure.required_acknowledgement ? palette.red600 : palette.mint700, background: disclosure.required_acknowledgement ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                                            {disclosure.required_acknowledgement ? "Required acknowledgment" : "Informational"}
                                           </span>
                                         </div>
                                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -17787,7 +17781,7 @@ export default function PlatformAdminApp() {
                                             <option value="before_form">Before form</option>
                                           </select>
                                         </label>
-                                        <div style={{ ...modalField, justifyContent: "center" }}>
+                                        <div style={{ ...modalField, justifyContent: "start" }}>
                                           <span>Acknowledgement</span>
                                           <label
                                             style={{
