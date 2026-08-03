@@ -17176,8 +17176,7 @@ export default function PlatformAdminApp() {
                                   <>
                                 <div style={{ display: "grid", gap: 10 }}>
                                 <div style={responsiveActionGrid}>
-                                  <div style={{ ...modalField, justifyContent: "center" }}>
-                                    <span>Road Required</span>
+                                  <div style={{ ...modalField, justifyContent: "start" }}>
                                     <label
                                       style={{
                                         display: "flex",
@@ -17204,16 +17203,10 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ display: "grid", gap: 2 }}>
-                                        <span style={{ fontWeight: 800 }}>Require road placement?</span>
-                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                          {domainConfigForm?.[d.key]?.road_required === true ? "Reports must land on a road" : "Reports can be placed anywhere allowed"}
-                                        </span>
-                                      </span>
+                                      <span style={{ fontWeight: 800 }}>Require road placement?</span>
                                     </label>
                                   </div>
-                                  <div style={{ ...modalField, justifyContent: "center" }}>
-                                    <span>Park Required</span>
+                                  <div style={{ ...modalField, justifyContent: "start" }}>
                                     <label
                                       style={{
                                         display: "flex",
@@ -17240,16 +17233,10 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ display: "grid", gap: 2 }}>
-                                        <span style={{ fontWeight: 800 }}>Require park placement?</span>
-                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                          {domainConfigForm?.[d.key]?.park_required === true ? "Reports must land inside a park boundary" : "Reports can be placed anywhere allowed"}
-                                        </span>
-                                      </span>
+                                      <span style={{ fontWeight: 800 }}>Require park placement?</span>
                                     </label>
                                   </div>
-                                  <div style={{ ...modalField, justifyContent: "center" }}>
-                                    <span>Allow Photos</span>
+                                  <div style={{ ...modalField, justifyContent: "start" }}>
                                     <label
                                       style={{
                                         display: "flex",
@@ -17277,16 +17264,10 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ display: "grid", gap: 2 }}>
-                                        <span style={{ fontWeight: 800 }}>Accept a report photo?</span>
-                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                          {domainConfigForm?.[d.key]?.allow_report_images === true ? "Photo collection is enabled" : "Reports will not request a photo"}
-                                        </span>
-                                      </span>
+                                      <span style={{ fontWeight: 800 }}>Accept a report photo?</span>
                                     </label>
                                   </div>
-                                  <div style={{ ...modalField, justifyContent: "center" }}>
-                                    <span>Photo Required</span>
+                                  <div style={{ ...modalField, justifyContent: "start" }}>
                                     <label
                                       style={{
                                         display: "flex",
@@ -17314,12 +17295,7 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ display: "grid", gap: 2 }}>
-                                        <span style={{ fontWeight: 800 }}>Require a photo to submit?</span>
-                                        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.78 }}>
-                                          {domainConfigForm?.[d.key]?.report_image_required === true ? "Residents must attach a photo" : "Photo attachment is optional"}
-                                        </span>
-                                      </span>
+                                      <span style={{ fontWeight: 800 }}>Require a photo to submit?</span>
                                     </label>
                                   </div>
                                   {!isAssetBacked ? (
