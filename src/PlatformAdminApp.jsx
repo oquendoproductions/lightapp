@@ -11207,7 +11207,6 @@ export default function PlatformAdminApp() {
                   display: "grid",
                   gridTemplateColumns: isCompactViewport ? "minmax(0, 1fr) 30px" : "minmax(0, 1fr) 32px",
                   gap: 0,
-                  overflow: "hidden",
                   borderRadius: isCompactViewport ? 18 : 999,
                   ...(isCompactViewport
                     ? (active ? { background: "rgba(23, 109, 120, 0.14)" } : null)
@@ -14607,7 +14606,7 @@ export default function PlatformAdminApp() {
                 aria-label="Search organizations"
                 style={{ ...inputBase, fontSize: 16 }}
               />
-              <div style={{ display: "grid", alignContent: "start", gap: 6, minHeight: 0, overflowY: "auto", paddingRight: 2 }}>
+              <div style={{ display: "grid", alignContent: "start", gap: 6, minHeight: 0, overflowY: "auto", paddingTop: 14, paddingRight: 2, borderTop: "1px solid rgba(23, 49, 79, 0.14)" }}>
                 {hasTenantSearchQuery ? filteredTenantRows.map((row) => {
                   const key = String(row?.tenant_key || "").trim();
                   if (!key) return null;
