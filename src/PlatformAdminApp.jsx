@@ -8133,10 +8133,10 @@ export default function PlatformAdminApp() {
   }, []);
 
   const saveTenantDomainDepartmentRouting = useCallback(async (domainKey, departmentIds) => {
-    if (!canManageDomainRegistry || tenantDepartmentRoutingSaving) return;
+    if (!canManageDomainRegistry || tenantDepartmentRoutingSaving) return false;
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
     const normalizedDomainKey = String(domainKey || "").trim().toLowerCase();
-    if (!tenantKey || !normalizedDomainKey) return;
+    if (!tenantKey || !normalizedDomainKey) return false;
     const nextIds = [...new Set((departmentIds || []).filter(Boolean))];
     setTenantDepartmentRoutingSaving(true);
     setStatus((prev) => ({ ...prev, domainAssignments: "" }));
@@ -8148,7 +8148,7 @@ export default function PlatformAdminApp() {
     if (removeResult.error) {
       setTenantDepartmentRoutingSaving(false);
       setStatus((prev) => ({ ...prev, domainAssignments: statusText(removeResult.error, "") }));
-      return;
+      return false;
     }
     if (nextIds.length) {
       const insertResult = await supabase.from("tenant_domain_departments").insert(
@@ -8157,11 +8157,12 @@ export default function PlatformAdminApp() {
       if (insertResult.error) {
         setTenantDepartmentRoutingSaving(false);
         setStatus((prev) => ({ ...prev, domainAssignments: statusText(insertResult.error, "") }));
-        return;
+        return false;
       }
     }
     setTenantDepartmentIdsByDomain((prev) => ({ ...prev, [normalizedDomainKey]: nextIds }));
     setTenantDepartmentRoutingSaving(false);
+    return true;
   }, [canManageDomainRegistry, selectedTenantKey, tenantDepartmentRoutingSaving]);
 
   const beginCreateTenantDepartment = useCallback(() => {
@@ -8698,12 +8699,12 @@ export default function PlatformAdminApp() {
     event?.preventDefault?.();
     if (!canEditTenantDomains) {
       setStatus((prev) => ({ ...prev, domains: "You need the Domains edit permission to update organization domain settings." }));
-      return;
+      return false;
     }
     const key = sanitizeTenantKey(selectedTenantKey);
     if (!key) {
       setStatus((prev) => ({ ...prev, domains: "Select a tenant first." }));
-      return;
+      return false;
     }
     const closingDomainKey = String(options?.closeEditingDomain || "").trim().toLowerCase();
     const currentVisibility = closingDomainKey
@@ -8722,7 +8723,7 @@ export default function PlatformAdminApp() {
       const confirmed = window.confirm(
         `Disable ${domainLabel}? It will no longer appear under Enabled Domains until it is added again.`
       );
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
     const checkpointApproved = await requirePlatformSecurityCheckpoint({
       settingKey: "require_pin_for_domain_settings_changes",
@@ -8730,7 +8731,7 @@ export default function PlatformAdminApp() {
       description: "Enter your PIN to save domain and asset settings.",
       onBlocked: (message) => setStatus((prev) => ({ ...prev, domains: message })),
     });
-    if (!checkpointApproved) return;
+    if (!checkpointApproved) return false;
 
     const shouldSaveSingleDomain = Boolean(closingDomainKey);
     const candidateDomainRows = shouldSaveSingleDomain
@@ -8849,7 +8850,7 @@ export default function PlatformAdminApp() {
         ...prev,
         domains: `${String(invalidTypeOption.option_label || "Type Option").trim()} must include at least one choice before saving.`,
       }));
-      return;
+      return false;
     }
 
     const tenantPayload = shouldSaveSingleDomain
@@ -8905,7 +8906,7 @@ export default function PlatformAdminApp() {
 
     if (visError || domainConfigError || tenantError || assignmentError) {
       setStatus((prev) => ({ ...prev, domains: statusText(visError || domainConfigError || tenantError || assignmentError, "") }));
-      return;
+      return false;
     }
 
     // The edit session belongs to the successful domain write above.  Do not
@@ -9004,9 +9005,21 @@ export default function PlatformAdminApp() {
       },
     });
 
-    setStatus((prev) => ({ ...prev, domains: `Saved domain settings, notification routing, and email templates for ${key}.` }));
+    setStatus((prev) => ({ ...prev, domains: `Saved domain settings for ${key}.` }));
     await refreshControlPlaneData();
+    return true;
   }, [canEditTenantDomains, selectedTenantKey, domainVisibilityForm, domainConfigForm, sessionUserId, logAudit, refreshControlPlaneData, requirePlatformSecurityCheckpoint, editingDomainSnapshot, activeManageableTenantDomainRows, selectedTenantDomainAssignments, editingDomainKey, manageableTenantDomainRowByKey]);
+
+  const saveReportNotifications = useCallback(async (domainKey) => {
+    const key = String(domainKey || "").trim().toLowerCase();
+    if (!key) return;
+    const routingIds = tenantDepartmentIdsByDomain?.[key] || [];
+    const saved = await saveDomainAndFeatureSettings(null, { closeEditingDomain: key });
+    if (!saved) return;
+    const routingSaved = await saveTenantDomainDepartmentRouting(key, routingIds);
+    if (!routingSaved) return;
+    setStatus((prev) => ({ ...prev, domains: `Saved report notification settings for ${key}.` }));
+  }, [saveDomainAndFeatureSettings, saveTenantDomainDepartmentRouting, tenantDepartmentIdsByDomain]);
 
   const saveMapFeaturesSettings = useCallback(async (event) => {
     event?.preventDefault?.();
@@ -9581,6 +9594,7 @@ export default function PlatformAdminApp() {
     setEditingDomainSnapshot({
       key,
       visibility: String(domainVisibilityForm?.[key] || "enabled"),
+      departmentIds: [...(tenantDepartmentIdsByDomain?.[key] || [])],
       config: {
         ...(domainConfigForm?.[key] || {
           domain_type: defaultDomainType(key),
@@ -9590,7 +9604,7 @@ export default function PlatformAdminApp() {
         }),
       },
     });
-  }, [domainVisibilityForm, domainConfigForm]);
+  }, [domainVisibilityForm, domainConfigForm, tenantDepartmentIdsByDomain]);
 
   const cancelDomainEdit = useCallback((domainKey) => {
     const key = String(domainKey || "").trim().toLowerCase();
@@ -9603,6 +9617,10 @@ export default function PlatformAdminApp() {
           ...(prev?.[key] || {}),
           ...(editingDomainSnapshot.config || {}),
         },
+      }));
+      setTenantDepartmentIdsByDomain((prev) => ({
+        ...prev,
+        [key]: [...(editingDomainSnapshot.departmentIds || [])],
       }));
     }
     setEditingDomainKey("");
@@ -17078,9 +17096,9 @@ export default function PlatformAdminApp() {
                                       <>
                                         <button
                                           type="button"
-                                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
-                                          disabled={!canEditTenantDomains}
-                                          onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
+                                          style={{ ...buttonBase, opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                          disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
+                                          onClick={() => void saveReportNotifications(d.key)}
                                         >
                                           Save {isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}
                                         </button>
@@ -17791,13 +17809,13 @@ export default function PlatformAdminApp() {
                                             <input
                                               type="checkbox"
                                               checked={checked}
-                                              disabled={!canManageDomainRegistry || tenantDepartmentRoutingSaving}
-                                              onChange={(event) => void saveTenantDomainDepartmentRouting(
-                                                d.key,
-                                                event.target.checked
+                                              disabled={domainFieldsReadOnly || !canManageDomainRegistry || tenantDepartmentRoutingSaving}
+                                              onChange={(event) => setTenantDepartmentIdsByDomain((prev) => ({
+                                                ...prev,
+                                                [d.key]: event.target.checked
                                                   ? [...selectedDepartmentIds, department.id]
-                                                  : selectedDepartmentIds.filter((id) => id !== department.id)
-                                              )}
+                                                  : selectedDepartmentIds.filter((id) => id !== department.id),
+                                              }))}
                                             />
                                             {department.name}
                                           </label>
