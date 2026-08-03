@@ -11327,7 +11327,7 @@ export default function PlatformAdminApp() {
     && isPlatformAdmin
     && controlPlanePage !== "manage-leads"
     && !settingsPageActive
-    && !(controlPlanePage === "manage-organizations" && inTenantWorkspace) ? (
+    && !(controlPlanePage === "manage-organizations" && (inTenantWorkspace || inEntryPrompt)) ? (
     <section style={{
       ...fullWidthSection,
       display: "grid",
@@ -14573,11 +14573,17 @@ export default function PlatformAdminApp() {
             ...(inTenantWorkspace && isCompactViewport ? {
               background: "linear-gradient(112deg, #d9edf0 0%, #cce5dc 100%)",
               borderRadius: 0,
-              borderTop: 0,
-              borderLeft: 0,
-              borderRight: 0,
+              border: 0,
+              borderBottom: `1px solid ${palette.border}`,
               boxShadow: "0 5px 14px rgba(16, 43, 70, 0.12)",
               padding: "14px 16px",
+            } : null),
+            ...(inEntryPrompt ? {
+              background: "linear-gradient(180deg, #f8fbff 0%, #f2f7fb 100%)",
+              borderRadius: 0,
+              border: 0,
+              boxShadow: "none",
+              padding: "20px 16px",
             } : null),
             minHeight: inEntryPrompt
               ? (isCompactViewport
@@ -14587,7 +14593,13 @@ export default function PlatformAdminApp() {
           }}
         >
           {inEntryPrompt ? (
-            <div style={{ display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 14, minHeight: 0 }}>
+            <div style={{ display: "grid", gridTemplateRows: "auto auto minmax(0, 1fr)", gap: 14, minHeight: 0 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 8 }}>
+                <h1 style={{ margin: 0, minWidth: 0, fontSize: "clamp(15px, 5.5vw, 24px)", fontWeight: 900, color: palette.navy900, lineHeight: 1.1, whiteSpace: "nowrap" }}>
+                  Manage Organizations
+                </h1>
+                {currentPageActions}
+              </div>
               <input
                 value={tenantSearch}
                 onChange={(e) => setTenantSearch(e.target.value)}
