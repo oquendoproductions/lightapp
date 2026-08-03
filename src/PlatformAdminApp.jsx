@@ -17182,13 +17182,8 @@ export default function PlatformAdminApp() {
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        minHeight: 48,
-                                        padding: "0 14px",
-                                        borderRadius: 14,
-                                        border: "1px solid rgba(17, 36, 69, 0.14)",
-                                        background: "rgba(255,255,255,0.92)",
-                                        color: palette.navy900,
-                                        fontWeight: 700,
+                                        color: palette.text,
+                                        fontSize: 12.5,
                                       }}
                                     >
                                       <input
@@ -17203,7 +17198,7 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ fontWeight: 800 }}>Require road placement?</span>
+                                      <span>Require road placement?</span>
                                     </label>
                                   </div>
                                   <div style={{ ...modalField, justifyContent: "start" }}>
@@ -17212,13 +17207,8 @@ export default function PlatformAdminApp() {
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        minHeight: 48,
-                                        padding: "0 14px",
-                                        borderRadius: 14,
-                                        border: "1px solid rgba(17, 36, 69, 0.14)",
-                                        background: "rgba(255,255,255,0.92)",
-                                        color: palette.navy900,
-                                        fontWeight: 700,
+                                        color: palette.text,
+                                        fontSize: 12.5,
                                       }}
                                     >
                                       <input
@@ -17233,7 +17223,7 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ fontWeight: 800 }}>Require park placement?</span>
+                                      <span>Require park placement?</span>
                                     </label>
                                   </div>
                                   <div style={{ ...modalField, justifyContent: "start" }}>
@@ -17242,13 +17232,8 @@ export default function PlatformAdminApp() {
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        minHeight: 48,
-                                        padding: "0 14px",
-                                        borderRadius: 14,
-                                        border: "1px solid rgba(17, 36, 69, 0.14)",
-                                        background: "rgba(255,255,255,0.92)",
-                                        color: palette.navy900,
-                                        fontWeight: 700,
+                                        color: palette.text,
+                                        fontSize: 12.5,
                                       }}
                                     >
                                       <input
@@ -17264,7 +17249,7 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ fontWeight: 800 }}>Accept a report photo?</span>
+                                      <span>Accept a report photo?</span>
                                     </label>
                                   </div>
                                   <div style={{ ...modalField, justifyContent: "start" }}>
@@ -17273,13 +17258,8 @@ export default function PlatformAdminApp() {
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
-                                        minHeight: 48,
-                                        padding: "0 14px",
-                                        borderRadius: 14,
-                                        border: "1px solid rgba(17, 36, 69, 0.14)",
-                                        background: "rgba(255,255,255,0.92)",
-                                        color: palette.navy900,
-                                        fontWeight: 700,
+                                        color: palette.text,
+                                        fontSize: 12.5,
                                         opacity: domainConfigForm?.[d.key]?.allow_report_images === true ? 1 : 0.58,
                                       }}
                                     >
@@ -17295,7 +17275,7 @@ export default function PlatformAdminApp() {
                                           },
                                         }))}
                                       />
-                                      <span style={{ fontWeight: 800 }}>Require a photo to submit?</span>
+                                      <span>Require a photo to submit?</span>
                                     </label>
                                   </div>
                                   {!isAssetBacked ? (
