@@ -230,6 +230,7 @@ const TAB_OPTIONS = [
   { key: "tenants", label: "Organization Info" },
   { key: "setup", label: "Organization Setup" },
   { key: "contacts", label: "Points of Contact" },
+  { key: "departments", label: "Departments" },
   { key: "users", label: "Users/Admins" },
   { key: "roles", label: "Roles + Permissions" },
   { key: "domains", label: "Domains" },
@@ -463,6 +464,7 @@ const TENANT_WORKSPACE_TAB_PERMISSIONS = {
   tenants: "organizations.access",
   setup: "organizations.access",
   contacts: "organizations.access",
+  departments: "users.access",
   users: "users.access",
   roles: "roles.access",
   domains: "domains.access",
@@ -2240,6 +2242,29 @@ function initialTenantParkForm() {
   };
 }
 
+function initialTenantDepartmentForm() {
+  return {
+    name: "",
+    notification_email: "",
+    active: true,
+  };
+}
+
+function buildTenantDepartmentForm(row) {
+  if (!row) return initialTenantDepartmentForm();
+  return {
+    name: String(row?.name || ""),
+    notification_email: String(row?.notification_email || ""),
+    active: row?.active !== false,
+  };
+}
+
+function sortTenantDepartments(rows) {
+  return [...(Array.isArray(rows) ? rows : [])].sort((left, right) => (
+    String(left?.name || "").localeCompare(String(right?.name || ""), undefined, { sensitivity: "base" })
+  ));
+}
+
 function buildParkBoundaryAssetSubtype(parkKey) {
   const normalized = slugifyDomainKeyInput(parkKey);
   return normalized ? `park:${normalized}` : "";
@@ -3003,9 +3028,14 @@ export default function PlatformAdminApp() {
   const [selectedAssignedDomainSectionKey, setSelectedAssignedDomainSectionKey] = useState(ASSIGNED_DOMAIN_SECTION_OPTIONS[0].key);
   const [tenantDomainAssignmentForm, setTenantDomainAssignmentForm] = useState(initialTenantDomainAssignmentForm);
   const [tenantDomainAssignmentSaving, setTenantDomainAssignmentSaving] = useState(false);
+  const [tenantDepartments, setTenantDepartments] = useState([]);
   const [tenantRoutingDepartments, setTenantRoutingDepartments] = useState([]);
   const [tenantDepartmentIdsByDomain, setTenantDepartmentIdsByDomain] = useState({});
   const [tenantDepartmentRoutingSaving, setTenantDepartmentRoutingSaving] = useState(false);
+  const [tenantDepartmentEditorOpen, setTenantDepartmentEditorOpen] = useState(false);
+  const [editingTenantDepartmentId, setEditingTenantDepartmentId] = useState("");
+  const [tenantDepartmentForm, setTenantDepartmentForm] = useState(initialTenantDepartmentForm);
+  const [tenantDepartmentSaving, setTenantDepartmentSaving] = useState(false);
   const [tenantParkSchemaReady, setTenantParkSchemaReady] = useState(true);
   const [tenantParkEditorOpen, setTenantParkEditorOpen] = useState(false);
   const [editingTenantParkId, setEditingTenantParkId] = useState("");
@@ -3105,6 +3135,7 @@ export default function PlatformAdminApp() {
     profile: "",
     users: "",
     roles: "",
+    departments: "",
     domains: "",
     domainRegistry: "",
     mapUiIcons: "",
@@ -3772,6 +3803,9 @@ export default function PlatformAdminApp() {
   const canViewTenantUsers = hasPlatformPermission("users.access") || hasPlatformPermission("users.edit") || hasPlatformPermission("users.delete");
   const canManageTenantUsers = hasPlatformPermission("users.edit");
   const canDeleteTenantUsers = hasPlatformPermission("users.delete");
+  const canViewTenantDepartments = canViewTenantUsers;
+  const canManageTenantDepartments = canManageTenantUsers;
+  const canDeleteTenantDepartments = canDeleteTenantUsers;
   const canViewTenantRoles = hasPlatformPermission("roles.access") || hasPlatformPermission("roles.edit") || hasPlatformPermission("roles.delete");
   const canManageTenantRoles = hasPlatformPermission("roles.edit");
   const canDeleteTenantRoles = hasPlatformPermission("roles.delete");
@@ -6389,22 +6423,36 @@ export default function PlatformAdminApp() {
   }, [selectedTenantKey]);
 
   useEffect(() => {
+    setEditingTenantDepartmentId("");
+    setTenantDepartmentEditorOpen(false);
+    setTenantDepartmentForm(initialTenantDepartmentForm());
+  }, [selectedTenantKey]);
+
+  useEffect(() => {
     let cancelled = false;
     const tenantKey = sanitizeTenantKey(selectedTenantKey);
-    if (!tenantKey || !canViewDomainRegistry) {
+    if (!tenantKey || (!canViewDomainRegistry && !canViewTenantDepartments)) {
+      setTenantDepartments([]);
       setTenantRoutingDepartments([]);
       setTenantDepartmentIdsByDomain({});
       return undefined;
     }
     async function loadDepartmentRouting() {
       const [departmentsResult, routesResult] = await Promise.all([
-        supabase.from("tenant_departments").select("id,name,notification_email,active").eq("tenant_key", tenantKey).eq("active", true).order("name"),
+        supabase.from("tenant_departments").select("id,name,notification_email,active").eq("tenant_key", tenantKey).order("name"),
         supabase.from("tenant_domain_departments").select("domain_key,department_id").eq("tenant_key", tenantKey),
       ]);
       if (cancelled) return;
       if (departmentsResult.error || routesResult.error) {
+        setTenantDepartments([]);
         setTenantRoutingDepartments([]);
         setTenantDepartmentIdsByDomain({});
+        setStatus((prev) => ({
+          ...prev,
+          departments: isMissingRelationError(departmentsResult.error || routesResult.error)
+            ? "Department configuration is not available in this environment yet."
+            : statusText(departmentsResult.error || routesResult.error, ""),
+        }));
         return;
       }
       const nextRoutes = {};
@@ -6413,12 +6461,15 @@ export default function PlatformAdminApp() {
         if (!domainKey || !row?.department_id) continue;
         nextRoutes[domainKey] = [...(nextRoutes[domainKey] || []), row.department_id];
       }
-      setTenantRoutingDepartments(departmentsResult.data || []);
+      const rows = sortTenantDepartments(departmentsResult.data || []);
+      setTenantDepartments(rows);
+      setTenantRoutingDepartments(rows.filter((row) => row?.active !== false));
       setTenantDepartmentIdsByDomain(nextRoutes);
+      setStatus((prev) => ({ ...prev, departments: "" }));
     }
     void loadDepartmentRouting();
     return () => { cancelled = true; };
-  }, [canViewDomainRegistry, selectedTenantKey]);
+  }, [canViewDomainRegistry, canViewTenantDepartments, selectedTenantKey]);
 
   useEffect(() => {
     const key = sanitizeTenantKey(selectedTenantKey);
@@ -8112,6 +8163,128 @@ export default function PlatformAdminApp() {
     setTenantDepartmentIdsByDomain((prev) => ({ ...prev, [normalizedDomainKey]: nextIds }));
     setTenantDepartmentRoutingSaving(false);
   }, [canManageDomainRegistry, selectedTenantKey, tenantDepartmentRoutingSaving]);
+
+  const beginCreateTenantDepartment = useCallback(() => {
+    if (!canManageTenantDepartments) return;
+    setEditingTenantDepartmentId("");
+    setTenantDepartmentForm(initialTenantDepartmentForm());
+    setTenantDepartmentEditorOpen(true);
+    setStatus((prev) => ({ ...prev, departments: "" }));
+  }, [canManageTenantDepartments]);
+
+  const beginEditTenantDepartment = useCallback((departmentId) => {
+    if (!canManageTenantDepartments) return;
+    const id = String(departmentId || "").trim();
+    const row = tenantDepartments.find((entry) => String(entry?.id || "") === id) || null;
+    if (!row) return;
+    setEditingTenantDepartmentId(id);
+    setTenantDepartmentForm(buildTenantDepartmentForm(row));
+    setTenantDepartmentEditorOpen(true);
+    setStatus((prev) => ({ ...prev, departments: "" }));
+  }, [canManageTenantDepartments, tenantDepartments]);
+
+  const cancelTenantDepartmentEditor = useCallback(() => {
+    setEditingTenantDepartmentId("");
+    setTenantDepartmentForm(initialTenantDepartmentForm());
+    setTenantDepartmentEditorOpen(false);
+  }, []);
+
+  const saveTenantDepartment = useCallback(async (event) => {
+    event?.preventDefault?.();
+    if (!canManageTenantDepartments || tenantDepartmentSaving) return;
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    const name = String(tenantDepartmentForm?.name || "").trim();
+    const notificationEmail = String(tenantDepartmentForm?.notification_email || "").trim().toLowerCase();
+    if (!tenantKey) {
+      setStatus((prev) => ({ ...prev, departments: "Select an organization before saving a department." }));
+      return;
+    }
+    if (!name) {
+      setStatus((prev) => ({ ...prev, departments: "Enter a department name before saving." }));
+      return;
+    }
+    if (name.length > 120) {
+      setStatus((prev) => ({ ...prev, departments: "Department names must be 120 characters or fewer." }));
+      return;
+    }
+
+    const payload = {
+      tenant_key: tenantKey,
+      name,
+      notification_email: notificationEmail || null,
+      active: tenantDepartmentForm?.active !== false,
+    };
+    setTenantDepartmentSaving(true);
+    setStatus((prev) => ({ ...prev, departments: "" }));
+    const result = editingTenantDepartmentId
+      ? await supabase
+        .from("tenant_departments")
+        .update(payload)
+        .eq("tenant_key", tenantKey)
+        .eq("id", editingTenantDepartmentId)
+        .select("id,name,notification_email,active")
+        .single()
+      : await supabase
+        .from("tenant_departments")
+        .insert(payload)
+        .select("id,name,notification_email,active")
+        .single();
+    setTenantDepartmentSaving(false);
+    if (result.error || !result.data) {
+      setStatus((prev) => ({ ...prev, departments: statusText(result.error, "Could not save department.") }));
+      return;
+    }
+
+    const nextRows = sortTenantDepartments(
+      editingTenantDepartmentId
+        ? tenantDepartments.map((row) => (String(row?.id || "") === editingTenantDepartmentId ? result.data : row))
+        : [...tenantDepartments, result.data]
+    );
+    setTenantDepartments(nextRows);
+    setTenantRoutingDepartments(nextRows.filter((row) => row?.active !== false));
+    cancelTenantDepartmentEditor();
+    setStatus((prev) => ({
+      ...prev,
+      departments: editingTenantDepartmentId ? "Department updated." : "Department created. You can now assign it to a report domain.",
+    }));
+  }, [canManageTenantDepartments, cancelTenantDepartmentEditor, editingTenantDepartmentId, selectedTenantKey, tenantDepartmentForm, tenantDepartmentSaving, tenantDepartments]);
+
+  const deleteTenantDepartment = useCallback(async (departmentId) => {
+    if (!canDeleteTenantDepartments || tenantDepartmentSaving) return;
+    const tenantKey = sanitizeTenantKey(selectedTenantKey);
+    const id = String(departmentId || "").trim();
+    const row = tenantDepartments.find((entry) => String(entry?.id || "") === id) || null;
+    if (!tenantKey || !row) return;
+    const confirmed = typeof window === "undefined"
+      ? true
+      : window.confirm(`Remove ${String(row?.name || "this department")} from this organization? Its domain routing and employee assignments will also be removed.`);
+    if (!confirmed) return;
+
+    setTenantDepartmentSaving(true);
+    setStatus((prev) => ({ ...prev, departments: "" }));
+    const { error } = await supabase
+      .from("tenant_departments")
+      .delete()
+      .eq("tenant_key", tenantKey)
+      .eq("id", id);
+    setTenantDepartmentSaving(false);
+    if (error) {
+      setStatus((prev) => ({ ...prev, departments: statusText(error, "Could not remove department.") }));
+      return;
+    }
+
+    const nextRows = tenantDepartments.filter((entry) => String(entry?.id || "") !== id);
+    setTenantDepartments(nextRows);
+    setTenantRoutingDepartments(nextRows.filter((entry) => entry?.active !== false));
+    setTenantDepartmentIdsByDomain((prev) => Object.fromEntries(
+      Object.entries(prev || {}).map(([domainKey, ids]) => [
+        domainKey,
+        (Array.isArray(ids) ? ids : []).filter((departmentEntryId) => departmentEntryId !== id),
+      ])
+    ));
+    if (editingTenantDepartmentId === id) cancelTenantDepartmentEditor();
+    setStatus((prev) => ({ ...prev, departments: `Removed ${String(row?.name || "department")}.` }));
+  }, [canDeleteTenantDepartments, cancelTenantDepartmentEditor, editingTenantDepartmentId, selectedTenantKey, tenantDepartmentSaving, tenantDepartments]);
 
   const beginCreateTenantPark = useCallback(() => {
     if (!canEditTenantDomains) return;
@@ -14499,6 +14672,16 @@ export default function PlatformAdminApp() {
                         title={canManageDomainRegistry ? "Assign a domain" : "You need the Domains edit permission"}
                       />
                     ) : null}
+                    {activeTab === "departments" ? (
+                      <PcpActionIconButton
+                        label="Add Department"
+                        src={pcpAddIconSrc}
+                        style={{ opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
+                        disabled={!canManageTenantDepartments || tenantDepartmentSaving}
+                        onClick={beginCreateTenantDepartment}
+                        title={canManageTenantDepartments ? "Add a department" : "You need the Users edit permission"}
+                      />
+                    ) : null}
                     {activeTab === "parks" ? (
                       <PcpActionIconButton
                         label="Add Park"
@@ -15515,6 +15698,129 @@ export default function PlatformAdminApp() {
                 )}
               </div>
               {status.profile ? <div style={{ fontSize: 12.5, color: palette.textMuted }}>{toOrganizationLanguage(status.profile)}</div> : null}
+            </div>
+          </section>
+        ) : null}
+
+        {inTenantWorkspace && activeTab === "departments" ? (
+          <section style={{ display: "grid", gap: 14 }}>
+            <div style={{ ...workspaceBodyCard, display: "grid", gap: 12 }}>
+              {status.departments ? (
+                <div style={{ fontSize: 12.5, color: String(status.departments || "").startsWith("Error:") ? palette.red600 : palette.textMuted }}>
+                  {toOrganizationLanguage(status.departments)}
+                </div>
+              ) : null}
+              {tenantDepartmentEditorOpen ? (
+                <form onSubmit={(event) => void saveTenantDepartment(event)} style={{ display: "grid", gap: 10, paddingBottom: 12, borderBottom: "1px solid rgba(23, 49, 79, 0.14)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900, color: palette.navy900 }}>
+                      {editingTenantDepartmentId ? "Edit Department" : "Add Department"}
+                    </div>
+                  </div>
+                  <div style={responsiveActionGrid}>
+                    <label style={modalField}>
+                      <span>Department Name</span>
+                      <input
+                        required
+                        maxLength={120}
+                        value={tenantDepartmentForm.name}
+                        onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, name: event.target.value }))}
+                        placeholder="Public Works"
+                        style={modalInput}
+                      />
+                    </label>
+                    <label style={modalField}>
+                      <span>Central Notification Email</span>
+                      <input
+                        type="email"
+                        value={tenantDepartmentForm.notification_email}
+                        onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, notification_email: event.target.value }))}
+                        placeholder="publicworks@example.gov"
+                        style={modalInput}
+                      />
+                    </label>
+                    <div style={{ ...modalField, justifyContent: "start" }}>
+                      <span>Status</span>
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          minHeight: 48,
+                          padding: "0 14px",
+                          borderRadius: 14,
+                          border: "1px solid rgba(17, 36, 69, 0.14)",
+                          background: "#eef4fb",
+                          color: palette.navy900,
+                          fontWeight: 700,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={tenantDepartmentForm.active !== false}
+                          onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, active: event.target.checked }))}
+                        />
+                        <span>{tenantDepartmentForm.active !== false ? "Active" : "Inactive"}</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="submit" style={{ ...buttonBase, opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }} disabled={!canManageTenantDepartments || tenantDepartmentSaving}>
+                      {tenantDepartmentSaving ? "Saving..." : "Save"}
+                    </button>
+                    <button type="button" style={buttonAlt} disabled={tenantDepartmentSaving} onClick={cancelTenantDepartmentEditor}>Cancel</button>
+                  </div>
+                </form>
+              ) : null}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeadCell}>Department</th>
+                      <th style={tableHeadCell}>Central Email</th>
+                      <th style={tableHeadCell}>Status</th>
+                      <th style={tableHeadCell}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tenantDepartments.map((department) => (
+                      <tr key={department.id}>
+                        <td style={{ padding: "10px 0", fontWeight: 800, color: palette.navy900 }}>{department.name}</td>
+                        <td style={{ padding: "10px 0", color: palette.textMuted }}>{department.notification_email || "—"}</td>
+                        <td style={{ padding: "10px 0" }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 800, color: department.active === false ? palette.red600 : palette.mint700, background: department.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                            {department.active === false ? "Inactive" : "Active"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px 0" }}>
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                            <PcpEditButton
+                              label={`Edit ${department.name}`}
+                              style={{ opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
+                              disabled={!canManageTenantDepartments || tenantDepartmentSaving}
+                              onClick={() => beginEditTenantDepartment(department.id)}
+                            />
+                            <PcpActionIconButton
+                              label={`Remove ${department.name}`}
+                              src={pcpTrashIconSrc}
+                              style={{ opacity: canDeleteTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }}
+                              disabled={!canDeleteTenantDepartments || tenantDepartmentSaving}
+                              onClick={() => void deleteTenantDepartment(department.id)}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!tenantDepartments.length ? (
+                      <tr>
+                        <td colSpan={4} style={{ padding: "10px 0", color: palette.textMuted }}>
+                          No departments configured yet.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         ) : null}
