@@ -15776,11 +15776,13 @@ export default function PlatformAdminApp() {
                 {tenantDepartments.map((department) => (
                   <div key={department.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "start", gap: 10, padding: "12px 0", borderBottom: "1px solid rgba(23, 49, 79, 0.14)" }}>
                     <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
-                      <strong style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: palette.navy900 }}>{department.name}</strong>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <strong style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: palette.navy900 }}>{department.name}</strong>
+                        <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: department.active === false ? palette.red600 : palette.mint700, background: department.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
+                          {department.active === false ? "Inactive" : "Active"}
+                        </span>
+                      </div>
                       <span style={{ overflowWrap: "anywhere", color: palette.textMuted }}>{department.notification_email || "No central email configured"}</span>
-                      <span style={{ justifySelf: "start", fontSize: 11.5, fontWeight: 800, color: department.active === false ? palette.red600 : palette.mint700, background: department.active === false ? "rgba(209,67,67,0.12)" : "rgba(18,128,106,0.12)", borderRadius: 999, padding: "4px 10px" }}>
-                        {department.active === false ? "Inactive" : "Active"}
-                      </span>
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <PcpEditButton
