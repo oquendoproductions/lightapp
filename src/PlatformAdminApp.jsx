@@ -11364,6 +11364,68 @@ export default function PlatformAdminApp() {
       </div>
     </section>
   ) : null;
+  const renderTenantDepartmentEditor = (style = {}) => (
+    <form onSubmit={(event) => void saveTenantDepartment(event)} style={{ display: "grid", gap: 10, ...style }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 900, color: palette.navy900 }}>
+          {editingTenantDepartmentId ? "Edit Department" : "Add Department"}
+        </div>
+      </div>
+      <div style={responsiveActionGrid}>
+        <label style={modalField}>
+          <span>Department Name</span>
+          <input
+            required
+            maxLength={120}
+            value={tenantDepartmentForm.name}
+            onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, name: event.target.value }))}
+            placeholder="Public Works"
+            style={modalInput}
+          />
+        </label>
+        <label style={modalField}>
+          <span>Central Notification Email</span>
+          <input
+            type="email"
+            value={tenantDepartmentForm.notification_email}
+            onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, notification_email: event.target.value }))}
+            placeholder="publicworks@example.gov"
+            style={modalInput}
+          />
+        </label>
+        <div style={{ ...modalField, justifyContent: "start" }}>
+          <span>Status</span>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minHeight: 48,
+              padding: "0 14px",
+              borderRadius: 14,
+              border: "1px solid rgba(17, 36, 69, 0.14)",
+              background: "#eef4fb",
+              color: palette.navy900,
+              fontWeight: 700,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={tenantDepartmentForm.active !== false}
+              onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, active: event.target.checked }))}
+            />
+            <span>{tenantDepartmentForm.active !== false ? "Active" : "Inactive"}</span>
+          </label>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="submit" style={{ ...buttonBase, opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }} disabled={!canManageTenantDepartments || tenantDepartmentSaving}>
+          {tenantDepartmentSaving ? "Saving..." : "Save"}
+        </button>
+        <button type="button" style={buttonAlt} disabled={tenantDepartmentSaving} onClick={cancelTenantDepartmentEditor}>Cancel</button>
+      </div>
+    </form>
+  );
 
   if (!authReady) {
     return (
@@ -15765,67 +15827,8 @@ export default function PlatformAdminApp() {
                   {toOrganizationLanguage(status.departments)}
                 </div>
               ) : null}
-              {tenantDepartmentEditorOpen ? (
-                <form onSubmit={(event) => void saveTenantDepartment(event)} style={{ display: "grid", gap: 10, paddingBottom: 12, borderBottom: "1px solid rgba(23, 49, 79, 0.14)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 900, color: palette.navy900 }}>
-                      {editingTenantDepartmentId ? "Edit Department" : "Add Department"}
-                    </div>
-                  </div>
-                  <div style={responsiveActionGrid}>
-                    <label style={modalField}>
-                      <span>Department Name</span>
-                      <input
-                        required
-                        maxLength={120}
-                        value={tenantDepartmentForm.name}
-                        onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, name: event.target.value }))}
-                        placeholder="Public Works"
-                        style={modalInput}
-                      />
-                    </label>
-                    <label style={modalField}>
-                      <span>Central Notification Email</span>
-                      <input
-                        type="email"
-                        value={tenantDepartmentForm.notification_email}
-                        onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, notification_email: event.target.value }))}
-                        placeholder="publicworks@example.gov"
-                        style={modalInput}
-                      />
-                    </label>
-                    <div style={{ ...modalField, justifyContent: "start" }}>
-                      <span>Status</span>
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          minHeight: 48,
-                          padding: "0 14px",
-                          borderRadius: 14,
-                          border: "1px solid rgba(17, 36, 69, 0.14)",
-                          background: "#eef4fb",
-                          color: palette.navy900,
-                          fontWeight: 700,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={tenantDepartmentForm.active !== false}
-                          onChange={(event) => setTenantDepartmentForm((prev) => ({ ...prev, active: event.target.checked }))}
-                        />
-                        <span>{tenantDepartmentForm.active !== false ? "Active" : "Inactive"}</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button type="submit" style={{ ...buttonBase, opacity: canManageTenantDepartments && !tenantDepartmentSaving ? 1 : 0.55 }} disabled={!canManageTenantDepartments || tenantDepartmentSaving}>
-                      {tenantDepartmentSaving ? "Saving..." : "Save"}
-                    </button>
-                    <button type="button" style={buttonAlt} disabled={tenantDepartmentSaving} onClick={cancelTenantDepartmentEditor}>Cancel</button>
-                  </div>
-                </form>
+              {tenantDepartmentEditorOpen && !editingTenantDepartmentId ? (
+                renderTenantDepartmentEditor({ paddingBottom: 12, borderBottom: "1px solid rgba(23, 49, 79, 0.14)" })
               ) : null}
               <div style={{ display: "grid" }}>
                 {tenantDepartments.map((department) => (
@@ -15854,6 +15857,9 @@ export default function PlatformAdminApp() {
                         onClick={() => void deleteTenantDepartment(department.id)}
                       />
                     </div>
+                    {tenantDepartmentEditorOpen && String(editingTenantDepartmentId) === String(department.id) ? (
+                      renderTenantDepartmentEditor({ gridColumn: "1 / -1", paddingTop: 12, borderTop: "1px solid rgba(23, 49, 79, 0.14)" })
+                    ) : null}
                   </div>
                 ))}
                 {!tenantDepartments.length ? (
