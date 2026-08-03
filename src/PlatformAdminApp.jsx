@@ -1543,7 +1543,7 @@ function buildEditableDomainTypeOptionConfigs(value, domainKey = "") {
         ? serializeDomainTypeOptionChoicesInput(parsedChoices)
         : String(existingChoicesInput),
     };
-  }).filter((row) => String(row?.option_label || "").trim() || String(row?.choices_input || "").trim());
+  });
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
