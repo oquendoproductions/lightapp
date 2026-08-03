@@ -3,6 +3,8 @@ import { supabase } from "./supabaseClient";
 import "./headerStandards.css";
 import pcpEditIconSrc from "./assets/pcp-edit-icon.svg";
 import pcpAddIconSrc from "./assets/pcp-add-icon.svg";
+import pcpConfirmIconSrc from "./assets/pcp-confirm-icon.svg";
+import pcpCancelIconSrc from "./assets/pcp-cancel-icon.svg";
 import pcpSwitchOrganizationIconSrc from "./assets/pcp-switch-organization-icon.svg";
 import pcpOpenHubIconSrc from "./assets/pcp-open-hub-icon.svg";
 import pcpWorkspaceSectionIconSrc from "./assets/pcp-workspace-section-icon.svg";
@@ -698,6 +700,32 @@ function PcpEditButton({ label = "Edit", title, disabled = false, onClick, style
     >
       <img src={pcpEditIconSrc} alt="" aria-hidden="true" style={pcpEditButtonIconStyle} />
     </button>
+  );
+}
+
+function PcpConfirmButton({ label = "Save", title, disabled = false, onClick, style }) {
+  return (
+    <PcpActionIconButton
+      label={label}
+      title={title || label}
+      src={pcpConfirmIconSrc}
+      disabled={disabled}
+      onClick={onClick}
+      style={style}
+    />
+  );
+}
+
+function PcpCancelButton({ label = "Cancel", title, disabled = false, onClick, style }) {
+  return (
+    <PcpActionIconButton
+      label={label}
+      title={title || label}
+      src={pcpCancelIconSrc}
+      disabled={disabled}
+      onClick={onClick}
+      style={style}
+    />
   );
 }
 
@@ -16607,22 +16635,19 @@ export default function PlatformAdminApp() {
                                     />
                                   ) : (
                                     <>
-                                      <button
-                                        type="button"
-                                        style={{ ...buttonBase, opacity: canManageDomainRegistry ? 1 : 0.55 }}
+                                      <PcpConfirmButton
+                                        label="Save Assignment"
+                                        title="Save assignment"
+                                        style={{ opacity: canManageDomainRegistry ? 1 : 0.55 }}
                                         disabled={!canManageDomainRegistry || tenantDomainAssignmentSaving}
                                         onClick={() => void saveTenantDomainAssignment()}
-                                      >
-                                        Save Assignment
-                                      </button>
-                                      <button
-                                        type="button"
-                                        style={buttonAlt}
+                                      />
+                                      <PcpCancelButton
+                                        label="Cancel assignment edits"
+                                        title="Cancel assignment edits"
                                         disabled={tenantDomainAssignmentSaving}
                                         onClick={cancelTenantDomainAssignmentEditor}
-                                      >
-                                        Cancel
-                                      </button>
+                                      />
                                     </>
                                   )}
                                 </div>
@@ -16748,38 +16773,50 @@ export default function PlatformAdminApp() {
                                 </div>
                                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                   {!isEditingMarkerIconSection ? (
-                                    <PcpEditButton
-                                      label="Edit Settings"
-                                      style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
-                                      disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment}
-                                      onClick={() => beginDomainEdit(d.key, "marker-icon")}
-                                      title={
-                                        editLockedByOtherDomain
-                                          ? "Finish the current domain edit before opening another domain."
-                                          : isEditingAssignment
-                                            ? "Finish editing assignment before editing settings."
-                                            : canEditTenantDomains
-                                              ? `Edit ${d.label}`
-                                              : "You need the Domains edit permission"
-                                      }
-                                    />
+                                    <>
+                                      {isAssetBacked ? (
+                                        <PcpActionIconButton
+                                          label="Add Coordinate File"
+                                          title={canEditTenantDomains && canEditTenantFiles ? `Add coordinate file for ${d.label}` : "You need the Domains and Files edit permissions"}
+                                          src={pcpAddIconSrc}
+                                          style={{ opacity: canEditTenantDomains && canEditTenantFiles && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
+                                          disabled={!canEditTenantDomains || !canEditTenantFiles || editLockedByOtherDomain || isEditingAssignment}
+                                          onClick={() => {
+                                            beginDomainEdit(d.key, "marker-icon");
+                                            openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key });
+                                          }}
+                                        />
+                                      ) : null}
+                                      <PcpEditButton
+                                        label="Edit Settings"
+                                        style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment ? 1 : 0.55 }}
+                                        disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment}
+                                        onClick={() => beginDomainEdit(d.key, "marker-icon")}
+                                        title={
+                                          editLockedByOtherDomain
+                                            ? "Finish the current domain edit before opening another domain."
+                                            : isEditingAssignment
+                                              ? "Finish editing assignment before editing settings."
+                                              : canEditTenantDomains
+                                                ? `Edit ${d.label}`
+                                                : "You need the Domains edit permission"
+                                        }
+                                      />
+                                    </>
                                   ) : (
                                     <>
-                                      <button
-                                        type="button"
-                                        style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                      <PcpConfirmButton
+                                        label="Save marker and icon settings"
+                                        title="Save marker and icon settings"
+                                        style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
                                         disabled={!canEditTenantDomains}
                                         onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
-                                      >
-                                        Save Marker & Icon
-                                      </button>
-                                      <button
-                                        type="button"
-                                        style={buttonAlt}
+                                      />
+                                      <PcpCancelButton
+                                        label="Cancel marker and icon edits"
+                                        title="Cancel marker and icon edits"
                                         onClick={() => cancelDomainEdit(d.key)}
-                                      >
-                                        Cancel
-                                      </button>
+                                      />
                                     </>
                                   )}
                                 </div>
@@ -17079,21 +17116,6 @@ export default function PlatformAdminApp() {
                                           : `No coordinate files are linked to ${d.label} yet.`}
                                       </div>
                                     </div>
-                                    <button
-                                      type="button"
-                                      style={{ ...buttonAlt, opacity: canEditTenantFiles && isEditingDomain ? 1 : 0.55 }}
-                                      disabled={!canEditTenantFiles || !isEditingDomain}
-                                      onClick={() => openTenantAssetModal({ category: "asset_coordinates", asset_subtype: d.key })}
-                                      title={
-                                        !isEditingDomain
-                                          ? `Open edit mode to manage ${d.label} coordinates`
-                                          : canEditTenantFiles
-                                            ? `Add coordinate file for ${d.label}`
-                                            : "You need the Files edit permission"
-                                      }
-                                    >
-                                      Add Coordinates
-                                    </button>
                                   </div>
                                   {coordinateFiles.length ? (
                                     <div style={{ display: "grid", gap: 6 }}>
@@ -17134,40 +17156,94 @@ export default function PlatformAdminApp() {
                                   </div>
                                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                                     {!isEditingReportingSection ? (
-                                      <PcpEditButton
-                                        label={`Edit ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}`}
-                                        style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
-                                        disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
-                                        onClick={() => beginDomainEdit(d.key, selectedAssignedDomainSectionKey)}
-                                        title={
-                                          isEditingDomain && !isEditingReportingSection
-                                            ? "Finish the current domain section edit before opening another one."
-                                            : editLockedByOtherDomain
-                                              ? "Finish the current domain edit before opening another domain."
-                                              : isEditingAssignment
-                                                ? "Finish editing assignment before editing this report section."
-                                              : canEditTenantDomains
-                                                  ? `Edit ${d.label} ${isReportingFieldsSection ? "reporting fields" : isReportDisclosuresSection ? "report disclosures" : "report settings"}`
-                                                  : "You need the Domains edit permission"
-                                        }
-                                      />
+                                      <>
+                                        {isReportingFieldsSection ? (
+                                          <PcpActionIconButton
+                                            label="Add Reporting Field"
+                                            title="Add reporting field"
+                                            src={pcpAddIconSrc}
+                                            style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                            disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                            onClick={() => {
+                                              beginDomainEdit(d.key, "reporting-fields");
+                                              setDomainConfigForm((prev) => ({
+                                                ...prev,
+                                                [d.key]: {
+                                                  ...(prev?.[d.key] || {}),
+                                                  type_options: [
+                                                    ...(Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []),
+                                                    {
+                                                      id: createDomainDisclosureId("type_option"),
+                                                      option_key: "",
+                                                      option_label: defaultDomainTypeOptionLabel(d.key, Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options.length : 0),
+                                                      choices_input: "",
+                                                    },
+                                                  ],
+                                                },
+                                              }));
+                                            }}
+                                          />
+                                        ) : null}
+                                        {isReportDisclosuresSection ? (
+                                          <PcpActionIconButton
+                                            label="Add Disclosure"
+                                            title="Add disclosure"
+                                            src={pcpAddIconSrc}
+                                            style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                            disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                            onClick={() => {
+                                              beginDomainEdit(d.key, "report-disclosures");
+                                              setDomainConfigForm((prev) => ({
+                                                ...prev,
+                                                [d.key]: {
+                                                  ...(prev?.[d.key] || {}),
+                                                  report_disclosures: [
+                                                    ...(Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []),
+                                                    {
+                                                      id: createDomainDisclosureId("report_disclosure"),
+                                                      title: "",
+                                                      body: "",
+                                                      required_acknowledgement: false,
+                                                      display_position: "inside_form",
+                                                    },
+                                                  ],
+                                                },
+                                              }));
+                                            }}
+                                          />
+                                        ) : null}
+                                        <PcpEditButton
+                                          label={`Edit ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}`}
+                                          style={{ opacity: canEditTenantDomains && !editLockedByOtherDomain && !isEditingAssignment && !isEditingDomain ? 1 : 0.55 }}
+                                          disabled={!canEditTenantDomains || editLockedByOtherDomain || isEditingAssignment || isEditingDomain}
+                                          onClick={() => beginDomainEdit(d.key, selectedAssignedDomainSectionKey)}
+                                          title={
+                                            isEditingDomain && !isEditingReportingSection
+                                              ? "Finish the current domain section edit before opening another one."
+                                              : editLockedByOtherDomain
+                                                ? "Finish the current domain edit before opening another domain."
+                                                : isEditingAssignment
+                                                  ? "Finish editing assignment before editing this report section."
+                                                  : canEditTenantDomains
+                                                    ? `Edit ${d.label} ${isReportingFieldsSection ? "reporting fields" : isReportDisclosuresSection ? "report disclosures" : "report settings"}`
+                                                    : "You need the Domains edit permission"
+                                          }
+                                        />
+                                      </>
                                     ) : (
                                       <>
-                                        <button
-                                          type="button"
-                                          style={{ ...buttonBase, opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
+                                        <PcpConfirmButton
+                                          label={`Save ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"}`}
+                                          title="Save"
+                                          style={{ opacity: canEditTenantDomains && !tenantDepartmentRoutingSaving ? 1 : 0.55 }}
                                           disabled={!canEditTenantDomains || tenantDepartmentRoutingSaving}
                                           onClick={() => void saveReportNotifications(d.key)}
-                                        >
-                                          Save
-                                        </button>
-                                        <button
-                                          type="button"
-                                          style={buttonAlt}
+                                        />
+                                        <PcpCancelButton
+                                          label={`Cancel ${isReportingFieldsSection ? "Reporting Fields" : isReportDisclosuresSection ? "Report Disclosures" : "Report Settings"} edits`}
+                                          title="Cancel"
                                           onClick={() => cancelDomainEdit(d.key)}
-                                        >
-                                          Cancel
-                                        </button>
+                                        />
                                       </>
                                     )}
                                   </div>
@@ -17398,30 +17474,6 @@ export default function PlatformAdminApp() {
                                   gap: 10,
                                 }}
                               >
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
-                                    disabled={domainFieldsReadOnly}
-                                    onClick={() => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        type_options: [
-                                          ...(Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options : []),
-                                          {
-                                            id: createDomainDisclosureId("type_option"),
-                                            option_key: "",
-                                            option_label: defaultDomainTypeOptionLabel(d.key, Array.isArray(prev?.[d.key]?.type_options) ? prev[d.key].type_options.length : 0),
-                                            choices_input: "",
-                                          },
-                                        ],
-                                      },
-                                    }))}
-                                  >
-                                    Add Reporting Field
-                                  </button>
-                                </div>
                                 {domainTypeOptionRows.length ? (
                                   <div style={{ display: "grid", gap: 10 }}>
                                     {domainTypeOptionRows.map((typeOption, typeIndex) => (
@@ -17567,31 +17619,6 @@ export default function PlatformAdminApp() {
                                   gap: 10,
                                 }}
                               >
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    style={{ ...buttonAlt, opacity: domainFieldsReadOnly ? 0.55 : 1 }}
-                                    disabled={domainFieldsReadOnly}
-                                    onClick={() => setDomainConfigForm((prev) => ({
-                                      ...prev,
-                                      [d.key]: {
-                                        ...(prev?.[d.key] || {}),
-                                        report_disclosures: [
-                                          ...(Array.isArray(prev?.[d.key]?.report_disclosures) ? prev[d.key].report_disclosures : []),
-                                          {
-                                            id: createDomainDisclosureId("report_disclosure"),
-                                            title: "",
-                                            body: "",
-                                            required_acknowledgement: false,
-                                            display_position: "inside_form",
-                                          },
-                                        ],
-                                      },
-                                    }))}
-                                  >
-                                    Add Disclosure
-                                  </button>
-                                </div>
                                 <div style={{ display: "grid", gap: 10 }}>
                                   {domainDisclosureRows.length ? domainDisclosureRows.map((disclosure, disclosureIndex) => (
                                     <div
@@ -17793,21 +17820,18 @@ export default function PlatformAdminApp() {
                                       />
                                     ) : (
                                       <>
-                                        <button
-                                          type="button"
-                                          style={{ ...buttonBase, opacity: canEditTenantDomains ? 1 : 0.55 }}
+                                        <PcpConfirmButton
+                                          label="Save report notifications"
+                                          title="Save report notifications"
+                                          style={{ opacity: canEditTenantDomains ? 1 : 0.55 }}
                                           disabled={!canEditTenantDomains}
                                           onClick={() => void saveDomainAndFeatureSettings(null, { closeEditingDomain: d.key })}
-                                        >
-                                          Save Notifications
-                                        </button>
-                                        <button
-                                          type="button"
-                                          style={buttonAlt}
+                                        />
+                                        <PcpCancelButton
+                                          label="Cancel report notification edits"
+                                          title="Cancel report notification edits"
                                           onClick={() => cancelDomainEdit(d.key)}
-                                        >
-                                          Cancel
-                                        </button>
+                                        />
                                       </>
                                     )}
                                   </div>
