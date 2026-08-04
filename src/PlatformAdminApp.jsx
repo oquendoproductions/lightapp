@@ -8850,6 +8850,7 @@ export default function PlatformAdminApp() {
         5,
         { min: 1, max: 25 }
       ),
+      public_inactivity_archive_days: sanitizePositiveIntegerSetting(domainConfigForm?.[d.key]?.public_inactivity_archive_days, 14, { min: 1, max: 365 }),
       road_required: domainConfigForm?.[d.key]?.road_required === true,
       park_required: domainConfigForm?.[d.key]?.park_required === true,
       allow_report_images: domainConfigForm?.[d.key]?.allow_report_images === true,
