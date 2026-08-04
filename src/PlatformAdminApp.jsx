@@ -4761,7 +4761,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_repair_confirmation_threshold,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_repair_confirmation_threshold,public_inactivity_archive_days,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -6583,6 +6583,7 @@ export default function PlatformAdminApp() {
           5,
           { min: 1, max: 25 }
         ),
+        public_inactivity_archive_days: sanitizePositiveIntegerSetting(assignment?.public_inactivity_archive_days, 14, { min: 1, max: 365 }),
         road_required: assignment?.road_required === true,
         park_required: assignment?.park_required === true,
         allow_report_images: assignment?.allow_report_images === true,
@@ -9007,6 +9008,7 @@ export default function PlatformAdminApp() {
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
               public_repair_confirmation_threshold: savedAssignment.public_repair_confirmation_threshold,
+              public_inactivity_archive_days: savedAssignment.public_inactivity_archive_days,
               road_required: savedAssignment.road_required === true,
               park_required: savedAssignment.park_required === true,
               allow_report_images: savedAssignment.allow_report_images === true,
