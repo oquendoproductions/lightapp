@@ -1,6 +1,6 @@
 # iOS App Store Readiness
 
-Last updated: 2026-04-24
+Last updated: 2026-07-30
 
 ## Goal
 
@@ -14,12 +14,14 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
 - App icon asset exists in [AppIcon.appiconset](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/ios/App/App/Assets.xcassets/AppIcon.appiconset).
 - Launch splash assets exist in [Splash.imageset](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/ios/App/App/Assets.xcassets/Splash.imageset).
 - Display name is set to `CityReport.io`.
-- Bundle identifier is set to `cityreport.io.map`.
+- Bundle identifier is set to `cityreport.io.app`.
 - Location usage description is present in [Info.plist](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/ios/App/App/Info.plist).
 - Privacy manifest exists in [PrivacyInfo.xcprivacy](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/ios/App/App/PrivacyInfo.xcprivacy).
 - Portrait-only iPhone orientation is configured.
 - Terms of Use and Privacy Policy are exposed inside the app.
-- Native push registration hooks exist in the app shell, pending Apple Developer capability enablement.
+- Native push registration hooks exist in the app shell.
+- Submission candidate version is `1.2.6` build `7`.
+- The Debug configuration uses the development APNs entitlement and the Release configuration uses `AppRelease.entitlements` with the production APNs entitlement.
 
 ### Safe config update completed
 
@@ -36,19 +38,13 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
      - TestFlight distribution
      - App Store release
 
-2. Xcode command-line selection
-   - `xcodebuild` currently resolves to Command Line Tools instead of full Xcode.
-   - Needed so local archive/validation commands can run cleanly.
-   - Expected fix on the machine:
-     - `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
-
-3. App Store Connect app record
-   - Create the iOS app record for `cityreport.io.map` if not already created.
+2. App Store Connect app record
+   - Create the iOS app record for `cityreport.io.app` if not already created.
    - Confirm bundle identifier, app name, primary language, and SKU.
 
 ### P0: Native capability validation
 
-4. Push notifications end-to-end
+3. Push notifications end-to-end
    - Enable Push Notifications capability in Xcode after Apple Developer enrollment.
    - Confirm APNs entitlement/profile generation.
    - Validate:
@@ -58,7 +54,7 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
      - badge/banner/sound behavior
      - alert/event topic preference behavior
 
-5. Real-device media upload validation
+4. Real-device media upload validation
    - The app currently uses web file inputs for image upload.
    - Must test on a physical iPhone:
      - photo library picker
@@ -68,7 +64,7 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
 
 ### P0: Store submission materials
 
-6. App Store metadata package
+5. App Store metadata package
    - App subtitle
    - App description
    - Keywords
@@ -77,7 +73,7 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
    - Privacy Policy URL
    - App category
 
-7. Screenshots and preview assets
+6. Screenshots and preview assets
    - Capture store screenshots for required iPhone sizes from the real app.
    - Recommended minimum set:
      - city selection
@@ -87,7 +83,7 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
      - alerts/events
      - account/preferences
 
-8. App Privacy questionnaire
+7. App Privacy questionnaire
    - Complete App Store Connect privacy disclosures based on actual data use:
      - location
      - contact/account info
@@ -121,8 +117,8 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
 ## P1: Release process setup
 
 12. Versioning strategy
-   - Current version is `1.0` build `1`.
-   - Decide release numbering convention before first TestFlight upload.
+   - Submission candidate is `1.2.6` build `7`.
+   - Increment the build number for every upload; increment the marketing version for public feature releases.
 
 13. Archive / validation workflow
    - Confirm release archive succeeds from Xcode.
@@ -138,10 +134,10 @@ Move the CityReport public iOS app from "good local/native testing build" to "su
 
 ## Recommended Order
 
-1. Fix `xcode-select` to point at full Xcode.
+1. Resolve the outstanding marker-persistence release blocker and finish physical-device QA.
 2. Enroll in Apple Developer Program and enable proper signing.
-3. Turn on Push Notifications capability and validate on device.
+3. Turn on Push Notifications capability and validate the production entitlement on device.
 4. Complete real-device QA for image upload and core reporting.
-5. Prepare App Store Connect metadata and screenshots.
-6. Archive, validate, upload to TestFlight.
-7. Run beta feedback round before public release.
+5. Use `docs/STORE_SUBMISSION_PACKAGE_v1.2.6.md` to complete App Store Connect metadata, privacy, review access, and screenshots.
+6. Archive, validate, and upload to TestFlight.
+7. Run a beta feedback round before public release.

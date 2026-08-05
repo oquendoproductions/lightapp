@@ -19,11 +19,21 @@ const DEFAULT_NAVIGATION_LOCATION_MARKER_SRC = svgDataUri(`
 `);
 
 const MAP_TOOL_ICON_BASE = "/Icons/Map Tools";
+const FIRST_PAINT_MAP_TOOL_ICON_BASE = `${MAP_TOOL_ICON_BASE}/first-paint`;
 const BUTTON_ICON_BASE = "/Icons/Buttons";
-const INCIDENT_LAYER_ICON_SRC = `${MAP_TOOL_ICON_BASE}/incident_driven_map_layer_button.png`;
+const INCIDENT_LAYER_ICON_SRC = `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/incident_driven_map_layer_button.webp`;
 const INFO_ICON_SRC = "/info_icon.png";
 const LOCATION_ICON_SRC = "/location_icon.png";
 const WARNING_SIGN_ICON_SRC = "/street_sign_icons/warning_sign_icon.png";
+const FIRST_PAINT_ICON_SRC_BY_LEGACY_SRC = Object.freeze({
+  "/satellite_icon.png": `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/satellite_icon.webp`,
+  "/street_map_icon.png": `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/street_map_icon.webp`,
+  "/heading_reset_icon.png": `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/heading_reset_icon.webp`,
+  "/location_icon.png": `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/location_icon.webp`,
+  [`${MAP_TOOL_ICON_BASE}/navigation_arrow_icon.png`]: `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/navigation_arrow_icon.webp`,
+  [`${MAP_TOOL_ICON_BASE}/home_recenter_button.png`]: `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/home_recenter_button.webp`,
+  [`${MAP_TOOL_ICON_BASE}/incident_driven_map_layer_button.png`]: `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/incident_driven_map_layer_button.webp`,
+});
 
 const DEFAULT_UI_ICON_ROWS = Object.freeze([
   ["account", "/account_icon.png"],
@@ -39,11 +49,11 @@ const DEFAULT_UI_ICON_ROWS = Object.freeze([
   ["mapping", "/streetlight_mapping_icon.png"],
   ["bulk", "/bulk_reporting_icon.png"],
   ["toolbox", "/toolbox_icon.png"],
-  ["headingReset", "/heading_reset_icon.png"],
+  ["headingReset", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/heading_reset_icon.webp`],
   ["info", INFO_ICON_SRC],
-  ["location", LOCATION_ICON_SRC],
-  ["homeRecenter", `${MAP_TOOL_ICON_BASE}/home_recenter_button.png`],
-  ["navigationArrow", `${MAP_TOOL_ICON_BASE}/navigation_arrow_icon.png`],
+  ["location", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/location_icon.webp`],
+  ["homeRecenter", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/home_recenter_button.webp`],
+  ["navigationArrow", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/navigation_arrow_icon.webp`],
   ["domainSelector", INCIDENT_LAYER_ICON_SRC],
   ["incidentReportingLayer", INCIDENT_LAYER_ICON_SRC],
   ["allIncidentReports", INCIDENT_LAYER_ICON_SRC],
@@ -51,8 +61,8 @@ const DEFAULT_UI_ICON_ROWS = Object.freeze([
   ["notifications", INCIDENT_LAYER_ICON_SRC],
   ["calendar", "/calendar_icon.png"],
   ["notification", "/notification_icon.png"],
-  ["satellite", "/satellite_icon.png"],
-  ["streetMap", "/street_map_icon.png"],
+  ["satellite", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/satellite_icon.webp`],
+  ["streetMap", `${FIRST_PAINT_MAP_TOOL_ICON_BASE}/street_map_icon.webp`],
   ["noticeInfo", INFO_ICON_SRC],
   ["noticeWarning", WARNING_SIGN_ICON_SRC],
   ["noticeSuccess", INFO_ICON_SRC],
@@ -116,9 +126,22 @@ export const DEFAULT_UI_ICON_META = Object.freeze(
 );
 
 function mergeResolvedRuntimeUiIconMeta(overrides = {}) {
+  const resolvedOverrides = Object.fromEntries(
+    Object.entries(overrides && typeof overrides === "object" ? overrides : {}).map(([key, value]) => {
+      if (typeof value === "string") {
+        return [key, FIRST_PAINT_ICON_SRC_BY_LEGACY_SRC[value] || value];
+      }
+      if (!value || typeof value !== "object") return [key, value];
+      const src = String(value.src || "").trim();
+      return [key, {
+        ...value,
+        src: FIRST_PAINT_ICON_SRC_BY_LEGACY_SRC[src] || src,
+      }];
+    })
+  );
   return {
     ...DEFAULT_UI_ICON_META,
-    ...(overrides && typeof overrides === "object" ? overrides : {}),
+    ...resolvedOverrides,
   };
 }
 
@@ -127,11 +150,41 @@ export let RUNTIME_UI_ICON_SRC = buildRuntimeUiIconSrc(RUNTIME_UI_ICON_META);
 export let RUNTIME_UI_ICON_RENDER_MODE_BY_SRC = buildRuntimeUiIconRenderModeBySrc(RUNTIME_UI_ICON_META);
 export let RUNTIME_UI_ICON_PRIMARY_KEY_BY_SRC = buildRuntimeUiIconPrimaryKeyBySrc(RUNTIME_UI_ICON_META);
 
+export const CRITICAL_MAP_TOOL_ICON_KEYS = Object.freeze([
+  "satellite",
+  "streetMap",
+  "headingReset",
+  "location",
+  "navigationArrow",
+  "homeRecenter",
+  "incidentReportingLayer",
+]);
+
+const criticalMapToolPreloadImages = new Map();
+
+export function preloadCriticalMapToolIcons(iconSrcByKey = RUNTIME_UI_ICON_SRC) {
+  if (typeof Image === "undefined") return [];
+  const started = [];
+  for (const key of CRITICAL_MAP_TOOL_ICON_KEYS) {
+    const src = String(iconSrcByKey?.[key] || "").trim();
+    if (!src || src.startsWith("data:") || criticalMapToolPreloadImages.has(src)) continue;
+    const image = new Image();
+    image.loading = "eager";
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    image.src = src;
+    criticalMapToolPreloadImages.set(src, image);
+    started.push(src);
+  }
+  return started;
+}
+
 export function setResolvedRuntimeUiIconMetaState(rawMeta) {
   RUNTIME_UI_ICON_META = mergeResolvedRuntimeUiIconMeta(rawMeta);
   RUNTIME_UI_ICON_SRC = buildRuntimeUiIconSrc(RUNTIME_UI_ICON_META);
   RUNTIME_UI_ICON_RENDER_MODE_BY_SRC = buildRuntimeUiIconRenderModeBySrc(RUNTIME_UI_ICON_META);
   RUNTIME_UI_ICON_PRIMARY_KEY_BY_SRC = buildRuntimeUiIconPrimaryKeyBySrc(RUNTIME_UI_ICON_META);
+  preloadCriticalMapToolIcons(RUNTIME_UI_ICON_SRC);
 }
 
 function isTintableSvgIconSrc(src = "") {

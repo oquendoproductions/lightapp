@@ -43,17 +43,28 @@ export function stripSystemMetadataFromNote(note) {
     // fall through to legacy note parsing
   }
   return raw
+    // Stable reporting-field metadata for newly submitted reports. It is for
+    // rendering only and must never appear in the resident's Notes text.
+    .replace(/\s*\[CR_TYPE_OPTIONS:[^\]]+\]\s*/gi, " ")
+    // A short-lived legacy writer emitted duplicate, delimiter-free type-option
+    // prefixes (for example `Type Option Sign Type Option Test`). The final
+    // value is the resident note, so remove the duplicate metadata prefix.
+    .replace(/(?:^|\s)Type Option(?:\s+[^|]*?)?\s+Type Option\s+/gi, " ")
     .replace(/(?:^|\s)Location:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Address:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Cross Street:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Intersection:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Landmark:\s*([^|]+?)(?:\s*\||$)/gi, "")
+    // Tenant-configured reporting fields are persisted as metadata. Older
+    // reports used an unlabeled `Type Option: value` tag, while current
+    // reports use `Type Option Field Label: value`; remove both before the
+    // generic Issue Type cleaner sees the nested `Issue Type:` substring.
+    .replace(/(?:^|\s)Type Option(?:\s+[^:|]+)?\s*:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Issue Type:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Water issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign issue:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Type:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/(?:^|\s)Sign type:\s*([^|]+?)(?:\s*\||$)/gi, "")
-    .replace(/(?:^|\s)Type Option\s+[^:|]+:\s*([^|]+?)(?:\s*\||$)/gi, "")
     .replace(/\[SL_QA\s+power_on=(yes|no|unknown)\s+hazardous=(yes|no|unknown)\]/gi, "")
     .replace(/(?:^|\s)Image:\s*(https?:\/\/[^\s|]+)(?:\s*\||$)/gi, "")
     .replace(/^\|\s*/, "")

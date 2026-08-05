@@ -1,5 +1,4 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "./supabaseClient";
 import {
   formattedIncidentDisplayIdShared,
 } from "./lib/mapIncidentDisplaySupport.js";
@@ -22,13 +21,14 @@ import {
 } from "./lib/incidentLifecycle.js";
 import { incidentLocationCacheKey } from "./lib/mapIncidentLocationCacheSupport.js";
 import { resolveIncidentRepairSnapshotShared } from "./lib/mapIncidentRepairSupport.js";
-import { isWorkingReportType, reportIdentityKey } from "./lib/mapIncidentIdentitySupport.js";
+import { reportIdentityKey } from "./lib/mapIncidentIdentitySupport.js";
 import {
   isPlaceholderLocationText,
   isUsableAddressText,
 } from "./lib/mapPopupTextSupport.js";
-import { activeTenantKey, normalizeDomainKey, normalizeDomainKeyOrSlug, singularizeDomainLabel } from "./lib/mapReportParsingSupport.js";
+import { normalizeDomainKey, normalizeDomainKeyOrSlug, singularizeDomainLabel } from "./lib/mapReportParsingSupport.js";
 import { repairActionButtonStyle } from "./lib/mapRepairActionStyleSupport.js";
+import { openMapNavigationFromCoordinates } from "./platform/external.js";
 import { getIncidentDomainHelperShared } from "./lib/mapIncidentDomainConfig.js";
 import {
   incidentSnapshotCandidateDomainsShared,
@@ -39,15 +39,11 @@ import {
   buildIncidentDrivenRecordMapByDomainShared,
   buildIncidentIssueStateByDomainShared,
 } from "./lib/mapDeferredIncidentWorkspaceStateSupport.js";
-import { isNativeAppRuntime } from "./platform/runtime.js";
-import { loadIncidentStateHistoryShared } from "./lib/mapIncidentStateReportSupport.js";
 
 const LazyIncidentLocationModal = lazy(() => import("./mapLazyReportInspectors.jsx").then((module) => ({ default: module.IncidentLocationModal })));
-const LazyAllReportsModal = lazy(() => import("./mapLazyReportInspectors.jsx").then((module) => ({ default: module.AllReportsModal })));
 const LazyAdminIncidentInfoWindowDetails = lazy(() => import("./mapLazyInfoPanels.jsx").then((module) => ({ default: module.AdminIncidentInfoWindowDetails })));
 const LazyIncidentPopupAdminExtras = lazy(() => import("./mapLazyIncidentPopupAdminExtras.jsx"));
 const loadDeferredSelectionPopupIncidentSupportModule = () => import("./lib/mapDeferredSelectionPopupIncidentSupport.js");
-const loadDeferredIncidentPopupFollowupSupportModule = () => import("./lib/mapDeferredIncidentPopupFollowupSupport.js");
 const loadDeferredIncidentPopupLocationSupportModule = () => import("./lib/mapDeferredIncidentPopupLocationSupport.js");
 const loadDeferredIncidentPopupReportTargetSupportModule = () => import("./lib/mapDeferredIncidentPopupReportTargetSupport.js");
 const loadPlatformExternalModule = () => import("./platform/external.js");
@@ -79,14 +75,12 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     incidentDomainCanonicalIncidentId,
     incidentDrivenRowsByDomain,
     isAdmin,
-    isPlatformAdmin,
     isPublicRepairEnabledForDomain,
     isReportsAdminView,
     mapCenter,
     mapInteracting,
     mapZoom,
     mappingMode,
-    actionsByLightId,
     openDomainReportFlow,
     openIncidentStatusDialogForTarget,
     openMyReports,
@@ -188,30 +182,6 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     copyHint: "",
     showReportToUtility: false,
   });
-  const [allReportsModal, setAllReportsModal] = useState({
-    open: false,
-    incidentKey: "",
-    title: "",
-    items: [],
-    reportRows: [],
-    fixActionRows: [],
-    issueStateByIncident: {},
-    domainKey: "streetlights",
-    incidentLabel: "",
-    sharedLocation: "",
-    sharedAddress: "",
-    sharedCrossStreet: "",
-    sharedLandmark: "",
-    sharedCoordinates: "",
-    geoLoading: false,
-    currentState: "",
-    lastChangedAt: "",
-    stateEvents: [],
-    stateEventsLoading: false,
-    stateEventsError: "",
-    hideSubmittedBy: false,
-    useSubmittedReportFormat: false,
-  });
   const [incidentLocationCopyToast, setIncidentLocationCopyToast] = useState(null);
   const incidentLocationCopyToastTimerRef = useRef(null);
   useEffect(() => () => {
@@ -282,7 +252,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       showIncidentCopyToast("Copy failed");
     }
   }, [showIncidentCopyToast]);
-  const openIncidentAllReportsFromMarker = useCallback(async (marker, domainOverride = "", popupInfo = null) => {
+  const openIncidentAllReportsFromMarker = useCallback((marker, domainOverride = "", popupInfo = null) => {
     const m = marker || selectedDomainMarker;
     if (!m || !popupInfo) return;
     const normalizedDomainOverride = String(
@@ -293,77 +263,22 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       || ""
     ).trim();
     if (!normalizedDomainOverride) return;
-    const { buildIncidentAllReportsModalPayloadShared } = await loadDeferredIncidentPopupFollowupSupportModule();
-    const modalPayload = buildIncidentAllReportsModalPayloadShared({
-      popupInfo,
-      marker: m,
-      domainKey: normalizedDomainOverride,
-      selectedDomainMarker,
-      adminReportDomain,
-      actionsByLightId,
-      incidentIssueStateByDomain,
-      slIdByUuid,
-    }, {
-      normalizeDomainKeyOrSlug,
-      getIncidentDisplaySupportDeps: () => incidentDisplaySupportDeps,
-    });
-    if (!modalPayload) return;
     const incidentId = String(m?.incident_id || popupInfo?.incidentId || m?.id || "").trim();
-    const incidentKey = String(modalPayload?.options?.incidentKey || "").trim();
-    setAllReportsModal({
-      open: true,
-      incidentKey,
-      title: modalPayload.title || "All Reports",
-      items: Array.isArray(modalPayload.items) ? modalPayload.items : [],
-      reportRows: Array.isArray(modalPayload?.options?.reportRows) ? modalPayload.options.reportRows : [],
-      fixActionRows: Array.isArray(modalPayload?.options?.fixActionRows) ? modalPayload.options.fixActionRows : [],
-      issueStateByIncident:
-        modalPayload?.options?.issueStateByIncident
-        && typeof modalPayload.options.issueStateByIncident === "object"
-        && !Array.isArray(modalPayload.options.issueStateByIncident)
-          ? modalPayload.options.issueStateByIncident
-          : {},
-      domainKey: String(modalPayload?.options?.domainKey || "streetlights").trim() || "streetlights",
-      incidentLabel: String(modalPayload?.options?.incidentLabel || "").trim(),
-      sharedLocation: String(modalPayload?.options?.sharedLocation || "").trim(),
-      sharedAddress: String(modalPayload?.options?.sharedAddress || "").trim(),
-      sharedCrossStreet: String(modalPayload?.options?.sharedCrossStreet || "").trim(),
-      sharedLandmark: String(modalPayload?.options?.sharedLandmark || "").trim(),
-      sharedCoordinates: String(modalPayload?.options?.sharedCoordinates || "").trim(),
-      geoLoading: Boolean(modalPayload?.options?.geoLoading),
-      currentState: String(modalPayload?.options?.currentState || "").trim(),
-      lastChangedAt: String(modalPayload?.options?.lastChangedAt || "").trim(),
-      stateEvents: [],
-      stateEventsLoading: Boolean(incidentId),
-      stateEventsError: "",
-      hideSubmittedBy: Boolean(modalPayload?.options?.hideSubmittedBy),
-      useSubmittedReportFormat: Boolean(modalPayload?.options?.useSubmittedReportFormat),
-    });
-
     if (!incidentId) return;
-    const { events: stateEvents, error } = await loadIncidentStateHistoryShared({
-      supabase,
-      tenantKey: activeTenantKey(),
+    openMyReports({
       domainKey: normalizedDomainOverride,
-      incidentId,
-    });
-    setAllReportsModal((current) => {
-      if (!current?.open || String(current?.incidentKey || "").trim() !== incidentKey) return current;
-      return {
-        ...current,
-        stateEvents,
-        stateEventsLoading: false,
-        stateEventsError: error ? String(error?.message || "Could not load state updates.") : "",
-      };
+      focusIncidentId: incidentId,
+      focusQuery: String(popupInfo?.displayId || "").trim() || incidentId,
+      handoffDomainKey: normalizedDomainOverride,
+      handoffRows: Array.isArray(popupInfo?.allRows) ? popupInfo.allRows : popupInfo?.rows,
+      reportedByMode: "all",
+      inViewOnly: false,
     });
   }, [
-    actionsByLightId,
     adminReportDomain,
-    incidentDisplaySupportDeps,
-    incidentIssueStateByDomain,
     normalizeDomainKeyOrSlug,
+    openMyReports,
     selectedDomainMarker,
-    slIdByUuid,
   ]);
   const openMyReportsFromIncidentPopup = useCallback((popupInfo, domainOverride = "") => {
     const domainKey = String(
@@ -378,6 +293,8 @@ export default function MapIncidentDomainPopupWorkspace(props) {
       domainKey,
       focusIncidentId,
       focusQuery,
+      handoffDomainKey: domainKey,
+      handoffRows: Array.isArray(popupInfo?.allRows) ? popupInfo.allRows : popupInfo?.rows,
     });
   }, [normalizeDomainKeyOrSlug, openMyReports]);
 
@@ -448,11 +365,8 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     incidentPopupSupport,
   ]);
   const buildIncidentPopupRenderModel = useCallback((options = {}) => (
-    incidentPopupSupport?.buildIncidentPopupRenderModelShared?.({
-      ...options,
-      isPlatformAdmin,
-    }) || null
-  ), [incidentPopupSupport, isPlatformAdmin]);
+    incidentPopupSupport?.buildIncidentPopupRenderModelShared?.(options) || null
+  ), [incidentPopupSupport]);
   const resolveIncidentDrivenLocationContextForRow = useCallback((domainKeyRaw, row) => (
     incidentPopupSupport?.resolveIncidentDrivenLocationContextForRowShared?.(domainKeyRaw, row, {
       incidentLocationCacheByKey,
@@ -850,9 +764,9 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     textDecoration: "underline",
     textUnderlineOffset: "2px",
     fontWeight: 800,
-    cursor: "copy",
-    fontSize: 12,
-    lineHeight: 1.35,
+    cursor: "pointer",
+    fontSize: 18,
+    lineHeight: 1.25,
     textAlign: "left",
     width: "fit-content",
   };
@@ -885,16 +799,18 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     projectPopupPixel,
     selectedDomainMarker,
   ]);
-  const selectedDomainPopupPlacement = getMarkerPopupPlacement(selectedDomainPopupPixel, { estimatedHeight: 340 });
+  const selectedDomainPopupPlacement = getMarkerPopupPlacement(selectedDomainPopupPixel, { estimatedHeight: 430 });
   const markerPopupActionSecondary = {
     ...btnPopupSecondary,
-    padding: "8px 10px",
+    padding: "10px 12px",
     borderRadius: 9,
+    fontSize: 16,
   };
   const markerPopupActionPrimary = {
     ...btnPopupPrimary,
-    padding: "8px 10px",
+    padding: "10px 12px",
     borderRadius: 9,
+    fontSize: 16,
   };
   const markerPopupActionDanger = {
     ...markerPopupActionPrimary,
@@ -906,15 +822,6 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     textUnderlineOffset: "2px",
     color: "var(--sl-ui-link-text)",
     fontWeight: 700,
-  };
-  const markerPopupCopyRowStyle = {
-    borderRadius: 7,
-    padding: "2px 4px",
-    cursor: "copy",
-    userSelect: "text",
-    fontSize: 12,
-    opacity: 0.92,
-    lineHeight: 1.35,
   };
   const renderSelectedDomainPopupFrame = (title, children) => (
     <div
@@ -932,7 +839,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
         >
           ×
         </button>
-        <div style={{ fontWeight: 900, paddingRight: 26 }}>{title}</div>
+        <div style={{ fontSize: 21, lineHeight: 1.2, fontWeight: 900, paddingRight: 26 }}>{title}</div>
         {children}
       </div>
       <div style={selectedDomainPopupPlacement.arrowStyle} />
@@ -1044,6 +951,9 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     getDeferredIncidentPopupLocationSupportDeps,
     resolveReportDomainLabel,
   ]);
+  const openIncidentCoordinatesInMaps = useCallback((rawCoordinates) => {
+    void openMapNavigationFromCoordinates(rawCoordinates);
+  }, []);
   const renderIncidentPopupAdminDetails = ({
     domainKey,
     popupInfo,
@@ -1051,19 +961,17 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     currentState = "",
     issueTypes = [],
     issueTypeDetails = [],
-    location = "Unavailable",
-    coordinates = "Unavailable",
-    landmark = "Unavailable",
+    marker = null,
+    renderModel = null,
   }) => {
     const isOrgManagedDomain = isOrganizationManagedIncidentDomain(domainKey);
     const normalizedState = String(currentState || popupInfo?.currentState || "").trim() || "reported";
-    const formattedCoordinates = String(coordinates || "").trim() || "Unavailable";
     return (
       <Suspense fallback={null}>
         <LazyAdminIncidentInfoWindowDetails
           domainId={popupInfo?.displayId || domainIdFallback}
-          onCopyDomainId={() => {
-            void copyIncidentPopupLocationField("Incident ID", popupInfo?.displayId || domainIdFallback);
+          onOpenLocationDetails={() => {
+            void openIncidentPopupLocationDetails({ domainKey, popupInfo, marker, renderModel });
           }}
           stateLabel={
             isOrgManagedDomain
@@ -1075,14 +983,6 @@ export default function MapIncidentDomainPopupWorkspace(props) {
           reportCount={Number(popupInfo?.openCount || 0)}
           issueTypes={issueTypes}
           issueTypeDetails={issueTypeDetails}
-          location={location || popupInfo?.locationDisplay || "Unavailable"}
-          crossStreet={String(popupInfo?.nearestCrossStreet || "").trim() || "Unavailable"}
-          intersection={String(popupInfo?.nearestIntersection || "").trim() || "Unavailable"}
-          landmark={landmark || popupInfo?.nearestLandmark || "Unavailable"}
-          coordinates={formattedCoordinates}
-          onCopyCoordinates={() => {
-            void copyIncidentPopupLocationField("Coordinates", formattedCoordinates);
-          }}
         />
       </Suspense>
     );
@@ -1093,20 +993,16 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     issueLabel = "",
     typeOptionDetails = [],
     showIssueFallback = true,
-    coordinates = "",
     currentState = "",
-    showCoordinates = false,
     onOpenIncidentLocation = null,
   }) => {
     const DeferredReportTypeOptionDetails = incidentPopupSupport?.ReportTypeOptionDetails || null;
     const domainId = popupInfo?.displayId || domainIdFallback;
-    const normalizedCoordinates = String(coordinates || "").trim() || popupInfo?.coordsText || "Unavailable";
     const normalizedState = String(currentState || popupInfo?.currentState || "").trim() || "reported";
     const details = Array.isArray(typeOptionDetails) ? typeOptionDetails : [];
     return (
       <>
-        <div style={{ fontSize: 12, opacity: 0.95, lineHeight: 1.35 }}>
-          <b>ID:</b>{" "}
+        <div style={{ display: "grid", gap: 4, width: "100%" }}>
           <button
             type="button"
             onClick={() => {
@@ -1121,9 +1017,13 @@ export default function MapIncidentDomainPopupWorkspace(props) {
           >
             {domainId}
           </button>
+          <div style={{ fontSize: 16, opacity: 0.9, lineHeight: 1.38 }}>
+            <span style={{ fontWeight: 800, color: "var(--sl-ui-text)" }}>Status:</span>{" "}
+            <span>{incidentStateLabel(normalizedState)}</span>
+          </div>
         </div>
         {!!String(issueLabel || "").trim() && showIssueFallback && !hasIssueTypeOptionDetail(details) && (
-          <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
+          <div style={{ fontSize: 16, opacity: 0.9, lineHeight: 1.38 }}>
             <span style={{ fontWeight: 800, color: "var(--sl-ui-text)" }}>Issue Type:</span>{" "}
             <span style={markerPopupCopyValueStyle}>{issueLabel}</span>
           </div>
@@ -1131,25 +1031,8 @@ export default function MapIncidentDomainPopupWorkspace(props) {
         {details.length > 0 && DeferredReportTypeOptionDetails ? (
           <DeferredReportTypeOptionDetails
             details={details}
-            textStyle={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}
+            textStyle={{ fontSize: 16, opacity: 0.9, lineHeight: 1.38 }}
           />
-        ) : null}
-        <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.35 }}>
-          <span style={{ fontWeight: 800, color: "var(--sl-ui-text)" }}>Status:</span>{" "}
-          <span style={markerPopupCopyValueStyle}>{incidentStateLabel(normalizedState)}</span>
-        </div>
-        {showCoordinates ? (
-          <button
-            type="button"
-            onClick={() => {
-              void copyIncidentPopupLocationField("Coordinates", normalizedCoordinates);
-            }}
-            title="Click to copy coordinates"
-            style={{ ...markerPopupCopyRowStyle, width: "100%", textAlign: "left", border: "none", background: "transparent" }}
-          >
-            <span style={{ fontWeight: 800, opacity: 0.9, color: "var(--sl-ui-text)" }}>Coordinates:</span>{" "}
-            <span style={markerPopupCopyValueStyle}>{normalizedCoordinates}</span>
-          </button>
         ) : null}
       </>
     );
@@ -1323,6 +1206,14 @@ export default function MapIncidentDomainPopupWorkspace(props) {
   };
   const renderSelectedIncidentDrivenPopup = (variant) => {
     if (!variant?.popupInfo || !selectedDomainMarker) return null;
+    // Tenant administrators can work an incident only when the tenant manages
+    // that domain.  For every other domain, deliberately use the resident
+    // presentation so the popup exposes exactly the same information and
+    // actions available to the public (rather than an admin-only report count
+    // or operational controls).
+    const showManagedDomainAdminPresentation = Boolean(
+      isReportsAdminView && isOrganizationManagedIncidentDomain(variant.domainKey)
+    );
     const renderModel = buildIncidentPopupRenderModel({
       popupInfo: variant.popupInfo,
       marker: selectedDomainMarker,
@@ -1331,7 +1222,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
     if (!renderModel) return null;
     return renderSelectedDomainPopupFrame(variant.title, (
       <>
-        {isReportsAdminView ? (
+        {showManagedDomainAdminPresentation ? (
           renderIncidentPopupAdminDetails({
             domainKey: variant.domainKey,
             popupInfo: {
@@ -1339,6 +1230,8 @@ export default function MapIncidentDomainPopupWorkspace(props) {
               ...(variant.adminPopupInfoExtra || {}),
             },
             ...renderModel.adminDetailsProps,
+            marker: selectedDomainMarker,
+            renderModel,
           })
         ) : (
           renderIncidentPopupResidentDetails({
@@ -1353,7 +1246,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
             },
           })
         )}
-        {isReportsAdminView ? (
+        {showManagedDomainAdminPresentation ? (
           <>
             {variant.adminAction
               ? renderIncidentPopupAdminActionGroup({
@@ -1424,47 +1317,15 @@ export default function MapIncidentDomainPopupWorkspace(props) {
           )
         )}
 
-      {Boolean(allReportsModal?.open) ? (
-        <Suspense fallback={null}>
-          <LazyAllReportsModal
-            open={Boolean(allReportsModal?.open)}
-            title={allReportsModal?.title || "All Reports"}
-            items={allReportsModal?.items || []}
-            reportRows={allReportsModal?.reportRows || []}
-            fixActionRows={allReportsModal?.fixActionRows || []}
-            issueStateByIncident={allReportsModal?.issueStateByIncident || {}}
-            domainKey={allReportsModal?.domainKey || "streetlights"}
-            incidentLabel={allReportsModal?.incidentLabel || ""}
-            sharedLocation={allReportsModal?.sharedLocation || ""}
-            sharedAddress={allReportsModal?.sharedAddress || ""}
-            sharedCrossStreet={allReportsModal?.sharedCrossStreet || ""}
-            sharedLandmark={allReportsModal?.sharedLandmark || ""}
-            sharedCoordinates={allReportsModal?.sharedCoordinates || ""}
-            geoLoading={Boolean(allReportsModal?.geoLoading)}
-            currentState={allReportsModal?.currentState || ""}
-            lastChangedAt={allReportsModal?.lastChangedAt || ""}
-            stateEvents={allReportsModal?.stateEvents || []}
-            stateEventsLoading={Boolean(allReportsModal?.stateEventsLoading)}
-            stateEventsError={allReportsModal?.stateEventsError || ""}
-            onCopyField={copyIncidentPopupLocationField}
-            onClose={() => setAllReportsModal((prev) => ({ ...prev, open: false }))}
-            isMobile={Boolean(useAppShellLayout)}
-            preferCompactBehavior={Boolean(isNativeAppRuntime)}
-            hideSubmittedBy={Boolean(allReportsModal?.hideSubmittedBy)}
-            useSubmittedReportFormat={Boolean(allReportsModal?.useSubmittedReportFormat)}
-            isWorkingReportType={isWorkingReportType}
-            resolveReportIssueLabel={resolveReportIssueLabel}
-            runtimeDomainMeta={RUNTIME_DOMAIN_META}
-          />
-        </Suspense>
-      ) : null}
-
       {!!incidentLocationCopyToast && incidentLocationCopyToast?.scope !== "incident_location_modal" && (
         <div
           style={{
             position: "fixed",
-            top: incidentLocationCopyToast?.y ?? 48,
-            left: incidentLocationCopyToast?.x ?? 18,
+            // Keep copy feedback clear of the header, logo, and map tools.
+            // The modal-local variant below remains anchored to its copied row.
+            top: "calc(env(safe-area-inset-top) + var(--mobile-header-height) + var(--mobile-header-overlay-page-gap) + 8px)",
+            left: "50%",
+            transform: "translateX(-50%)",
             zIndex: 10050,
             padding: "7px 11px",
             borderRadius: 8,
@@ -1490,6 +1351,7 @@ export default function MapIncidentDomainPopupWorkspace(props) {
             loading={Boolean(incidentLocationModal?.loading)}
             copyHint={incidentLocationModal?.copyHint || ""}
             copyToast={incidentLocationCopyToast}
+            onOpenCoordinatesInMaps={openIncidentCoordinatesInMaps}
             onCopyRow={(row, anchorEl) => {
               void copyIncidentPopupLocationField(
                 row?.label || "Location field",

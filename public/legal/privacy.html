@@ -4,17 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CityReport.io Privacy Notice</title>
+    <script>
+      const requestedTheme = new URLSearchParams(window.location.search).get("theme");
+      if (requestedTheme === "light" || requestedTheme === "dark") {
+        document.documentElement.dataset.theme = requestedTheme;
+      }
+    </script>
     <style>
-      body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 860px; line-height: 1.55; color: #10243e; }
+      :root { color-scheme: light; --legal-bg: #ffffff; --legal-text: #10243e; --legal-muted: #3b4f68; --legal-link: #1a3153; --legal-table-border: #cbd5e1; --legal-table-head: #f3f7fc; }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; --legal-bg: #202327; --legal-text: #f3f5f7; --legal-muted: #c2cad4; --legal-link: #9bdcff; --legal-table-border: #59636f; --legal-table-head: #2b3138; }
+      }
+      :root[data-theme="light"] { color-scheme: light; --legal-bg: #ffffff; --legal-text: #10243e; --legal-muted: #3b4f68; --legal-link: #1a3153; --legal-table-border: #cbd5e1; --legal-table-head: #f3f7fc; }
+      :root[data-theme="dark"] { color-scheme: dark; --legal-bg: #202327; --legal-text: #f3f5f7; --legal-muted: #c2cad4; --legal-link: #9bdcff; --legal-table-border: #59636f; --legal-table-head: #2b3138; }
+      html { background: var(--legal-bg); }
+      body { font-family: Arial, sans-serif; margin: 2rem auto; padding: 0 1rem 2rem; max-width: 860px; line-height: 1.55; color: var(--legal-text); background: var(--legal-bg); }
       h1 { margin-bottom: 0.25rem; }
       h2 { margin-top: 1.5rem; }
       p, li { font-size: 0.98rem; }
       ul { padding-left: 1.2rem; }
       table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; }
-      th, td { border: 1px solid #cbd5e1; padding: 0.55rem; text-align: left; vertical-align: top; }
-      th { background: #f3f7fc; }
-      a { color: #1a3153; }
-      .meta { color: #3b4f68; font-size: 0.95rem; }
+      th, td { border: 1px solid var(--legal-table-border); padding: 0.55rem; text-align: left; vertical-align: top; }
+      th { background: var(--legal-table-head); }
+      a { color: var(--legal-link); }
+      .meta { color: var(--legal-muted); font-size: 0.95rem; }
     </style>
   </head>
   <body>

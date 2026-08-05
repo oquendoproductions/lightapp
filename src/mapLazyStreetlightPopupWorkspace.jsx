@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { openMapNavigationFromCoordinates } from "./platform/external.js";
 import {
   REPORTING_MIN_ZOOM,
   STREETLIGHT_UTILITY_REPORT_URL,
@@ -231,7 +232,7 @@ export default function MapLazyStreetlightPopupWorkspace({
     selectedOfficialLightForPopup,
   ]);
 
-  const selectedOfficialPopupPlacement = getMarkerPopupPlacement(selectedOfficialPopupPixel, { estimatedHeight: 390 });
+  const selectedOfficialPopupPlacement = getMarkerPopupPlacement(selectedOfficialPopupPixel, { estimatedHeight: 430 });
 
   const markerPopupCardStyle = {
     minWidth: 210,
@@ -259,6 +260,7 @@ export default function MapLazyStreetlightPopupWorkspace({
     background: "var(--sl-ui-brand-blue)",
     color: "white",
     fontWeight: 900,
+    fontSize: 16,
     cursor: "pointer",
   };
 
@@ -270,6 +272,7 @@ export default function MapLazyStreetlightPopupWorkspace({
     background: "var(--sl-ui-modal-btn-secondary-bg)",
     color: "var(--sl-ui-modal-btn-secondary-text)",
     fontWeight: 900,
+    fontSize: 16,
     cursor: "pointer",
   };
 
@@ -388,6 +391,9 @@ export default function MapLazyStreetlightPopupWorkspace({
             rows={streetlightLocationRows}
             loading={Boolean(streetlightUtilityContext.loading)}
             copyHint="Use this location information to submit directly to the electric utility."
+            onOpenCoordinatesInMaps={(coordinates) => {
+              void openMapNavigationFromCoordinates(coordinates);
+            }}
             onCopyRow={(row) => {
               void copyStreetlightLocationField(row?.label || "Location field", row?.value || "");
             }}
@@ -405,8 +411,9 @@ export default function MapLazyStreetlightPopupWorkspace({
         <div
           style={{
             position: "fixed",
-            top: 48,
-            left: 18,
+            top: "calc(env(safe-area-inset-top) + var(--mobile-header-height) + var(--mobile-header-overlay-page-gap) + 8px)",
+            left: "50%",
+            transform: "translateX(-50%)",
             zIndex: 10050,
             padding: "7px 11px",
             borderRadius: 8,

@@ -151,6 +151,27 @@ export async function loadConfiguredIncidentPersistedRecordStateShared(domainKey
   }
 }
 
+export function mergeLoadedConfiguredIncidentRowsShared(loadedRows = [], currentRows = [], options = {}) {
+  const loaded = Array.isArray(loadedRows) ? loadedRows : [];
+  const current = Array.isArray(currentRows) ? currentRows : [];
+  const localCommitMaxAgeMs = Number(options?.localCommitMaxAgeMs || 120000);
+  const nowTs = Number(options?.nowTs || Date.now());
+  const rowKey = (row) => String(
+    row?.id
+    || row?.report_number
+    || row?.incident_id
+    || ""
+  ).trim();
+  const seen = new Set(loaded.map(rowKey).filter(Boolean));
+  const preserved = current.filter((row) => {
+    const key = rowKey(row);
+    if (!key || seen.has(key)) return false;
+    const committedAt = Number(row?.__cityreport_local_commit_ts || 0);
+    return committedAt > 0 && (nowTs - committedAt) <= localCommitMaxAgeMs;
+  });
+  return preserved.length ? [...preserved, ...loaded] : loaded;
+}
+
 export function applyLoadedConfiguredIncidentPersistedRecordStateShared(domainKeyRaw, context = {}, deps = {}) {
   const {
     normalizeDomainKeyOrSlug,
@@ -199,22 +220,28 @@ export function applyLoadedConfiguredIncidentDomainStateShared(domainKeyRaw, con
   if (seededError) {
     console.warn(`[${domainKey}] load warning:`, seededError?.message || seededError);
   } else if (typeof context?.setSeededRows === "function") {
-    context.setSeededRows(
-      seededRows
-        .map((row) => incidentDomainNormalizeConfiguredSeededRecord(domainKey, row))
-        .filter(Boolean)
-    );
+    const normalizedSeededRows = seededRows
+      .map((row) => incidentDomainNormalizeConfiguredSeededRecord(domainKey, row))
+      .filter(Boolean);
+    context.setSeededRows((currentRows) => mergeLoadedConfiguredIncidentRowsShared(
+      normalizedSeededRows,
+      currentRows,
+      context,
+    ));
   }
 
   if (reportError) {
     const reportsTable = incidentDomainConfiguredSourceTable(domainKey, "reports") || `${domainKey}_reports`;
     console.warn(`[${reportsTable}] load warning:`, reportError?.message || reportError);
   } else if (typeof context?.setReportRows === "function") {
-    context.setReportRows(
-      reportRows
-        .map((row) => incidentDomainNormalizeConfiguredReportRecord(domainKey, row))
-        .filter(Boolean)
-    );
+    const normalizedReportRows = reportRows
+      .map((row) => incidentDomainNormalizeConfiguredReportRecord(domainKey, row))
+      .filter(Boolean);
+    context.setReportRows((currentRows) => mergeLoadedConfiguredIncidentRowsShared(
+      normalizedReportRows,
+      currentRows,
+      context,
+    ));
   }
 }
 
@@ -498,12 +525,14 @@ export function scheduleConfiguredIncidentDomainsHydrationShared(state = {}, dep
   ));
   const shouldDeferCachedConfiguredIncidentRefresh =
     !state.reportsAdminView
+    && !state.reportWorkspaceOpen
     && state.publicMapCoreCacheHydrated
     && canRefreshConfiguredDomainsFromCachedSnapshot
     && canRefreshPersistedStateFromCachedSnapshot
     && (state.loading || !state.nonCriticalStartupReady);
   const shouldIdleRefreshCachedConfiguredIncidentDomains =
     !state.reportsAdminView
+    && !state.reportWorkspaceOpen
     && state.publicMapCoreCacheHydrated
     && canRefreshConfiguredDomainsFromCachedSnapshot
     && canRefreshPersistedStateFromCachedSnapshot;
@@ -520,10 +549,12 @@ export function scheduleConfiguredIncidentDomainsHydrationShared(state = {}, dep
   }
 
   let cancelled = false;
+  let loadStarted = false;
   let idleHandle = null;
   let timeoutHandle = null;
 
   const runLoad = async () => {
+    loadStarted = true;
     try {
       await loadConfiguredIncidentDomainsBatchShared({
         missingConfiguredDomainKeys,
@@ -567,7 +598,25 @@ export function scheduleConfiguredIncidentDomainsHydrationShared(state = {}, dep
   }
 
   return () => {
-    cancelled = true;
+    // A scheduled idle refresh reserves these keys immediately so a second
+    // effect cannot start a duplicate request.  Previously, a render during
+    // that idle window cancelled the callback but left the reservation in
+    // place.  The domain then looked "already loading" forever, which made
+    // report-tab handoffs appear empty until a full app restart.
+    //
+    // Once a request has actually started, let it finish.  Its `finally`
+    // block clears the reservation and commits the newest data.  If it has
+    // not started, release the reservation here so the next render can
+    // schedule it again.
+    if (!loadStarted) {
+      cancelled = true;
+      for (const domainKey of missingConfiguredDomainKeys) {
+        state.configuredIncidentLoadingDomainKeysRef?.current?.delete(domainKey);
+      }
+      for (const domainKey of missingPersistedStateDomainKeys) {
+        state.configuredIncidentPersistedStateLoadingDomainKeysRef?.current?.delete(domainKey);
+      }
+    }
     if (idleHandle != null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
       window.cancelIdleCallback(idleHandle);
     }

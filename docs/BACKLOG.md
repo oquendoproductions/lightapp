@@ -1,6 +1,9 @@
 # Product Backlog
 
 ## Now (highest priority)
+0. Release blocker — resolve non-tenant-managed marker persistence/visibility:
+   - Do not submit the app for review until the visibility policy is decided and the resident/admin behavior is consistent.
+   - In particular, opening an incident must not cause a marker to disappear solely because the viewer previously selected `Is fixed`.
 1. Drive-test tracking behavior on live roads.
 3. Confirm bulk selection persistence under movement/reload pressure.
 4. Monitor email deliverability trend (suspicious/spam drift).
@@ -102,10 +105,17 @@
      - preview should support seeing both the base theme and the temporary scheduled override before publish
    - Follow-up design/engineering review needed on draft/publish linkage:
      - user noted there may be a missing link between draft theme/icon edits and publishing behavior
-     - revisit how preview, draft saves, reset, and publish are connected before finalizing UX
+   - revisit how preview, draft saves, reset, and publish are connected before finalizing UX
+15. Alerts / Events admin clutter cleanup:
+   - Simplify the admin-only controls and authoring surfaces in Alerts and Events.
+   - Remove redundant controls, reduce competing actions, and clarify the distinction between resident-facing content and administrative configuration.
+   - Preserve the separate alert-topic and event-topic workflows.
 
 ## Later
 1. Two-factor authentication.
+2. Tenant-editable public notification email templates:
+   - Add a Hub settings editor for the Alert/Event email subject, branding, footer, and shared body layout.
+   - Preserve safe tenant-provided fields (title, summary, body, dates, location, CTA) and prevent arbitrary email HTML/script injection.
 2. Branding/logo pass.
 3. Additional analytics and incident ops tooling.
 4. PCP disclosure editor UX polish:

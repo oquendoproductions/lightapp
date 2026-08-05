@@ -137,6 +137,7 @@ async function submitConfiguredCustomIncidentDomainReportFlowRuntime(domainKeyRa
     runtimeDomainMeta: deps.runtimeDomainMeta,
     visibleDomainOptions: state.visibleDomainOptions,
     notifyAsyncEmailDelivery: deps.notifyAsyncEmailDelivery,
+    onPersistedReport: deps.commitSubmittedIncidentMapState,
     supabase: deps.supabase,
   });
 }
@@ -341,6 +342,7 @@ export async function submitIncidentDomainReportRuntimeShared(state = {}, deps =
         visibleDomainOptions: state.visibleDomainOptions,
         dispatchDomainSubmitEmailNotice: deps.dispatchDomainSubmitEmailNotice,
         notifyAsyncEmailDelivery: deps.notifyAsyncEmailDelivery,
+        onPersistedReport: deps.commitSubmittedIncidentMapState,
       });
       if (!genericSubmitResult) return;
       successReportNumbers = Array.isArray(genericSubmitResult?.successReportNumbers)

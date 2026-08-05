@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { domainDisclosureAckKey } from "./lib/mapIncidentDisclosureSupport.js";
 import {
   defaultDomainTypeOptionLabel,
@@ -11,6 +11,7 @@ import {
   resolveRuntimeDomainAllowReportImagesShared,
   resolveRuntimeDomainDisclosuresShared,
   resolveRuntimeDomainIssueOptionsShared,
+  resolveRuntimeDomainReportImageRequiredShared,
   resolveRuntimeDomainTypeOptionConfigsShared,
 } from "./lib/mapRuntimeDomainReportConfigSupport.js";
 import { ModalShell } from "./lib/mapReportModalShellSupport.jsx";
@@ -165,11 +166,14 @@ export function DomainReportModal({
   const typeOptionConfigs = resolveRuntimeDomainTypeOptionConfigsShared(domain);
   const disclosures = resolveRuntimeDomainDisclosuresShared(domain);
   const imageUploadEnabled = resolveRuntimeDomainAllowReportImagesShared(domain);
+  const imageRequired = resolveRuntimeDomainReportImageRequiredShared(domain);
   const insideFormDisclosures = disclosures.filter((row) => row?.display_position !== "before_form");
   const requiredInsideFormDisclosures = insideFormDisclosures.filter((row) => row?.required_acknowledgement === true);
   const resolvedIssueOptions = normalizeDomainIssueOptions(issueOptions);
   const resolvedTypeOptionConfigs = normalizeDomainTypeOptionConfigs(typeOptionConfigs, domain);
-  const issueTypeOptionKey = String(getIssueTypeOptionConfig(domain, resolvedTypeOptionConfigs, resolvedIssueOptions)?.optionKey || "").trim();
+  const issueTypeOptionConfig = getIssueTypeOptionConfig(domain, resolvedTypeOptionConfigs, resolvedIssueOptions);
+  const issueTypeOptionKey = String(issueTypeOptionConfig?.optionKey || "").trim();
+  const issueTypePrompt = String(issueTypeOptionConfig?.optionLabel || "").trim() || "Issue Type";
   const visibleTypeOptionConfigs = resolvedTypeOptionConfigs.filter((cfg) => String(cfg?.optionKey || "").trim() !== issueTypeOptionKey);
   const requiresIssueSelection = resolvedIssueOptions.length > 0;
   const requiresTypeSelection = visibleTypeOptionConfigs.length > 0;
@@ -184,7 +188,8 @@ export function DomainReportModal({
     Boolean(acknowledgements?.[domainDisclosureAckKey(row, index)])
   ));
   const canSubmit = !saving && disclosuresValid;
-  const canSubmitFinal = canSubmit && issueValid && typeValid;
+  const imageValid = !imageRequired || Boolean(imageFile);
+  const canSubmitFinal = canSubmit && issueValid && typeValid && imageValid;
   const notesPlaceholder = String(getIncidentDomainHelperShared(domain).notesPlaceholder || "").trim()
     || (
       requiredInsideFormDisclosures.length
@@ -214,68 +219,72 @@ export function DomainReportModal({
       </div>
 
       <div style={{ padding: 16, overflow: "auto", display: "grid", gap: 12, minHeight: 0 }}>
-        {requiresIssueSelection && (
-          <label style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-              What issue are you seeing?
-            </div>
-            <select
-              value={issueValue}
-              onChange={(e) => setIssueValue(e.target.value)}
-              style={{
-                padding: 10,
-                height: 40,
-                boxSizing: "border-box",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                background: "#fff",
-                color: "#111",
-                fontSize: 14,
-                lineHeight: 1.2,
-              }}
-              disabled={saving}
-            >
-              {resolvedIssueOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {requiresTypeSelection ? visibleTypeOptionConfigs.map((cfg, index) => (
-          <label key={cfg.id || cfg.optionKey || `type-option-${index}`} style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
-              {String(cfg.optionLabel || defaultDomainTypeOptionLabel(domain, index)).trim()}
-            </div>
-            <select
-              value={String(typeSelections?.[cfg.optionKey] || "").trim()}
-              onChange={(e) => setTypeSelections((prev) => ({
-                ...(prev || {}),
-                [cfg.optionKey]: String(e.target.value || "").trim().toLowerCase(),
-              }))}
-              style={{
-                padding: 10,
-                height: 40,
-                boxSizing: "border-box",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                background: "#fff",
-                color: "#111",
-                fontSize: 14,
-                lineHeight: 1.2,
-              }}
-              disabled={saving}
-            >
-              {cfg.choices.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )) : null}
+        {resolvedTypeOptionConfigs.map((cfg, index) => {
+          const isIssueType = String(cfg?.optionKey || "").trim() === issueTypeOptionKey;
+          if (isIssueType && requiresIssueSelection) {
+            return (
+              <label key={cfg.id || cfg.optionKey || `type-option-${index}`} style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+                  {issueTypePrompt}
+                </div>
+                <select
+                  value={issueValue}
+                  onChange={(e) => setIssueValue(e.target.value)}
+                  style={{
+                    padding: 10,
+                    height: 40,
+                    boxSizing: "border-box",
+                    borderRadius: 8,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                    color: "#111",
+                    fontSize: 14,
+                    lineHeight: 1.2,
+                  }}
+                  disabled={saving}
+                >
+                  {resolvedIssueOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          }
+          return (
+            <label key={cfg.id || cfg.optionKey || `type-option-${index}`} style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 13.5, opacity: 0.9, fontWeight: 800, lineHeight: 1.2 }}>
+                {String(cfg.optionLabel || defaultDomainTypeOptionLabel(domain, index)).trim()}
+              </div>
+              <select
+                value={String(typeSelections?.[cfg.optionKey] || "").trim()}
+                onChange={(e) => setTypeSelections((prev) => ({
+                  ...(prev || {}),
+                  [cfg.optionKey]: String(e.target.value || "").trim().toLowerCase(),
+                }))}
+                style={{
+                  padding: 10,
+                  height: 40,
+                  boxSizing: "border-box",
+                  borderRadius: 8,
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  color: "#111",
+                  fontSize: 14,
+                  lineHeight: 1.2,
+                }}
+                disabled={saving}
+              >
+                {cfg.choices.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
 
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Notes (optional)</div>
@@ -298,51 +307,82 @@ export function DomainReportModal({
         </label>
 
         {supportsImageAttachment && (
-          <label style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Photo (optional)</div>
-            <input
-              type="file"
-              accept="image/*"
-              disabled={saving}
-              onChange={(e) => {
-                const f = e.target.files?.[0] || null;
-                setImageFile(f);
-              }}
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>
+              Photo ({imageRequired ? "required" : "optional"})
+            </div>
+            <div
               style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 10,
-                border: "1px solid var(--sl-ui-modal-input-border)",
-                background: "var(--sl-ui-modal-input-bg)",
-                color: "var(--sl-ui-text)",
+                display: "grid",
+                gridTemplateColumns: imageFile ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)",
+                alignItems: "center",
+                gap: 8,
               }}
-            />
-            {imageFile && (
-              <div style={{ display: "grid", gap: 6 }}>
-                {imagePreviewUrl ? (
-                  <img
-                    src={imagePreviewUrl}
-                    alt="Report attachment preview"
-                    style={{
-                      width: "100%",
-                      maxHeight: 112,
-                      objectFit: "cover",
-                      borderRadius: 10,
-                      border: "1px solid var(--sl-ui-modal-border)",
-                    }}
-                  />
-                ) : null}
+            >
+              <input
+                type="file"
+                accept="image/*"
+                required={imageRequired}
+                aria-required={imageRequired}
+                aria-label="Choose report photo"
+                disabled={saving}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setImageFile(f);
+                }}
+                style={{
+                  width: "100%",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                  padding: 8,
+                  borderRadius: 10,
+                  border: "1px solid var(--sl-ui-modal-input-border)",
+                  background: "var(--sl-ui-modal-input-bg)",
+                  color: "var(--sl-ui-text)",
+                }}
+              />
+              {imageFile && (
                 <button
                   type="button"
                   onClick={() => setImageFile(null)}
                   disabled={saving}
-                  style={btnSecondary}
+                  style={{ ...btnSecondary, whiteSpace: "nowrap" }}
                 >
                   Remove image
                 </button>
-              </div>
+              )}
+            </div>
+            {imageFile && (
+              imagePreviewUrl ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "min(220px, 100%)",
+                    maxHeight: 112,
+                    overflow: "hidden",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-border)",
+                    background: "var(--sl-ui-modal-input-bg)",
+                  }}
+                >
+                  <img
+                    src={imagePreviewUrl}
+                    alt="Report attachment preview"
+                    style={{
+                      display: "block",
+                      width: "auto",
+                      height: "auto",
+                      maxWidth: "100%",
+                      maxHeight: 112,
+                      objectFit: "contain",
+                    }}
+                  />
+                </div>
+              ) : null
             )}
-          </label>
+          </div>
         )}
 
         {insideFormDisclosures.length ? (

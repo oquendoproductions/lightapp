@@ -1275,6 +1275,7 @@ function initialDomainConfigForm() {
       notification_body_template: preset.body,
       organization_monitored_repairs: true,
       public_repair_confirmation_threshold: 5,
+      public_inactivity_archive_days: 14,
       road_required: false,
       park_required: false,
       allow_report_images: false,
@@ -2153,6 +2154,7 @@ function initialTenantDomainAssignmentForm() {
     notification_body_template: preset.body,
     organization_monitored_repairs: true,
     public_repair_confirmation_threshold: 5,
+    public_inactivity_archive_days: 14,
     road_required: false,
     park_required: false,
     allow_report_images: false,
@@ -2195,6 +2197,11 @@ function buildTenantDomainAssignmentForm(row) {
       row?.public_repair_confirmation_threshold,
       5,
       { min: 1, max: 25 }
+    ),
+    public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+      row?.public_inactivity_archive_days,
+      14,
+      { min: 1, max: 365 }
     ),
     road_required: row?.road_required === true,
     park_required: row?.park_required === true,
@@ -4424,7 +4431,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_configs")
-      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_repair_confirmation_threshold,public_visibility_min_reports,high_confidence_min_reports,high_confidence_marker_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color");
+      .select("tenant_key,domain,domain_type,notification_email,organization_monitored_repairs,public_repair_confirmation_threshold,public_inactivity_archive_days,public_visibility_min_reports,high_confidence_min_reports,high_confidence_marker_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color");
     if (error && isMissingColumnError(error)) {
       const fallback = await supabase
         .from("tenant_domain_configs")
@@ -4453,6 +4460,11 @@ export default function PlatformAdminApp() {
           row?.public_repair_confirmation_threshold,
           5,
           { min: 1, max: 25 }
+        ),
+        public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+          row?.public_inactivity_archive_days,
+          14,
+          { min: 1, max: 365 }
         ),
         public_visibility_min_reports: sanitizePositiveIntegerSetting(
           row?.public_visibility_min_reports,
@@ -4640,7 +4652,7 @@ export default function PlatformAdminApp() {
     }
     let { data, error } = await supabase
       .from("tenant_domain_assignments")
-      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_repair_confirmation_threshold,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
+      .select("id,tenant_key,domain_key,active,visibility,display_label,marker_color,high_confidence_marker_color,icon_render_mode,icon_tint_mode,icon_tint_color,high_confidence_icon_tint_mode,high_confidence_icon_tint_color,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,organization_monitored_repairs,public_repair_confirmation_threshold,public_inactivity_archive_days,road_required,park_required,allow_report_images,report_image_required,public_visibility_min_reports,high_confidence_min_reports,type_options,report_disclosures,billing_status,billing_model,billing_amount,billing_notes,activated_at,activated_by,created_at,updated_at")
       .order("tenant_key", { ascending: true })
       .order("domain_key", { ascending: true });
     if (error && isMissingColumnError(error)) {
@@ -6405,6 +6417,11 @@ export default function PlatformAdminApp() {
           5,
           { min: 1, max: 25 }
         ),
+        public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+          assignment?.public_inactivity_archive_days ?? configured?.public_inactivity_archive_days,
+          14,
+          { min: 1, max: 365 }
+        ),
         road_required: assignment?.road_required === true,
         park_required: assignment?.park_required === true,
         allow_report_images: assignment?.allow_report_images === true,
@@ -8163,6 +8180,11 @@ export default function PlatformAdminApp() {
         5,
         { min: 1, max: 25 }
       ),
+      public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+        tenantDomainAssignmentForm?.public_inactivity_archive_days,
+        14,
+        { min: 1, max: 365 }
+      ),
       billing_status: String(tenantDomainAssignmentForm?.billing_status || "not_applicable").trim().toLowerCase(),
       billing_model: String(tenantDomainAssignmentForm?.billing_model || "included").trim().toLowerCase(),
       billing_amount: Number.isFinite(Number(tenantDomainAssignmentForm?.billing_amount))
@@ -8490,6 +8512,11 @@ export default function PlatformAdminApp() {
         5,
         { min: 1, max: 25 }
       ),
+      public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_inactivity_archive_days,
+        14,
+        { min: 1, max: 365 }
+      ),
       park_required: domainConfigForm?.[d.key]?.park_required === true,
       public_visibility_min_reports: sanitizePositiveIntegerSetting(
         domainConfigForm?.[d.key]?.public_visibility_min_reports,
@@ -8546,6 +8573,11 @@ export default function PlatformAdminApp() {
         domainConfigForm?.[d.key]?.public_repair_confirmation_threshold,
         5,
         { min: 1, max: 25 }
+      ),
+      public_inactivity_archive_days: sanitizePositiveIntegerSetting(
+        domainConfigForm?.[d.key]?.public_inactivity_archive_days,
+        14,
+        { min: 1, max: 365 }
       ),
       road_required: domainConfigForm?.[d.key]?.road_required === true,
       park_required: domainConfigForm?.[d.key]?.park_required === true,
@@ -8661,6 +8693,7 @@ export default function PlatformAdminApp() {
               notification_email: savedConfig.notification_email || "",
               organization_monitored_repairs: savedConfig.organization_monitored_repairs !== false,
               public_repair_confirmation_threshold: savedConfig.public_repair_confirmation_threshold,
+              public_inactivity_archive_days: savedConfig.public_inactivity_archive_days,
               public_visibility_min_reports: savedConfig.public_visibility_min_reports,
               high_confidence_min_reports: savedConfig.high_confidence_min_reports,
               high_confidence_marker_color: savedConfig.high_confidence_marker_color || defaultDomainHighConfidenceMarkerColor(closingDomainKey),
@@ -8703,6 +8736,7 @@ export default function PlatformAdminApp() {
               notification_body_template: savedAssignment.notification_body_template || "",
               organization_monitored_repairs: savedAssignment.organization_monitored_repairs !== false,
               public_repair_confirmation_threshold: savedAssignment.public_repair_confirmation_threshold,
+              public_inactivity_archive_days: savedAssignment.public_inactivity_archive_days,
               road_required: savedAssignment.road_required === true,
               park_required: savedAssignment.park_required === true,
               allow_report_images: savedAssignment.allow_report_images === true,
@@ -10089,6 +10123,28 @@ export default function PlatformAdminApp() {
             </span>
           </label>
         </div>
+        <label style={modalField}>
+          <span>Inactivity Auto-Archive (days)</span>
+          <input
+            type="number"
+            min="1"
+            max="365"
+            step="1"
+            readOnly={tenantDomainAssignmentForm.organization_monitored_repairs !== false}
+            value={tenantDomainAssignmentForm.public_inactivity_archive_days ?? 14}
+            onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, public_inactivity_archive_days: e.target.value }))}
+            onBlur={(e) => setTenantDomainAssignmentForm((prev) => ({
+              ...prev,
+              public_inactivity_archive_days: sanitizePositiveIntegerSetting(e.target.value, 14, { min: 1, max: 365 }),
+            }))}
+            style={{ ...modalInput, background: tenantDomainAssignmentForm.organization_monitored_repairs !== false ? "#eef4fb" : modalInput.background }}
+          />
+          <span style={{ fontSize: 12, color: palette.textMuted }}>
+            {tenantDomainAssignmentForm.organization_monitored_repairs !== false
+              ? "Organization-managed incidents are never auto-archived."
+              : "Unmanaged incidents are removed after this period of inactivity."}
+          </span>
+        </label>
       </div>
       <div style={{ fontSize: 12, color: palette.textMuted }}>
         Department routing is configured from this domain’s <b>Reporting</b> section. This legacy address is only used when no routed department has an email.
@@ -16122,6 +16178,28 @@ export default function PlatformAdminApp() {
                                     </span>
                                   </label>
                                 </div>
+                                <label style={modalField}>
+                                  <span>Inactivity Auto-Archive (days)</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    step="1"
+                                    readOnly={assignmentFieldsReadOnly || (isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false)}
+                                    value={isEditingAssignment ? (tenantDomainAssignmentForm?.public_inactivity_archive_days ?? 14) : (assignment.public_inactivity_archive_days ?? 14)}
+                                    onChange={(e) => setTenantDomainAssignmentForm((prev) => ({ ...prev, public_inactivity_archive_days: e.target.value }))}
+                                    onBlur={(e) => setTenantDomainAssignmentForm((prev) => ({
+                                      ...prev,
+                                      public_inactivity_archive_days: sanitizePositiveIntegerSetting(e.target.value, 14, { min: 1, max: 365 }),
+                                    }))}
+                                    style={{ ...modalInput, background: (assignmentFieldsReadOnly || (isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false)) ? "#eef4fb" : modalInput.background }}
+                                  />
+                                  <span style={{ fontSize: 12, color: palette.textMuted }}>
+                                    {(isEditingAssignment ? tenantDomainAssignmentForm?.organization_monitored_repairs !== false : assignment.organization_monitored_repairs !== false)
+                                      ? "Organization-managed incidents are never auto-archived."
+                                      : "Unmanaged incidents leave the map after this many inactive days."}
+                                  </span>
+                                </label>
                                 <label style={{ ...modalField, gridColumn: "1 / -1" }}>
                                   <span>Billing Notes</span>
                                   <textarea

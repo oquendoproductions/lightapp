@@ -3,6 +3,21 @@ const loadPlatformAuthModule = () => import("../platform/auth.js");
 const loadCrossTenantAuthModule = () => import("../auth/crossTenantAuth");
 const loadDeferredReportAccessSupportModule = () => import("./mapDeferredReportAccessSupport.js");
 const loadCapacitorPushNotificationsModule = () => import("@capacitor/push-notifications");
+const loadNotificationSettingsModule = () => import("../platform/notifications.js");
+
+function notificationNeedsFullAlerts(settings) {
+  if (!settings || typeof settings !== "object") return false;
+  const authorizationStatus = String(settings.authorizationStatus || "").trim();
+  if (authorizationStatus === "provisional" || authorizationStatus === "ephemeral") return true;
+  const alertSetting = String(settings.alertSetting || "").trim();
+  const soundSetting = String(settings.soundSetting || "").trim();
+  const alertStyle = String(settings.alertStyle || "").trim();
+  return alertSetting === "disabled"
+    || alertSetting === "notSupported"
+    || soundSetting === "disabled"
+    || soundSetting === "notSupported"
+    || alertStyle === "none";
+}
 export {
   clearCachedUserProfileShared,
   normalizeCachedUserProfileShared,
@@ -30,6 +45,7 @@ export async function sendPasswordResetRuntimeShared(state = {}, deps = {}) {
 }
 
 export async function userCreateAccountRuntimeShared(state = {}, deps = {}) {
+  const { getEmailConfirmationRedirectOptions } = await loadPlatformAuthModule();
   const { userCreateAccountAction } = await loadDeferredAccountActionSupportModule();
   return userCreateAccountAction({
     supabase: deps.supabase,
@@ -37,6 +53,17 @@ export async function userCreateAccountRuntimeShared(state = {}, deps = {}) {
     password: state.password,
     full_name: state.fullName,
     phone: state.phone,
+    getEmailConfirmationRedirectOptions,
+  });
+}
+
+export async function resendSignupConfirmationRuntimeShared(state = {}, deps = {}) {
+  const { getEmailConfirmationRedirectOptions } = await loadPlatformAuthModule();
+  const { resendSignupConfirmationAction } = await loadDeferredAccountActionSupportModule();
+  return resendSignupConfirmationAction({
+    supabase: deps.supabase,
+    email: state.email,
+    getEmailConfirmationRedirectOptions,
   });
 }
 
@@ -410,6 +437,9 @@ export function attachNativePushListenersRuntimeShared(state = {}, deps = {}) {
   const listenerHandles = [];
   const tenantKey = state.resolvedCommunityFeedTenantKey;
   const userId = state.sessionUserId;
+  const registrationStorageKey = state.nativePushRegisteredKey
+    ? `${state.nativePushRegisteredKey}:${tenantKey}:${userId}`
+    : "";
   const platform = deps.getPlatformName();
   const safePlatform = platform === "android" ? "android" : platform === "ios" ? "ios" : "";
   if (!tenantKey || !safePlatform) return undefined;
@@ -430,6 +460,15 @@ export function attachNativePushListenersRuntimeShared(state = {}, deps = {}) {
       }], { onConflict: "tenant_key,user_id,platform,token" });
     if (error && !deps.isMissingRelationError(error) && !deps.isExpectedPermissionError(error)) {
       console.warn("[native push token]", error?.message || error);
+      deps.openNotice?.("⚠️", "Push setup failed", "This device could not save its push token.");
+      return;
+    }
+    if (registrationStorageKey) {
+      try {
+        localStorage.setItem(registrationStorageKey, "1");
+      } catch {
+        // ignore storage failures
+      }
     }
   };
 
@@ -441,22 +480,70 @@ export function attachNativePushListenersRuntimeShared(state = {}, deps = {}) {
       }));
       listenerHandles.push(await PushNotifications.addListener("registrationError", (error) => {
         console.warn("[native push registration]", error?.error || error);
+        if (registrationStorageKey) {
+          try {
+            localStorage.removeItem(registrationStorageKey);
+          } catch {
+            // ignore storage failures
+          }
+        }
+        deps.openNotice?.(
+          "⚠️",
+          "Push registration failed",
+          String(error?.error || error?.message || "The device could not register for push notifications."),
+        );
       }));
       listenerHandles.push(await PushNotifications.addListener("pushNotificationReceived", () => {
         void deps.loadMapCommunityFeed();
+        deps.refreshResidentNotifications?.();
       }));
-      listenerHandles.push(await PushNotifications.addListener("pushNotificationActionPerformed", () => {
+      listenerHandles.push(await PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
         void deps.loadMapCommunityFeed();
+        deps.refreshResidentNotifications?.();
+        const rawData = action?.notification?.data?.cityreport || action?.notification?.data || {};
+        let payload = rawData;
+        if (typeof rawData === "string") {
+          try {
+            payload = JSON.parse(rawData);
+          } catch {
+            payload = {};
+          }
+        }
+        const kind = String(payload?.kind || "").trim().toLowerCase();
+        const tenantKey = String(payload?.tenant_key || "").trim().toLowerCase();
+        const itemId = String(payload?.item_id || "").trim();
+        if (
+          (kind === "alert" || kind === "event")
+          && tenantKey
+          && itemId
+          && typeof deps.openResidentNotificationTarget === "function"
+        ) {
+          void deps.openResidentNotificationTarget({
+            tenant_key: tenantKey,
+            kind,
+            id: itemId,
+          });
+          return;
+        }
+        deps.openNotificationsInbox?.();
       }));
+      // APNs can return the registration token immediately. Register only
+      // after these listeners exist, otherwise that token event is lost and
+      // no server-side device token is ever saved for delivery.
+      if (!cancelled) {
+        registrationDispose = scheduleNativePushRegistrationRuntimeShared(state, deps) || (() => {});
+      }
     } catch (error) {
       if (!cancelled) console.warn("[native push listeners]", error?.message || error);
     }
   };
 
+  let registrationDispose = () => {};
   void attachListeners();
 
   return () => {
     cancelled = true;
+    registrationDispose();
     for (const handle of listenerHandles) {
       try {
         void handle?.remove?.();
@@ -498,20 +585,45 @@ export function scheduleNativePushRegistrationRuntimeShared(state = {}, deps = {
         }
       }
 
+      if (platform === "ios") {
+        try {
+          const {
+            getNativeNotificationSettings,
+            requestNativeFullNotificationAuthorization,
+          } = await loadNotificationSettingsModule();
+          let nativeSettings = await getNativeNotificationSettings();
+          if (notificationNeedsFullAlerts(nativeSettings)) {
+            nativeSettings = await requestNativeFullNotificationAuthorization() || nativeSettings;
+          }
+          if (!cancelled && notificationNeedsFullAlerts(nativeSettings)) {
+            console.warn("[native push ios settings]", nativeSettings);
+          }
+        } catch (error) {
+          console.warn("[native push ios settings]", error?.message || error);
+        }
+      }
+
       let permission = await PushNotifications.checkPermissions();
       if (permission?.receive === "prompt") {
         permission = await PushNotifications.requestPermissions();
       }
-      if (cancelled || permission?.receive !== "granted") return;
+      if (cancelled || permission?.receive !== "granted") {
+        deps.openNotice?.(
+          "⚠️",
+          "Push permission needed",
+          "Allow notifications for this app on your iPhone so resident alerts can arrive as banners, sounds, and badges.",
+        );
+        return;
+      }
 
       await PushNotifications.register();
-      try {
-        localStorage.setItem(`${state.nativePushRegisteredKey}:${tenantKey}:${userId}`, "1");
-      } catch {
-        // ignore storage failures
-      }
     } catch (error) {
       if (!cancelled) console.warn("[native push register]", error?.message || error);
+      deps.openNotice?.(
+        "⚠️",
+        "Push registration failed",
+        String(error?.message || error || "The device could not start push registration."),
+      );
     } finally {
       state.nativePushRegisteringRef.current = false;
     }

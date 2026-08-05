@@ -26,15 +26,16 @@ export function incidentRepairDisplayState(snapshot) {
 
 export function incidentRepairSummaryText(snapshot, incidentRepairTarget = 5) {
   const repairProgress = Math.max(0, Number(snapshot?.repairProgress || 0));
+  const repairTarget = Math.max(1, Number(snapshot?.repairTarget || incidentRepairTarget || 5));
   const issueScore = Number(snapshot?.issueScore || 0);
   if (snapshot?.archived) return "Archived after 2 weeks with no new activity.";
   if (snapshot?.likelyFixed) {
-    return `Community repair confidence reached ${repairProgress}/${incidentRepairTarget}.`;
+    return `Community repair confidence reached ${repairProgress}/${repairTarget}.`;
   }
   if (issueScore < 0) {
-    return `Issue score ${issueScore} • repair progress ${repairProgress}/${incidentRepairTarget}.`;
+    return `Issue score ${issueScore} • repair progress ${repairProgress}/${repairTarget}.`;
   }
-  return `Repair progress ${repairProgress}/${incidentRepairTarget}.`;
+  return `Repair progress ${repairProgress}/${repairTarget}.`;
 }
 
 export function bearingBetween(a, b) {

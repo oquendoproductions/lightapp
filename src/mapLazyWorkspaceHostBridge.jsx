@@ -80,6 +80,7 @@ export default memo(function MapLazyWorkspaceHostBridge({
   eventsSessionNewKeys,
   focusedResidentEventId,
   handleResidentEventVisible,
+  updateResidentNotificationInboxState,
   sessionUserId,
   communityFeedEditor,
   mapCommunityTopics,
@@ -130,6 +131,7 @@ export default memo(function MapLazyWorkspaceHostBridge({
   myReportsDomainFilters,
   toggleMyReportsDomainFilter,
   resetMyReportsDomainFilters,
+  resetMyReportsDomainFiltersToAll,
   mapBounds,
   canToggleReportedByInMyReports,
   myReportsReportedByMode,
@@ -143,11 +145,11 @@ export default memo(function MapLazyWorkspaceHostBridge({
   isPlatformAdmin,
   resolvedOpenReportsActiveDomain,
   canMutateAnyOpenReportsSelection,
-  canOpenAdminReports,
   openReportsDomainOptions,
   openReportsDomainFilters,
   toggleOpenReportsDomainFilter,
   resetOpenReportsDomainFilters,
+  resetOpenReportsDomainFiltersToAll,
   isTenantOrganizationManagedIncidentDomain,
   shouldRenderStreetlightSelectionPopup,
   bulkMode,
@@ -281,6 +283,7 @@ export default memo(function MapLazyWorkspaceHostBridge({
           eventsSessionNewKeys,
           focusedResidentEventId,
           handleResidentEventVisible,
+          updateResidentNotificationInboxState,
           sessionUserId,
         },
         communityFeedEditorWorkspace: {
@@ -339,6 +342,9 @@ export default memo(function MapLazyWorkspaceHostBridge({
           onClose: closeMyReports,
           controllerMode: "my",
           launchOptions: myReportsLaunchOptions,
+          // The unified Reports workspace uses the full filter/table surface
+          // for both public users and tenant admins.  Permissions continue to
+          // control reporter details and mutation actions separately.
           isAdmin: true,
           allowReporterDetails: isReportsAdminView,
           publicRepairLifecycleEnabled: isPublicRepairEnabledForDomain(myReportsDomain),
@@ -354,6 +360,7 @@ export default memo(function MapLazyWorkspaceHostBridge({
           selectedDomains: myReportsDomainFilters,
           onToggleDomain: toggleMyReportsDomainFilter,
           onSelectAllDomains: resetMyReportsDomainFilters,
+          onResetDomainFilters: resetMyReportsDomainFiltersToAll,
           mapBounds,
           canToggleReportedBy: canToggleReportedByInMyReports,
           reportedByMode: myReportsReportedByMode,
@@ -374,13 +381,17 @@ export default memo(function MapLazyWorkspaceHostBridge({
           darkMode: prefersDarkMode,
           allowIncidentMutations: canMutateAnyOpenReportsSelection,
           canManageIncidentMutations: canManageIncidentDomainRepairs,
-          modalTitle: canOpenAdminReports ? "Admin Reports" : "Domain Reports",
+          // This route remains for permission-scoped/deep-linked reports, but
+          // it is no longer presented to users as a separate Admin Reports
+          // product. The unified workspace is called All Reports.
+          modalTitle: "All Reports",
           activeDomain: resolvedOpenReportsActiveDomain,
           domainOptions: openReportsDomainOptions,
           onSelectDomain: setAdminReportDomain,
           selectedDomains: openReportsDomainFilters,
           onToggleDomain: toggleOpenReportsDomainFilter,
           onSelectAllDomains: resetOpenReportsDomainFilters,
+          onResetDomainFilters: resetOpenReportsDomainFiltersToAll,
           shouldIncludeDerivedSharedDomain: isTenantOrganizationManagedIncidentDomain,
         },
       }}

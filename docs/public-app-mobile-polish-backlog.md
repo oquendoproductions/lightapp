@@ -208,6 +208,35 @@ Targets:
 - Friendlier location-permission explanation
 - Better fallback messaging when location is denied
 
+### 11. Icon-first action controls
+
+Targets:
+
+- Replace repeated, space-consuming text actions with recognizable icon buttons where the meaning is unambiguous.
+- Prioritize reporter info, fly to location, view reports, view location info, and update status/state controls.
+- Keep text for consequential or ambiguous actions such as submit, save, delete, and cancel.
+- Every icon action must retain a tooltip and an accessible label; tap targets must meet mobile sizing requirements.
+- Use one shared icon language across resident and admin surfaces so the same action always has the same symbol.
+
+Acceptance:
+
+- Repeated map, report, and admin actions are quicker to scan and use on small screens.
+- No action becomes discoverable only by visual icon recognition: tooltip, accessible name, and clear feedback remain available.
+
+### 12. Navigate to report / asset location
+
+Targets:
+
+- Add a `Navigate` action on marker and report detail surfaces that opens the device’s native mapping app with directions from the user’s current location to the selected marker.
+- Prefer a platform-aware handoff: Apple Maps on iOS, Google Maps or the device default on Android, and a browser-compatible mapping fallback on web.
+- Treat turn-by-turn navigation inside CityReport as a later, separately scoped option; it has substantially more map, routing, battery, and safety implications.
+- Handle missing location permission and invalid marker coordinates with clear fallback messaging.
+
+Acceptance:
+
+- A resident or administrator can start directions to any report/asset with a single explicit action.
+- The action never exposes the reporter’s private location; it routes only to the selected public marker/asset coordinates.
+
 ## Recommended Working Order
 
 1. Build the native tenant switch / city picker.
@@ -217,6 +246,120 @@ Targets:
 5. Do a loading/transition polish pass.
 
 ## First Implementation Slice
+
+## 2026-07-22 Addendum: Deferred Follow-Ups
+
+### 11. Resident public report browsing with safe community moderation
+
+Why it matters:
+
+- Residents should be able to understand what others are reporting nearby without exposing reporter identity.
+- Public images and notes need stronger trust-and-safety handling before this becomes a default resident surface.
+
+Targets:
+
+- Let residents browse other public reports and attached images.
+- Redact reporter name, email, phone, and any other identifying metadata from resident-facing views.
+- Add a resident-facing `Flag as` moderation entry point for inappropriate images/content.
+- Route community flags into the existing moderation/admin review workflow instead of inventing a separate system.
+
+Implementation note:
+
+- Treat this as a next-version feature, not a same-pass polish tweak. It needs visibility rules, redaction guarantees, moderation UX, and policy review together.
+
+Likely files:
+
+- [src/mapLazyOpenReportsResidentListPanel.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/mapLazyOpenReportsResidentListPanel.jsx)
+- [src/mapLazyOpenReportsModal.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/mapLazyOpenReportsModal.jsx)
+- [src/mapLazyReportInspectors.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/mapLazyReportInspectors.jsx)
+- [src/lib/mapDeferredAbuseSupport.js](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/lib/mapDeferredAbuseSupport.js)
+
+Acceptance:
+
+- Residents can browse community-visible reports without seeing reporter identity.
+- Public images can be flagged by residents and reviewed by admins.
+- Inappropriate content does not rely on manual DB cleanup as the primary control path.
+
+### 12. Move navigation action into a drawer-style control
+
+Why it matters:
+
+- The navigation action competes with other floating controls.
+- A drawer treatment could make it feel more intentional and consistent with the streetlight bulk-save drawer pattern.
+
+Targets:
+
+- Evaluate moving the navigation button into a drawer or grouped control pattern.
+- Keep the primary map interaction area cleaner on phone-sized screens.
+
+Implementation note:
+
+- Treat as a later UX pass. This is a layout/control-model change, not a quick cleanup.
+
+Likely files:
+
+- [src/MapGoogleFull.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/MapGoogleFull.jsx)
+- [src/mapLazyMobileActionBars.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/mapLazyMobileActionBars.jsx)
+
+### 13. Split tenant menu and CityReport menu branding
+
+Why it matters:
+
+- Using the tenant logo as the tenant menu trigger and the CityReport logo as the platform menu trigger could make the navigation model clearer.
+- This also affects branding hierarchy, not just button placement.
+
+Targets:
+
+- Explore replacing the current menu-button image with the tenant logo for tenant actions.
+- Explore making the CityReport logo open a separate CityReport-level menu.
+
+Implementation note:
+
+- Keep this for a later branding/navigation pass after the core mobile IA is stable.
+
+Likely files:
+
+- [src/MapGoogleFull.jsx](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/MapGoogleFull.jsx)
+- [src/headerStandards.css](/Users/oquendoproductions/Desktop/streetlight-app/streetlight-web/src/headerStandards.css)
+
+### 14. Report-history visual identification policy
+
+Why it matters:
+
+- People reviewing a report history need to distinguish an original issue, state update, fix, reopening, and other activity at a glance.
+- The treatment must add clarity without relying on color alone or creating a visually noisy timeline.
+
+Targets:
+
+- Define one shared visual policy for report-history card types: issue report, state update, fix/repair confirmation, reopen, and working/action entries.
+- Use a restrained combination of card tint or border treatment, icon, and explicit text label; preserve readable contrast and accessibility.
+- Apply the same policy across mobile and desktop report-history surfaces.
+
+Acceptance:
+
+- Each history-card type is immediately recognizable while dates, titles, and details keep the same consistent hierarchy.
+- Meaning remains clear for color-blind users and in low-quality screenshots.
+
+### 15. Non-scrollable marker info-window layout
+
+Why it matters:
+
+- A tall marker info window can extend into the app header and hide map status counters or controls.
+- Internal scrolling inside a small marker card makes the core information and actions harder to scan and conflicts with the map gesture area.
+
+Targets:
+
+- Establish one shared, non-scrollable layout policy for public and admin marker info windows.
+- Keep every popup fully below the app header and clear of the bottom navigation rail; it must never render in front of, behind, or above the header.
+- Preserve a consistent information hierarchy across domains while avoiding domain-specific copy/spacing hacks.
+- Coordinate this with the icon-first action-controls pass: replace repeatable secondary text buttons with accessible icon actions where appropriate, keeping text for consequential actions.
+- If a domain genuinely exceeds the shared card budget, move secondary details/actions into a dedicated sheet or detail view instead of making the info window scroll.
+
+Acceptance:
+
+- No marker info window scrolls internally on phone-sized screens.
+- The header, in-view counters, and primary map controls remain visible and usable while an info window is open.
+- Long streetlight and incident cards retain the same shared visual structure as shorter domain cards.
 
 Recommended next slice:
 

@@ -1,4 +1,4 @@
-import React, { Fragment, Suspense, lazy, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildStreetlightUtilityRows,
   displayLightId,
@@ -11,6 +11,13 @@ import {
   REPORT_DOMAIN_OPTIONS,
   normalizeExplicitDomainSelection,
 } from "./lib/mapDomainSelectionConfig.js";
+import {
+  beginMobileDomainSelectorGesture,
+  cancelMobileDomainSelectorGesture,
+  endMobileDomainSelectorGesture,
+  shouldIgnoreMobileDomainSelectorClick,
+  updateMobileDomainSelectorGesture,
+} from "./lib/mobileDomainSelectorGestureSupport.js";
 import { REPORT_TYPES } from "./lib/mapDomainTypeOptionSupport.js";
 import {
   isLifecycleStateOpen,
@@ -65,6 +72,10 @@ import {
   resolveHighConfidenceMarkerColorForDomainShared,
 } from "./lib/mapDomainMarkerColorSupport.js";
 import { getIncidentDomainHelperShared } from "./lib/mapIncidentDomainConfig.js";
+import {
+  loadIncidentStateHistoryShared,
+  resolveIncidentStateForReportsShared,
+} from "./lib/mapIncidentStateReportSupport.js";
 import { prefixedIncidentDomainKeyShared } from "./lib/mapIncidentPrefixSupport.js";
 import { RUNTIME_DOMAIN_META } from "./lib/mapRuntimeDomainMeta.js";
 import {
@@ -88,6 +99,10 @@ import {
   singularizeDomainLabel,
 } from "./lib/mapReportParsingSupport.js";
 import { formatTs } from "./lib/mapTimestampFormatSupport.js";
+import {
+  dedupeReportRowsShared,
+  reportDeduplicationKeyShared,
+} from "./lib/mapReportDedupSupport.js";
 import { humanizeLabel } from "./lib/workspaceLabelSupport.js";
 import {
   ActionButtonIcon,
@@ -98,7 +113,7 @@ import {
   DomainSelectorListIcon,
 } from "./mapDomainIconComponentsSupport.jsx";
 import { RUNTIME_UI_ICON_SRC as UI_ICON_SRC } from "./mapUiIconRuntimeSupport.js";
-import { openExternalUrl } from "./platform/external.js";
+import { openExternalUrl, openMapNavigationFromCoordinates } from "./platform/external.js";
 import { supabase } from "./supabaseClient";
 
 const LazyIncidentLocationModal = lazy(() => import("./mapLazyReportInspectors.jsx").then((module) => ({ default: module.IncidentLocationModal })));
@@ -114,6 +129,96 @@ const LazyOpenReportsUtilityReportDialogModal = lazy(() => import("./mapLazyOpen
 const EXPORT_SCHEMA_VERSION = "v1";
 let deferredOpenReportsExportSupportModulePromise = null;
 let deferredOpenReportsPersonalSupportModulePromise = null;
+
+const PUBLIC_REPORT_STATUS_FILTER_OPTIONS = Object.freeze([
+  { key: "reported", label: "Reported" },
+  { key: "unconfirmed", label: "Unconfirmed" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "likely_outage", label: "Likely outage" },
+  { key: "high_confidence_outage", label: "High-confidence outage" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "likely_resolved", label: "Likely resolved" },
+  { key: "resolved", label: "Resolved" },
+  { key: "operational", label: "Operational" },
+  { key: "archived", label: "Archived" },
+]);
+
+function PublicReportStatusMultiSelect({ selectedKeys = [], onToggle, onSelectAll, compact = false }) {
+  const selected = new Set(Array.isArray(selectedKeys) ? selectedKeys : []);
+  // An empty stored selection means All, matching the domain selector. Render
+  // it as a real all-selected state so the menu communicates that clearly.
+  const isAllSelection = selected.size === 0;
+  const selectedLabels = PUBLIC_REPORT_STATUS_FILTER_OPTIONS
+    .filter((option) => selected.has(option.key))
+    .map((option) => option.label);
+  const allSelected = isAllSelection;
+  const summary = selectedLabels.length ? selectedLabels.join(", ") : "All";
+  const controlHeight = compact ? 36 : 40;
+
+  return (
+    <details style={{ marginTop: 4, position: "relative" }}>
+      <summary
+        style={{
+          minHeight: controlHeight,
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          borderRadius: 8,
+          border: "1px solid var(--sl-ui-modal-input-border)",
+          background: "var(--sl-ui-modal-input-bg)",
+          color: "var(--sl-ui-text)",
+          fontWeight: 800,
+          cursor: "pointer",
+          listStyle: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</span>
+        <span aria-hidden="true">▾</span>
+      </summary>
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 30,
+          top: `calc(${controlHeight}px + 4px)`,
+          left: 0,
+          minWidth: "100%",
+          maxWidth: 300,
+          maxHeight: 280,
+          overflowY: "auto",
+          padding: 10,
+          borderRadius: 10,
+          border: "1px solid var(--sl-ui-modal-input-border)",
+          background: "var(--sl-ui-modal-bg)",
+          boxShadow: "0 12px 28px rgba(0, 0, 0, 0.24)",
+          display: "grid",
+          gap: 8,
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() => onSelectAll?.()}
+          />
+          All
+        </label>
+        {PUBLIC_REPORT_STATUS_FILTER_OPTIONS.map((option) => (
+          <label key={option.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 750, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={isAllSelection || selected.has(option.key)}
+              onChange={() => onToggle?.(option.key)}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 function loadDeferredOpenReportsExportSupportModule() {
   if (!deferredOpenReportsExportSupportModulePromise) {
@@ -355,6 +460,7 @@ export default function OpenReportsModal(props) {
       selectedDomains = [],
       onToggleDomain = null,
       onSelectAllDomains = null,
+      onResetDomainFilters = null,
       groups, // [{ lightId, rows, count, lastTs }]
       expandedSet,
       onToggleExpand,
@@ -384,6 +490,10 @@ export default function OpenReportsModal(props) {
       onConfirmRepairIncident = null,
       focusIncidentId = "",
       initialSearchQuery = "",
+      launchToken = "",
+      launchFocusIncidentId = "",
+      handoffDomainKey = "",
+      handoffRows = [],
       onInitialFocusApplied = null,
       mapBounds = null,
       inViewOnly = false,
@@ -549,6 +659,9 @@ export default function OpenReportsModal(props) {
     geoLoading: false,
     currentState: "",
     lastChangedAt: "",
+    stateEvents: [],
+    stateEventsLoading: false,
+    stateEventsError: "",
     hideSubmittedBy: false,
     useSubmittedReportFormat: false,
   });
@@ -599,6 +712,9 @@ export default function OpenReportsModal(props) {
       geoLoading: Boolean(opts?.geoLoading),
       currentState: String(opts?.currentState || "").trim(),
       lastChangedAt: String(opts?.lastChangedAt || "").trim(),
+      stateEvents: Array.isArray(opts?.stateEvents) ? opts.stateEvents : [],
+      stateEventsLoading: Boolean(opts?.stateEventsLoading),
+      stateEventsError: String(opts?.stateEventsError || ""),
       hideSubmittedBy: Boolean(opts?.hideSubmittedBy),
       useSubmittedReportFormat: Boolean(opts?.useSubmittedReportFormat),
     });
@@ -663,7 +779,9 @@ export default function OpenReportsModal(props) {
     );
   }, [formattedIncidentDisplayId, incidentIdLabelForDomain, normalizeDomainKey, normalizeDomainKeyOrSlug]);
   const [sortMode, setSortMode] = useState("count"); // count | recent
-  const [statusFilter, setStatusFilter] = useState("open"); // open | closed | all
+  // An empty selection means all statuses. This avoids the old, misleading
+  // Open/Closed grouping and lets residents combine real lifecycle states.
+  const [statusFilterKeys, setStatusFilterKeys] = useState([]);
   const [searchDraft, setSearchDraft] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const DATE_PRESET_OPTIONS = useMemo(() => ([
@@ -738,6 +856,25 @@ export default function OpenReportsModal(props) {
       year: "numeric",
     });
     return `${fmt.format(fromD)} - ${fmt.format(toD)}`;
+  }, [parseIsoDate]);
+  const dateRangeLines = useCallback((from, to) => {
+    if (!String(from || "").trim() && !String(to || "").trim()) {
+      return { from: "All dates", to: "No limit" };
+    }
+    const fromD = parseIsoDate(from);
+    const toD = parseIsoDate(to);
+    if (!fromD || !toD) {
+      return { from: "Select", to: "range" };
+    }
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+    });
+    return {
+      from: fmt.format(fromD),
+      to: fmt.format(toD),
+    };
   }, [parseIsoDate]);
   const openDatePicker = useCallback(() => {
     const from = String(exportFromDate || "").trim();
@@ -843,6 +980,7 @@ export default function OpenReportsModal(props) {
   });
   const [compactDomainMenuOpen, setCompactDomainMenuOpen] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
+  const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [compactSortMenuOpen, setCompactSortMenuOpen] = useState(false);
   const [metricsCollapsed, setMetricsCollapsed] = useState(() => {
     if (useCompactAppBehavior) return true;
@@ -852,6 +990,7 @@ export default function OpenReportsModal(props) {
   const listScrollRef = useRef(null);
   const compactSortMenuRef = useRef(null);
   const rowRefMap = useRef(new Map());
+  const domainSelectorGestureRef = useRef(null);
   const [tableSort, setTableSort] = useState({ key: "submitted_at", dir: "desc" });
   const [streetlightReportInfoByIncident, setStreetlightReportInfoByIncident] = useState({});
   const [streetlightUtilityExpandedSet, setStreetlightUtilityExpandedSet] = useState(() => new Set());
@@ -871,9 +1010,26 @@ export default function OpenReportsModal(props) {
     open: false,
     row: null,
     domainKey: "",
+    stateEvents: [],
+    stateEventsLoading: false,
+    stateEventsError: "",
   });
   const [copyToast, setCopyToast] = useState(null);
   const copyToastTimerRef = useRef(null);
+  const domainSelectorTapHandlers = useCallback((action) => ({
+    onPointerDown: (event) => beginMobileDomainSelectorGesture(event, domainSelectorGestureRef),
+    onPointerMove: (event) => updateMobileDomainSelectorGesture(event, domainSelectorGestureRef),
+    onPointerCancel: (event) => cancelMobileDomainSelectorGesture(event, domainSelectorGestureRef),
+    onPointerUp: (event) => endMobileDomainSelectorGesture(event, domainSelectorGestureRef, action),
+    onClick: (event) => {
+      if (shouldIgnoreMobileDomainSelectorClick(domainSelectorGestureRef)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      action?.();
+    },
+  }), []);
   useEffect(() => {
     setIncidentLocationCacheByKey(readPersistedIncidentLocationCache(currentTenantLocationCacheKey));
   }, [currentTenantLocationCacheKey]);
@@ -1036,51 +1192,28 @@ export default function OpenReportsModal(props) {
   const [utilityReportDialogReference, setUtilityReportDialogReference] = useState("");
   const [savedStreetlightReportIncidentId, setSavedStreetlightReportIncidentId] = useState("");
   const [inViewOnlyActive, setInViewOnlyActive] = useState(Boolean(inViewOnly));
-  const [deferredDataActivation, setDeferredDataActivation] = useState(false);
+  // This is a one-time map/notification handoff constraint. It must not keep
+  // participating after the person starts a normal manual search.
+  const [activeLaunchFocusIncidentId, setActiveLaunchFocusIncidentId] = useState("");
+  // A search submission is an action, not just a string value. Keeping an
+  // explicit revision makes repeat Apply operations deterministic even when a
+  // person applies the same pasted value again after clearing or navigating.
+  // It also prevents a memoized report table from retaining a previous search
+  // result merely because the text value happened to compare equal.
+  const [searchApplyRevision, setSearchApplyRevision] = useState(0);
+  // Reports is a primary tab, not a speculative background surface.  A
+  // deferred activation gate can be cancelled when the map workspace remounts
+  // during a View Report handoff, leaving a visible Reports tab with zero
+  // derived groups even though its report input is present.  Keep this data
+  // path synchronous and deterministic.
+  const deferredDataActivation = true;
   const searchQueryNormalizer = useCallback((rawValue = "") => {
     return String(rawValue || "").trim();
   }, []);
-  const exactIncidentSearchDraft = useMemo(() => {
-    const raw = searchQueryNormalizer(searchDraft);
-    if (!raw) return "";
-    const upper = raw.toUpperCase();
-    if (/^[A-Z]{2}\d{10}$/.test(upper)) return upper;
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
-      return raw.toLowerCase();
-    }
-    return "";
-  }, [searchDraft, searchQueryNormalizer]);
   useEffect(() => {
     if (!open) return;
     setInViewOnlyActive(Boolean(inViewOnly));
   }, [open, inViewOnly]);
-  useEffect(() => {
-    if (!open) {
-      setDeferredDataActivation(false);
-      return;
-    }
-    const activationDelayMs = useCompactAppBehavior ? 320 : 90;
-    let timeoutId = 0;
-    let idleId = 0;
-    const activate = () => {
-      startTransition(() => {
-        setDeferredDataActivation(true);
-      });
-    };
-    timeoutId = window.setTimeout(() => {
-      if (typeof window.requestIdleCallback === "function") {
-        idleId = window.requestIdleCallback(() => activate(), { timeout: activationDelayMs });
-        return;
-      }
-      activate();
-    }, activationDelayMs);
-    return () => {
-      window.clearTimeout(timeoutId);
-      if (idleId && typeof window.cancelIdleCallback === "function") {
-        window.cancelIdleCallback(idleId);
-      }
-    };
-  }, [open, useCompactAppBehavior]);
   useEffect(() => {
     let cancelled = false;
     if (!open || !deferredDataActivation || !usesPersonalMyReportsLayout) {
@@ -1102,34 +1235,29 @@ export default function OpenReportsModal(props) {
     : "Search by incident ID, report #, name, phone, or email";
   const applySearchQuery = useCallback((nextRaw = searchDraft) => {
     const nextQuery = searchQueryNormalizer(nextRaw);
-    startTransition(() => {
-      setSearchQuery(nextQuery);
-    });
+    setActiveLaunchFocusIncidentId("");
+    // Apply is a primary, explicit user action. It must not be deferred behind
+    // map/runtime rendering work or a repeated paste can appear to do nothing.
+    setSearchQuery(nextQuery);
+    setSearchApplyRevision((previous) => previous + 1);
   }, [searchDraft, searchQueryNormalizer]);
   const clearSearchField = useCallback(() => {
     setSearchDraft("");
-    startTransition(() => {
-      setSearchQuery("");
-      setInViewOnlyActive(false);
-    });
+    setActiveLaunchFocusIncidentId("");
+    setSearchQuery("");
+    setSearchApplyRevision((previous) => previous + 1);
+    setInViewOnlyActive(false);
   }, []);
   const resetCompactFilters = useCallback(() => {
     clearSearchField();
-    setStatusFilter("open");
-    const range = getPresetRange("last90");
-    setExportFromDate(range.from);
-    setExportToDate(range.to);
-  }, [clearSearchField, getPresetRange]);
-  useEffect(() => {
-    if (!open || !exactIncidentSearchDraft) return;
-    if (searchQueryNormalizer(searchQuery) === exactIncidentSearchDraft) return;
-    const timer = window.setTimeout(() => {
-      applySearchQuery(exactIncidentSearchDraft);
-    }, 90);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [open, exactIncidentSearchDraft, searchQuery, searchQueryNormalizer, applySearchQuery]);
+    setStatusFilterKeys([]);
+    setExportFromDate("");
+    setExportToDate("");
+    // The domain menu's "All" control is a toggle. The toolbar action is a
+    // reset, so it must always select every domain and never produce the
+    // empty-domain state.
+    onResetDomainFilters?.();
+  }, [clearSearchField, onResetDomainFilters]);
   const showInlineToast = useCallback((text) => {
     setCopyToast({ text: String(text || "Saved"), x: 18, y: 48 });
     if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
@@ -1210,6 +1338,7 @@ export default function OpenReportsModal(props) {
     if (!open || !compactDomainPicker) {
       setCompactDomainMenuOpen(false);
       setCompactFiltersOpen(false);
+      setCompactSearchOpen(false);
     }
   }, [open, compactDomainPicker]);
   useEffect(() => {
@@ -1245,19 +1374,31 @@ export default function OpenReportsModal(props) {
     if (!open) return;
     const targetIncidentId = String(focusIncidentId || "").trim();
     if (!targetIncidentId) return;
-    setStatusFilter("all");
+    setStatusFilterKeys([]);
+    setExportFromDate("");
+    setExportToDate("");
   }, [open, focusIncidentId]);
+  const appliedLaunchTokenRef = useRef("");
   useEffect(() => {
     if (!open) return;
+    const token = String(launchToken || "").trim();
+    // Every Reports entry point supplies a fresh launch token.  Treat that
+    // token as an atomic navigation: an incident handoff applies its target,
+    // while a normal Reports-tab visit deliberately clears a prior target.
+    // This prevents a hidden exact-ID search from surviving after the user
+    // leaves Reports and makes the info-window/notification handoff stable.
+    if (!token || token === appliedLaunchTokenRef.current) return;
+    appliedLaunchTokenRef.current = token;
     const q = String(initialSearchQuery || "").trim();
-    if (!q) return;
-    setStatusFilter("all");
+    setActiveLaunchFocusIncidentId(String(launchFocusIncidentId || "").trim());
+    setStatusFilterKeys([]);
+    setExportFromDate("");
+    setExportToDate("");
     setSearchDraft(q);
-    startTransition(() => {
-      setSearchQuery(q);
-    });
-    if (typeof onInitialFocusApplied === "function") onInitialFocusApplied();
-  }, [open, initialSearchQuery]);
+    setSearchQuery(q);
+    setSearchApplyRevision((previous) => previous + 1);
+    if (q && typeof onInitialFocusApplied === "function") onInitialFocusApplied();
+  }, [open, launchToken, initialSearchQuery, launchFocusIncidentId, onInitialFocusApplied]);
   const shouldLoadUtilityReportedState = activeDomainKeys.includes("streetlights");
   useEffect(() => {
     let cancelled = false;
@@ -1651,10 +1792,25 @@ export default function OpenReportsModal(props) {
 
     const builtGroups = [];
     for (const domainKey of selectedDomainKeys) {
+      const handoffRowsForDomain = (Array.isArray(handoffRows) ? handoffRows : [])
+        .filter((row) => {
+          const rowDomainKey = normalizeDomainKeyOrSlug(
+            row?.domainKey || row?.domain || handoffDomainKey,
+            { allowUnknown: true }
+          ) || String(row?.domainKey || row?.domain || handoffDomainKey || "").trim();
+          return rowDomainKey === domainKey;
+        })
+        .map((row) => ({ ...row, domainKey, domain: domainKey }));
       builtGroups.push(
         ...buildPersonalMyReportsGroupsForDomain(domainKey, {
           identityKey,
-          reportRows: configuredIncidentReportRowsByDomain?.get?.(domainKey) || [],
+          // The map popup resolved these rows before it closed. Include them
+          // in the personal-report path as well as the shared path so a map
+          // refresh cannot erase a later View Report handoff.
+          reportRows: [
+            ...(configuredIncidentReportRowsByDomain?.get?.(domainKey) || []),
+            ...handoffRowsForDomain,
+          ],
           seededRows: configuredIncidentSeededRowsByDomain?.get?.(domainKey) || [],
           slIdByUuid,
         }, {
@@ -1667,13 +1823,22 @@ export default function OpenReportsModal(props) {
       );
     }
 
-    const mine = (Array.isArray(reports) ? reports : []).filter((row) => (
-      reportIdentityKey(row) === identityKey
-      && selectedDomainKeys.has(reportDomainForRow(row, reportKnownAssetIdSetsByDomainForExport))
-    ));
+    const mine = [
+      ...(Array.isArray(reports) ? reports : []),
+      ...(Array.isArray(handoffRows) ? handoffRows : []),
+    ].filter((row) => {
+      const domainKey = normalizeDomainKeyOrSlug(
+        row?.domainKey || row?.domain || handoffDomainKey,
+        { allowUnknown: true }
+      ) || reportDomainForRow(row, reportKnownAssetIdSetsByDomainForExport);
+      return reportIdentityKey(row) === identityKey && selectedDomainKeys.has(domainKey);
+    });
     const byScopedIncidentId = new Map();
     for (const row of mine) {
-      const domainKey = reportDomainForRow(row, reportKnownAssetIdSetsByDomainForExport);
+      const domainKey = normalizeDomainKeyOrSlug(
+        row?.domainKey || row?.domain || handoffDomainKey,
+        { allowUnknown: true }
+      ) || reportDomainForRow(row, reportKnownAssetIdSetsByDomainForExport);
       const incidentId = String(row?.light_id || "").trim();
       if (!incidentId) continue;
       const scopedLightId = domainKey === "streetlights"
@@ -1707,6 +1872,10 @@ export default function OpenReportsModal(props) {
       };
     }));
 
+    // Keep the runtime's native group structure through the search/handoff
+    // pipeline.  These groups can carry domain-specific lookup data beyond
+    // `rows`; collapsing them here caused a View Reports handoff to lose its
+    // searchable source before the display could be built.
     builtGroups.sort((a, b) => Number(b?.lastTs || 0) - Number(a?.lastTs || 0));
     const standardGroups = builtGroups.map((group) => {
       const rows = Array.isArray(group?.mineRows) ? group.mineRows : [];
@@ -1725,7 +1894,7 @@ export default function OpenReportsModal(props) {
 
     return {
       groups: standardGroups,
-      rows: builtGroups.flatMap((group) => (Array.isArray(group?.mineRows) ? group.mineRows : [])),
+      rows: standardGroups.flatMap((group) => (Array.isArray(group?.rows) ? group.rows : [])),
     };
   }, [
     activeDomainKeys,
@@ -1735,6 +1904,8 @@ export default function OpenReportsModal(props) {
     formattedIncidentDisplayId,
     getIncidentDomainHelper,
     groups,
+    handoffDomainKey,
+    handoffRows,
     incidentDomainResolveLookupValueByMode,
     normalizeDomainKeyOrSlug,
     open,
@@ -1774,6 +1945,7 @@ export default function OpenReportsModal(props) {
       resolveIncidentDrivenLocationContextForRow,
     };
     const rowsByScopedIncident = new Map();
+    const rowKeysByScopedIncident = new Map();
     const pushRow = (row, domainKeyRaw = "") => {
       const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw || row?.domainKey || row?.domain, { allowUnknown: true })
         || String(domainKeyRaw || row?.domainKey || row?.domain || "").trim();
@@ -1785,6 +1957,11 @@ export default function OpenReportsModal(props) {
       }, domainKey, sharedReportHydrationContext);
       const scopedLightId = `${domainKey}:${incidentId}`;
       if (!rowsByScopedIncident.has(scopedLightId)) rowsByScopedIncident.set(scopedLightId, []);
+      if (!rowKeysByScopedIncident.has(scopedLightId)) rowKeysByScopedIncident.set(scopedLightId, new Set());
+      const rowKey = reportDeduplicationKeyShared(row, domainKey)
+        || `${incidentId}:${Number(row?.ts || 0)}:${String(row?.note || "").trim()}`;
+      if (rowKeysByScopedIncident.get(scopedLightId).has(rowKey)) return;
+      rowKeysByScopedIncident.get(scopedLightId).add(rowKey);
       rowsByScopedIncident.get(scopedLightId).push({
         ...hydratedRow,
         domainKey,
@@ -1800,6 +1977,17 @@ export default function OpenReportsModal(props) {
     }
     for (const row of Array.isArray(reports) ? reports : []) {
       const domainKey = reportDomainForRow(row, reportKnownAssetIdSetsByDomainForExport);
+      if (!selectedDomainKeys.includes(domainKey)) continue;
+      pushRow(row, domainKey);
+    }
+    // A map popup has already resolved these rows for the exact incident the
+    // person clicked. Retain that snapshot for this launch so a map-runtime
+    // refresh cannot make a later View Report appear empty.
+    for (const row of Array.isArray(handoffRows) ? handoffRows : []) {
+      const domainKey = normalizeDomainKeyOrSlug(
+        handoffDomainKey || row?.domainKey || row?.domain,
+        { allowUnknown: true }
+      ) || String(handoffDomainKey || row?.domainKey || row?.domain || "").trim();
       if (!selectedDomainKeys.includes(domainKey)) continue;
       pushRow(row, domainKey);
     }
@@ -1848,6 +2036,8 @@ export default function OpenReportsModal(props) {
     cityBoundaryLoaded,
     configuredIncidentReportRowsByDomain,
     deferredDataActivation,
+    handoffDomainKey,
+    handoffRows,
     groups,
     hydrateIncidentLocationFieldsShared,
     incidentLocationCacheSeed,
@@ -1863,12 +2053,17 @@ export default function OpenReportsModal(props) {
     shouldIncludeDerivedSharedDomain,
     usesPersonalMyReportsLayout,
   ]);
-  const effectiveGroups = Array.isArray(groups)
+  const rawEffectiveGroups = Array.isArray(groups)
     ? groups
     : (usesPersonalMyReportsLayout ? derivedPersonalMyReports.groups : derivedSharedIncidentSelection.groups);
-  const effectiveAllDomainReports = Array.isArray(allDomainReports)
+  // Do not normalize the group collection before matching a marker handoff.
+  // De-duplication belongs at the final incident-card/history boundary;
+  // upstream group shapes are intentionally domain-specific.
+  const effectiveGroups = rawEffectiveGroups;
+  const rawEffectiveAllDomainReports = Array.isArray(allDomainReports)
     ? allDomainReports
     : (usesPersonalMyReportsLayout ? derivedPersonalMyReports.rows : derivedSharedIncidentSelection.rows);
+  const effectiveAllDomainReports = rawEffectiveAllDomainReports;
   const sortedGroups = useMemo(() => {
     const arr = Array.isArray(effectiveGroups) ? [...effectiveGroups] : [];
     if (sortMode === "recent") {
@@ -1901,7 +2096,14 @@ export default function OpenReportsModal(props) {
   }, [inViewOnlyActive, mapBounds, visibleGroups, resolveItemDomainKey]);
   const matchedSearchRows = useMemo(() => {
     const q = String(searchQuery || "").trim().toLowerCase();
-    if (!q) return [];
+    const launchTargetIncidentId = String(activeLaunchFocusIncidentId || "").trim();
+    // A marker handoff includes the canonical incident key in addition to its
+    // human-facing display ID.  The display ID is useful in the search field,
+    // but it may be rebuilt as report/config data refreshes.  Keep the actual
+    // handoff bound to its canonical key so a repeated View Report always
+    // isolates the same incident.
+    const hasLaunchTarget = Boolean(launchTargetIncidentId);
+    if (!q && !hasLaunchTarget) return [];
     const from = (() => {
       const s = String(exportFromDate || "").trim();
       if (!s) return null;
@@ -1969,7 +2171,20 @@ export default function OpenReportsModal(props) {
         const groupIncidentIdNorm = String(g?.incidentId || "").trim().toLowerCase();
         const searchableLookupIds = searchableIncidentLookupIdsForDomain(rowDomainKey, incidentIdNorm);
         const displayIdNorm = String(displayId || "").toLowerCase();
-        const matches =
+        const canonicalIncidentId = canonicalIncidentDrivenIncidentIdShared(
+          rowDomainKey,
+          r,
+          incidentIdRaw || g?.lightId,
+          { getIncidentDomainHelper, normalizeDomainKeyOrSlug }
+        );
+        const matchesLaunchTarget = hasLaunchTarget && [
+          incidentIdRaw,
+          g?.incidentId,
+          g?.lightId,
+          canonicalIncidentId,
+          ...searchableLookupIds,
+        ].some((candidate) => String(candidate || "").trim() === launchTargetIncidentId);
+        const matchesSearch = Boolean(q) && (
           reportNo.includes(q) ||
           name.includes(q) ||
           email.includes(q) ||
@@ -1980,7 +2195,13 @@ export default function OpenReportsModal(props) {
           incidentLabel.toLowerCase().includes(q) ||
           String(issueLabel || "").toLowerCase().includes(q) ||
           displayIdNorm.includes(q) ||
-          (digitsQ && phoneNorm.includes(digitsQ));
+          (digitsQ && phoneNorm.includes(digitsQ))
+        );
+        // The map popup supplies both a canonical incident key and a display
+        // value.  Keep either route valid: a refreshed map can rebuild one of
+        // those values between repeated View Report visits, but it must not
+        // turn an otherwise valid handoff into an empty report workspace.
+        const matches = matchesLaunchTarget || matchesSearch;
         if (!matches) continue;
         out.push({
           id: `${g.lightId}:${r.id}`,
@@ -2000,6 +2221,8 @@ export default function OpenReportsModal(props) {
     return out.sort((a, b) => Number(b?.row?.ts || 0) - Number(a?.row?.ts || 0));
   }, [
     searchQuery,
+    searchApplyRevision,
+    activeLaunchFocusIncidentId,
     sortedGroups,
     visibleGroups,
     activeDomain,
@@ -2014,33 +2237,6 @@ export default function OpenReportsModal(props) {
     resolveItemDomainKey,
     resolveIssueLabel,
   ]);
-
-  const getIncidentStateForDisplay = useCallback((incidentId, rows = [], domainOverride = "") => {
-    const id = String(incidentId || "").trim();
-    if (!id) return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
-    const domainKey = resolveItemDomainKey(null, { domain: domainOverride || activeDomain }, activeDomain);
-
-    if (domainKey === "streetlights") {
-      const confidence = getStreetlightConfidence(id);
-      if (confidence) {
-        const closedAtMs = Number(confidence?.latestWorkingTs || confidence?.lastSignalTs || 0);
-        const lastChangedMs = Number(confidence?.lastSignalTs || 0);
-        return {
-          state: String(confidence?.state || "").trim(),
-          fixedAtIso: confidence?.closed && closedAtMs ? new Date(closedAtMs).toISOString() : "",
-          lastChangedAtIso: lastChangedMs ? new Date(lastChangedMs).toISOString() : "",
-        };
-      }
-    }
-
-    return deriveIncidentStateFromTimeline(id, rows);
-  }, [activeDomain, deriveIncidentStateFromTimeline, getStreetlightConfidence, resolveItemDomainKey]);
-
-  const matchesStatusFilter = useCallback((state) => {
-    if (statusFilter === "all") return true;
-    const isOpen = isOpenLifecycleState(state);
-    return statusFilter === "open" ? isOpen : !isOpen;
-  }, [statusFilter, isOpenLifecycleState]);
 
   const getIncidentSnapshotForDisplay = useCallback((domainKeyRaw, incidentIdRaw) => {
     const domainKey = normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true })
@@ -2061,6 +2257,55 @@ export default function OpenReportsModal(props) {
 
     return null;
   }, [incidentStateByKey]);
+
+  const getIncidentStateForDisplay = useCallback((incidentId, rows = [], domainOverride = "") => {
+    const id = String(incidentId || "").trim();
+    if (!id) return { state: "", fixedAtIso: "", lastChangedAtIso: "" };
+    const domainKey = resolveItemDomainKey(null, { domain: domainOverride || activeDomain }, activeDomain);
+    const snapshot = getIncidentSnapshotForDisplay(domainKey, id);
+    return resolveIncidentStateForReportsShared({
+      snapshot,
+      streetlightConfidence: domainKey === "streetlights" ? getStreetlightConfidence(id) : null,
+      timelineState: deriveIncidentStateFromTimeline(id, rows),
+    });
+  }, [
+    activeDomain,
+    deriveIncidentStateFromTimeline,
+    getIncidentSnapshotForDisplay,
+    getStreetlightConfidence,
+    resolveItemDomainKey,
+  ]);
+
+  const toggleStatusFilterKey = useCallback((keyRaw) => {
+    const key = String(keyRaw || "").trim();
+    if (!PUBLIC_REPORT_STATUS_FILTER_OPTIONS.some((option) => option.key === key)) return;
+    setStatusFilterKeys((previous) => {
+      // With All active, unchecking one status means keep every other status
+      // selected. This preserves the domain selector's empty-means-All model.
+      if (!previous.length) {
+        return PUBLIC_REPORT_STATUS_FILTER_OPTIONS
+          .map((option) => option.key)
+          .filter((optionKey) => optionKey !== key);
+      }
+      const next = previous.includes(key)
+        ? previous.filter((value) => value !== key)
+        : [...previous, key];
+      // Match the domain selector: an empty explicit selection represents All.
+      return next.length === PUBLIC_REPORT_STATUS_FILTER_OPTIONS.length ? [] : next;
+    });
+  }, []);
+
+  const selectAllStatusFilters = useCallback(() => {
+    setStatusFilterKeys([]);
+  }, []);
+
+  const matchesStatusFilter = useCallback((state) => {
+    if (!statusFilterKeys.length) return true;
+    const stateLabel = incidentStateLabel(state).trim().toLowerCase();
+    return statusFilterKeys.some((key) => (
+      PUBLIC_REPORT_STATUS_FILTER_OPTIONS.find((option) => option.key === key)?.label.toLowerCase() === stateLabel
+    ));
+  }, [statusFilterKeys]);
 
   const buildLocalIncidentDetailRow = useCallback((row, {
     domainKeyRaw = "",
@@ -2091,7 +2336,7 @@ export default function OpenReportsModal(props) {
         String(timelineState?.fixedAtIso || "")
         || (snapshot?.state === "fixed" ? String(snapshot?.last_changed_at || "") : ""),
       time_to_close_seconds: "",
-      current_state: String(timelineState?.state || snapshot?.state || ""),
+      current_state: String(snapshot?.state || timelineState?.state || ""),
       reporter_name: String(row?.reporter_name || ""),
       reporter_email: String(row?.reporter_email || ""),
       reporter_phone: String(row?.reporter_phone || ""),
@@ -2221,6 +2466,7 @@ export default function OpenReportsModal(props) {
     exportFromDate,
     exportToDate,
     searchQuery,
+    searchApplyRevision,
     matchedSearchRows,
     visibleGroups,
     inViewIncidentIdSet,
@@ -2329,7 +2575,9 @@ export default function OpenReportsModal(props) {
 
   const adminTableRows = useMemo(() => {
     const grouped = new Map();
-    for (const r of filteredExportDetailRows || []) {
+    // This is the final table boundary.  A single persisted report can be
+    // represented by more than one runtime source, but must count once here.
+    for (const r of dedupeReportRowsShared(filteredExportDetailRows || [])) {
       const incidentId = String(r?.incident_id || "").trim();
       if (!incidentId) continue;
       const rowDomainKey = isMultiDomainMyReports
@@ -2594,10 +2842,19 @@ export default function OpenReportsModal(props) {
     resolveItemDomainKey,
   ]);
 
-  const isAdminMultiDomainAllReports = isAdmin && isMultiDomainMyReports && !isMyReportsModal;
+  // The unified Reports workspace keeps the modal title as "My Reports" and
+  // switches views with the Reported By selector.  Use that actual mode—not
+  // the cosmetic title—to select the all-reports table and its incident
+  // handoff behavior.  Preserve the legacy scoped All Reports controller too.
+  const isAdminMultiDomainAllReports = isAdmin
+    && isMultiDomainMyReports
+    && (showAllReportedByMode || !isMyReportsModal);
 
   const matchedSearchRowsByIncidentKey = useMemo(() => {
-    if (!isAdminMultiDomainAllReports || !String(searchQuery || "").trim()) return new Map();
+    const hasSearchTarget = Boolean(
+      String(searchQuery || "").trim() || String(activeLaunchFocusIncidentId || "").trim()
+    );
+    if (!isAdminMultiDomainAllReports || !hasSearchTarget) return new Map();
     const grouped = new Map();
     for (const item of matchedSearchRows || []) {
       const domainKey = resolveItemDomainKey(null, item?.row, item?.domainKey || activeDomain);
@@ -2616,7 +2873,16 @@ export default function OpenReportsModal(props) {
       grouped.get(incidentKey).push(item);
     }
     return grouped;
-  }, [isAdminMultiDomainAllReports, matchedSearchRows, searchQuery, resolveItemDomainKey, activeDomain]);
+  }, [
+    isAdminMultiDomainAllReports,
+    matchedSearchRows,
+    searchQuery,
+    activeLaunchFocusIncidentId,
+    resolveItemDomainKey,
+    activeDomain,
+    getIncidentDomainHelper,
+    normalizeDomainKeyOrSlug,
+  ]);
 
   const adminMultiDomainDisplayRows = useMemo(() => {
     if (!isAdminMultiDomainAllReports) return [];
@@ -2638,8 +2904,17 @@ export default function OpenReportsModal(props) {
       const domainKey = resolveItemDomainKey(g, g?.rows?.[0] || null, activeDomain);
       const incidentId = String(g?.incidentId || (domainKey === "streetlights" ? g?.lightId : "")).trim();
       if (!incidentId) continue;
-      const incidentKey = `${domainKey}::${incidentId}`;
-      const sourceRows = String(searchQuery || "").trim()
+      // Match the key used by matchedSearchRowsByIncidentKey.  Using the raw
+      // group ID here was the source of the repeat-handoff failure: after map
+      // data refreshed, it could differ from the canonical row incident ID.
+      const canonicalIncidentId = canonicalIncidentDrivenIncidentIdShared(
+        domainKey,
+        g?.rows?.[0] || null,
+        incidentId,
+        { getIncidentDomainHelper, normalizeDomainKeyOrSlug }
+      ) || incidentId;
+      const incidentKey = `${domainKey}::${canonicalIncidentId}`;
+      const sourceRows = (String(searchQuery || "").trim() || String(activeLaunchFocusIncidentId || "").trim())
         ? (matchedSearchRowsByIncidentKey.get(incidentKey) || []).map((item) => item?.row).filter(Boolean)
         : (Array.isArray(g?.rows) ? g.rows.filter((r) => inRange(r?.ts)) : []);
       if (!sourceRows.length) continue;
@@ -2772,9 +3047,40 @@ export default function OpenReportsModal(props) {
       rows.push(row);
     }
 
+    // A report can arrive through both the configured-domain runtime and the
+    // generic reports runtime.  Merge only the finished incident cards here,
+    // after the marker handoff has selected its source rows.  This keeps one
+    // card per domain/incident and one occurrence of each report number.
+    const uniqueRowsByIncident = new Map();
+    for (const row of rows) {
+      const incidentKey = String(row?.incident_key || `${row?.domainKey || ""}::${row?.incident_id || ""}`).trim();
+      const existing = uniqueRowsByIncident.get(incidentKey);
+      if (!existing) {
+        uniqueRowsByIncident.set(incidentKey, {
+          ...row,
+          rows: dedupeReportRowsShared(row?.rows || [], row?.domainKey || row?.domain || activeDomain),
+        });
+        continue;
+      }
+      const mergedReportRows = dedupeReportRowsShared([
+        ...(existing?.rows || []),
+        ...(row?.rows || []),
+      ], existing?.domainKey || row?.domainKey || activeDomain);
+      const incomingIsNewer = String(row?.latest_activity_at || row?.latest_submitted_at || "")
+        > String(existing?.latest_activity_at || existing?.latest_submitted_at || "");
+      uniqueRowsByIncident.set(incidentKey, {
+        ...(incomingIsNewer ? row : existing),
+        rows: mergedReportRows,
+        report_count: mergedReportRows.length,
+        primary_report_number: String(mergedReportRows?.[0]?.report_number || "").trim()
+          || String((incomingIsNewer ? row : existing)?.primary_report_number || "").trim(),
+      });
+    }
+    const displayRows = Array.from(uniqueRowsByIncident.values());
+
     const dir = tableSort?.dir === "asc" ? 1 : -1;
     const key = String(tableSort?.key || "submitted_at");
-    rows.sort((a, b) => {
+    displayRows.sort((a, b) => {
       if (key === "report_count") return (Number(a.report_count || 0) - Number(b.report_count || 0)) * dir;
       if (key === "utility_reported") {
         const aa = Boolean(utilityReportedByIncident?.[a?.incident_id]) ? 1 : 0;
@@ -2799,13 +3105,15 @@ export default function OpenReportsModal(props) {
       if (sa > sb) return 1 * dir;
       return 0;
     });
-    return rows;
+    return displayRows;
   }, [
     isAdminMultiDomainAllReports,
     visibleGroups,
     activeDomain,
     searchQuery,
+    searchApplyRevision,
     matchedSearchRowsByIncidentKey,
+    activeLaunchFocusIncidentId,
     parseLocalDateStart,
     parseLocalDateEndExclusive,
     exportFromDate,
@@ -2819,6 +3127,8 @@ export default function OpenReportsModal(props) {
     tableSort,
     utilityReportedByIncident,
     resolveItemDomainKey,
+    getIncidentDomainHelper,
+    normalizeDomainKeyOrSlug,
   ]);
 
   const displayedAdminRows = isAdminMultiDomainAllReports ? adminMultiDomainDisplayRows : adminTableRows;
@@ -2938,13 +3248,36 @@ export default function OpenReportsModal(props) {
     )
     : "";
 
-  const openAdminSubmittedReportsModal = useCallback((row, domainOverride = "") => {
+  const openAdminSubmittedReportsModal = useCallback(async (row, domainOverride = "") => {
     if (!row) return;
     const domainKey = resolveDisplayedRowDomainKey(row, domainOverride || activeDomain);
+    const incidentId = String(row?.incident_id || "").trim();
+    const requestKey = `${domainKey}:${incidentId}`;
     setSubmittedReportsModal({
       open: true,
       row,
       domainKey,
+      stateEvents: [],
+      stateEventsLoading: Boolean(domainKey && incidentId),
+      stateEventsError: "",
+    });
+
+    if (!domainKey || !incidentId) return;
+    const { events: stateEvents, error } = await loadIncidentStateHistoryShared({
+      supabase,
+      tenantKey: activeTenantKey(),
+      domainKey,
+      incidentId,
+    });
+    setSubmittedReportsModal((current) => {
+      const currentKey = `${String(current?.domainKey || "").trim()}:${String(current?.row?.incident_id || "").trim()}`;
+      if (!current?.open || currentKey !== requestKey) return current;
+      return {
+        ...current,
+        stateEvents,
+        stateEventsLoading: false,
+        stateEventsError: error ? String(error?.message || "Could not load state updates.") : "",
+      };
     });
   }, [activeDomain, resolveDisplayedRowDomainKey]);
 
@@ -3069,6 +3402,15 @@ export default function OpenReportsModal(props) {
         || isPlaceholderLocationText(nearestCrossStreet)
         || isPlaceholderLocationText(nearestLandmark)
       );
+    const initialNearestAddress = shouldLookupGeo && !isUsableAddressText(nearestAddress)
+      ? "Loading"
+      : nearestAddress;
+    const initialNearestCrossStreet = shouldLookupGeo && isPlaceholderLocationText(nearestCrossStreet)
+      ? "Loading"
+      : nearestCrossStreet;
+    const initialNearestLandmark = shouldLookupGeo && isPlaceholderLocationText(nearestLandmark)
+      ? "Loading"
+      : nearestLandmark;
     const modalTitle = `${domainLabel} ${displayId}`.trim();
     const buildLocationRows = (addressValue, crossStreetValue, landmarkValue) => ([
       { label: "Nearest address", value: addressValue },
@@ -3080,7 +3422,7 @@ export default function OpenReportsModal(props) {
     setIncidentLocationModal({
       open: true,
       title: modalTitle,
-      rows: buildLocationRows(nearestAddress, nearestCrossStreet, nearestLandmark),
+      rows: buildLocationRows(initialNearestAddress, initialNearestCrossStreet, initialNearestLandmark),
       loading: shouldLookupGeo,
       incidentKey: incidentLocationKey,
       domainKey,
@@ -3171,15 +3513,27 @@ export default function OpenReportsModal(props) {
     const history = [];
     const domainKey = resolveDisplayedRowDomainKey(row, activeDomain);
 
+    const seenReportKeys = new Set();
     for (const detail of row.rows || []) {
+      const detailKey = reportDeduplicationKeyShared(detail, domainKey);
+      if (seenReportKeys.has(detailKey)) continue;
+      seenReportKeys.add(detailKey);
       const issueLabel = resolveIssueLabel(detail, domainKey);
+      // Resolve the configured reporting fields while the original report row
+      // is still intact. The history modal must show this same field list,
+      // rather than attempting to reconstruct it from a shortened summary.
+      const typeOptionDetails = resolveReportTypeOptionDetails(detail, domainKey);
       history.push({
+        ...detail,
         kind: "report",
         ts: Date.parse(String(detail?.submitted_at || "")) || 0,
         label: issueLabel || REPORT_TYPES?.[String(detail?.report_type || "").trim()] || String(detail?.report_type || "").trim() || "Report",
         issueLabel,
         note: String(detail?.raw_notes || detail?.notes || ""),
         type: String(detail?.report_type || ""),
+        domainKey,
+        report_domain: domainKey,
+        typeOptionDetails,
         report_number: detail?.report_number || null,
         reporter_user_id: detail?.reporter_user_id || null,
         reporter_name: detail?.reporter_name || null,
@@ -3243,6 +3597,7 @@ export default function OpenReportsModal(props) {
       "",
       slIdByUuid
     );
+    const shouldLoadStateEvents = Boolean(domainKey && incidentId);
     openAllReportsModal(
       incidentModalTitle || String(row.incident_label || row.incident_id || "Incident"),
       history,
@@ -3251,17 +3606,39 @@ export default function OpenReportsModal(props) {
         domainKey,
         incidentLabel: "",
         sharedLocation: "",
-        sharedAddress: incidentAddress,
-        sharedCrossStreet: incidentCrossStreet,
-        sharedLandmark: incidentLandmark,
+        sharedAddress: shouldLookupGeo && !incidentAddress ? "Loading" : incidentAddress,
+        sharedCrossStreet: shouldLookupGeo && !incidentCrossStreet ? "Loading" : incidentCrossStreet,
+        sharedLandmark: shouldLookupGeo && !incidentLandmark ? "Loading" : incidentLandmark,
         sharedCoordinates: incidentCoordinates,
         geoLoading: shouldLookupGeo,
         currentState: String(row?.current_state || "").trim(),
         lastChangedAt: String(row?.latest_activity_at || row?.latest_submitted_at || "").trim(),
+        stateEvents: [],
+        stateEventsLoading: shouldLoadStateEvents,
+        stateEventsError: "",
         hideSubmittedBy: true,
         useSubmittedReportFormat: true,
       }
     );
+
+    if (shouldLoadStateEvents) {
+      void loadIncidentStateHistoryShared({
+        supabase,
+        tenantKey: activeTenantKey(),
+        domainKey,
+        incidentId,
+      }).then(({ events: stateEvents, error }) => {
+        setAllReportsModal((current) => {
+          if (!current?.open || String(current?.incidentKey || "").trim() !== incidentModalKey) return current;
+          return {
+            ...current,
+            stateEvents,
+            stateEventsLoading: false,
+            stateEventsError: error ? String(error?.message || "Could not load state updates.") : "",
+          };
+        });
+      });
+    }
     if (!shouldLookupGeo) return;
     try {
       const geo = await getStreetlightUtilityDetails(fallbackLat, fallbackLng, { mode: "full" });
@@ -3527,7 +3904,7 @@ export default function OpenReportsModal(props) {
       exportToDate,
       searchQuery,
       sortMode,
-      statusFilter,
+      statusFilter: statusFilterKeys.join(","),
       rowCount: filteredExportDetailRows.length,
     });
   }, [
@@ -3541,7 +3918,7 @@ export default function OpenReportsModal(props) {
     isAdmin,
     searchQuery,
     sortMode,
-    statusFilter,
+    statusFilterKeys,
   ]);
 
   const exportSummaryCsv = useCallback(async () => {
@@ -3581,7 +3958,7 @@ export default function OpenReportsModal(props) {
       exportToDate,
       searchQuery,
       sortMode,
-      statusFilter,
+      statusFilter: statusFilterKeys.join(","),
       rowCount: exportSummaryRows.length,
     });
   }, [
@@ -3595,7 +3972,7 @@ export default function OpenReportsModal(props) {
     isAdmin,
     searchQuery,
     sortMode,
-    statusFilter,
+    statusFilterKeys,
   ]);
 
   if (!open) return null;
@@ -3683,183 +4060,152 @@ export default function OpenReportsModal(props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "40px minmax(0, 1fr)",
+          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
           gap: 8,
-          alignItems: "start",
+          alignItems: "end",
         }}
       >
-        <button
-          type="button"
-          onClick={resetCompactFilters}
-          style={{
-            width: 36,
-            minWidth: 36,
-            height: 36,
-            borderRadius: 8,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-            padding: 0,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 16,
-            lineHeight: 1,
-            alignSelf: "end",
-          }}
-          aria-label="Reset filters"
-          title="Reset filters"
-        >
-          ↺
-        </button>
+        <div style={{ fontSize: 12, fontWeight: 800, minWidth: 0 }}>
+          <div style={{ opacity: 0.85 }}>Status</div>
+          <PublicReportStatusMultiSelect selectedKeys={statusFilterKeys} onToggle={toggleStatusFilterKey} onSelectAll={selectAllStatusFilters} />
+        </div>
         <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85, minWidth: 0 }}>
-          Status
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
+          Date range
+          <button
+            type="button"
+            onClick={openDatePicker}
             style={{
               marginTop: 4,
               width: "100%",
               minHeight: 40,
-              padding: "8px 10px",
+              height: 40,
+              padding: "6px 10px",
               borderRadius: 8,
               border: "1px solid var(--sl-ui-modal-input-border)",
               background: "var(--sl-ui-modal-input-bg)",
               color: "var(--sl-ui-text)",
               fontWeight: 800,
+              textAlign: "left",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
             }}
           >
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-            <option value="all">All</option>
-          </select>
+            <span style={{ display: "grid", gap: 1, minWidth: 0, lineHeight: 1.05 }}>
+              <span style={{ fontSize: 11.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {dateRangeLines(exportFromDate, exportToDate).from}
+              </span>
+              <span style={{ fontSize: 11.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: 0.82 }}>
+                {dateRangeLines(exportFromDate, exportToDate).to}
+              </span>
+            </span>
+            <span style={{ opacity: 0.75, flex: "0 0 auto" }}>▾</span>
+          </button>
         </label>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <div style={{ position: "relative", flex: 1 }}>
-          <input
-            value={searchDraft}
-            onChange={(e) => setSearchDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applySearchQuery();
-            }}
-            placeholder={reportSearchPlaceholder}
-            style={{
-              width: "100%",
-              padding: "9px 30px 9px 10px",
-              borderRadius: 10,
-              border: "1px solid var(--sl-ui-modal-input-border)",
-              background: "var(--sl-ui-modal-input-bg)",
-              color: "var(--sl-ui-text)",
-              fontSize: 12.5,
-            }}
-          />
-          {showSearchClearButton ? (
-            <button
-              type="button"
-              onClick={clearSearchField}
-              style={{
-                position: "absolute",
-                right: 7,
-                top: "50%",
-                transform: "translateY(-50%)",
-                width: 18,
-                height: 18,
-                borderRadius: 999,
-                border: "none",
-                background: "transparent",
-                color: "var(--sl-ui-text)",
-                opacity: 0.55,
-                fontSize: 15,
-                lineHeight: 1,
-                cursor: "pointer",
-                padding: 0,
-              }}
-              aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
-              title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          onClick={() => applySearchQuery()}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 10,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Apply
-        </button>
-      </div>
-      <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
-        Date range
-        <button
-          type="button"
-          onClick={openDatePicker}
-          style={{
-            marginTop: 4,
-            width: "100%",
-            minHeight: 40,
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: "1px solid var(--sl-ui-modal-input-border)",
-            background: "var(--sl-ui-modal-input-bg)",
-            color: "var(--sl-ui-text)",
-            fontWeight: 800,
-            textAlign: "left",
-            cursor: "pointer",
-          }}
-        >
-          {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
-        </button>
-      </label>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 8 }}>
-        <button
-          type="button"
-          onClick={exportSummaryCsv}
-          style={{
-            padding: "7px 10px",
-            borderRadius: 9,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-            minWidth: 0,
-          }}
-        >
-          Export summary CSV
-        </button>
-        <button
-          type="button"
-          onClick={exportDetailCsv}
-          style={{
-            padding: "7px 10px",
-            borderRadius: 9,
-            border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-            background: "var(--sl-ui-modal-btn-secondary-bg)",
-            color: "var(--sl-ui-modal-btn-secondary-text)",
-            fontWeight: 900,
-            cursor: "pointer",
-            minWidth: 0,
-          }}
-        >
-          Export detail CSV
-        </button>
       </div>
     </div>
   ) : null;
-
+  const compactSearchPanel = compactSearchOpen ? (
+    <div
+      style={{
+        marginTop: 6,
+        border: "1px solid var(--sl-ui-modal-border)",
+        borderRadius: 10,
+        padding: 8,
+        display: "flex",
+        gap: 8,
+        background: "var(--sl-ui-modal-subtle-bg)",
+        width: "100%",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+        <input
+          autoFocus
+          value={searchDraft}
+          onChange={(e) => setSearchDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              applySearchQuery();
+              setCompactSearchOpen(false);
+            }
+          }}
+          placeholder={reportSearchPlaceholder}
+          style={{
+            width: "100%",
+            minHeight: 40,
+            padding: "9px 34px 9px 10px",
+            borderRadius: 10,
+            border: "1px solid var(--sl-ui-modal-input-border)",
+            background: "var(--sl-ui-modal-input-bg)",
+            color: "var(--sl-ui-text)",
+            fontSize: 12.5,
+            boxSizing: "border-box",
+          }}
+        />
+        {showSearchClearButton ? (
+          <button
+            type="button"
+            onClick={clearSearchField}
+            style={{
+              position: "absolute",
+              right: 7,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 22,
+              height: 22,
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              color: "var(--sl-ui-text)",
+              opacity: 0.65,
+              fontSize: 18,
+              lineHeight: 1,
+              cursor: "pointer",
+              padding: 0,
+            }}
+            aria-label={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+            title={inViewOnlyActive ? "Clear search and in-view filter" : "Clear search"}
+          >
+            ×
+          </button>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          applySearchQuery();
+          setCompactSearchOpen(false);
+        }}
+        style={{
+          width: 42,
+          minWidth: 42,
+          height: 40,
+          borderRadius: 8,
+          border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+          background: "var(--sl-ui-modal-btn-secondary-bg)",
+          color: "var(--sl-ui-modal-btn-secondary-text)",
+          cursor: "pointer",
+          padding: 9,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        aria-label="Apply report search"
+        title="Apply report search"
+      >
+        <img
+          src="/Icons/Buttons/reports/search_button.svg"
+          alt=""
+          width="20"
+          height="20"
+          style={{ display: "block", filter: darkMode ? "invert(1)" : "none" }}
+        />
+      </button>
+    </div>
+  ) : null;
   return (
     <Fragment>
       <ModalShell
@@ -3886,6 +4232,7 @@ export default function OpenReportsModal(props) {
             display: "flex",
             flexDirection: "column",
             position: "relative",
+            touchAction: "manipulation",
             gap: 0,
             marginTop: reportsPageTopInset,
             marginBottom: 0,
@@ -3903,6 +4250,7 @@ export default function OpenReportsModal(props) {
             display: "flex",
             flexDirection: "column",
             position: "relative",
+            touchAction: "manipulation",
           }
       }
     >
@@ -3989,9 +4337,7 @@ export default function OpenReportsModal(props) {
                     {isMultiDomainMyReports && (
                       <button
                         type="button"
-                        onClick={() => {
-                          onSelectAllDomains?.();
-                        }}
+                        {...domainSelectorTapHandlers(() => onSelectAllDomains?.())}
                         style={{
                           borderRadius: 9,
                           border: !hasExplicitDomainSelection
@@ -4025,13 +4371,13 @@ export default function OpenReportsModal(props) {
                         <button
                           key={d.key}
                           type="button"
-                          onClick={() => {
+                          {...domainSelectorTapHandlers(() => {
                             if (isMultiDomainMyReports) onToggleDomain?.(d.key);
                             else {
                               onSelectDomain?.(d.key);
                               setCompactDomainMenuOpen(false);
                             }
-                          }}
+                          })}
                           style={{
                             borderRadius: 9,
                             border: selected
@@ -4130,7 +4476,7 @@ export default function OpenReportsModal(props) {
         </div>
       )}
 
-      {isAdmin && !isCompactMyReports && (
+      {isAdmin && !isCompactMyReports && !compactDomainPicker && (
         <div
           style={{
             display: "grid",
@@ -4245,9 +4591,7 @@ export default function OpenReportsModal(props) {
                   {isMultiDomainMyReports && (
                     <button
                       type="button"
-                      onClick={() => {
-                        onSelectAllDomains?.();
-                      }}
+                      {...domainSelectorTapHandlers(() => onSelectAllDomains?.())}
                       style={{
                         borderRadius: 9,
                         border: !hasExplicitDomainSelection
@@ -4281,13 +4625,13 @@ export default function OpenReportsModal(props) {
                       <button
                         key={d.key}
                         type="button"
-                        onClick={() => {
+                        {...domainSelectorTapHandlers(() => {
                           if (isMultiDomainMyReports) onToggleDomain?.(d.key);
                           else {
                             onSelectDomain?.(d.key);
                             setCompactDomainMenuOpen(false);
                           }
-                        }}
+                        })}
                         style={{
                           borderRadius: 9,
                           border: selected
@@ -4324,7 +4668,7 @@ export default function OpenReportsModal(props) {
               {isMultiDomainMyReports ? (
                 <button
                   type="button"
-                  onClick={onSelectAllDomains}
+                  {...domainSelectorTapHandlers(onSelectAllDomains)}
                   style={{
                     borderRadius: 10,
                     border: !hasExplicitDomainSelection
@@ -4353,11 +4697,11 @@ export default function OpenReportsModal(props) {
                   <button
                     key={d.key}
                     type="button"
-                    onClick={() => {
+                    {...domainSelectorTapHandlers(() => {
                       if (!d.enabled) return;
                       if (isMultiDomainMyReports) onToggleDomain?.(d.key);
                       else onSelectDomain?.(d.key);
-                    }}
+                    })}
                     disabled={!d.enabled}
                     style={{
                       borderRadius: 10,
@@ -4493,28 +4837,10 @@ export default function OpenReportsModal(props) {
               </div>
               {isAdmin && (
                 <div style={{ display: "grid", gap: 8 }}>
-                  <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
-                    Status
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
-                      style={{
-                        marginTop: 4,
-                        width: "100%",
-                        minHeight: 36,
-                        padding: "6px 8px",
-                        borderRadius: 8,
-                        border: "1px solid var(--sl-ui-modal-input-border)",
-                        background: "var(--sl-ui-modal-input-bg)",
-                        color: "var(--sl-ui-text)",
-                        fontWeight: 800,
-                      }}
-                    >
-                      <option value="open">Open</option>
-                      <option value="closed">Closed</option>
-                      <option value="all">All</option>
-                    </select>
-                  </label>
+                  <div style={{ fontSize: 12, fontWeight: 800 }}>
+                    <div style={{ opacity: 0.85 }}>Status</div>
+                    <PublicReportStatusMultiSelect selectedKeys={statusFilterKeys} onToggle={toggleStatusFilterKey} onSelectAll={selectAllStatusFilters} compact />
+                  </div>
                   <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
                     Date range
                     <button
@@ -4524,7 +4850,8 @@ export default function OpenReportsModal(props) {
                         marginTop: 4,
                         width: "100%",
                         minHeight: 40,
-                        padding: "8px 10px",
+                        height: 40,
+                        padding: "6px 10px",
                         borderRadius: 8,
                         border: "1px solid var(--sl-ui-modal-input-border)",
                         background: "var(--sl-ui-modal-input-bg)",
@@ -4532,9 +4859,21 @@ export default function OpenReportsModal(props) {
                         fontWeight: 800,
                         textAlign: "left",
                         cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
                       }}
                     >
-                      {dateRangeLabel(exportFromDate, exportToDate)} <span style={{ opacity: 0.75 }}>▾</span>
+                      <span style={{ display: "grid", gap: 1, minWidth: 0, lineHeight: 1.05 }}>
+                        <span style={{ fontSize: 11.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {dateRangeLines(exportFromDate, exportToDate).from}
+                        </span>
+                        <span style={{ fontSize: 11.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: 0.82 }}>
+                          {dateRangeLines(exportFromDate, exportToDate).to}
+                        </span>
+                      </span>
+                      <span style={{ opacity: 0.75, flex: "0 0 auto" }}>▾</span>
                     </button>
                   </label>
                 </div>
@@ -4542,8 +4881,6 @@ export default function OpenReportsModal(props) {
             </div>
           )}
         </div>
-      ) : compactDomainPicker && !(isAdmin && isCompactMyReports) ? (
-        compactAdminFiltersPanel
       ) : !compactDomainPicker ? (
         <>
           <div style={{ marginTop: 6, minHeight: 42, display: "flex", gap: 8 }}>
@@ -4617,9 +4954,7 @@ export default function OpenReportsModal(props) {
                   >
                     <button
                       type="button"
-                      onClick={() => {
-                        onSelectAllDomains?.();
-                      }}
+                      {...domainSelectorTapHandlers(() => onSelectAllDomains?.())}
                       style={{
                         display: "grid",
                         gridTemplateColumns: "22px minmax(0, 1fr)",
@@ -4652,7 +4987,7 @@ export default function OpenReportsModal(props) {
                         <button
                           key={d.key}
                           type="button"
-                          onClick={() => onToggleDomain?.(d.key)}
+                          {...domainSelectorTapHandlers(() => onToggleDomain?.(d.key))}
                           style={{
                             display: "grid",
                             gridTemplateColumns: "22px minmax(0, 1fr)",
@@ -4754,27 +5089,10 @@ export default function OpenReportsModal(props) {
 
           {isAdmin && (
             <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
-                Status{" "}
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(String(e.target.value || "open"))}
-                  style={{
-                    marginLeft: 6,
-                    minHeight: 34,
-                    padding: "6px 8px",
-                    borderRadius: 8,
-                    border: "1px solid var(--sl-ui-modal-input-border)",
-                    background: "var(--sl-ui-modal-input-bg)",
-                    color: "var(--sl-ui-text)",
-                    fontWeight: 800,
-                  }}
-                >
-                  <option value="open">Open</option>
-                  <option value="closed">Closed</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>
+                <div style={{ opacity: 0.85 }}>Status</div>
+                <PublicReportStatusMultiSelect selectedKeys={statusFilterKeys} onToggle={toggleStatusFilterKey} onSelectAll={selectAllStatusFilters} compact />
+              </div>
               <label style={{ fontSize: 12, fontWeight: 800, opacity: 0.85 }}>
                 Date range{" "}
                 <button
@@ -4892,8 +5210,8 @@ export default function OpenReportsModal(props) {
 
       {isAdmin && compactDomainPicker && (
         <div style={{ marginTop: 6, width: "100%", boxSizing: "border-box" }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 8, minWidth: 0 }}>
-            <div style={{ position: "relative", flex: "0 0 auto", zIndex: compactDomainMenuOpen ? 40 : "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <div style={{ position: "relative", minWidth: 0, zIndex: compactDomainMenuOpen ? 40 : "auto" }}>
               <button
                 type="button"
                 onClick={() => {
@@ -4901,15 +5219,16 @@ export default function OpenReportsModal(props) {
                     const next = !p;
                     if (next) {
                       setCompactFiltersOpen(false);
+                      setCompactSearchOpen(false);
                       setCompactSortMenuOpen(false);
                     }
                     return next;
                   });
                 }}
                 style={{
-                  width: 48,
-                  minWidth: 48,
-                  height: 36,
+                  width: "100%",
+                  minWidth: 0,
+                  height: 44,
                   borderRadius: 8,
                   border: compactDomainMenuOpen
                     ? "1px solid var(--sl-ui-brand-green-border)"
@@ -4958,9 +5277,7 @@ export default function OpenReportsModal(props) {
                   {isMultiDomainMyReports && (
                     <button
                       type="button"
-                      onClick={() => {
-                        onSelectAllDomains?.();
-                      }}
+                      {...domainSelectorTapHandlers(() => onSelectAllDomains?.())}
                       style={{
                         borderRadius: 9,
                         border: !hasExplicitDomainSelection
@@ -4994,13 +5311,13 @@ export default function OpenReportsModal(props) {
                       <button
                         key={d.key}
                         type="button"
-                        onClick={() => {
+                        {...domainSelectorTapHandlers(() => {
                           if (isMultiDomainMyReports) onToggleDomain?.(d.key);
                           else {
                             onSelectDomain?.(d.key);
                             setCompactDomainMenuOpen(false);
                           }
-                        }}
+                        })}
                         style={{
                           borderRadius: 9,
                           border: selected
@@ -5032,42 +5349,109 @@ export default function OpenReportsModal(props) {
                 </div>
               )}
             </div>
-            {isCompactMyReports ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setCompactFiltersOpen((p) => !p);
-                  setCompactDomainMenuOpen(false);
-                  setCompactSortMenuOpen(false);
-                }}
-                style={{
-                  width: 48,
-                  minWidth: 48,
-                  height: 36,
-                  borderRadius: 8,
-                  border: compactFiltersOpen
-                    ? "1px solid var(--sl-ui-brand-green-border)"
-                    : "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                  background: compactFiltersOpen
-                    ? "var(--sl-ui-brand-green)"
-                    : "var(--sl-ui-modal-btn-secondary-bg)",
-                  color: compactFiltersOpen ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  padding: 0,
-                  alignSelf: "flex-end",
-                }}
-                aria-label="Search and filters"
-                title="Search and filters"
-              >
-                <AppIcon src={UI_ICON_SRC.filter} iconKey="filter" darkMode={darkMode} active={compactFiltersOpen} size={22} />
-              </button>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setCompactFiltersOpen((p) => !p);
+                setCompactDomainMenuOpen(false);
+                setCompactSearchOpen(false);
+                setCompactSortMenuOpen(false);
+              }}
+              style={{
+                width: "100%",
+                minWidth: 0,
+                height: 44,
+                borderRadius: 8,
+                border: compactFiltersOpen
+                  ? "1px solid var(--sl-ui-brand-green-border)"
+                  : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: compactFiltersOpen
+                  ? "var(--sl-ui-brand-green)"
+                  : "var(--sl-ui-modal-btn-secondary-bg)",
+                color: compactFiltersOpen ? "white" : "var(--sl-ui-modal-btn-secondary-text)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                padding: 0,
+              }}
+              aria-label="Report filters"
+              title="Report filters"
+            >
+              <AppIcon src={UI_ICON_SRC.filter} iconKey="filter" darkMode={darkMode} active={compactFiltersOpen} size={22} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCompactSearchOpen((p) => !p);
+                setCompactDomainMenuOpen(false);
+                setCompactFiltersOpen(false);
+                setCompactSortMenuOpen(false);
+              }}
+              style={{
+                width: "100%",
+                minWidth: 0,
+                height: 44,
+                borderRadius: 8,
+                border: compactSearchOpen
+                  ? "1px solid var(--sl-ui-brand-green-border)"
+                  : "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: compactSearchOpen
+                  ? "var(--sl-ui-brand-green)"
+                  : "var(--sl-ui-modal-btn-secondary-bg)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                padding: 10,
+              }}
+              aria-label="Search reports"
+              title="Search reports"
+            >
+              <img
+                src="/Icons/Buttons/reports/search_button.svg"
+                alt=""
+                width="21"
+                height="21"
+                style={{ display: "block", filter: darkMode || compactSearchOpen ? "invert(1)" : "none" }}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                resetCompactFilters();
+                setCompactDomainMenuOpen(false);
+                setCompactFiltersOpen(false);
+                setCompactSearchOpen(false);
+                setCompactSortMenuOpen(false);
+              }}
+              style={{
+                width: "100%",
+                minWidth: 0,
+                height: 44,
+                borderRadius: 8,
+                border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                background: "var(--sl-ui-modal-btn-secondary-bg)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                padding: 10,
+              }}
+              aria-label="Reset reports"
+              title="Reset reports"
+            >
+              <img
+                src="/Icons/Buttons/reports/clear_button.svg"
+                alt=""
+                width="21"
+                height="21"
+                style={{ display: "block", filter: darkMode ? "invert(1)" : "none" }}
+              />
+            </button>
             <div
               ref={compactSortMenuRef}
-              style={{ display: "grid", gap: 0, fontSize: 12, fontWeight: 800, flex: 1, minWidth: 0, position: "relative" }}
+              style={{ display: "grid", gap: 0, fontSize: 12, fontWeight: 800, minWidth: 0, position: "relative" }}
             >
               <button
                 type="button"
@@ -5075,12 +5459,13 @@ export default function OpenReportsModal(props) {
                   setCompactSortMenuOpen((prev) => !prev);
                   setCompactDomainMenuOpen(false);
                   setCompactFiltersOpen(false);
+                  setCompactSearchOpen(false);
                 }}
                 style={{
                   width: "100%",
-                  height: 36,
-                  minHeight: 36,
-                  padding: "0 10px",
+                  height: 44,
+                  minHeight: 44,
+                  padding: 10,
                   borderRadius: 8,
                   border: "1px solid var(--sl-ui-modal-input-border)",
                   background: "var(--sl-ui-modal-input-bg)",
@@ -5088,30 +5473,42 @@ export default function OpenReportsModal(props) {
                   fontWeight: 800,
                   display: "inline-flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
+                  justifyContent: "center",
                   cursor: "pointer",
-                  textAlign: "left",
                 }}
                 aria-haspopup="menu"
                 aria-expanded={compactSortMenuOpen ? "true" : "false"}
+                aria-label="Sort reports"
+                title="Sort reports"
               >
-                <span>Sort Reports</span>
-                <span style={{ opacity: 0.75 }}>{compactSortMenuOpen ? "▴" : "▾"}</span>
+                <img
+                  src="/Icons/Buttons/reports/sort_button.svg"
+                  alt=""
+                  width="21"
+                  height="21"
+                  style={{ display: "block", filter: darkMode ? "invert(1)" : "none" }}
+                />
               </button>
               {compactSortMenuOpen ? (
                 <>
-                  <button
-                    type="button"
-                    aria-label="Close sort menu"
-                    onClick={() => setCompactSortMenuOpen(false)}
+                  <div
+                    aria-hidden="true"
+                    onPointerDown={(event) => {
+                      // Keep the dismissal tap inside the menu layer. A
+                      // full-screen button here received mobile active/focus
+                      // paint and let the click reach Reports beneath it.
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setCompactSortMenuOpen(false);
+                    }}
                     style={{
                       position: "fixed",
                       inset: 0,
                       zIndex: 3,
-                      border: "none",
-                      padding: 0,
-                      margin: 0,
                       background: "transparent",
                       cursor: "default",
                     }}
@@ -5121,8 +5518,8 @@ export default function OpenReportsModal(props) {
                     style={{
                       position: "absolute",
                       top: "calc(100% + 6px)",
-                      left: 0,
                       right: 0,
+                      width: "min(240px, calc(100vw - 32px))",
                       zIndex: 4,
                       borderRadius: 10,
                       border: "1px solid var(--sl-ui-modal-border)",
@@ -5177,10 +5574,11 @@ export default function OpenReportsModal(props) {
               ) : null}
             </div>
           </div>
+          {compactSearchPanel}
+          {compactAdminFiltersPanel}
         </div>
       )}
 
-      {isAdmin && compactDomainPicker && isCompactMyReports ? compactAdminFiltersPanel : null}
 
       <div
         ref={listScrollRef}
@@ -5299,8 +5697,9 @@ export default function OpenReportsModal(props) {
         <div
           style={{
             position: "fixed",
-            top: copyToast?.y ?? 48,
-            left: copyToast?.x ?? 18,
+            top: "calc(env(safe-area-inset-top) + var(--mobile-header-height) + var(--mobile-header-overlay-page-gap) + 8px)",
+            left: "50%",
+            transform: "translateX(-50%)",
             zIndex: 10050,
             padding: "7px 11px",
             borderRadius: 8,
@@ -5334,6 +5733,9 @@ export default function OpenReportsModal(props) {
           geoLoading={Boolean(allReportsModal?.geoLoading)}
           currentState={allReportsModal?.currentState || ""}
           lastChangedAt={allReportsModal?.lastChangedAt || ""}
+          stateEvents={allReportsModal?.stateEvents || []}
+          stateEventsLoading={Boolean(allReportsModal?.stateEventsLoading)}
+          stateEventsError={String(allReportsModal?.stateEventsError || "")}
           onCopyField={copyReportField}
           onClose={() => setAllReportsModal((prev) => ({ ...prev, open: false }))}
           isMobile={Boolean(useCompactAppBehavior)}
@@ -5356,6 +5758,9 @@ export default function OpenReportsModal(props) {
           loading={Boolean(incidentLocationModal?.loading)}
           copyHint={incidentLocationModal?.copyHint || ""}
           copyToast={copyToast}
+          onOpenCoordinatesInMaps={(coordinates) => {
+            void openMapNavigationFromCoordinates(coordinates);
+          }}
           onCopyRow={(row, anchorEl) => {
             if (incidentLocationModal?.domainKey === "streetlights") {
               void copyStreetlightField(
@@ -5393,7 +5798,17 @@ export default function OpenReportsModal(props) {
           modalTitleValue={submittedReportsTitleValue}
           showCommunityRepairDiagnostics={showCommunityRepairDiagnostics}
           repairSnapshot={submittedReportsRepairSnapshot}
-          onClose={() => setSubmittedReportsModal({ open: false, row: null, domainKey: "" })}
+          stateEvents={submittedReportsModal?.stateEvents || []}
+          stateEventsLoading={Boolean(submittedReportsModal?.stateEventsLoading)}
+          stateEventsError={String(submittedReportsModal?.stateEventsError || "")}
+          onClose={() => setSubmittedReportsModal({
+            open: false,
+            row: null,
+            domainKey: "",
+            stateEvents: [],
+            stateEventsLoading: false,
+            stateEventsError: "",
+          })}
           onReporterDetails={handleOpenReporterDetails}
           resolveItemDomainKey={resolveItemDomainKey}
           resolveIssueLabel={resolveIssueLabel}
@@ -5509,7 +5924,6 @@ export function OpenReportsModalController(props) {
   } = props;
   const [expandedSet, setExpandedSet] = useState(() => new Set());
   const [focusIncidentId, setFocusIncidentId] = useState("");
-  const [initialSearchQuery, setInitialSearchQuery] = useState("");
   const [localInViewOnly, setLocalInViewOnly] = useState(false);
   const lastLaunchTokenRef = useRef("");
   const filterResetKey = useMemo(() => {
@@ -5529,14 +5943,6 @@ export function OpenReportsModalController(props) {
   }, []);
 
   useEffect(() => {
-    if (props.open) return;
-    setExpandedSet(new Set());
-    setFocusIncidentId("");
-    setInitialSearchQuery("");
-    setLocalInViewOnly(false);
-  }, [props.open]);
-
-  useEffect(() => {
     if (!props.open) return;
     const nextToken = String(launchOptions?.token || "").trim();
     if (!nextToken || nextToken === lastLaunchTokenRef.current) return;
@@ -5545,8 +5951,11 @@ export function OpenReportsModalController(props) {
       const focusId = String(launchOptions?.focusIncidentId || "").trim();
       return focusId ? new Set([focusId]) : new Set();
     });
-    setFocusIncidentId(String(launchOptions?.focusIncidentId || "").trim());
-    setInitialSearchQuery(controllerMode === "my" ? String(launchOptions?.focusQuery || "").trim() : "");
+    const focusId = String(launchOptions?.focusIncidentId || "").trim();
+    setFocusIncidentId(focusId);
+    // Both the public/My Reports and All Reports controllers can receive an
+    // info-window handoff.  Always carry its display ID (or raw incident ID)
+    // through as the applied query.
     setLocalInViewOnly(Boolean(launchOptions?.inViewOnly));
   }, [controllerMode, launchOptions, props.open]);
 
@@ -5562,9 +5971,20 @@ export function OpenReportsModalController(props) {
 
   const handleInitialFocusApplied = useCallback(() => {
     setFocusIncidentId("");
-    setInitialSearchQuery("");
     if (typeof onInitialFocusApplied === "function") onInitialFocusApplied();
   }, [onInitialFocusApplied]);
+
+  // The modal receives this directly from the launch request.  Deriving it
+  // through a controller effect briefly rendered the child with a fresh token
+  // and an empty query; it then consumed the token before the actual incident
+  // ID arrived.  That is why View Reports opened a whole domain instead of
+  // the marker's incident and later left the workspace empty.
+  const launchSearchQuery = String(
+    launchOptions?.focusQuery || launchOptions?.focusIncidentId || ""
+  ).trim();
+  const launchFocusIncidentId = String(launchOptions?.focusIncidentId || "").trim();
+  const handoffDomainKey = String(launchOptions?.handoffDomainKey || "").trim();
+  const handoffRows = Array.isArray(launchOptions?.handoffRows) ? launchOptions.handoffRows : [];
 
   return (
     <OpenReportsModal
@@ -5572,7 +5992,11 @@ export function OpenReportsModalController(props) {
       expandedSet={expandedSet}
       onToggleExpand={toggleExpand}
       focusIncidentId={focusIncidentId}
-      initialSearchQuery={initialSearchQuery}
+      initialSearchQuery={launchSearchQuery}
+      launchToken={String(launchOptions?.token || "")}
+      launchFocusIncidentId={launchFocusIncidentId}
+      handoffDomainKey={handoffDomainKey}
+      handoffRows={handoffRows}
       onInitialFocusApplied={handleInitialFocusApplied}
       inViewOnly={controllerMode === "my" ? localInViewOnly : Boolean(inViewOnly)}
     />

@@ -13,7 +13,6 @@ const INCIDENT_DOMAIN_LAZY_HELPERS = Object.freeze({
   potholes: Object.freeze({
     popupVariantTitle: "Pothole",
     popupVariantDomainIdFallback: "PH0000000000",
-    popupVariantIssueLabelFallback: "Pothole",
     popupLocationCompletenessMode: "address_any_detail",
     notesPlaceholder: "Add details (size, lane, nearby landmark)",
     buildMyReportsGroupsMode: "grouped_lookup_reports",

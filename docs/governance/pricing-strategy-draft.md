@@ -1,7 +1,9 @@
 # Pricing Strategy Draft
 
 Date: March 23, 2026
-Status: Internal planning only
+Status: Superseded for current finance planning
+
+> Current working pricing, cost assumptions, and approval controls now live in `docs/finance/PRICING_AND_COST_MODEL.md`. This draft remains as the historical record of the original packaging direction.
 
 ## Purpose
 

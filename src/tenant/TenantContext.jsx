@@ -73,9 +73,20 @@ function isAllowDefaultTenantFallback() {
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
+function getNativeTenantExclusionList() {
+  if (!isNativeAppRuntime()) return null;
+  const keys = String(import.meta.env.VITE_NATIVE_TENANT_EXCLUDELIST || "")
+    .split(",")
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  return keys.length ? new Set(keys) : null;
+}
+
 async function fetchTenantConfigFromDb(tenantKey) {
   const selectBase =
     "tenant_key,name,display_name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active";
+  const legacySelectBase =
+    "tenant_key,name,primary_subdomain,boundary_config_key,notification_email_potholes,notification_email_water_drain,is_pilot,active";
   try {
     const resolved = await resolveTenantConfigByRoute(tenantKey);
     if (resolved) return resolved;
@@ -94,11 +105,13 @@ async function fetchTenantConfigFromDb(tenantKey) {
 
   const fallback = await supabase
     .from("tenants")
-    .select(selectBase)
+    .select(legacySelectBase)
     .eq("tenant_key", tenantKey)
     .maybeSingle();
   if (fallback.error) throw fallback.error;
-  return fallback.data ? { ...fallback.data, resident_portal_enabled: false } : null;
+  return fallback.data
+    ? { ...fallback.data, display_name: "", resident_portal_enabled: false }
+    : null;
 }
 
 export function TenantProvider({ resolution, children }) {
@@ -109,6 +122,7 @@ export function TenantProvider({ resolution, children }) {
   const municipalityMode = mode === "municipality_app";
   const publicMapMode = municipalityMode && appScope === "map";
   const nativePinnedTenantKey = getConfiguredNativeTenantKey();
+  const nativeTenantExclusionList = useMemo(() => getNativeTenantExclusionList(), []);
   const initialNativeTenantSelectionPending =
     publicMapMode &&
     isNativeAppRuntime() &&
@@ -191,24 +205,24 @@ export function TenantProvider({ resolution, children }) {
     }
 
     loadTenantConfigCached(
-      requestedTenantRoute,
-      async () => {
-        try {
-          const fromDb = await fetchTenantConfigFromDb(requestedTenantRoute);
-          return fromDb;
-        } catch (error) {
-          if (
-            requestedTenantRoute === getDefaultTenantKey() &&
-            isAllowDefaultTenantFallback() &&
-            isMissingRelationError(error)
-          ) {
-            return fallbackTenantConfig(requestedTenantRoute);
-          }
-          throw error;
-        }
-      },
-      { ttlMs: 5 * 60 * 1000 }
-    )
+          requestedTenantRoute,
+          async () => {
+            try {
+              const fromDb = await fetchTenantConfigFromDb(requestedTenantRoute);
+              return fromDb;
+            } catch (error) {
+              if (
+                requestedTenantRoute === getDefaultTenantKey() &&
+                isAllowDefaultTenantFallback() &&
+                isMissingRelationError(error)
+              ) {
+                return fallbackTenantConfig(requestedTenantRoute);
+              }
+              throw error;
+            }
+          },
+          { ttlMs: 5 * 60 * 1000 }
+      )
       .then((tenantConfig) => {
         if (cancelled) return;
         if (!tenantConfig || tenantConfig.active === false) {
@@ -222,12 +236,7 @@ export function TenantProvider({ resolution, children }) {
           return;
         }
         setSwitchingTenant("");
-        setState({
-          loading: false,
-          ready: true,
-          tenantConfig,
-          error: "",
-        });
+        setState({ loading: false, ready: true, tenantConfig, error: "" });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -286,10 +295,13 @@ export function TenantProvider({ resolution, children }) {
           isMissingFunctionError,
           isMissingRelationError,
         });
-        if (availableTenantsRequestSeqRef.current !== requestSeq) return items;
-        setAvailableTenants(items);
+        const permittedItems = nativeTenantExclusionList
+          ? items.filter((item) => !nativeTenantExclusionList.has(String(item?.tenantKey || "").trim().toLowerCase()))
+          : items;
+        if (availableTenantsRequestSeqRef.current !== requestSeq) return permittedItems;
+        setAvailableTenants(permittedItems);
         setAvailableTenantsLoaded(true);
-        return items;
+        return permittedItems;
       } catch (error) {
         if (availableTenantsRequestSeqRef.current !== requestSeq) {
           return currentTenantOption ? [currentTenantOption] : [];
@@ -312,6 +324,7 @@ export function TenantProvider({ resolution, children }) {
       currentTenantOption,
       initialTenantChoiceResolved,
       publicMapMode,
+      nativeTenantExclusionList,
       state.ready,
       state.tenantConfig,
       tenantKey,
@@ -360,6 +373,7 @@ export function TenantProvider({ resolution, children }) {
       const nextTenantKey = String(rawTenantKey || "").trim().toLowerCase();
       if (!nextTenantKey) return false;
       if (!publicMapMode) return false;
+      if (nativeTenantExclusionList?.has(nextTenantKey)) return false;
       if (nextTenantKey === tenantKey) {
         setRuntimeTenantKey(nextTenantKey);
         return true;
@@ -395,7 +409,7 @@ export function TenantProvider({ resolution, children }) {
       setRequestedTenantRoute(nextTenantKey);
       return true;
     },
-    [effectiveAvailableTenants, env, publicMapMode, tenantKey]
+    [effectiveAvailableTenants, env, nativeTenantExclusionList, publicMapMode, tenantKey]
   );
 
   const completeInitialTenantChoice = useCallback(

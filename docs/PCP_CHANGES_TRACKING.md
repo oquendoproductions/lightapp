@@ -7,7 +7,7 @@ Source list: `/Users/oquendoproductions/Downloads/PCP Changes/PCP Changes.md`
 - [x] Separate out Organizations tab. `Manage Organizations` and `Manage Leads` should be their own tabs.
 - [x] Mobile: Move tabs to bottom of page.
 - [x] Desktop: connect tabs to bottom of header.
-- [ ] Mobile: make sections fit within left and right edges of the screen with no side scrolling.
+- [x] Mobile: make sections fit within left and right edges of the screen with no side scrolling.
 - [x] Remove `Current Page` text from page titles.
 - [x] Remove `Current Page` from active tab.
 

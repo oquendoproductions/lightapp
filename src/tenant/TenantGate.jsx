@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useState } from "re
 import AppLaunchScreen from "../AppLaunchScreen.jsx";
 import { loadFollowedTenantKeys } from "../lib/followedCitySupport.js";
 import { isNativeAppRuntime } from "../platform/runtime.js";
+import { getAuthRedirectOptions } from "../platform/auth.js";
 import { supabase } from "../supabaseClient";
 import { TenantContext } from "./contextObject";
 import {
@@ -38,6 +39,8 @@ export function TenantGate({ children }) {
   const [initialSignupLegalAccepted, setInitialSignupLegalAccepted] = useState(false);
   const [initialSignupBusy, setInitialSignupBusy] = useState(false);
   const [initialSignupError, setInitialSignupError] = useState("");
+  const [initialSignupConfirmationLoading, setInitialSignupConfirmationLoading] = useState(false);
+  const [initialSignupConfirmationStatus, setInitialSignupConfirmationStatus] = useState("");
   const [followedTenantKeys, setFollowedTenantKeys] = useState([]);
   const [tenantSearch, setTenantSearch] = useState("");
   const [dismissedPublicOnboardingKeys, setDismissedPublicOnboardingKeys] = useState(() => new Set());
@@ -153,7 +156,15 @@ export function TenantGate({ children }) {
     setInitialLoginError("");
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      if (error) {
+        if (String(error?.message || "").toLowerCase().includes("email not confirmed")) {
+          setInitialSignupEmail(email);
+          setInitialSignupConfirmationStatus("Please confirm your email before signing in. Didn’t receive the link?");
+          setInitialLaunchStep("signup-confirmation");
+          return;
+        }
+        throw error;
+      }
       await loadInitialSavedLocations(data?.user?.id || data?.session?.user?.id || "");
       setInitialLaunchStep("tenant");
     } catch (error) {
@@ -227,6 +238,7 @@ export function TenantGate({ children }) {
         await loadInitialSavedLocations(userId);
         setInitialLaunchStep("tenant");
       } else {
+        setInitialSignupConfirmationStatus("");
         setInitialLaunchStep("signup-confirmation");
       }
     } catch (error) {
@@ -243,6 +255,28 @@ export function TenantGate({ children }) {
     initialSignupPhone,
     loadInitialSavedLocations,
   ]);
+
+  const resendInitialSignupConfirmation = useCallback(async () => {
+    setInitialSignupConfirmationLoading(true);
+    const { resendSignupConfirmationRuntimeShared } = await loadDeferredAccountRuntimeModule();
+    const result = await resendSignupConfirmationRuntimeShared({ email: initialSignupEmail }, { supabase });
+    setInitialSignupConfirmationLoading(false);
+    setInitialSignupConfirmationStatus(
+      result?.ok
+        ? "If confirmation is required for this address, a new link is on its way."
+        : "If confirmation is required for this address, please try again in a moment."
+    );
+  }, [initialSignupEmail]);
+
+  const sendInitialSignupPasswordReset = useCallback(async () => {
+    const email = String(initialSignupEmail || "").trim().toLowerCase();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
+    setInitialSignupConfirmationStatus(
+      error
+        ? "If an account exists for this address, please try again in a moment."
+        : "If an account exists for this address, a password reset link is on its way."
+    );
+  }, [initialSignupEmail]);
 
   if (!tenant.isMunicipalityApp) return children;
 
@@ -296,6 +330,10 @@ export function TenantGate({ children }) {
           signupError={initialSignupError}
           onCreateAccount={createAccountForInitialLaunch}
           onReturnToSignIn={returnToInitialSignIn}
+          signupConfirmationLoading={initialSignupConfirmationLoading}
+          signupConfirmationStatus={initialSignupConfirmationStatus}
+          onResendSignupConfirmation={resendInitialSignupConfirmation}
+          onSendSignupPasswordReset={sendInitialSignupPasswordReset}
           tenantSearch={tenantSearch}
           onTenantSearchChange={setTenantSearch}
           tenantSearchTerm={tenantSearchTerm}

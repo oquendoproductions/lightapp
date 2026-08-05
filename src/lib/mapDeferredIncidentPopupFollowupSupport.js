@@ -27,7 +27,7 @@ export function buildIncidentAllReportsModalPayloadShared({
     || adminReportDomain
     || ""
   ).trim();
-  const incidentId = String(popupInfo?.incidentId || m?.incident_id || m?.id || "").trim();
+  const incidentId = String(m?.incident_id || popupInfo?.incidentId || m?.id || "").trim();
   if (!normalizedDomainKey || !incidentId || !popupInfo) return null;
 
   const reportRows = Array.isArray(popupInfo?.rows)

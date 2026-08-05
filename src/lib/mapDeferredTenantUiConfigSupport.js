@@ -311,6 +311,7 @@ export async function loadTenantMapFeaturesShared({
 function scheduleDeferredTenantUiRefreshShared(loadFn, {
   idleTimeoutMs = 1000,
   fallbackDelayMs = 240,
+  immediate = false,
 } = {}) {
   let cancelled = false;
   let idleHandle = null;
@@ -331,7 +332,9 @@ function scheduleDeferredTenantUiRefreshShared(loadFn, {
     await loadFn(() => cancelled);
   };
 
-  if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+  if (immediate) {
+    void runLoad();
+  } else if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
     idleHandle = window.requestIdleCallback(() => {
       idleHandle = null;
       void runLoad();
@@ -373,6 +376,7 @@ export function scheduleTenantVisibilityConfigRuntimeShared(state = {}) {
   }, {
     idleTimeoutMs: state.idleTimeoutMs ?? 1000,
     fallbackDelayMs: state.fallbackDelayMs ?? 240,
+    immediate: state.immediate === true,
   });
 }
 

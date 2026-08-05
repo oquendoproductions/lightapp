@@ -703,7 +703,6 @@ export function createDeferredIncidentDomainSubmitHelpers(deps = {}) {
     ).trim();
     const submitEmailDomainLabel = String(resolved.helper?.submitEmailDomainLabel || "").trim();
     const submitEmailIssueTypeFallback = String(resolved.helper?.submitEmailIssueTypeFallback || "").trim();
-    const serviceSubmitResultExternalIdField = String(resolved.helper?.serviceSubmitResultExternalIdField || "").trim();
     const initialIncidentIdFields = Array.isArray(resolved.helper?.customSubmitFlowInitialIncidentIdFields)
       ? resolved.helper.customSubmitFlowInitialIncidentIdFields
       : ["incident_id"];
@@ -760,14 +759,14 @@ export function createDeferredIncidentDomainSubmitHelpers(deps = {}) {
         );
         payload[reportPayloadIncidentIdField] = normalizedIncidentId;
       },
-      buildEmailDispatchContext: ({ target, saved, externalId, userNotesOnly }) => {
+      buildEmailDispatchContext: ({ target, saved, userNotesOnly }) => {
         if (submitEmailDomainLabel || submitEmailIssueTypeFallback) {
           return {
             domainLabel: submitEmailDomainLabel || String(resolved.domainKey || "").trim() || "Incident",
             issueTypeLabel:
-              String(externalId || "").trim()
-              || String(target?.lightId || "").trim()
-              || String(saved?.[serviceSubmitResultExternalIdField] || "").trim()
+              String(target?.issueLabel || "").trim()
+              || String(target?.label || "").trim()
+              || String(saved?.issue_type || "").trim()
               || submitEmailIssueTypeFallback
               || "Incident",
             typeOptions: [],

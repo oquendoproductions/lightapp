@@ -69,7 +69,7 @@ export function buildRoadValidatedSubmitGeoShared(target) {
     isRoad: true,
     label: String(target?.locationLabel || "").trim(),
     nearestAddress: String(target?.nearestAddress || "").trim(),
-    nearestStreet: "",
+    nearestStreet: String(target?.nearestStreet || "").trim(),
     nearestCrossStreet: String(target?.nearestCrossStreet || "").trim(),
     nearestLandmark: String(target?.nearestLandmark || "").trim(),
     nearestIntersection: String(target?.nearestIntersection || "").trim(),
@@ -195,7 +195,20 @@ export async function prepareDomainSubmitGeoAndImageShared(args = {}, deps = {})
 
   const submitGeoPromise = roadRequired
     ? Promise.resolve(
-        buildRoadValidatedSubmitGeoShared(target)
+        typeof reverseGeocodeRoadLabel === "function"
+          ? reverseGeocodeRoadLabel(Number(target.lat), Number(target.lng), {
+              mode: "full",
+              useRoadsApi: false,
+              debugSource: `${resolvedDebugSource}:road-required-submit`,
+            }).then((geo) => ({
+              ...buildRoadValidatedSubmitGeoShared(target),
+              ...(geo && typeof geo === "object" ? geo : {}),
+              isRoad: true,
+              snappedLat: Number(target?.lat),
+              snappedLng: Number(target?.lng),
+              validationUnavailable: false,
+            })).catch(() => buildRoadValidatedSubmitGeoShared(target))
+          : buildRoadValidatedSubmitGeoShared(target)
       )
     : Promise.resolve(
         typeof reverseGeocodeRoadLabel === "function"
@@ -1464,6 +1477,7 @@ export function createConfiguredIncidentDomainSubmitSupportShared(deps = {}) {
     const insertedReportData = context?.insertedReportData || null;
     if (!insertedReportData?.id || !incidentIdField) return null;
     const resolvedIncidentId = String(insertedReportData?.[incidentIdField] || context?.incidentId || "").trim();
+    const createdAt = insertedReportData?.created_at || null;
     return {
       id: insertedReportData?.id,
       incident_id: resolvedIncidentId,
@@ -1474,7 +1488,8 @@ export function createConfiguredIncidentDomainSubmitSupportShared(deps = {}) {
       lng: Number(insertedReportData?.lng),
       note: insertedReportData?.note || String(context?.fallbackNote || "").trim() || "",
       report_number: insertedReportData?.report_number || null,
-      ts: new Date(insertedReportData?.created_at).getTime(),
+      created_at: createdAt,
+      ts: Date.parse(String(createdAt || "")) || Number(insertedReportData?.ts || 0) || Date.now(),
       reporter_user_id: insertedReportData?.reporter_user_id || null,
       reporter_name: insertedReportData?.reporter_name || null,
       reporter_phone: insertedReportData?.reporter_phone || null,
@@ -1591,13 +1606,11 @@ export function createConfiguredIncidentDomainSubmitSupportShared(deps = {}) {
     const nearestCrossStreet = String(context?.nearestCrossStreet || "").trim();
     const nearestIntersection = String(context?.nearestIntersection || "").trim();
     const nearestLandmark = String(context?.nearestLandmark || "").trim();
-    if (!(typeof isUsableAddressText === "function" ? isUsableAddressText(nearestAddress) : nearestAddress) && !nearestCrossStreet && !nearestIntersection && !nearestLandmark) {
-      return null;
-    }
     const savedLocationContext = await buildSavedLocationContext(domainKey, context) || null;
     const savedLat = Number(savedLocationContext?.lat);
     const savedLng = Number(savedLocationContext?.lng);
     const savedLocationLabel = String(savedLocationContext?.locationLabel || "").trim();
+    if (!Number.isFinite(savedLat) || !Number.isFinite(savedLng)) return null;
     const payload = await buildLocationCacheEntryPayload(domainKey, {
       nearestAddress: (typeof isUsableAddressText === "function" ? isUsableAddressText(nearestAddress) : Boolean(nearestAddress)) ? nearestAddress : "",
       nearestCrossStreet,
@@ -1633,10 +1646,13 @@ export function createConfiguredIncidentDomainSubmitSupportShared(deps = {}) {
       || resolvedIds?.lightId
       || ""
     ).trim();
-    const incoming = buildInsertedLocationRecord(domainKey, {
+    const incomingRecord = buildInsertedLocationRecord(domainKey, {
       ...context,
       incidentId,
     }) || null;
+    const incoming = incomingRecord
+      ? { ...incomingRecord, __cityreport_local_commit_ts: Date.now() }
+      : null;
     if (
       incidentId
       && typeof context?.setSeededRows === "function"
@@ -1656,7 +1672,10 @@ export function createConfiguredIncidentDomainSubmitSupportShared(deps = {}) {
       ? normalizeDomainKeyOrSlug(domainKeyRaw, { allowUnknown: true })
       : String(domainKeyRaw || "").trim().toLowerCase();
     if (!domainKey) return null;
-    const saved = buildSavedReportRecord(domainKey, context) || {};
+    const saved = {
+      ...(buildSavedReportRecord(domainKey, context) || {}),
+      __cityreport_local_commit_ts: Date.now(),
+    };
     const submitSuccessMeta = buildSubmitSuccessMeta(domainKey, {
       ...context,
       saved,
@@ -1744,6 +1763,7 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
     runtimeDomainMeta,
     getIncidentDomainHelper,
     reportDomainFromLightId,
+    incidentDomainBuildCoordsDisplayId,
     setReports,
     persistIncidentLocationCacheWithEnrichment,
     refreshIncidentRepairProgress,
@@ -1751,6 +1771,7 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
     visibleDomainOptions,
     dispatchDomainSubmitEmailNotice,
     notifyAsyncEmailDelivery,
+    onPersistedReport,
   } = deps;
 
   if (!target) return null;
@@ -1902,6 +1923,15 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
 
   setReports((prev) => [saved, ...prev]);
 
+  if (typeof onPersistedReport === "function") {
+    onPersistedReport({
+      domainKey: target.domain,
+      submittedAt: successSubmittedAt,
+      submittedReport: saved,
+      target,
+    });
+  }
+
   const genericLocationEnrichmentPromise = saved?.light_id
     ? persistIncidentLocationCacheWithEnrichment(
         target.domain,
@@ -1925,7 +1955,9 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
       )
     : null;
 
-  await refreshIncidentRepairProgress(viewerIdentityKey);
+  void Promise.resolve().then(() => refreshIncidentRepairProgress(viewerIdentityKey)).catch((error) => {
+    console.warn("[incident submit] repair progress refresh failed:", error?.message || error);
+  });
 
   const issueLabel =
     selectedIssueLabel
@@ -1961,6 +1993,15 @@ export async function submitGenericIncidentDomainReportShared(config = {}, deps 
     domainLabel: emailDomainLabel,
     issueTypeLabel: issueLabel,
     typeOptions: typeOptionPayload,
+    incidentId: (
+      typeof incidentDomainBuildCoordsDisplayId === "function"
+        ? incidentDomainBuildCoordsDisplayId(target.domain, {
+            incidentId: saved.light_id,
+            lat: Number(data?.lat ?? incidentSubmitLat),
+            lng: Number(data?.lng ?? incidentSubmitLng),
+          })
+        : ""
+    ) || String(saved.light_id || "").trim(),
     reportNumber: data?.report_number || saved.report_number || "",
     notes: userNotesOnly,
     lat: Number(data?.lat ?? incidentSubmitLat),
@@ -2014,11 +2055,13 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
     insertConfiguredIncidentDomainReportWithFallback,
     incidentDomainCommitConfiguredSavedReport,
     incidentDomainQueueConfiguredSubmitLocationEnrichment,
+    incidentDomainBuildCoordsDisplayId,
     refreshIncidentRepairProgress,
     dispatchDomainSubmitEmailNotice,
     runtimeDomainMeta,
     visibleDomainOptions,
     notifyAsyncEmailDelivery,
+    onPersistedReport,
     supabase,
   } = deps;
 
@@ -2283,28 +2326,6 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
     externalId = String(normalizedLocationCommit.externalId || externalId || "").trim();
   }
 
-  const legacyGeoCacheSanitizedEntry = incidentId && (nearestAddress || nearestCrossStreet || nearestLandmark)
-    ? await incidentDomainBuildLocationCacheEntryPayload(domainKey, {
-        nearestAddress,
-        nearestCrossStreet,
-        nearestIntersection,
-        nearestLandmark,
-        locationLabel: nearestAddress,
-      })
-    : null;
-
-  const legacySubmitGeoCachePromise = incidentId && (nearestAddress || nearestCrossStreet || nearestLandmark)
-    ? persistConfiguredIncidentDomainSubmitGeoCache(domainKey, {
-        tenantKey: activeTenantKey(),
-        incidentId,
-        locationFields,
-        sanitizedEntry: legacyGeoCacheSanitizedEntry || {},
-        setSeededRows,
-        setReportRows,
-        ...applySeededCacheStateContext,
-      })
-    : null;
-
   assignReportPayloadIncidentId(reportPayload, incidentId);
 
   let insReport = { data: serviceReportData, error: null };
@@ -2336,8 +2357,50 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
     : [];
   const successSubmittedAt = Number(reportCommit?.successSubmittedAt || 0) || Date.now();
 
+  const submittedReport = {
+    ...saved,
+    domain: domainKey,
+    domainKey,
+    report_domain: domainKey,
+    incident_id: String(saved?.incident_id || incidentId || "").trim(),
+    light_id: String(saved?.light_id || saved?.incident_id || incidentId || "").trim(),
+    lat: Number.isFinite(Number(saved?.lat)) ? Number(saved.lat) : Number(submitLat),
+    lng: Number.isFinite(Number(saved?.lng)) ? Number(saved.lng) : Number(submitLng),
+    ts: Number(saved?.ts || 0) || successSubmittedAt,
+  };
+  if (typeof onPersistedReport === "function") {
+    onPersistedReport({
+      domainKey,
+      submittedAt: successSubmittedAt,
+      submittedReport,
+      target,
+    });
+  }
+
+  const legacySubmitGeoCachePromise = incidentId && (nearestAddress || nearestCrossStreet || nearestLandmark)
+    ? Promise.resolve().then(() => incidentDomainBuildLocationCacheEntryPayload(domainKey, {
+        nearestAddress,
+        nearestCrossStreet,
+        nearestIntersection,
+        nearestLandmark,
+        locationLabel: nearestAddress,
+      })).then((legacyGeoCacheSanitizedEntry) => (
+        persistConfiguredIncidentDomainSubmitGeoCache(domainKey, {
+          tenantKey: activeTenantKey(),
+          incidentId,
+          locationFields,
+          sanitizedEntry: legacyGeoCacheSanitizedEntry || {},
+          setSeededRows,
+          setReportRows,
+          ...applySeededCacheStateContext,
+        })
+      ))
+    : null;
+
   if (typeof legacySubmitGeoCachePromise?.then === "function") {
-    await legacySubmitGeoCachePromise;
+    void legacySubmitGeoCachePromise.catch((error) => {
+      console.warn("[incident submit] location cache persistence failed:", error?.message || error);
+    });
   }
 
   const legacyLocationEnrichmentPromise = incidentId
@@ -2355,7 +2418,9 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
       })
     : null;
 
-  await refreshIncidentRepairProgress(viewerIdentityKey);
+  void Promise.resolve().then(() => refreshIncidentRepairProgress(viewerIdentityKey)).catch((error) => {
+    console.warn("[incident submit] repair progress refresh failed:", error?.message || error);
+  });
 
   const submittedAtIso = insReport.data?.created_at || new Date().toISOString();
   const reporterPayload = {
@@ -2374,6 +2439,15 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
         reportDomainOptions: visibleDomainOptions,
       })
     ).trim() || "Incident",
+    incidentId: String(externalId || "").trim() || (
+      typeof incidentDomainBuildCoordsDisplayId === "function"
+        ? incidentDomainBuildCoordsDisplayId(domainKey, {
+            incidentId,
+            lat: Number(insReport.data?.lat ?? submitLat),
+            lng: Number(insReport.data?.lng ?? submitLng),
+          })
+        : ""
+    ) || String(incidentId || "").trim(),
     reportNumber: insReport.data?.report_number || saved.report_number || "",
     notes: insReport.data?.note || reportPayload.note || "",
     lat: Number(insReport.data?.lat ?? submitLat),
@@ -2418,16 +2492,6 @@ export async function submitConfiguredCustomIncidentDomainReportFlowShared(domai
     persistedSubmission: true,
     successReportNumbers,
     successSubmittedAt,
-    submittedReport: {
-      ...saved,
-      domain: domainKey,
-      domainKey,
-      report_domain: domainKey,
-      incident_id: String(saved?.incident_id || incidentId || "").trim(),
-      light_id: String(saved?.light_id || saved?.incident_id || incidentId || "").trim(),
-      lat: Number.isFinite(Number(saved?.lat)) ? Number(saved.lat) : Number(submitLat),
-      lng: Number.isFinite(Number(saved?.lng)) ? Number(saved.lng) : Number(submitLng),
-      ts: Number(saved?.ts || 0) || successSubmittedAt,
-    },
+    submittedReport,
   };
 }

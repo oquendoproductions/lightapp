@@ -12,6 +12,96 @@ import { installVitePreloadRecovery } from "./lib/vitePreloadRecovery.js";
 
 installVitePreloadRecovery();
 
+class RuntimeFailureBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    // Keep a concrete native-WebView failure available in Xcode's console.
+    console.error("[cityreport][runtime-failure]", error, info);
+  }
+
+  componentDidMount() {
+    this.handleGlobalRuntimeFailure = (event) => {
+      const failure = event?.reason || event?.error || new Error(event?.message || "Unknown application error");
+      console.error("[cityreport][global-runtime-failure]", failure);
+      this.setState({ error: failure });
+    };
+    window.addEventListener("error", this.handleGlobalRuntimeFailure);
+    window.addEventListener("unhandledrejection", this.handleGlobalRuntimeFailure);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener("error", this.handleGlobalRuntimeFailure);
+    window.removeEventListener("unhandledrejection", this.handleGlobalRuntimeFailure);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+    const detail = String(error?.message || error || "Unknown application error").trim();
+    return (
+      <main
+        role="alert"
+        style={{
+          minHeight: "100dvh",
+          display: "grid",
+          placeItems: "center",
+          padding: 24,
+          background: "#fff",
+          color: "#111827",
+          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+          textAlign: "center",
+        }}
+      >
+        <section style={{ maxWidth: 420 }}>
+          <h1 style={{ margin: "0 0 12px", fontSize: 28 }}>CityReport couldn’t finish loading</h1>
+          <p style={{ margin: 0, color: "#4b5563", lineHeight: 1.5 }}>
+            Please capture the diagnostic code below and reload the app.
+          </p>
+          <code
+            style={{
+              display: "block",
+              marginTop: 18,
+              padding: 12,
+              borderRadius: 8,
+              overflowWrap: "anywhere",
+              background: "#f3f4f6",
+              color: "#991b1b",
+              textAlign: "left",
+              fontSize: 13,
+            }}
+          >
+            {detail}
+          </code>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+              marginTop: 20,
+              minHeight: 44,
+              padding: "0 18px",
+              border: 0,
+              borderRadius: 8,
+              background: "#183b68",
+              color: "#fff",
+              fontWeight: 700,
+            }}
+          >
+            Reload
+          </button>
+        </section>
+      </main>
+    );
+  }
+}
+
 const App = lazy(() => import("./App.jsx"));
 const MapGoogleFull = lazy(() => import("./MapGoogleFull.jsx"));
 const MunicipalityApp = lazy(() => import("./MunicipalityApp.jsx"));
@@ -90,21 +180,23 @@ const Root =
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <TenantProvider resolution={resolution}>
-      <TenantGate>
-        <Suspense
-          fallback={
-            <AppLaunchScreen
-              eyebrow={resolution.appScope === "hub" ? "CityReport Hub" : "Reporting Map"}
-              title="CityReport.io"
-              subtitle={resolution.appScope === "hub" ? "Opening your organization workspace..." : "Opening your reporting map..."}
-              status="Loading app..."
-            />
-          }
-        >
-          <Root />
-        </Suspense>
-      </TenantGate>
-    </TenantProvider>
+    <RuntimeFailureBoundary>
+      <TenantProvider resolution={resolution}>
+        <TenantGate>
+          <Suspense
+            fallback={
+              <AppLaunchScreen
+                eyebrow={resolution.appScope === "hub" ? "CityReport Hub" : "Reporting Map"}
+                title="CityReport.io"
+                subtitle={resolution.appScope === "hub" ? "Opening your organization workspace..." : "Opening your reporting map..."}
+                status="Loading app..."
+              />
+            }
+          >
+            <Root />
+          </Suspense>
+        </TenantGate>
+      </TenantProvider>
+    </RuntimeFailureBoundary>
   </React.StrictMode>
 );

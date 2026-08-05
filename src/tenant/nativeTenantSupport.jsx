@@ -28,6 +28,10 @@ export function TenantInitialSelectionScreen({
   signupError = "",
   onCreateAccount,
   onReturnToSignIn,
+  signupConfirmationLoading = false,
+  signupConfirmationStatus = "",
+  onResendSignupConfirmation,
+  onSendSignupPasswordReset,
   tenantSearch = "",
   onTenantSearchChange,
   tenantSearchTerm = "",
@@ -194,12 +198,19 @@ export function TenantInitialSelectionScreen({
       <AppLaunchInteractiveScreen
         eyebrow="Almost There"
         title="Check Your Email"
-        subtitle={`We sent a confirmation link to ${signupEmail}. Confirm your account, then return to sign in.`}
+        subtitle="If this address needs confirmation, we’ve sent instructions. If you already have an account, sign in or reset your password."
         status=""
       >
         <div style={{ display: "grid", gap: 10 }}>
+          {signupConfirmationStatus ? <div style={{ fontSize: 13, lineHeight: 1.4 }}>{signupConfirmationStatus}</div> : null}
           <button type="button" onClick={() => onReturnToSignIn?.()} style={launchPrimaryButtonStyle}>
-            Back to Sign In
+            Sign In
+          </button>
+          <button type="button" onClick={() => onResendSignupConfirmation?.()} disabled={signupConfirmationLoading || !signupEmail} style={launchSecondaryButtonStyle}>
+            {signupConfirmationLoading ? "Sending..." : "Resend Confirmation Email"}
+          </button>
+          <button type="button" onClick={() => onSendSignupPasswordReset?.()} style={launchSecondaryButtonStyle}>
+            Forgot Password?
           </button>
           <button type="button" onClick={() => onContinueGuest?.()} style={launchTextButtonStyle}>
             Continue as Guest

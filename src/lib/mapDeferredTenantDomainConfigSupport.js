@@ -12,7 +12,10 @@ import {
   normalizeDomainIconTintMode,
 } from "../domainIconRendering";
 
-const TENANT_DOMAIN_CONFIG_CACHE_KEY = "cityreport_tenant_domain_config_v1";
+// v2 deliberately invalidates the pre-2026-07-31 snapshot shape.  Those
+// snapshots could contain an old, narrowed assignment list and were allowed
+// to decide which incident domains existed before a live refresh completed.
+const TENANT_DOMAIN_CONFIG_CACHE_KEY = "cityreport_tenant_domain_config_v2";
 
 function isExpectedMissingFunctionError(error) {
   const msg = String(error?.message || "").toLowerCase();
@@ -94,6 +97,7 @@ export function clearRuntimeDomainMetaShared(runtimeDomainMeta) {
   runtimeDomainMeta.typeOptionsByDomain.clear();
   runtimeDomainMeta.disclosuresByDomain.clear();
   runtimeDomainMeta.allowReportImagesByDomain.clear();
+  runtimeDomainMeta.reportImageRequiredByDomain.clear();
   runtimeDomainMeta.roadRequiredByDomain.clear();
   runtimeDomainMeta.parkRequiredByDomain.clear();
 }
@@ -159,6 +163,9 @@ export function normalizeRegistryIncidentDomainRowsShared(rows = [], deps = {}) 
     if (typeof row?.allow_report_images === "boolean") {
       runtimeDomainMeta.allowReportImagesByDomain.set(domainKey, row.allow_report_images === true);
     }
+    if (typeof row?.report_image_required === "boolean") {
+      runtimeDomainMeta.reportImageRequiredByDomain.set(domainKey, row.report_image_required === true);
+    }
     if (typeof row?.road_required === "boolean") {
       runtimeDomainMeta.roadRequiredByDomain.set(domainKey, row.road_required === true);
     }
@@ -179,6 +186,7 @@ export function normalizeRegistryIncidentDomainRowsShared(rows = [], deps = {}) 
       report_prefix: reportPrefix,
       marker_color: markerColor,
       allow_report_images: row?.allow_report_images === true,
+      report_image_required: row?.allow_report_images === true && row?.report_image_required === true,
       road_required: row?.road_required === true,
       park_required: row?.park_required === true,
     });
@@ -193,7 +201,6 @@ export async function loadTenantDomainConfigSnapshotShared({
   fetchTenantDomainPublicConfig,
   fetchTenantAssignedDomainsRobust,
   fetchTenantRegistryIncidentDomains,
-  defaultRoadRequiredForDomain,
 }) {
   if (tenantReady === false) return null;
 
@@ -240,7 +247,11 @@ export async function loadTenantDomainConfigSnapshotShared({
     legacyNext[domainKey] = {
       domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
       organization_monitored_repairs: row?.organization_monitored_repairs === true,
-      road_required: defaultRoadRequiredForDomain(domainKey),
+      public_repair_confirmation_threshold: sanitizeIncidentReportThreshold(
+        row?.public_repair_confirmation_threshold,
+        5
+      ),
+      road_required: false,
       park_required: false,
       public_visibility_min_reports: publicVisibilityMin,
       high_confidence_min_reports: sanitizeIncidentReportThreshold(
@@ -264,6 +275,10 @@ export async function loadTenantDomainConfigSnapshotShared({
     assignedNext[domainKey] = {
       domain_type: String(row?.domain_type || "").trim().toLowerCase() || defaultDomainType(domainKey),
       organization_monitored_repairs: row?.organization_monitored_repairs === true,
+      public_repair_confirmation_threshold: sanitizeIncidentReportThreshold(
+        row?.public_repair_confirmation_threshold ?? legacyConfig?.public_repair_confirmation_threshold,
+        5
+      ),
       road_required: row?.road_required === true,
       park_required: row?.park_required === true,
       public_visibility_min_reports: assignedPublicVisibilityMin,
@@ -313,7 +328,6 @@ export async function refreshTenantDomainPublicConfigShared({
   fetchTenantDomainPublicConfig,
   fetchTenantAssignedDomainsRobust,
   fetchTenantRegistryIncidentDomains,
-  defaultRoadRequiredForDomain,
   applyTenantDomainConfigSnapshot,
   writeCachedTenantDomainConfigSnapshot,
   shouldCancel,
@@ -327,7 +341,6 @@ export async function refreshTenantDomainPublicConfigShared({
       fetchTenantDomainPublicConfig,
       fetchTenantAssignedDomainsRobust,
       fetchTenantRegistryIncidentDomains,
-      defaultRoadRequiredForDomain,
     });
     if (typeof shouldCancel === "function" && shouldCancel()) return;
     if (!snapshot) return;

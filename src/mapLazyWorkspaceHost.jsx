@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, memo } from "react";
+import MapTabLoadingSurface from "./mapTabLoadingSurface.jsx";
 
 const LazyMapSecondaryWorkspace = lazy(() => import("./mapLazySecondaryWorkspace.jsx"));
 const LazyStreetlightPopupWorkspace = lazy(() => import("./mapLazyStreetlightPopupWorkspace.jsx"));
@@ -15,10 +16,18 @@ export default memo(function MapLazyWorkspaceHost({
   selectionPopupsVisible,
   selectionPopupsProps,
 }) {
+  const secondaryFallback = secondaryVisible
+    && secondaryWorkspaceProps?.residentFeedWorkspace?.useAppShellLayout ? (
+    <MapTabLoadingSurface
+      pageTopInset={secondaryWorkspaceProps?.moderationWorkspace?.mobileTabPageTopInset}
+      pageBottomInset={secondaryWorkspaceProps?.moderationWorkspace?.mobileReportsPageBottomInset}
+    />
+  ) : null;
+
   return (
     <>
       {secondaryVisible ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={secondaryFallback}>
           <LazyMapSecondaryWorkspace {...secondaryWorkspaceProps} />
         </Suspense>
       ) : null}

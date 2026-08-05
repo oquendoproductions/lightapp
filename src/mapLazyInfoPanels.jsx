@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { AppIcon } from "./mapUiIconComponentsSupport.jsx";
 import { RUNTIME_UI_ICON_SRC as uiIconSrc } from "./mapUiIconRuntimeSupport.js";
+import { isRuntimeUiIconEnabled } from "./mapUiIconRuntimeCoreSupport.js";
 import { buildDomainMarkerIconPresentationShared } from "./lib/mapDomainMarkerPresentationSupport";
 
 function ModalShell({ open, children, zIndex = 9999, panelStyle }) {
@@ -50,19 +51,13 @@ export function AdminIncidentInfoWindowDetails({
   reportCount = 0,
   issueTypes = "",
   issueTypeDetails = [],
-  location = "",
-  crossStreet = "",
-  intersection = "",
-  landmark = "",
-  coordinates = "",
-  onCopyDomainId = null,
-  onCopyCoordinates = null,
+  onOpenLocationDetails = null,
 }) {
   const safeId = String(domainId || "").trim() || "Unavailable";
   const safeState = String(stateLabel || "").trim() || "Reported";
   const safeSummaryLabel = String(summaryLabel || "").trim() || "State";
   const safeCount = Number.isFinite(Number(reportCount)) ? Number(reportCount) : 0;
-  const safeIssueTypes = String(issueTypes || "").trim() || "Unavailable";
+  const safeIssueTypes = String(issueTypes || "").trim();
   const configuredIssueTypeDetails = (Array.isArray(issueTypeDetails) ? issueTypeDetails : [])
     .map((detail) => ({
       key: String(detail?.key || "").trim(),
@@ -70,13 +65,8 @@ export function AdminIncidentInfoWindowDetails({
       valueLabel: String(detail?.valueLabel || "").trim(),
     }))
     .filter((detail) => detail.label && detail.valueLabel);
-  const safeCoordinates = String(coordinates || "").trim() || "Unavailable";
-  const safeCrossStreet =
-    String(crossStreet || "").trim()
-    || String(intersection || "").trim()
-    || "Unavailable";
   const issueLabel = safeIssueTypes.includes(" • ") ? "Issue Types" : "Issue Type";
-  const inlineRowStyle = { fontSize: 13, lineHeight: 1.3, textAlign: "left" };
+  const inlineRowStyle = { fontSize: 16, lineHeight: 1.38, textAlign: "left" };
   const inlineLabelStyle = { fontWeight: 900 };
   const sansSerifUiStack = 'Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   return (
@@ -91,13 +81,13 @@ export function AdminIncidentInfoWindowDetails({
       }}
     >
       <div style={{ display: "grid", gap: 4, width: "100%" }}>
-        {typeof onCopyDomainId === "function" ? (
+        {typeof onOpenLocationDetails === "function" ? (
           <button
             type="button"
-            onClick={onCopyDomainId}
-            title="Click to copy incident ID"
+            onClick={onOpenLocationDetails}
+            title="Open incident location information"
             style={{
-              fontSize: 15,
+              fontSize: 18,
               lineHeight: 1.2,
               fontWeight: 800,
               textAlign: "left",
@@ -107,13 +97,13 @@ export function AdminIncidentInfoWindowDetails({
               color: "var(--sl-ui-link-text)",
               textDecoration: "underline",
               textUnderlineOffset: 2,
-              cursor: "copy",
+              cursor: "pointer",
             }}
           >
             {safeId}
           </button>
         ) : (
-          <div style={{ fontSize: 15, lineHeight: 1.2, fontWeight: 800, textAlign: "left" }}>
+          <div style={{ fontSize: 18, lineHeight: 1.2, fontWeight: 800, textAlign: "left" }}>
             {safeId}
           </div>
         )}
@@ -135,55 +125,11 @@ export function AdminIncidentInfoWindowDetails({
             </div>
           ))}
         </div>
-      ) : (
+      ) : safeIssueTypes ? (
         <div style={inlineRowStyle}>
           <span style={inlineLabelStyle}>{issueLabel}:</span> {safeIssueTypes}
         </div>
-      )}
-      <div style={{ display: "grid", gap: 4, width: "100%" }}>
-        <div style={inlineRowStyle}>
-          <span style={inlineLabelStyle}>Location:</span> {String(location || "").trim() || "Unavailable"}
-        </div>
-        <div style={inlineRowStyle}>
-          <span style={inlineLabelStyle}>Closest cross street:</span> {safeCrossStreet}
-        </div>
-        <div style={inlineRowStyle}>
-          <span style={inlineLabelStyle}>Landmark:</span> {String(landmark || "").trim() || "Unavailable"}
-        </div>
-        {typeof onCopyCoordinates === "function" ? (
-          <button
-            type="button"
-            onClick={onCopyCoordinates}
-            title="Click to copy coordinates"
-            style={{
-              ...inlineRowStyle,
-              width: "100%",
-              padding: 0,
-              border: "none",
-              background: "transparent",
-              color: "inherit",
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            <span style={inlineLabelStyle}>Coordinates:</span>{" "}
-            <span
-              style={{
-                color: "var(--sl-ui-link-text)",
-                textDecoration: "underline",
-                textUnderlineOffset: 2,
-                fontWeight: 800,
-              }}
-            >
-              {safeCoordinates}
-            </span>
-          </button>
-        ) : (
-          <div style={inlineRowStyle}>
-            <span style={inlineLabelStyle}>Coordinates:</span> {safeCoordinates}
-          </div>
-        )}
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -386,7 +332,7 @@ export function InfoMenuModal({
           label: "Blue ring means you reported this incident",
         },
         { swatch: currentLocationSwatch, label: "Your current location" },
-        { swatch: navigationLocationSwatch, label: "Navigation location and heading" },
+        ...(showNavigationTool ? [{ swatch: navigationLocationSwatch, label: "Navigation location and heading" }] : []),
       ],
     },
   ];
@@ -414,7 +360,7 @@ export function InfoMenuModal({
     { iconSrc: uiIconSrc.openReports, iconKey: "openReports", label: "My Reports", desc: "Open your saved report history and follow-up tools." },
     { iconSrc: uiIconSrc.incidentReportingLayer, iconKey: "incidentReportingLayer", label: "Layers", desc: "Choose which reportable domains are visible on the map." },
     { iconSrc: uiIconSrc.bulk, iconKey: "bulk", label: "Bulk Save (Streetlights)", desc: "Select and save multiple streetlights to My Reports." },
-  ];
+  ].filter((row) => isRuntimeUiIconEnabled(row.iconKey, row.iconSrc));
 
   const adminToolRows = [
     { iconSrc: uiIconSrc.toolbox, iconKey: "toolbox", label: "Admin Tools", desc: "Open admin action menu." },

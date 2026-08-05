@@ -155,3 +155,9 @@ export function resolveRuntimeDomainAllowReportImagesShared(domainKeyRaw = "") {
   }
   return defaultAllowReportImagesForDomainShared(domainKey);
 }
+
+export function resolveRuntimeDomainReportImageRequiredShared(domainKeyRaw = "") {
+  const domainKey = normalizeRuntimeDomainKey(domainKeyRaw);
+  if (!domainKey || !resolveRuntimeDomainAllowReportImagesShared(domainKey)) return false;
+  return RUNTIME_DOMAIN_META.reportImageRequiredByDomain.get(domainKey) === true;
+}

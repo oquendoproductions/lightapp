@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, memo } from "react";
+import MapTabLoadingSurface from "./mapTabLoadingSurface.jsx";
 import { INCIDENT_REPORTING_LAYER_KEY } from "./lib/mapDomainSelectionConfig.js";
 import { DomainAppIcon } from "./mapDomainIconComponentsSupport.jsx";
 import { AppIcon } from "./mapUiIconComponentsSupport.jsx";
@@ -607,6 +608,7 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
   prefersDarkMode,
   locating,
   travelFollowMode,
+  navigationToolEnabled,
   mobileMapToolButtonStyle,
   mobileMapLayerButtonStyle,
   mobilePrimaryLayerOptions,
@@ -660,6 +662,7 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
           iconKey={mapType === "satellite" ? "streetMap" : "satellite"}
           darkMode={prefersDarkMode}
           size={32}
+          priority
         />
       </div>
       <div
@@ -669,7 +672,7 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
         onClick={onResetHeading}
         style={mobileMapToolButtonStyle}
       >
-        <AppIcon src={uiIconSrc.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={32} />
+        <AppIcon src={uiIconSrc.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={32} priority />
       </div>
       <div
         role="button"
@@ -686,9 +689,9 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
             : mobileMapToolButtonStyle.background,
         }}
       >
-        <AppIcon src={uiIconSrc.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={32} />
+        <AppIcon src={uiIconSrc.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={32} priority />
       </div>
-      <div
+      {navigationToolEnabled ? <div
         role="button"
         aria-label="Toggle travel follow"
         title="Travel follow"
@@ -706,8 +709,8 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
             : mobileMapToolButtonStyle.color,
         }}
       >
-        <AppIcon src={uiIconSrc.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={28} />
-      </div>
+        <AppIcon src={uiIconSrc.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={28} priority />
+      </div> : null}
       <div
         role="button"
         aria-label="Recenter to city"
@@ -715,7 +718,7 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
         onClick={onRecenterHome}
         style={mobileMapToolButtonStyle}
       >
-        <AppIcon src={uiIconSrc.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={30} />
+        <AppIcon src={uiIconSrc.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={30} priority />
       </div>
       {mobilePrimaryLayerOptions.length ? (
         <>
@@ -744,7 +747,7 @@ const MobileMapToolChrome = memo(function MobileMapToolChrome({
             const showIncidentSubcontrols =
               isIncidentButton &&
               isActive &&
-              incidentLayerDomainOptions.length > 1 &&
+              incidentLayerDomainOptions.length > 0 &&
               mobileIncidentDomainMenuOpen;
             return (
               <div
@@ -1043,6 +1046,7 @@ function MobileMapTopOverlay({
   tenantKey,
   tenantScopedReadClient,
   showMobileMapTabContent,
+  mapUiIconManifestReady,
   toolChromeProps,
   statusChipProps,
 }) {
@@ -1094,7 +1098,14 @@ function MobileMapTopOverlay({
         />
 
         {accountMenuOpen ? (
-          <Suspense fallback={null}>
+          <Suspense
+            fallback={(
+              <MapTabLoadingSurface
+                pageTopInset={mobileTabPageTopInset}
+                pageBottomInset={mobileReportsPageBottomInset}
+              />
+            )}
+          >
             <LazyAccountMenuPanel
               open={accountMenuOpen}
               session={session}
@@ -1131,6 +1142,7 @@ function MobileMapTopOverlay({
               onOpenLocationDiagnostics={onMobileHeaderOpenLocationDiagnostics}
               onContactUs={onMobileHeaderContactUs}
               onOpenAbout={onMobileHeaderOpenAbout}
+              organizationDisplayName={organizationDisplayName}
               tenantKey={tenantKey}
               readClient={tenantScopedReadClient}
             />
@@ -1147,7 +1159,7 @@ function MobileMapTopOverlay({
               pointerEvents: "none",
             }}
           >
-            <MobileMapToolChrome {...toolChromeProps} />
+            {mapUiIconManifestReady ? <MobileMapToolChrome {...toolChromeProps} /> : null}
             <MobileMapStatusChips {...statusChipProps} />
           </div>
         ) : null}
@@ -1208,6 +1220,7 @@ export default function MapLazyMobileChrome({
     tenantScopedReadClient,
     showAdminTools,
     showMobileMapTabContent,
+    mapUiIconManifestReady,
   } = mobileChromeShared;
   const {
     accountMenuOpen,
@@ -1321,6 +1334,7 @@ export default function MapLazyMobileChrome({
     tenantKey,
     tenantScopedReadClient,
     showMobileMapTabContent,
+    mapUiIconManifestReady,
     toolChromeProps: toolChromeConfig,
     statusChipProps: statusChipConfig,
   };
@@ -1340,7 +1354,7 @@ export default function MapLazyMobileChrome({
           <LazyMobileMappingActionBar {...mappingActionBarProps} />
         </Suspense>
       ) : null}
-      <MobileMapBottomRail {...bottomRailProps} />
+      {bottomRailProps.mapUiIconManifestReady ? <MobileMapBottomRail {...bottomRailProps} /> : null}
     </>
   );
 }

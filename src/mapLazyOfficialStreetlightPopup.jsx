@@ -76,10 +76,10 @@ export default function OfficialStreetlightPopup({
           ×
         </button>
 
-        <div style={{ fontWeight: 900, paddingRight: 26 }}>
+        <div style={{ fontSize: 21, lineHeight: 1.2, fontWeight: 900, paddingRight: 26 }}>
           Streetlight • {displayId}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.78, marginTop: -7, letterSpacing: 0.1 }}>
+        <div style={{ fontSize: 16, lineHeight: 1.38, fontWeight: 600, opacity: 0.78, marginTop: -7, letterSpacing: 0.1 }}>
           Utility-owned
         </div>
         <button
@@ -114,7 +114,7 @@ export default function OfficialStreetlightPopup({
         ) : null}
         {canTrackUtility ? (
           <>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, opacity: 0.95 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 16, opacity: 0.95 }}>
               <input
                 type="checkbox"
                 checked={utilityReported}
@@ -146,7 +146,7 @@ export default function OfficialStreetlightPopup({
               View My Report
             </button>
             {utilityReported ? (
-              <div style={{ fontSize: 12, opacity: 0.84 }}>
+              <div style={{ fontSize: 16, lineHeight: 1.38, opacity: 0.84 }}>
                 Utility report #: {utilityReportReference || "Not added yet"}
               </div>
             ) : null}
@@ -161,12 +161,12 @@ export default function OfficialStreetlightPopup({
             Is working
           </button>
         ) : null}
-        <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd27d", lineHeight: 1.35 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#ffd27d", lineHeight: 1.38 }}>
           Immediate danger? Call 911.
         </div>
 
         {showZoomHint ? (
-          <div style={{ fontSize: 11.5, opacity: 0.78, lineHeight: 1.25 }}>
+          <div style={{ fontSize: 16, opacity: 0.78, lineHeight: 1.38 }}>
             Zoom in closer to save this light.
           </div>
         ) : null}

@@ -18,6 +18,7 @@ export default memo(function MapLazyDesktopMapControls({
   onLocate,
   travelFollowMode,
   onToggleTravelFollow,
+  navigationToolEnabled,
   setAutoFollow,
   setFollowCamera,
   recenterToTenantHome,
@@ -51,13 +52,13 @@ export default memo(function MapLazyDesktopMapControls({
   suppressPopupsSafe,
   clearBulkSelection,
   canOpenDomainReports,
-  openReportsOpen,
+  myReportsOpen,
   mappingMode,
   requestExitMappingMode,
   setNotificationsWindowOpen,
   setAlertsWindowOpen,
   setEventsWindowOpen,
-  openOpenReports,
+  openMyReports,
 }) {
   return (
     <>
@@ -81,6 +82,7 @@ export default memo(function MapLazyDesktopMapControls({
           iconKey={mapType === "satellite" ? "streetMap" : "satellite"}
           darkMode={prefersDarkMode}
           size={38}
+          priority
         />
       </button>
 
@@ -110,7 +112,7 @@ export default memo(function MapLazyDesktopMapControls({
         title="Reset heading"
         aria-label="Reset heading"
       >
-        <AppIcon src={uiIconSrc.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={38} />
+        <AppIcon src={uiIconSrc.headingReset} iconKey="headingReset" darkMode={prefersDarkMode} size={38} priority />
       </button>
 
       <button
@@ -125,10 +127,10 @@ export default memo(function MapLazyDesktopMapControls({
         title="Find my location"
         aria-label="Find my location"
       >
-        <AppIcon src={uiIconSrc.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={38} />
+        <AppIcon src={uiIconSrc.location} iconKey="location" darkMode={prefersDarkMode} active={locating} size={38} priority />
       </button>
 
-      <button
+      {navigationToolEnabled ? <button
         type="button"
         className={`sl-map-tool-mini ${travelFollowMode ? "is-on" : ""}`}
         onClick={(event) => {
@@ -140,8 +142,8 @@ export default memo(function MapLazyDesktopMapControls({
         title="Travel follow"
         aria-label="Toggle travel follow"
       >
-        <AppIcon src={uiIconSrc.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={34} />
-      </button>
+        <AppIcon src={uiIconSrc.navigationArrow} iconKey="navigationArrow" darkMode={prefersDarkMode} active={travelFollowMode} size={34} priority />
+      </button> : null}
 
       <button
         type="button"
@@ -158,7 +160,7 @@ export default memo(function MapLazyDesktopMapControls({
         title="City home"
         aria-label="Recenter to city"
       >
-        <AppIcon src={uiIconSrc.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={36} />
+        <AppIcon src={uiIconSrc.homeRecenter} iconKey="homeRecenter" darkMode={prefersDarkMode} size={36} priority />
       </button>
 
       {incidentLayerButtonEnabled && incidentLayerDomainOptions.length ? (
@@ -194,6 +196,7 @@ export default memo(function MapLazyDesktopMapControls({
               darkMode={prefersDarkMode}
               active={adminDomainMenuOpen || activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY}
               size={38}
+              priority
             />
           </button>
           {adminDomainMenuOpen ? (
@@ -277,7 +280,7 @@ export default memo(function MapLazyDesktopMapControls({
       {canOpenDomainReports ? (
         <button
           type="button"
-          className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${openReportsOpen ? "is-on" : ""}`}
+          className={`sl-map-tool-mini sl-mobile-hide-bottom-rail ${myReportsOpen ? "is-on" : ""}`}
           title="Reports"
           aria-label="Open reports"
           onClick={(event) => {
@@ -290,11 +293,15 @@ export default memo(function MapLazyDesktopMapControls({
             setNotificationsWindowOpen(false);
             setAlertsWindowOpen(false);
             setEventsWindowOpen(false);
-            openOpenReports({ inViewOnly: false });
+            // The web Reports tool opens the same unified workspace as the
+            // Reports tab: My Reports by default, with All Reports available
+            // through its reported-by selector. The legacy Admin Reports
+            // workspace is not a user-facing destination.
+            openMyReports({ reportedByMode: "me", inViewOnly: false });
             showToolHint("Reports", 1000, 5);
           }}
         >
-          <AppIcon src={uiIconSrc.openReports} iconKey="openReports" darkMode={prefersDarkMode} active={openReportsOpen} size={38} />
+          <AppIcon src={uiIconSrc.openReports} iconKey="openReports" darkMode={prefersDarkMode} active={myReportsOpen} size={38} />
         </button>
       ) : null}
     </>

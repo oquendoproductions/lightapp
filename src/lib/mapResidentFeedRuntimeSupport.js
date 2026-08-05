@@ -96,6 +96,10 @@ function emptyMapCommunityFeedReadState() {
     eventsReadKeys: [],
     alertsReadIds: [],
     eventsReadIds: [],
+    alertsUnreadIds: [],
+    eventsUnreadIds: [],
+    alertsDeletedIds: [],
+    eventsDeletedIds: [],
   };
 }
 
@@ -122,6 +126,10 @@ function normalizeMapCommunityFeedReadState(raw = {}) {
     eventsReadKeys: Array.isArray(raw?.eventsReadKeys) ? raw.eventsReadKeys.map((value) => String(value || "").trim()).filter(Boolean) : [],
     alertsReadIds: Array.isArray(raw?.alertsReadIds) ? raw.alertsReadIds.map((value) => String(value || "").trim()).filter(Boolean) : [],
     eventsReadIds: Array.isArray(raw?.eventsReadIds) ? raw.eventsReadIds.map((value) => String(value || "").trim()).filter(Boolean) : [],
+    alertsUnreadIds: Array.isArray(raw?.alertsUnreadIds ?? raw?.alerts_unread_ids) ? (raw.alertsUnreadIds ?? raw.alerts_unread_ids).map((value) => String(value || "").trim()).filter(Boolean) : [],
+    eventsUnreadIds: Array.isArray(raw?.eventsUnreadIds ?? raw?.events_unread_ids) ? (raw.eventsUnreadIds ?? raw.events_unread_ids).map((value) => String(value || "").trim()).filter(Boolean) : [],
+    alertsDeletedIds: Array.isArray(raw?.alertsDeletedIds ?? raw?.alerts_deleted_ids) ? (raw.alertsDeletedIds ?? raw.alerts_deleted_ids).map((value) => String(value || "").trim()).filter(Boolean) : [],
+    eventsDeletedIds: Array.isArray(raw?.eventsDeletedIds ?? raw?.events_deleted_ids) ? (raw.eventsDeletedIds ?? raw.events_deleted_ids).map((value) => String(value || "").trim()).filter(Boolean) : [],
   };
 }
 
@@ -135,6 +143,10 @@ function mergeMapCommunityFeedReadState(primary = {}, secondary = {}) {
     eventsReadKeys: Array.from(new Set([...(a.eventsReadKeys || []), ...(b.eventsReadKeys || [])])).slice(-300),
     alertsReadIds: Array.from(new Set([...(a.alertsReadIds || []), ...(b.alertsReadIds || [])])).slice(-300),
     eventsReadIds: Array.from(new Set([...(a.eventsReadIds || []), ...(b.eventsReadIds || [])])).slice(-300),
+    alertsUnreadIds: Array.from(new Set([...(a.alertsUnreadIds || []), ...(b.alertsUnreadIds || [])])).slice(-300),
+    eventsUnreadIds: Array.from(new Set([...(a.eventsUnreadIds || []), ...(b.eventsUnreadIds || [])])).slice(-300),
+    alertsDeletedIds: Array.from(new Set([...(a.alertsDeletedIds || []), ...(b.alertsDeletedIds || [])])).slice(-300),
+    eventsDeletedIds: Array.from(new Set([...(a.eventsDeletedIds || []), ...(b.eventsDeletedIds || [])])).slice(-300),
   };
 }
 
@@ -179,6 +191,8 @@ function applyMapCommunityFeedItemsViewedToState(prevState = {}, kind = "alerts"
   const mergedEventKeys = new Set(Array.isArray(normalizedPrev?.eventsReadKeys) ? normalizedPrev.eventsReadKeys : []);
   const mergedAlertIds = new Set(Array.isArray(normalizedPrev?.alertsReadIds) ? normalizedPrev.alertsReadIds : []);
   const mergedEventIds = new Set(Array.isArray(normalizedPrev?.eventsReadIds) ? normalizedPrev.eventsReadIds : []);
+  const mergedAlertUnreadIds = new Set(Array.isArray(normalizedPrev?.alertsUnreadIds) ? normalizedPrev.alertsUnreadIds : []);
+  const mergedEventUnreadIds = new Set(Array.isArray(normalizedPrev?.eventsUnreadIds) ? normalizedPrev.eventsUnreadIds : []);
   const prevAlertKeyCount = mergedAlertKeys.size;
   const prevEventKeyCount = mergedEventKeys.size;
   const prevAlertIdCount = mergedAlertIds.size;
@@ -186,10 +200,16 @@ function applyMapCommunityFeedItemsViewedToState(prevState = {}, kind = "alerts"
 
   if (safeKind === "alerts") {
     nextReadKeys.forEach((key) => mergedAlertKeys.add(key));
-    nextReadIds.forEach((id) => mergedAlertIds.add(id));
+    nextReadIds.forEach((id) => {
+      mergedAlertIds.add(id);
+      mergedAlertUnreadIds.delete(id);
+    });
   } else {
     nextReadKeys.forEach((key) => mergedEventKeys.add(key));
-    nextReadIds.forEach((id) => mergedEventIds.add(id));
+    nextReadIds.forEach((id) => {
+      mergedEventIds.add(id);
+      mergedEventUnreadIds.delete(id);
+    });
   }
 
   const nextState = {
@@ -203,6 +223,10 @@ function applyMapCommunityFeedItemsViewedToState(prevState = {}, kind = "alerts"
     eventsReadKeys: Array.from(mergedEventKeys).slice(-300),
     alertsReadIds: Array.from(mergedAlertIds).slice(-300),
     eventsReadIds: Array.from(mergedEventIds).slice(-300),
+    alertsUnreadIds: Array.from(mergedAlertUnreadIds).slice(-300),
+    eventsUnreadIds: Array.from(mergedEventUnreadIds).slice(-300),
+    alertsDeletedIds: normalizedPrev.alertsDeletedIds,
+    eventsDeletedIds: normalizedPrev.eventsDeletedIds,
   };
 
   const changed = (
@@ -220,6 +244,39 @@ function applyMapCommunityFeedItemsViewedToState(prevState = {}, kind = "alerts"
   };
 }
 
+function applyMapCommunityFeedItemInboxActionToState(prevState = {}, kind = "alerts", item = null, action = "read") {
+  const safeKind = kind === "events" ? "events" : "alerts";
+  const itemId = String(item?.id || "").trim();
+  if (!itemId) return { changed: false, nextState: normalizeMapCommunityFeedReadState(prevState) };
+  const previous = normalizeMapCommunityFeedReadState(prevState);
+  const key = safeKind === "events" ? "events" : "alerts";
+  const readIds = new Set(previous[`${key}ReadIds`] || []);
+  const unreadIds = new Set(previous[`${key}UnreadIds`] || []);
+  const deletedIds = new Set(previous[`${key}DeletedIds`] || []);
+
+  if (action === "unread") {
+    readIds.delete(itemId);
+    unreadIds.add(itemId);
+    deletedIds.delete(itemId);
+  } else if (action === "delete") {
+    readIds.delete(itemId);
+    unreadIds.delete(itemId);
+    deletedIds.add(itemId);
+  } else {
+    readIds.add(itemId);
+    unreadIds.delete(itemId);
+    deletedIds.delete(itemId);
+  }
+
+  const nextState = {
+    ...previous,
+    [`${key}ReadIds`]: Array.from(readIds).slice(-300),
+    [`${key}UnreadIds`]: Array.from(unreadIds).slice(-300),
+    [`${key}DeletedIds`]: Array.from(deletedIds).slice(-300),
+  };
+  return { changed: JSON.stringify(previous) !== JSON.stringify(nextState), nextState };
+}
+
 function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts") {
   const lastViewedAt = kind === "events"
     ? Number(readState?.eventsLastViewedAt || 0)
@@ -234,10 +291,16 @@ function countUnreadMapCommunityFeedItems(items, readState = {}, kind = "alerts"
       ? (Array.isArray(readState?.eventsReadIds) ? readState.eventsReadIds : [])
       : (Array.isArray(readState?.alertsReadIds) ? readState.alertsReadIds : []),
   );
+  const unreadIds = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsUnreadIds) ? readState.eventsUnreadIds : [])
+      : (Array.isArray(readState?.alertsUnreadIds) ? readState.alertsUnreadIds : []),
+  );
   const threshold = Math.max(0, Number(lastViewedAt || 0));
   return (items || []).filter((item) => {
     const itemId = String(item?.id || "").trim();
     const itemKey = mapCommunityFeedItemReadKey(item);
+    if (itemId && unreadIds.has(itemId)) return true;
     if (itemId && readIds.has(itemId)) return false;
     if (itemKey && readKeys.has(itemKey)) return false;
     return mapCommunityFeedItemTs(item) > threshold;
@@ -258,8 +321,14 @@ function isUnreadMapCommunityFeedItem(item, readState = {}, kind = "alerts") {
       ? (Array.isArray(readState?.eventsReadIds) ? readState.eventsReadIds : [])
       : (Array.isArray(readState?.alertsReadIds) ? readState.alertsReadIds : []),
   );
+  const unreadIds = new Set(
+    kind === "events"
+      ? (Array.isArray(readState?.eventsUnreadIds) ? readState.eventsUnreadIds : [])
+      : (Array.isArray(readState?.alertsUnreadIds) ? readState.alertsUnreadIds : []),
+  );
   const itemId = String(item?.id || "").trim();
   const itemKey = mapCommunityFeedItemReadKey(item);
+  if (itemId && unreadIds.has(itemId)) return true;
   if (itemId && readIds.has(itemId)) return false;
   if (itemKey && readKeys.has(itemKey)) return false;
   return mapCommunityFeedItemTs(item) > Math.max(0, Number(lastViewedAt || 0));
@@ -284,7 +353,10 @@ function filterResidentFeedItemsForInAppPreferences(items = [], preferencesByTop
 }
 
 function normalizeResidentNotificationKind(value) {
-  return String(value || "").trim().toLowerCase() === "event" ? "event" : "alert";
+  const kind = String(value || "").trim().toLowerCase();
+  if (kind === "event") return "event";
+  if (kind === "report_update") return "report_update";
+  return "alert";
 }
 
 export function createResidentFeedRuntimeSupport({
@@ -322,6 +394,10 @@ export function createResidentFeedRuntimeSupport({
           eventsReadKeys: Array.isArray(value?.eventsReadKeys) ? value.eventsReadKeys.slice(-300) : [],
           alertsReadIds: Array.isArray(value?.alertsReadIds) ? value.alertsReadIds.slice(-300) : [],
           eventsReadIds: Array.isArray(value?.eventsReadIds) ? value.eventsReadIds.slice(-300) : [],
+          alertsUnreadIds: Array.isArray(value?.alertsUnreadIds) ? value.alertsUnreadIds.slice(-300) : [],
+          eventsUnreadIds: Array.isArray(value?.eventsUnreadIds) ? value.eventsUnreadIds.slice(-300) : [],
+          alertsDeletedIds: Array.isArray(value?.alertsDeletedIds) ? value.alertsDeletedIds.slice(-300) : [],
+          eventsDeletedIds: Array.isArray(value?.eventsDeletedIds) ? value.eventsDeletedIds.slice(-300) : [],
         }),
       );
     } catch {
@@ -335,7 +411,7 @@ export function createResidentFeedRuntimeSupport({
     if (!supabase?.from || !safeTenantKey || !safeUserId) return null;
     const { data, error } = await supabase
       .from(remoteTable)
-      .select("alerts_last_viewed_at,events_last_viewed_at")
+      .select("alerts_last_viewed_at,events_last_viewed_at,alerts_read_ids,events_read_ids,alerts_unread_ids,events_unread_ids,alerts_deleted_ids,events_deleted_ids")
       .eq("tenant_key", safeTenantKey)
       .eq("user_id", safeUserId)
       .maybeSingle();
@@ -358,6 +434,12 @@ export function createResidentFeedRuntimeSupport({
       user_id: safeUserId,
       alerts_last_viewed_at: normalized.alertsLastViewedAt ? new Date(normalized.alertsLastViewedAt).toISOString() : null,
       events_last_viewed_at: normalized.eventsLastViewedAt ? new Date(normalized.eventsLastViewedAt).toISOString() : null,
+      alerts_read_ids: normalized.alertsReadIds,
+      events_read_ids: normalized.eventsReadIds,
+      alerts_unread_ids: normalized.alertsUnreadIds,
+      events_unread_ids: normalized.eventsUnreadIds,
+      alerts_deleted_ids: normalized.alertsDeletedIds,
+      events_deleted_ids: normalized.eventsDeletedIds,
     };
     const { error } = await supabase
       .from(remoteTable)
@@ -380,6 +462,7 @@ export function createResidentFeedRuntimeSupport({
     saveMapCommunityFeedReadStateRemote,
     mergeMapCommunityFeedReadState,
     applyMapCommunityFeedItemsViewedToState,
+    applyMapCommunityFeedItemInboxActionToState,
     mapCommunityFeedItemReadKey,
     countUnreadMapCommunityFeedItems,
     isUnreadMapCommunityFeedItem,

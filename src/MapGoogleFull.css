@@ -45,6 +45,12 @@ body {
   display: none;
 }
 
+/* Native iPad uses the same app shell as phone, but must not inherit the
+   phone-only max-width visibility gate. */
+.sl-native-tablet-shell {
+  display: block;
+}
+
 @keyframes sl-modal-overlay-enter {
   from {
     opacity: 0;

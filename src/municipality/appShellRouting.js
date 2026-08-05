@@ -60,6 +60,7 @@ export function normalizeMunicipalityAppPath(pathname, tenantKey) {
     return "/events/create";
   }
   if (stripped === "/events" || stripped.startsWith("/events/")) return "/events";
+  if (stripped === "/locations" || stripped.startsWith("/locations/")) return "/locations";
   if (
     stripped === "/preferences" ||
     stripped.startsWith("/preferences/") ||

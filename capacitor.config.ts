@@ -26,16 +26,33 @@ function normalizeTarget(rawTarget: string | undefined) {
 const appTarget = normalizeTarget(process.env.CITYREPORT_APP_TARGET);
 const preset = APP_TARGET_PRESETS[appTarget];
 const platform = String(process.env.CITYREPORT_PLATFORM || "").trim().toLowerCase();
+const iosVariant = String(process.env.CITYREPORT_IOS_VARIANT || "").trim().toLowerCase();
+const isMapIosDevBuild = appTarget === "map" && platform === "ios" && iosVariant === "dev";
 const resolvedAppId =
-  appTarget === "map" && platform === "ios" ? "cityreport.io.app"
+  isMapIosDevBuild ? "cityreport.io.app.dev"
+    : appTarget === "map" && platform === "ios" ? "cityreport.io.app"
     : appTarget === "map" && platform === "android" ? "cityreport.io.map"
     : String(process.env.CITYREPORT_APP_ID || preset.appId).trim();
+const resolvedAppName = String(
+  isMapIosDevBuild ? "CityReport Dev" : (process.env.CITYREPORT_APP_NAME || preset.appName)
+).trim();
+const resolvedAuthRedirectUrl = String(
+  isMapIosDevBuild ? "cityreportdev://auth/callback" : (process.env.VITE_NATIVE_AUTH_REDIRECT_URL || preset.authRedirectUrl)
+).trim();
 
 const config: CapacitorConfig = {
   appId: resolvedAppId,
-  appName: String(process.env.CITYREPORT_APP_NAME || preset.appName).trim(),
+  appName: resolvedAppName,
   webDir: "dist",
   bundledWebRuntime: false,
+  packageClassList: [
+    "CAPBrowserPlugin",
+    "GeolocationPlugin",
+    "PushNotificationsPlugin",
+    "BadgePlugin",
+    "ExternalBrowser",
+    "NotificationSettings",
+  ],
   server: {
     androidScheme: "https",
   },
@@ -43,7 +60,7 @@ const config: CapacitorConfig = {
     CityReportRuntime: {
       appTarget,
       appScope: String(process.env.VITE_NATIVE_APP_SCOPE || preset.appScope).trim() || preset.appScope,
-      authRedirectUrl: String(process.env.VITE_NATIVE_AUTH_REDIRECT_URL || preset.authRedirectUrl).trim(),
+      authRedirectUrl: resolvedAuthRedirectUrl,
     },
     PushNotifications: {
       presentationOptions: ["badge", "sound", "alert"] as PresentationOption[],

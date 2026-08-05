@@ -1,5 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPlatformName, isNativeAppRuntime } from "./platform/runtime.js";
+import { residentNotificationIncidentDisplayId } from "./lib/mapResidentNotificationSupport.js";
+import {
+  writeNativeResidentNotificationFeedHandoff,
+  writeNativeResidentNotificationReportHandoff,
+  writeResidentNotificationFeedHandoff,
+  writeResidentNotificationReportHandoff,
+} from "./lib/residentNotificationReportHandoff.js";
 
 const loadDeferredResidentFeedActionSupportModule = () => import("./lib/mapDeferredResidentFeedActionSupport.js");
 const loadDeferredNativeBadgeRuntimeModule = () => import("./lib/mapDeferredNativeBadgeRuntime.js");
@@ -13,6 +20,8 @@ export default function MapLazyResidentFeedBadgeController({
   loading,
   startupWarmupReady,
   showMapNotificationsIcon,
+  showMapAlertIcon,
+  showMapEventIcon,
   resolvedCommunityFeedTenantKey,
   currentTenantKey,
   supabase,
@@ -56,6 +65,7 @@ export default function MapLazyResidentFeedBadgeController({
   setMobileHeaderMenuOpen,
   setAdminDomainMenuOpen,
   setAdminToolboxOpen,
+  openMyReports,
   setMyReportsOpen,
   setOpenReportsOpen,
   setAlertsSessionNewKeys,
@@ -69,6 +79,8 @@ export default function MapLazyResidentFeedBadgeController({
   nativePushShouldRegister,
   nativePushRegisteringRef,
   nativePushRegisteredKey,
+  openNotice,
+  openNotificationsInbox,
   tenantSwitch,
   isMissingFunctionError,
   isMissingRelationError,
@@ -80,11 +92,20 @@ export default function MapLazyResidentFeedBadgeController({
   const residentFeedRuntimeReady = Boolean(residentFeedRuntimeSupport);
   const [residentNotificationSummaryWarmReady, setResidentNotificationSummaryWarmReady] = useState(false);
   const [communityFeedTimeKey, setCommunityFeedTimeKey] = useState(() => Date.now());
+  const nativePushCallbacksRef = useRef({});
 
   const shouldPrepareCommunityFeedReadState =
     alertsWindowOpen ||
     eventsWindowOpen ||
-    (Boolean(communityFeedViewerUserId) && (notificationsWindowOpen || notificationPreferencesOpen));
+    // Badges are calculated from this state. Hydrate it as soon as either
+    // feed entry point is available, rather than waiting until its panel is
+    // opened; otherwise a cold app launch treats already-read items as new.
+    (Boolean(communityFeedViewerUserId) && (
+      notificationsWindowOpen
+      || notificationPreferencesOpen
+      || showMapAlertIcon
+      || showMapEventIcon
+    ));
 
   const shouldLoadResidentFeedRuntimeSupport = Boolean(
     shouldPrepareCommunityFeedReadState ||
@@ -268,7 +289,19 @@ export default function MapLazyResidentFeedBadgeController({
     setMapCommunityTopics,
   ]);
 
-  const shouldLoadMapCommunityFeed = alertsWindowOpen || eventsWindowOpen;
+  // Notification Preferences renders the tenant's notification topics.  Load the
+  // same feed metadata when that screen opens; otherwise its topic list remains
+  // empty until the resident happens to visit Alerts or Events first.
+  // Alert/Event badges are live entry points, not merely counters within
+  // their respective workspaces. Keep their shared feed current whenever
+  // either tool is enabled so a newly published Alert cannot lag behind an
+  // Event until somebody happens to open the tab.
+  const shouldLoadMapCommunityFeed =
+    alertsWindowOpen
+    || eventsWindowOpen
+    || notificationPreferencesOpen
+    || showMapAlertIcon
+    || showMapEventIcon;
 
   useEffect(() => {
     if (!shouldLoadMapCommunityFeed || !residentFeedRuntimeReady) return undefined;
@@ -373,14 +406,20 @@ export default function MapLazyResidentFeedBadgeController({
           nativePushEnabled,
           sessionUserId: communityFeedViewerUserId,
           nativePushShouldRegister,
+          nativePushRegisteringRef,
           resolvedCommunityFeedTenantKey,
+          nativePushRegisteredKey,
         }, {
           isNativeAppRuntime,
           getPlatformName,
           supabase,
           isMissingRelationError,
           isExpectedPermissionError,
-          loadMapCommunityFeed,
+          loadMapCommunityFeed: (...args) => nativePushCallbacksRef.current.loadMapCommunityFeed?.(...args),
+          refreshResidentNotifications: (...args) => nativePushCallbacksRef.current.refreshResidentNotifications?.(...args),
+          openNotice: (...args) => nativePushCallbacksRef.current.openNotice?.(...args),
+          openNotificationsInbox: (...args) => nativePushCallbacksRef.current.openNotificationsInbox?.(...args),
+          openResidentNotificationTarget: (...args) => nativePushCallbacksRef.current.openResidentNotificationTarget?.(...args),
         }) || (() => {});
       })
       .catch(() => {});
@@ -393,45 +432,11 @@ export default function MapLazyResidentFeedBadgeController({
     communityFeedViewerUserId,
     isExpectedPermissionError,
     isMissingRelationError,
-    loadMapCommunityFeed,
     nativePushEnabled,
+    nativePushRegisteringRef,
     nativePushShouldRegister,
     resolvedCommunityFeedTenantKey,
     supabase,
-  ]);
-
-  useEffect(() => {
-    let dispose = () => {};
-    let cancelled = false;
-
-    void loadDeferredAccountRuntimeModule()
-      .then(({ scheduleNativePushRegistrationRuntimeShared }) => {
-        if (cancelled) return;
-        dispose = scheduleNativePushRegistrationRuntimeShared({
-          nativePushEnabled,
-          sessionUserId: communityFeedViewerUserId,
-          nativePushShouldRegister,
-          nativePushRegisteringRef,
-          resolvedCommunityFeedTenantKey,
-          nativePushRegisteredKey,
-        }, {
-          isNativeAppRuntime,
-          getPlatformName,
-        }) || (() => {});
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-      dispose();
-    };
-  }, [
-    communityFeedViewerUserId,
-    nativePushEnabled,
-    nativePushRegisteringRef,
-    nativePushRegisteredKey,
-    nativePushShouldRegister,
-    resolvedCommunityFeedTenantKey,
   ]);
 
   const openResidentNotificationTarget = useCallback(async (item) => {
@@ -440,6 +445,65 @@ export default function MapLazyResidentFeedBadgeController({
     const kind = residentFeedRuntimeSupport.normalizeResidentNotificationKind(item?.kind);
     const itemId = String(item?.id || "").trim();
     if (!tenantKey || !itemId) return;
+
+    if (kind === "report_update") {
+      await supabase
+        .from("resident_incident_notifications")
+        .update({ read_at: new Date().toISOString() })
+        .eq("id", Number(itemId));
+      refreshResidentNotifications();
+      setNotificationsWindowOpen(false);
+      setAccountMenuOpen(false);
+      setMobileHeaderMenuOpen(false);
+      setAdminDomainMenuOpen(false);
+      setAdminToolboxOpen(false);
+      setOpenReportsOpen(false);
+      const normalizedCurrentTenantKey = String(currentTenantKey || resolvedCommunityFeedTenantKey || "").trim().toLowerCase();
+      // Tenant switching is asynchronous.  Queue the report handoff and let
+      // the tenant-ready effect below open it only after the destination
+      // tenant has become active; opening it immediately races the old
+      // tenant's report runtime.
+      setPendingResidentNotificationTarget({
+        tenantKey,
+        kind,
+        itemId,
+        reportTarget: {
+          domainKey: String(item?.domain || "").trim(),
+          focusIncidentId: String(item?.incident_id || "").trim(),
+          focusQuery: residentNotificationIncidentDisplayId(item),
+          incidentState: String(item?.new_state || "").trim(),
+          incidentStateChangedAt: String(item?.created_at || "").trim(),
+          reportedByMode: "me",
+          inViewOnly: false,
+          diagnosticSource: "resident-notification",
+        },
+      });
+      if (normalizedCurrentTenantKey !== tenantKey) {
+        // Only a browser tenant switch navigates away and therefore needs a
+        // URL handoff. Native remains in this React runtime; putting the
+        // handoff in its URL let a completed (or failed) switch leak into a
+        // later, unrelated location change.
+        if (isNativeAppRuntime()) {
+          writeNativeResidentNotificationReportHandoff({
+            tenantKey,
+            domainKey: String(item?.domain || "").trim(),
+            focusIncidentId: String(item?.incident_id || "").trim(),
+            incidentState: String(item?.new_state || "").trim(),
+            incidentStateChangedAt: String(item?.created_at || "").trim(),
+          });
+        } else {
+          writeResidentNotificationReportHandoff({
+            domainKey: String(item?.domain || "").trim(),
+            focusIncidentId: String(item?.incident_id || "").trim(),
+            incidentState: String(item?.new_state || "").trim(),
+            incidentStateChangedAt: String(item?.created_at || "").trim(),
+          });
+        }
+        const switched = await tenantSwitch?.(tenantKey);
+        if (switched === false) setPendingResidentNotificationTarget(null);
+      }
+      return;
+    }
 
     markMapCommunityFeedItemsViewed(kind === "event" ? "events" : "alerts", [item], {
       tenantKey,
@@ -462,6 +526,11 @@ export default function MapLazyResidentFeedBadgeController({
 
     const normalizedCurrentTenantKey = String(currentTenantKey || resolvedCommunityFeedTenantKey || "").trim().toLowerCase();
     if (normalizedCurrentTenantKey === tenantKey) return;
+    if (isNativeAppRuntime()) {
+      writeNativeResidentNotificationFeedHandoff({ tenantKey, kind, itemId });
+    } else {
+      writeResidentNotificationFeedHandoff({ tenantKey, kind, itemId });
+    }
     await tenantSwitch?.(tenantKey);
   }, [
     currentTenantKey,
@@ -474,12 +543,27 @@ export default function MapLazyResidentFeedBadgeController({
     setAdminDomainMenuOpen,
     setAdminToolboxOpen,
     setMobileHeaderMenuOpen,
+    openMyReports,
     setMyReportsOpen,
     setNotificationsWindowOpen,
     setOpenReportsOpen,
     setPendingResidentNotificationTarget,
     tenantSwitch,
   ]);
+
+  // Native listeners must outlive ordinary React renders. Several of the
+  // callbacks above intentionally change as map/feed state changes, so keep
+  // their latest versions in a ref instead of tearing down and recreating the
+  // iOS listeners on every render.
+  useEffect(() => {
+    nativePushCallbacksRef.current = {
+      loadMapCommunityFeed,
+      refreshResidentNotifications,
+      openNotice,
+      openNotificationsInbox,
+      openResidentNotificationTarget,
+    };
+  });
 
   const handleResidentAlertVisible = useCallback((item) => {
     const changed = markMapCommunityFeedItemsViewed("alerts", [item], { persistRemote: true });
@@ -495,17 +579,81 @@ export default function MapLazyResidentFeedBadgeController({
     }
   }, [markMapCommunityFeedItemsViewed, refreshResidentNotifications]);
 
+  const updateResidentNotificationInboxState = useCallback(async (item, action = "read") => {
+    const kind = residentFeedRuntimeSupport?.normalizeResidentNotificationKind(item?.kind);
+    const itemId = String(item?.id || "").trim();
+    const tenantKey = String(item?.tenant_key || resolvedCommunityFeedTenantKey || "").trim().toLowerCase();
+    if (!kind || !itemId || !tenantKey) return false;
+
+    if (kind === "report_update") {
+      const payload = action === "delete"
+        ? { deleted_at: new Date().toISOString() }
+        : { read_at: action === "unread" ? null : new Date().toISOString() };
+      const { error } = await supabase
+        .from("resident_incident_notifications")
+        .update(payload)
+        .eq("id", Number(itemId));
+      if (error) throw error;
+      refreshResidentNotifications();
+      return true;
+    }
+
+    const feedKind = kind === "event" ? "events" : "alerts";
+    const persist = async (nextState) => {
+      residentFeedRuntimeSupport.saveMapCommunityFeedReadState(tenantKey, communityFeedViewerKey, nextState);
+      if (communityFeedViewerUserId) {
+        await residentFeedRuntimeSupport.saveMapCommunityFeedReadStateRemote(tenantKey, communityFeedViewerUserId, nextState);
+      }
+      return nextState;
+    };
+    if (tenantKey !== resolvedCommunityFeedTenantKey) {
+      const previous = residentFeedRuntimeSupport.loadMapCommunityFeedReadState(tenantKey, communityFeedViewerKey);
+      const result = residentFeedRuntimeSupport.applyMapCommunityFeedItemInboxActionToState(previous, feedKind, item, action);
+      if (!result.changed) return false;
+      await persist(result.nextState);
+      refreshResidentNotifications();
+      return true;
+    }
+
+    // Calculate from the committed state in this render rather than trying to
+    // read a value out of React's queued state updater. The latter can run
+    // after this async handler returns, which made a fast swipe look saved
+    // locally while its durable update was skipped.
+    const result = residentFeedRuntimeSupport.applyMapCommunityFeedItemInboxActionToState(
+      mapCommunityFeedReadState,
+      feedKind,
+      item,
+      action,
+    );
+    if (!result.changed) return false;
+    setMapCommunityFeedReadState(result.nextState);
+    await persist(result.nextState);
+    refreshResidentNotifications();
+    return true;
+  }, [
+    communityFeedViewerKey,
+    communityFeedViewerUserId,
+    mapCommunityFeedReadState,
+    refreshResidentNotifications,
+    residentFeedRuntimeSupport,
+    resolvedCommunityFeedTenantKey,
+    setMapCommunityFeedReadState,
+    supabase,
+  ]);
+
   useEffect(() => {
     onResidentFeedApiChange?.({
       loadMapCommunityFeed,
       openResidentNotificationTarget,
       handleResidentAlertVisible,
       handleResidentEventVisible,
+      updateResidentNotificationInboxState,
       refreshResidentNotifications,
     });
   }, [
     handleResidentAlertVisible,
     handleResidentEventVisible,
+    updateResidentNotificationInboxState,
     loadMapCommunityFeed,
     onResidentFeedApiChange,
     openResidentNotificationTarget,
@@ -793,8 +941,22 @@ export default function MapLazyResidentFeedBadgeController({
     if (!target) return;
     const normalizedCurrentTenantKey = String(currentTenantKey || "").trim().toLowerCase();
     if (!normalizedCurrentTenantKey || normalizedCurrentTenantKey !== String(target?.tenantKey || "").trim().toLowerCase()) return;
-    if (mapCommunityFeedLoading) return;
 
+    if (target.kind === "report_update") {
+      // `currentTenantKey` changes as soon as the switch is requested, before
+      // the destination tenant's domains and report runtime are available.
+      // Opening Reports at that point binds it to half-torn-down state and
+      // makes subsequent navigation unpredictable. Wait for the destination
+      // load to have fully committed.
+      if (tenantReady === false || loading) return;
+      setPendingResidentNotificationTarget(null);
+      openMyReports?.(target.reportTarget || {});
+      return;
+    }
+
+    // A tenant key updates before the destination feed runtime has committed.
+    // Defer the tab transition until that commit, just as report updates do.
+    if (tenantReady === false || loading) return;
     const safeItemId = String(target?.itemId || "").trim();
     if (!safeItemId) {
       setPendingResidentNotificationTarget(null);
@@ -815,13 +977,16 @@ export default function MapLazyResidentFeedBadgeController({
     setPendingResidentNotificationTarget(null);
   }, [
     currentTenantKey,
+    loading,
     mapCommunityFeedLoading,
+    openMyReports,
     pendingResidentNotificationTarget,
     setAlertsWindowOpen,
     setEventsWindowOpen,
     setFocusedResidentAlertId,
     setFocusedResidentEventId,
     setPendingResidentNotificationTarget,
+    tenantReady,
   ]);
 
   useEffect(() => {

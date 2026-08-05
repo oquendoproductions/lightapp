@@ -44,19 +44,60 @@ export function buildInitialDomainTypeSelections(target, typeOptionConfigs = [])
 }
 
 export function buildDomainTypeOptionNoteTags(typeSelections = {}, typeOptionConfigs = []) {
-  return (Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [])
+  const details = (Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [])
     .map((cfg) => {
       const selectedValue = String(typeSelections?.[cfg.optionKey] || "").trim().toLowerCase();
       const selectedLabel = resolveDomainTypeSelectionLabel(selectedValue, cfg);
       if (!selectedLabel) return null;
-      return `Type Option ${String(cfg.optionLabel || "Type").trim()}: ${selectedLabel}`;
+      return {
+        key: String(cfg?.optionKey || "").trim(),
+        label: String(cfg?.optionLabel || "Type").trim(),
+        value: selectedValue,
+        valueLabel: selectedLabel,
+      };
     })
     .filter(Boolean);
+
+  // Keep a machine-readable, stable field identity with each report.  The
+  // display label is tenant-editable, so parsing labels alone can otherwise
+  // shift values into the wrong reporting field after a PCP edit.
+  const metadata = details
+    .filter((detail) => detail.key && detail.value && detail.valueLabel)
+    .map((detail, index) => ({ ...detail, position: index + 1 }));
+  const metadataTag = metadata.length
+    ? `[CR_TYPE_OPTIONS:${encodeURIComponent(JSON.stringify(metadata))}]`
+    : "";
+
+  return [
+    ...details.map((detail) => `Type Option ${detail.label}: ${detail.valueLabel}`),
+    metadataTag,
+  ].filter(Boolean);
+}
+
+export function readDomainTypeOptionMetadataFromNote(note) {
+  const raw = String(note || "");
+  const match = raw.match(/\[CR_TYPE_OPTIONS:([^\]]+)\]/i);
+  if (!match?.[1]) return [];
+  try {
+    const parsed = JSON.parse(decodeURIComponent(String(match[1] || "")));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry, index) => ({
+        key: normalizeLooseIssueToken(entry?.key || ""),
+        label: String(entry?.label || "").trim(),
+        value: String(entry?.value || "").trim(),
+        valueLabel: String(entry?.valueLabel || "").trim(),
+        position: Number.isFinite(Number(entry?.position)) ? Number(entry.position) : index + 1,
+      }))
+      .filter((entry) => entry.key && (entry.value || entry.valueLabel));
+  } catch {
+    return [];
+  }
 }
 
 export function buildDomainTypeOptionPayload(typeSelections = {}, typeOptionConfigs = []) {
   return (Array.isArray(typeOptionConfigs) ? typeOptionConfigs : [])
-    .map((cfg) => {
+    .map((cfg, index) => {
       const selectedValue = String(typeSelections?.[cfg.optionKey] || "").trim().toLowerCase();
       const selectedLabel = resolveDomainTypeSelectionLabel(selectedValue, cfg);
       if (!selectedLabel) return null;
@@ -65,7 +106,9 @@ export function buildDomainTypeOptionPayload(typeSelections = {}, typeOptionConf
         label: String(cfg.optionLabel || "").trim() || "Type",
         value: selectedValue,
         valueLabel: selectedLabel,
-        macroKey: `type_option_${normalizeLooseIssueToken(cfg.optionKey || cfg.optionLabel || "type_option")}`,
+        // The public label is tenant-controlled. A positional macro remains
+        // stable when that label changes and is intentionally short.
+        macroKey: `issue_type_${index + 1}`,
       };
     })
     .filter(Boolean);

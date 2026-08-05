@@ -10,6 +10,7 @@ export {
   inferMapUiIconRenderMode,
   isRuntimeUiIconEnabled,
   normalizeMapUiIconRenderMode,
+  preloadCriticalMapToolIcons,
   resolveRuntimeUiIconRenderMode,
   resolveRuntimeUiIconThemeMeta,
   setResolvedRuntimeUiIconMetaState,

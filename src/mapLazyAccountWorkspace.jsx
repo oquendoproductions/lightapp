@@ -1,4 +1,5 @@
 import React, { Fragment, Suspense, lazy } from "react";
+import MapTabLoadingSurface from "./mapTabLoadingSurface.jsx";
 
 const LazyAccountMenuPanel = lazy(() => import("./mapLazyAccountPanels.jsx").then((module) => ({ default: module.AccountMenuPanel })));
 const LazyFollowedLocationsModal = lazy(() => import("./mapLazyAccountPanels.jsx").then((module) => ({ default: module.FollowedLocationsController })));
@@ -256,11 +257,17 @@ export default function MapLazyAccountWorkspace({
     organizationDisplayName: contactOrganizationDisplayName,
     headerOrganizationProfile: contactHeaderOrganizationProfile,
   } = contactWorkspace;
+  const accountPageLoadingFallback = useAppShellLayout ? (
+    <MapTabLoadingSurface
+      pageTopInset={mobileTabPageTopInset}
+      pageBottomInset={mobileReportsPageBottomInset}
+    />
+  ) : null;
 
   return (
     <Fragment>
       {(accountMenuOpen && !useAppShellLayout) ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyAccountMenuPanel
             open={accountMenuOpen && !useAppShellLayout}
             session={session}
@@ -324,7 +331,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {manageOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyManageAccountModal
             open={manageOpen}
             onClose={() => {
@@ -368,7 +375,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {deleteAccountOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyDeleteAccountModal
             open={deleteAccountOpen}
             onClose={() => {
@@ -402,7 +409,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {reauthOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyReauthModal
             open={reauthOpen}
             onClose={() => {
@@ -423,7 +430,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {changePasswordOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyChangePasswordModal
             open={changePasswordOpen}
             onClose={() => {
@@ -456,7 +463,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {recoveryPasswordOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyRecoveryPasswordModal
             open={recoveryPasswordOpen}
             onClose={() => {
@@ -479,7 +486,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {followedLocationsOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyFollowedLocationsModal
             open={followedLocationsOpen}
             onClose={() => setFollowedLocationsOpen(false)}
@@ -511,7 +518,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {notificationPreferencesOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyNotificationPreferencesModal
             open={notificationPreferencesOpen}
             onClose={() => {
@@ -543,7 +550,7 @@ export default function MapLazyAccountWorkspace({
       ) : null}
 
       {contactUsOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={accountPageLoadingFallback}>
           <LazyContactUsModal
             open={contactUsOpen}
             onClose={() => setContactUsOpen(false)}

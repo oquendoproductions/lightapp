@@ -1,5 +1,16 @@
 import { resolveIncidentMarkerLookupIdShared } from "./mapIncidentDomainHelperSupport.js";
 
+export function resolveIncidentDrivenMarkerCollectionShared(domainKey, specializedMarkers, genericMarkers, mergeCollections) {
+  const generic = Array.isArray(genericMarkers) ? genericMarkers : [];
+  if (typeof mergeCollections === "function") {
+    return mergeCollections(domainKey, specializedMarkers, generic);
+  }
+  if (Array.isArray(specializedMarkers)) {
+    return generic.length ? [...specializedMarkers, ...generic] : specializedMarkers;
+  }
+  return generic;
+}
+
 export function incidentMarkerDedupKeyShared(marker, deps = {}) {
   if (!marker || typeof marker !== "object") return "";
   const domain = String(marker?.domain || "").trim().toLowerCase();

@@ -191,7 +191,7 @@ export function NoticeModal({
         {!compact && (
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ fontSize: 16, fontWeight: 900 }}>{title}</div>
-            <div style={{ fontSize: 14, opacity: 0.9, lineHeight: 1.35 }}>{message}</div>
+            <div style={{ fontSize: 14, opacity: 0.9, lineHeight: 1.35, whiteSpace: "pre-wrap" }}>{message}</div>
           </div>
         )}
       </div>
@@ -648,6 +648,12 @@ export function AuthGateModal({
   setSignupPassword,
   signupLoading,
   onCreateAccount,
+  signupConfirmationEmail,
+  signupConfirmationLoading,
+  signupConfirmationStatus,
+  onResendSignupConfirmation,
+  onUseConfirmationEmailToSignIn,
+  onUseConfirmationEmailForPasswordReset,
   signupPassword2,
   setSignupPassword2,
   signupLegalAccepted,
@@ -1077,12 +1083,36 @@ export function AuthGateModal({
           </button>
         </>
       )}
+
+      {step === "signup-confirmation" && (
+        <>
+          <div style={{ fontSize: 16, fontWeight: 950 }}>Check your email</div>
+          <div style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.45 }}>
+            If this address needs confirmation, we&apos;ve sent instructions. If you already have an account, sign in or reset your password.
+          </div>
+          {signupConfirmationStatus ? (
+            <div style={{ fontSize: 12.5, lineHeight: 1.35, fontWeight: 800, color: "var(--sl-ui-text)" }}>
+              {signupConfirmationStatus}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gap: 10 }}>
+            <button onClick={onUseConfirmationEmailToSignIn} style={{ padding: 10, borderRadius: 10, border: "none", background: "#111", color: "white", fontWeight: 900, cursor: "pointer" }}>Sign in</button>
+            <button onClick={onUseConfirmationEmailForPasswordReset} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--sl-ui-modal-btn-secondary-border)", background: "var(--sl-ui-modal-btn-secondary-bg)", color: "var(--sl-ui-modal-btn-secondary-text)", fontWeight: 900, cursor: "pointer" }}>Forgot password?</button>
+            <button onClick={onResendSignupConfirmation} disabled={signupConfirmationLoading || !signupConfirmationEmail} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--sl-ui-modal-btn-secondary-border)", background: "var(--sl-ui-modal-btn-secondary-bg)", color: "var(--sl-ui-modal-btn-secondary-text)", fontWeight: 900, cursor: signupConfirmationLoading ? "not-allowed" : "pointer", opacity: signupConfirmationLoading ? 0.7 : 1 }}>
+              {signupConfirmationLoading ? "Sending…" : "Resend confirmation email"}
+            </button>
+            <button onClick={onContinueGuest} style={{ padding: 4, border: "none", background: "transparent", color: "#1976d2", fontWeight: 800, cursor: "pointer" }}>Continue as guest</button>
+          </div>
+        </>
+      )}
+
     </ModalShell>
   );
 }
 
-export function TermsOfUseModal({ open, onClose, btnPrimary = {} }) {
+export function TermsOfUseModal({ open, onClose, btnPrimary = {}, darkMode = false }) {
   const termsUrl = "https://cityreport.io/legal/terms.html";
+  const embeddedTermsUrl = `/legal/terms.html?theme=${darkMode ? "dark" : "light"}`;
   return (
     <ModalShell
       open={open}
@@ -1105,8 +1135,8 @@ export function TermsOfUseModal({ open, onClose, btnPrimary = {} }) {
         <div style={{ overflow: "hidden", padding: "0", background: "var(--sl-ui-modal-bg)" }}>
           <iframe
             title="CityReport Terms of Service"
-            src="/legal/terms.html"
-            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "white" }}
+            src={embeddedTermsUrl}
+            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "var(--sl-ui-modal-bg)", colorScheme: darkMode ? "dark" : "light" }}
           />
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>
@@ -1135,8 +1165,9 @@ export function TermsOfUseModal({ open, onClose, btnPrimary = {} }) {
   );
 }
 
-export function PrivacyPolicyModal({ open, onClose, btnPrimary = {} }) {
+export function PrivacyPolicyModal({ open, onClose, btnPrimary = {}, darkMode = false }) {
   const privacyUrl = "https://cityreport.io/legal/privacy.html";
+  const embeddedPrivacyUrl = `/legal/privacy.html?theme=${darkMode ? "dark" : "light"}`;
   return (
     <ModalShell
       open={open}
@@ -1159,8 +1190,8 @@ export function PrivacyPolicyModal({ open, onClose, btnPrimary = {} }) {
         <div style={{ overflow: "hidden", padding: "0", background: "var(--sl-ui-modal-bg)" }}>
           <iframe
             title="CityReport Privacy Notice"
-            src="/legal/privacy.html"
-            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "white" }}
+            src={embeddedPrivacyUrl}
+            style={{ width: "100%", height: "100%", minHeight: "58vh", border: "none", background: "var(--sl-ui-modal-bg)", colorScheme: darkMode ? "dark" : "light" }}
           />
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--sl-ui-modal-border)", display: "grid", gap: 8 }}>

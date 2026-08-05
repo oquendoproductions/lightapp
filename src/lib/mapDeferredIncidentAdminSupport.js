@@ -5,9 +5,51 @@ import {
 import { uploadIncidentActionImageIfAnyShared } from "./mapDeferredReportSubmitSupport.js";
 import { uniqueLightIdsForClusterShared } from "./mapIncidentClusterSupport.js";
 import {
+  incidentActionFailureDisplayTextShared,
+  recordIncidentActionFailureShared,
+} from "./mapIncidentActionDiagnostics.js";
+import {
   adminFacingIncidentStateLabel,
   adminIncidentStateOptionsForDomain,
+  incidentStateLabel,
 } from "./incidentLifecycle.js";
+
+function residentReportUpdateStatePhrase(stateRaw) {
+  const state = String(stateRaw || "").trim().toLowerCase();
+  if (state === "fixed") return "fixed";
+  if (state === "confirmed") return "confirmed";
+  if (state === "in_progress") return "moved to in progress";
+  if (state === "archived") return "archived";
+  return `updated to ${state.replaceAll("_", " ") || "a new status"}`;
+}
+
+function residentReportUpdateSummary(incidentIdRaw, domainRaw) {
+  const incidentId = String(incidentIdRaw || "").trim();
+  const domain = String(domainRaw || "")
+    .trim()
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return `${domain || "Unknown"}\n${incidentId}`;
+}
+
+function latestIncidentReportNumber(clusterReports = [], incidentIdRaw = "") {
+  const incidentId = String(incidentIdRaw || "").trim();
+  const candidates = (Array.isArray(clusterReports) ? clusterReports : [])
+    .filter((row) => {
+      const reportNumber = String(row?.report_number || "").trim();
+      if (!reportNumber) return false;
+      if (!incidentId) return true;
+      const rowIncidentId = String(row?.incident_id || row?.light_id || "").trim();
+      return !rowIncidentId || rowIncidentId === incidentId;
+    })
+    .sort((a, b) => {
+      const bTime = Date.parse(String(b?.created_at || b?.submitted_at || "")) || 0;
+      const aTime = Date.parse(String(a?.created_at || a?.submitted_at || "")) || 0;
+      return bTime - aTime;
+    });
+  return String(candidates[0]?.report_number || "").trim();
+}
 
 export async function insertLightActionsWithFallbackShared(args = {}) {
   const {
@@ -165,10 +207,17 @@ export async function markIncidentFixedShared(args = {}) {
   });
 
   if (insertResult.error) {
+    const diagnostic = recordIncidentActionFailureShared({
+      stage: "fix_history_insert",
+      tenantKey,
+      incidentId: ids.join(","),
+      action: "fix",
+      error: insertResult.error,
+    });
     return {
       ok: false,
       error: insertResult.error,
-      errorMessage: "Couldn’t record fix history.",
+      errorMessage: `Couldn’t record fix history. ${incidentActionFailureDisplayTextShared(diagnostic)}. Reference: ${diagnostic.reference}`,
       actorColsSupported: insertResult.actorColsSupported,
     };
   }
@@ -187,11 +236,18 @@ export async function markIncidentFixedShared(args = {}) {
       .from("fixed_lights")
       .upsert(ids.map((id) => ({ tenant_key: tenantKey, light_id: id, fixed_at: fixIso })));
 
-    if (fixErr) {
+  if (fixErr) {
+      const diagnostic = recordIncidentActionFailureShared({
+        stage: "fixed_state_upsert",
+        tenantKey,
+        incidentId: ids.join(","),
+        action: "fix",
+        error: fixErr,
+      });
       return {
         ok: false,
         error: fixErr,
-        errorMessage: "Couldn’t update fixed state.",
+        errorMessage: `Couldn’t update fixed state. ${incidentActionFailureDisplayTextShared(diagnostic)}. Reference: ${diagnostic.reference}`,
         actorColsSupported: insertResult.actorColsSupported,
       };
     }
@@ -236,6 +292,22 @@ export async function reopenIncidentShared(args = {}) {
     actorColsSupported,
   });
 
+  if (insertResult.error) {
+    const diagnostic = recordIncidentActionFailureShared({
+      stage: "reopen_history_insert",
+      tenantKey,
+      incidentId: ids.join(","),
+      action: "reopen",
+      error: insertResult.error,
+    });
+    return {
+      ok: false,
+      error: insertResult.error,
+      errorMessage: `Couldn’t record reopen history. ${incidentActionFailureDisplayTextShared(diagnostic)}. Reference: ${diagnostic.reference}`,
+      actorColsSupported: insertResult.actorColsSupported,
+    };
+  }
+
   const { error: reErr } = await supabase
     .from("fixed_lights")
     .delete()
@@ -243,12 +315,18 @@ export async function reopenIncidentShared(args = {}) {
     .in("light_id", ids);
 
   if (reErr) {
+    const diagnostic = recordIncidentActionFailureShared({
+      stage: "fixed_state_delete",
+      tenantKey,
+      incidentId: ids.join(","),
+      action: "reopen",
+      error: reErr,
+    });
     return {
       ok: false,
       error: reErr,
-      errorMessage: "Couldn’t re-open this light.",
+      errorMessage: `Couldn’t re-open this light. ${incidentActionFailureDisplayTextShared(diagnostic)}. Reference: ${diagnostic.reference}`,
       actorColsSupported: insertResult.actorColsSupported,
-      logError: insertResult.error || null,
     };
   }
 
@@ -272,6 +350,8 @@ export async function emitIncidentStateChangeShared(args = {}) {
     noteText = "",
     incidentLabel = "",
     previousState = "",
+    imageUpload = null,
+    reportNumber = "",
   } = args;
   const changedAt = new Date().toISOString();
   const { error } = await supabase.rpc("emit_incident_state_change_tenant", {
@@ -286,6 +366,11 @@ export async function emitIncidentStateChangeShared(args = {}) {
       incident_label: incidentLabel || null,
       previous_state: previousState || null,
       source: "map_admin_status_update",
+      image_url: imageUpload?.publicUrl || null,
+      image_path: imageUpload?.path || null,
+      image_mime_type: imageUpload?.contentType || null,
+      image_file_name: imageUpload?.fileName || null,
+      captured_at: imageUpload?.capturedAt || null,
     },
   });
   if (error) {
@@ -294,6 +379,30 @@ export async function emitIncidentStateChangeShared(args = {}) {
       error,
       errorMessage: String(error?.message || "Could not update incident state."),
     };
+  }
+  // Reporter status notifications are intentionally best-effort. A state
+  // change must never be rolled back because an individual device cannot be
+  // reached by APNs.
+  try {
+    await supabase.functions.invoke("send-resident-notification", {
+      body: {
+        tenant_key: tenantKey,
+        kind: "report_update",
+        item: {
+          tenant_key: tenantKey,
+          incident_id: incidentId,
+          domain: domainKey,
+          new_state: nextState,
+          report_number: String(reportNumber || "").trim() || null,
+          state_label: incidentStateLabel(nextState),
+          title: `Your reported issue has been ${residentReportUpdateStatePhrase(nextState)}`,
+          summary: residentReportUpdateSummary(incidentId, domainKey),
+          delivery_channels: ["push"],
+        },
+      },
+    });
+  } catch (pushError) {
+    console.warn("[reporter status push]", pushError?.message || pushError);
   }
   return {
     ok: true,
@@ -655,6 +764,7 @@ export async function reopenLightForMapShared(context = {}, deps = {}) {
     tenantKey = "",
     light,
     noteText = "",
+    options = {},
     actor = {},
     actorColsSupportedRef,
     domainForIncidentId,
@@ -674,6 +784,11 @@ export async function reopenLightForMapShared(context = {}, deps = {}) {
     actorName: actor.name,
     actorEmail: actor.email,
     actorPhone: actor.phone,
+    imageUrl: options?.imageUrl || "",
+    imagePath: options?.imagePath || "",
+    imageMimeType: options?.imageMimeType || "",
+    imageFileName: options?.imageFileName || "",
+    capturedAt: options?.capturedAt || "",
   });
   const mutation = await reopenIncidentShared({
     supabase,
@@ -814,7 +929,17 @@ export function buildIncidentStatusDialogCompatOptionsShared(domainKeyRaw, conte
     return helper.buildStatusDialogCompatOptions(context, { domainKey: normalizedDomainKey, helper }) ?? null;
   }
   if (String(helper?.buildStatusDialogCompatMode || "").trim() === "lookup_official_marker") {
-    const lookupId = lookupIncidentIdForDomain(normalizedDomainKey, context?.incidentId);
+    const markerIncidentId = String(
+      context?.marker?.incident_id
+      || context?.marker?.pothole_id
+      || context?.domainRecord?.incident_id
+      || context?.domainRecord?.pothole_id
+      || ""
+    ).trim();
+    const lookupId = lookupIncidentIdForDomain(
+      normalizedDomainKey,
+      markerIncidentId || context?.incidentId
+    );
     if (!lookupId) return false;
     const lat = Number(context?.marker?.lat ?? context?.domainRecord?.lat ?? 0);
     const lng = Number(context?.marker?.lng ?? context?.domainRecord?.lng ?? 0);
@@ -922,7 +1047,7 @@ export async function markIncidentsFixedByIdsShared(context = {}) {
   }
 }
 
-export async function submitPendingIncidentActionShared(context = {}, deps = {}) {
+export async function submitPendingIncidentActionShared(context = {}) {
   const {
     supabase,
     tenantKey = "",
@@ -960,6 +1085,7 @@ export async function submitPendingIncidentActionShared(context = {}, deps = {})
   const actionType = normalizedNextState === "reported" && normalizedCurrentState === "fixed"
     ? "reopen"
     : (normalizedNextState === "fixed" ? "fix" : "status");
+  const persistenceIncidentId = String(compatTarget?.lightId || normalizedIncidentId).trim();
 
   if (!normalizedIncidentId || !normalizedDomainKey || !normalizedNextState) return false;
   if (normalizedNextState === normalizedCurrentState) return false;
@@ -998,62 +1124,59 @@ export async function submitPendingIncidentActionShared(context = {}, deps = {})
     }
 
     let saved = false;
+    let imageUpload = null;
+    if (actionImageFile) {
+      const incidentIdForUpload = persistenceIncidentId;
+      imageUpload = typeof uploadIncidentActionImageIfAny === "function"
+        ? await uploadIncidentActionImageIfAny(actionImageFile, incidentIdForUpload, actionType)
+        : await uploadIncidentActionImageIfAnyShared(actionImageFile, incidentIdForUpload, actionType, {
+            buildNativeSafeImageUploadPayload,
+            extFromFileName,
+            activeTenantKey,
+            normalizeDomainKeyOrSlug,
+            domainForIncidentId,
+            supabase,
+          });
+    }
+    const imageOptions = {
+      imageUrl: imageUpload?.publicUrl || "",
+      imagePath: imageUpload?.path || "",
+      imageMimeType: imageUpload?.contentType || "",
+      imageFileName: imageUpload?.fileName || "",
+      capturedAt: imageUpload?.capturedAt || "",
+    };
 
     if (normalizedNextState === "fixed" || (normalizedNextState === "reported" && normalizedCurrentState === "fixed")) {
-      let imageUpload = null;
-      if (actionImageFile) {
-        const incidentIdForUpload = compatTarget?.lightId || normalizedIncidentId;
-        imageUpload = typeof uploadIncidentActionImageIfAny === "function"
-          ? await uploadIncidentActionImageIfAny(actionImageFile, incidentIdForUpload, actionType)
-          : await uploadIncidentActionImageIfAnyShared(actionImageFile, incidentIdForUpload, actionType, {
-              buildNativeSafeImageUploadPayload,
-              extFromFileName,
-              activeTenantKey,
-              normalizeDomainKeyOrSlug,
-              domainForIncidentId,
-              supabase,
-            });
-      }
-
       if (compatTarget) {
         if (normalizedNextState === "reported" && normalizedCurrentState === "fixed") {
-          saved = await reopenLight(compatTarget, noteText);
+          saved = await reopenLight(compatTarget, noteText, imageOptions);
         } else {
-          saved = await markFixed(compatTarget, noteText, {
-            imageUrl: imageUpload?.publicUrl || "",
-            imagePath: imageUpload?.path || "",
-            imageMimeType: imageUpload?.contentType || "",
-            imageFileName: imageUpload?.fileName || "",
-            capturedAt: imageUpload?.capturedAt || "",
-          });
+          saved = await markFixed(compatTarget, noteText, imageOptions);
         }
       } else {
         const clusterLight = pendingIncidentIsOfficialTarget
           ? { lightId: normalizedIncidentId, isOfficial: true }
           : { lightId: normalizedIncidentId, isOfficial: false, reports: clusterReports };
         if (normalizedNextState === "reported" && normalizedCurrentState === "fixed") {
-          saved = await reopenLight(clusterLight, noteText);
+          saved = await reopenLight(clusterLight, noteText, imageOptions);
         } else {
-          saved = await markFixed(clusterLight, noteText, {
-            imageUrl: imageUpload?.publicUrl || "",
-            imagePath: imageUpload?.path || "",
-            imageMimeType: imageUpload?.contentType || "",
-            imageFileName: imageUpload?.fileName || "",
-            capturedAt: imageUpload?.capturedAt || "",
-          });
+          saved = await markFixed(clusterLight, noteText, imageOptions);
         }
       }
     } else {
+      const reportNumber = latestIncidentReportNumber(clusterReports, persistenceIncidentId);
       const mutation = await emitIncidentStateChangeShared({
         supabase,
         tenantKey,
-        incidentId: normalizedIncidentId,
+        incidentId: persistenceIncidentId,
         domainKey: normalizedDomainKey,
         nextState: normalizedNextState,
         changedBy: sessionUserId || null,
         noteText,
         incidentLabel: pendingIncidentLabel || null,
         previousState: normalizedCurrentState || null,
+        imageUpload,
+        reportNumber,
       });
       if (!mutation?.ok) {
         setPendingIncidentStatusError(String(mutation?.errorMessage || "Could not update incident state."));
@@ -1061,12 +1184,13 @@ export async function submitPendingIncidentActionShared(context = {}, deps = {})
       }
       const { changedAt } = mutation;
       setIncidentStateByKey((prev) => {
-        const key = incidentSnapshotKey(normalizedDomainKey, normalizedIncidentId);
-        if (!key) return prev;
-        return {
-          ...(prev || {}),
-          [key]: { state: normalizedNextState, last_changed_at: changedAt },
-        };
+        const next = { ...(prev || {}) };
+        const snapshot = { state: normalizedNextState, last_changed_at: changedAt };
+        const canonicalKey = incidentSnapshotKey(normalizedDomainKey, persistenceIncidentId);
+        const visibleKey = incidentSnapshotKey(normalizedDomainKey, normalizedIncidentId);
+        if (canonicalKey) next[canonicalKey] = snapshot;
+        if (visibleKey) next[visibleKey] = snapshot;
+        return next;
       });
       openConfiguredNotice("incident_state_updated", {
         icon: "✅",

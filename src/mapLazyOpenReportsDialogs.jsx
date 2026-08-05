@@ -13,6 +13,7 @@ import {
 } from "./lib/mapPopupDetailSupport.jsx";
 import { readImageUrlFromNote } from "./lib/mapReportParsingSupport.js";
 import { formatTs } from "./lib/mapTimestampFormatSupport.js";
+import { adminFacingIncidentStateLabel } from "./lib/incidentLifecycle.js";
 
 const btnPrimaryDark = {
   padding: 10,
@@ -353,6 +354,9 @@ export function OpenReportsSubmittedReportsModal({
   modalTitleValue = "",
   showCommunityRepairDiagnostics = false,
   repairSnapshot = null,
+  stateEvents = [],
+  stateEventsLoading = false,
+  stateEventsError = "",
   onClose,
   onReporterDetails,
   incidentRepairSummaryText,
@@ -543,6 +547,102 @@ export function OpenReportsSubmittedReportsModal({
                 )}
               </div>
             )}
+
+            {(stateEventsLoading || stateEventsError || stateEvents.length > 0) && (
+              <div
+                style={{
+                  color: "var(--sl-ui-text)",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  lineHeight: 1.3,
+                }}
+              >
+                Incident History
+              </div>
+            )}
+
+            {stateEventsLoading && (
+              <div style={{ opacity: 0.8, lineHeight: 1.35 }}>Loading incident history…</div>
+            )}
+
+            {!!stateEventsError && !stateEventsLoading && (
+              <div style={{ opacity: 0.8, lineHeight: 1.35 }}>
+                Incident history could not be loaded.
+              </div>
+            )}
+
+            {!stateEventsLoading && stateEvents.map((event) => {
+              const isRepairConfirmation = event.kind === "repair_confirmation";
+              const actorName = String(event.changedByName || "").trim()
+                || String(event.changedByEmail || "").trim()
+                || (event.changedBy ? `User ${String(event.changedBy).slice(0, 8)}` : "Guest user");
+              return (
+              <div
+                key={`modal-state-event-${row.incident_id}-${event.eventId || event.changedAt}`}
+                style={{
+                  border: "1px solid var(--sl-ui-open-reports-item-border)",
+                  borderRadius: 8,
+                  padding: "9px 10px",
+                  display: "grid",
+                  gap: 6,
+                  background: isRepairConfirmation ? "rgba(46,125,50,0.14)" : "rgba(31,93,162,0.12)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 900 }}>{isRepairConfirmation ? "Marked fixed" : "State updated"}</div>
+                  <div style={{ opacity: 0.8 }}>
+                    {event.changedAt ? formatTs(Date.parse(event.changedAt)) : ""}
+                  </div>
+                </div>
+                {isRepairConfirmation ? (
+                  <>
+                    <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                      <b>Submitted by:</b> {actorName}
+                    </div>
+                    <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                      Repair confirmation recorded.
+                    </div>
+                  </>
+                ) : null}
+                {!isRepairConfirmation && !!event.previousState && (
+                  <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Previous State:</b> {adminFacingIncidentStateLabel(event.previousState)}
+                  </div>
+                )}
+                {!isRepairConfirmation && (
+                  <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>New State:</b> {adminFacingIncidentStateLabel(event.newState)}
+                  </div>
+                )}
+                {!!event.note && (
+                  <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                    <b>Note:</b> {event.note}
+                  </div>
+                )}
+                <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
+                  <b>Image:</b>{" "}
+                  {event.imageUrl ? (
+                    <a
+                      href={event.imageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--sl-ui-text)",
+                        textDecoration: "underline",
+                        textUnderlineOffset: "2px",
+                        fontWeight: 500,
+                      }}
+                      title="View attached image"
+                    >
+                      View Image
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </div>
+              </div>
+              );
+            })}
 
             <div
               style={{
@@ -1213,7 +1313,6 @@ export function OpenReportsIncidentStateUpdateModal({
   note = "",
   onNoteChange,
   notePlaceholder = "",
-  showClosurePhoto = false,
   submitting = false,
   imageFile = null,
   imagePreviewUrl = "",
@@ -1279,62 +1378,75 @@ export function OpenReportsIncidentStateUpdateModal({
             }}
           />
         </label>
-        {showClosurePhoto ? (
-          <label style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Closure photo (optional)</div>
-            <input
-              type="file"
-              accept="image/*"
-              disabled={submitting}
-              onChange={(e) => {
-                const file = e.target.files?.[0] || null;
-                onImageFileChange?.(file);
-              }}
-              style={{
-                width: "100%",
-                padding: 8,
-                borderRadius: 10,
-                border: "1px solid var(--sl-ui-modal-input-border)",
-                background: "var(--sl-ui-modal-input-bg)",
-                color: "var(--sl-ui-text)",
-              }}
-            />
-            {imageFile ? (
-              <div style={{ display: "grid", gap: 6 }}>
-                {imagePreviewUrl ? (
-                  <img
-                    src={imagePreviewUrl}
-                    alt="Closure photo preview"
-                    style={{
-                      width: "100%",
-                      maxHeight: 112,
-                      objectFit: "cover",
-                      borderRadius: 10,
-                      border: "1px solid var(--sl-ui-modal-border)",
-                    }}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => onRemoveImage?.()}
-                  disabled={submitting}
+        <label style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>Photo (optional)</div>
+          <input
+            type="file"
+            accept="image/*"
+            disabled={submitting}
+            onChange={(e) => {
+              const file = e.target.files?.[0] || null;
+              onImageFileChange?.(file);
+            }}
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 10,
+              border: "1px solid var(--sl-ui-modal-input-border)",
+              background: "var(--sl-ui-modal-input-bg)",
+              color: "var(--sl-ui-text)",
+            }}
+          />
+          {imageFile ? (
+            <div style={{ display: "grid", gap: 6, justifyItems: "start" }}>
+              {imagePreviewUrl ? (
+                <div
                   style={{
-                    padding: 12,
-                    borderRadius: 12,
-                    border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                    background: "var(--sl-ui-modal-btn-secondary-bg)",
-                    color: "var(--sl-ui-modal-btn-secondary-text)",
-                    fontWeight: 900,
-                    cursor: submitting ? "not-allowed" : "pointer",
-                    opacity: submitting ? 0.7 : 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "min(220px, 100%)",
+                    maxHeight: 112,
+                    overflow: "hidden",
+                    borderRadius: 10,
+                    border: "1px solid var(--sl-ui-modal-border)",
+                    background: "var(--sl-ui-modal-input-bg)",
                   }}
                 >
-                  Remove photo
-                </button>
-              </div>
-            ) : null}
-          </label>
-        ) : null}
+                  <img
+                    src={imagePreviewUrl}
+                    alt="State update photo preview"
+                    style={{
+                      display: "block",
+                      width: "auto",
+                      height: "auto",
+                      maxWidth: "100%",
+                      maxHeight: 112,
+                      objectFit: "contain",
+                    }}
+                  />
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onRemoveImage?.()}
+                disabled={submitting}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                  fontWeight: 900,
+                  cursor: submitting ? "not-allowed" : "pointer",
+                  opacity: submitting ? 0.7 : 1,
+                }}
+              >
+                Remove photo
+              </button>
+            </div>
+          ) : null}
+        </label>
         <label style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 12, fontWeight: 800, opacity: 0.82 }}>PIN</div>
           <input

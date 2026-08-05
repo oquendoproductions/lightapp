@@ -14,6 +14,7 @@ describe("municipality app shell routing", () => {
   it("normalizes hub-prefixed routes and keeps hub reports on the reports page", () => {
     expect(normalizeMunicipalityAppPath("/hub/report", "ashtabulacity")).toBe("/report");
     expect(normalizeMunicipalityAppPath("/hub/reports", "ashtabulacity")).toBe("/reports");
+    expect(normalizeMunicipalityAppPath("/hub/locations", "ashtabulacity")).toBe("/locations");
     expect(normalizeMunicipalityAppPath("/reports?tab=open", "ashtabulacity")).toBe("/reports");
   });
 
@@ -28,5 +29,6 @@ describe("municipality app shell routing", () => {
 
   it("builds root-relative hrefs for municipality subdomains", () => {
     expect(buildMunicipalityAppHref("/hub/report", "ashtabulacity", "/alerts")).toBe("/hub/alerts");
+    expect(buildMunicipalityAppHref("/hub", "ashtabulacity", "/locations")).toBe("/hub/locations");
   });
 });

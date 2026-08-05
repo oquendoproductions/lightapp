@@ -34,7 +34,14 @@ export async function fetchIncidentRepairProgressSnapshot({
     if (!key) continue;
     progressByKey[key] = {
       issueScore: Number(row?.issue_score || 0),
-      repairProgress: Math.max(0, Math.min(incidentRepairTarget, Number(row?.repair_progress || 0))),
+      repairTarget: Math.max(1, Number(row?.repair_confirmation_threshold || incidentRepairTarget || INCIDENT_REPAIR_TARGET)),
+      repairProgress: Math.max(
+        0,
+        Math.min(
+          Math.max(1, Number(row?.repair_confirmation_threshold || incidentRepairTarget || INCIDENT_REPAIR_TARGET)),
+          Number(row?.repair_progress || 0)
+        )
+      ),
       lastIssueAt: row?.last_issue_at || null,
       lastRepairAt: row?.last_repair_at || null,
       lastMovementAt: row?.last_movement_at || null,

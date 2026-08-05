@@ -42,7 +42,7 @@ const TEST_HELPERS = {
   street_signs: {
     prefix: "street_signs",
     canonicalIncidentPrefix: "street_signs",
-    canonicalIncidentIdMode: "lookup_or_light_id",
+    canonicalIncidentIdMode: "prefix_lookup",
     reportsLookupField: "incident_key",
     snapshotAliases: ["street_signs"],
     reportsCollectionName: "street_sign_reports",
@@ -131,6 +131,36 @@ describe("mapIncidentDomainHelperCoreSupport", () => {
         testDeps,
       )
     );
+  });
+
+  it("canonicalizes street sign incident ids while preserving raw lookup ids", () => {
+    expect(normalizeIncidentDrivenLookupIdCore("street_signs", "street_signs:1062", testDeps)).toBe(
+      normalizeIncidentDrivenLookupIdFull("street_signs", "street_signs:1062", testDeps)
+    );
+    expect(normalizeIncidentDrivenLookupIdCore("street_signs", "street_signs:1062", testDeps)).toBe("1062");
+    expect(
+      canonicalIncidentDrivenIncidentIdCore(
+        "street_signs",
+        { incident_id: "street_signs:1062" },
+        "",
+        testDeps,
+      )
+    ).toBe(
+      canonicalIncidentDrivenIncidentIdFull(
+        "street_signs",
+        { incident_id: "street_signs:1062" },
+        "",
+        testDeps,
+      )
+    );
+    expect(
+      canonicalIncidentDrivenIncidentIdCore(
+        "street_signs",
+        { incident_id: "street_signs:1062" },
+        "",
+        testDeps,
+      )
+    ).toBe("street_signs:1062");
   });
 
   it("matches lookup resolution and snapshot candidate behavior", () => {

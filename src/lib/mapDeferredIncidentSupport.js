@@ -43,6 +43,7 @@ export function buildSharedIncidentSubmitEmailNoticeArgs({
   domainLabel = "",
   issueTypeLabel = "",
   issueTypeFallback = "",
+  incidentId = "",
   reportNumber = "",
   notes = "",
   lat = Number.NaN,
@@ -59,6 +60,7 @@ export function buildSharedIncidentSubmitEmailNoticeArgs({
     domainLabel: String(domainLabel || "").trim(),
     issueTypeLabel: String(issueTypeLabel || "").trim() || String(issueTypeFallback || "").trim(),
     typeOptions: [],
+    incidentId: String(incidentId || "").trim(),
     reportNumber,
     notes,
     lat,
@@ -79,12 +81,25 @@ export function buildSharedIncidentLocationCacheEntryPayload({
   nearestLandmark = "",
   locationLabel = "",
 } = {}) {
+  const sanitizedAddress = isUsableAddressText(nearestAddress)
+    ? String(nearestAddress || "").trim()
+    : "";
+  const sanitizedCrossStreet = isPlaceholderLocationText(nearestCrossStreet)
+    ? ""
+    : String(nearestCrossStreet || "").trim();
+  const sanitizedIntersection = isPlaceholderLocationText(nearestIntersection)
+    ? ""
+    : String(nearestIntersection || "").trim();
+  const sanitizedLandmark = isPlaceholderLocationText(nearestLandmark)
+    ? ""
+    : String(nearestLandmark || "").trim();
+  const sanitizedLocationLabel = String(locationLabel || "").trim() || sanitizedAddress;
   return {
-    nearestAddress: String(nearestAddress || "").trim(),
-    nearestCrossStreet: String(nearestCrossStreet || "").trim(),
-    nearestIntersection: String(nearestIntersection || "").trim(),
-    nearestLandmark: String(nearestLandmark || "").trim(),
-    locationLabel: String(locationLabel || "").trim(),
+    nearestAddress: sanitizedAddress,
+    nearestCrossStreet: sanitizedCrossStreet,
+    nearestIntersection: sanitizedIntersection,
+    nearestLandmark: sanitizedLandmark,
+    locationLabel: sanitizedLocationLabel,
   };
 }
 
@@ -181,7 +196,7 @@ export async function resolveBufferedEmailLocationFieldsShared({
   closestCrossStreet = "",
   closestIntersection = "",
   enrichmentPromise = null,
-  waitMs = 5000,
+  waitMs = 15000,
 } = {}, {
   setTimeoutImpl = null,
 } = {}) {
@@ -400,6 +415,7 @@ export async function sendIncidentDomainEmailNoticeShared({
   domainLabel,
   issueTypeLabel,
   typeOptions = [],
+  incidentId,
   reportNumber,
   notes,
   lat,
@@ -447,6 +463,7 @@ export async function sendIncidentDomainEmailNoticeShared({
     ),
     issueType: String(issueTypeLabel || "").trim() || "",
     typeOptions: Array.isArray(typeOptions) ? typeOptions : [],
+    incidentId: String(incidentId || "").trim(),
     reportNumber: String(reportNumber || "").trim(),
     notes: String(notes || "").trim(),
     location: {
@@ -475,6 +492,7 @@ export async function dispatchDomainSubmitEmailNoticeShared({
   domainLabel = "",
   issueTypeLabel = "",
   typeOptions = [],
+  incidentId = "",
   reportNumber = "",
   notes = "",
   lat = Number.NaN,
@@ -490,7 +508,7 @@ export async function dispatchDomainSubmitEmailNoticeShared({
   normalizeDomainKeyOrSlug = null,
   sendIncidentDomainEmailNotice = null,
   resolveReportDomainLabel = null,
-  emailLocationEnrichmentWaitMs = 5000,
+  emailLocationEnrichmentWaitMs = 15000,
   setTimeoutImpl = null,
   tenantKey = "",
   functionUrlBase = "",
@@ -523,6 +541,7 @@ export async function dispatchDomainSubmitEmailNoticeShared({
       ).trim() || "Incident",
       issueTypeLabel,
       typeOptions: Array.isArray(typeOptions) ? typeOptions : [],
+      incidentId,
       reportNumber,
       notes,
       lat,
@@ -546,6 +565,7 @@ export async function dispatchDomainSubmitEmailNoticeShared({
     ).trim() || "Incident",
     issueTypeLabel,
     typeOptions: Array.isArray(typeOptions) ? typeOptions : [],
+    incidentId,
     reportNumber,
     notes,
     lat,

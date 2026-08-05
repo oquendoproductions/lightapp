@@ -1,4 +1,5 @@
 import React, { Fragment, Suspense, lazy, useMemo } from "react";
+import MapTabLoadingSurface from "./mapTabLoadingSurface.jsx";
 import {
   adminFacingIncidentStateLabel,
   adminIncidentStateOptionsForDomain,
@@ -27,11 +28,21 @@ const LazyModerationFlagsModal = lazy(() => import("./mapLazyReportInspectors.js
 const LazyCommunityFeedEditorModal = lazy(() => import("./mapLazyCommunityFeedEditor.jsx").then((module) => ({ default: module.CommunityFeedEditorController })));
 
 function OpenReportsModal(props) {
-  const { open } = props;
-  if (!open) return null;
+  const {
+    preferAppShellBehavior,
+    pageTopInset,
+    pageBottomInset,
+  } = props;
 
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={preferAppShellBehavior ? (
+        <MapTabLoadingSurface
+          pageTopInset={pageTopInset}
+          pageBottomInset={pageBottomInset}
+        />
+      ) : null}
+    >
       <LazyOpenReportsModalImpl {...props} />
     </Suspense>
   );
@@ -126,6 +137,7 @@ export default function MapLazySecondaryWorkspace({
     eventsSessionNewKeys,
     focusedResidentEventId,
     handleResidentEventVisible,
+    updateResidentNotificationInboxState,
     sessionUserId,
   } = residentFeedWorkspace;
   const {
@@ -314,6 +326,12 @@ export default function MapLazySecondaryWorkspace({
     incidentIssueStateByDomain,
     configuredIncidentReportRowsByDomain,
   };
+  const tabLoadingFallback = useAppShellLayout ? (
+    <MapTabLoadingSurface
+      pageTopInset={mobileTabPageTopInset}
+      pageBottomInset={mobileReportsPageBottomInset}
+    />
+  ) : null;
 
   return (
     <Fragment>
@@ -402,7 +420,6 @@ export default function MapLazySecondaryWorkspace({
                 : pendingIncidentNextState === "confirmed"
                   ? "What confirms this incident?"
                   : "Optional notes for this state change"}
-            showClosurePhoto={pendingIncidentNextState === "fixed"}
             submitting={markFixedSubmitting}
             imageFile={markFixedImageFile}
             imagePreviewUrl={markFixedImagePreviewUrl}
@@ -435,7 +452,12 @@ export default function MapLazySecondaryWorkspace({
         </Suspense>
       ) : null}
 
-      <Suspense fallback={null}>
+      {(notificationsWindowOpen || alertsWindowOpen || eventsWindowOpen)
+        && !residentFeedRuntimeReady
+        ? tabLoadingFallback
+        : null}
+
+      <Suspense fallback={tabLoadingFallback}>
         {notificationsWindowOpen && residentFeedRuntimeReady ? (
           <LazyNotificationsWindow
             enabled={showMapNotificationsIcon}
@@ -450,6 +472,7 @@ export default function MapLazySecondaryWorkspace({
             onOpenNotification={(item) => {
               void openResidentNotificationTarget(item);
             }}
+            onUpdateNotificationState={updateResidentNotificationInboxState}
             supabase={supabase}
             authReady={authReady}
             tenantReady={tenantReady}
@@ -536,6 +559,10 @@ export default function MapLazySecondaryWorkspace({
         </Suspense>
       ) : null}
 
+      {/* Keep both controllers mounted while residents switch bottom tabs.
+          Their launch options already reset a new marker/notification target;
+          remounting here also threw away the report data runtime whenever the
+          user left Reports for Notifications, Alerts, or Events. */}
       <OpenReportsModal {...myReportsWorkspace} />
       <OpenReportsModal {...openReportsWorkspace} />
     </Fragment>

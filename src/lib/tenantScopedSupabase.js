@@ -63,13 +63,16 @@ export function createTenantScopedAuthedClient(tenantKey, accessToken) {
   const client = createClient(
     credentials.supabaseUrl,
     credentials.supabaseAnonKey,
-    buildTenantClientConfig(
-      {
-        "x-tenant-key": normalizedTenantKey,
-        Authorization: `Bearer ${normalizedAccessToken}`,
-      },
-      `sb-tenant-authed-${normalizedTenantKey}`
-    )
+    {
+      ...buildTenantClientConfig(
+        { "x-tenant-key": normalizedTenantKey },
+        `sb-tenant-authed-${normalizedTenantKey}`
+      ),
+      // A global Authorization header is overwritten by Supabase's fetch
+      // wrapper when this isolated client has no persisted session. Supplying
+      // accessToken keeps the real signed-in identity on every request.
+      accessToken: async () => normalizedAccessToken,
+    }
   );
   tenantAuthedClientCache.set(cacheKey, client);
   return client;

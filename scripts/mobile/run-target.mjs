@@ -151,6 +151,8 @@ function getAuthCallbackParts(authRedirectUrl) {
 }
 
 function buildEnv(preset, target, platform) {
+  const iosVariant = String(process.env.CITYREPORT_IOS_VARIANT || "").trim().toLowerCase();
+  const isMapIosReleaseBuild = target === "map" && platform === "ios" && iosVariant === "release";
   return {
     ...process.env,
     CITYREPORT_APP_TARGET: target,
@@ -158,6 +160,11 @@ function buildEnv(preset, target, platform) {
     CITYREPORT_APP_NAME: preset.appName,
     VITE_NATIVE_APP_SCOPE: preset.appScope,
     VITE_NATIVE_AUTH_REDIRECT_URL: preset.authRedirectUrl,
+    ...(isMapIosReleaseBuild
+      ? {
+          VITE_NATIVE_TENANT_EXCLUDELIST: "testcity1",
+        }
+      : {}),
   };
 }
 
@@ -303,23 +310,12 @@ function updateAndroidProject(preset) {
   ensureAndroidMainActivityPackage(preset.appId);
 }
 
-function updateIosProject(preset) {
-  const callback = getAuthCallbackParts(preset.authRedirectUrl);
-
-  let projectFile = readText(IOS_PROJECT_PATH);
-  projectFile = replaceRequired(
-    projectFile,
-    /PRODUCT_BUNDLE_IDENTIFIER = [^;]+;/g,
-    `PRODUCT_BUNDLE_IDENTIFIER = ${preset.appId};`,
-    "iOS bundle identifier"
-  );
-  writeText(IOS_PROJECT_PATH, projectFile);
-
+function updateIosProject() {
   let infoPlist = readText(IOS_INFO_PLIST_PATH);
   infoPlist = replaceRequired(
     infoPlist,
     /<key>CFBundleDisplayName<\/key>\s*<string>[^<]*<\/string>/,
-    `<key>CFBundleDisplayName</key>\n        <string>${preset.appName}</string>`,
+    `<key>CFBundleDisplayName</key>\n        <string>$(PRODUCT_DISPLAY_NAME)</string>`,
     "iOS display name"
   );
   const urlTypesBlock = `
@@ -327,10 +323,10 @@ function updateIosProject(preset) {
 \t<array>
 \t\t<dict>
 \t\t\t<key>CFBundleURLName</key>
-\t\t\t<string>${preset.appId}.auth</string>
+\t\t\t<string>$(PRODUCT_BUNDLE_IDENTIFIER).auth</string>
 \t\t\t<key>CFBundleURLSchemes</key>
 \t\t\t<array>
-\t\t\t\t<string>${callback.scheme}</string>
+\t\t\t\t<string>$(CITYREPORT_AUTH_URL_SCHEME)</string>
 \t\t\t</array>
 \t\t</dict>
 \t</array>`;

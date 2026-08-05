@@ -9,7 +9,7 @@ const corsHeaders = {
     "authorization, apikey, content-type, x-client-info, x-supabase-client-platform, x-supabase-api-version, x-tenant-key",
 };
 
-type ResidentNotificationKind = "alert" | "event";
+type ResidentNotificationKind = "alert" | "event" | "report_update";
 
 type ResidentNotificationItem = {
   id?: number | string | null;
@@ -28,6 +28,11 @@ type ResidentNotificationItem = {
   published_at?: string | null;
   all_day?: boolean | null;
   status?: string | null;
+  domain?: string | null;
+  incident_id?: string | null;
+  new_state?: string | null;
+  report_number?: string | null;
+  state_label?: string | null;
   delivery_channels?: string[] | null;
 };
 
@@ -40,12 +45,14 @@ type ResidentProfileRow = {
 type TopicRow = {
   topic_key: string;
   label?: string | null;
+  default_enabled?: boolean | null;
 };
 
 type ResidentPreferenceRow = {
   user_id: string;
   in_app_enabled?: boolean | null;
   email_enabled?: boolean | null;
+  web_push_enabled?: boolean | null;
 };
 
 type NativePushTokenRow = {
@@ -53,6 +60,18 @@ type NativePushTokenRow = {
   token: string;
   platform?: string | null;
 };
+
+function dedupeUserIds(values: string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const value of values || []) {
+    const normalized = trimOrEmpty(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    next.push(normalized);
+  }
+  return next;
+}
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -228,6 +247,31 @@ function formatPushBody(item: ResidentNotificationItem) {
   return "Open CityReport to view details.";
 }
 
+function humanizeDomainLabel(raw: unknown) {
+  const normalized = trimOrEmpty(raw)
+    .replaceAll("_", " ")
+    .replaceAll("-", " ");
+  if (!normalized) return "Unknown domain";
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function reportUpdateStateLabel(item: ResidentNotificationItem) {
+  const explicit = trimOrEmpty(item?.state_label);
+  if (explicit) return explicit;
+  const state = trimOrEmpty(item?.new_state).toLowerCase();
+  const labels: Record<string, string> = {
+    reported: "Reported",
+    aggregated: "Reported",
+    confirmed: "Confirmed",
+    unconfirmed: "Unconfirmed",
+    in_progress: "In Progress",
+    fixed: "Resolved",
+    reopened: "Reported",
+    archived: "Archived",
+  };
+  return labels[state] || (state ? state.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Updated");
+}
+
 function normalizePrivateKey(raw: unknown) {
   return trimOrEmpty(raw).replaceAll("\\n", "\n");
 }
@@ -238,7 +282,7 @@ function formatSubject(input: {
   title: string;
   topicLabel: string;
 }) {
-  const kindLabel = input.kind === "event" ? "Event" : "Alert";
+  const kindLabel = input.kind === "event" ? "Event" : input.kind === "report_update" ? "Report update" : "Alert";
   return `${input.displayName}: ${kindLabel} - ${input.title} (${input.topicLabel})`;
 }
 
@@ -440,7 +484,7 @@ async function sendResidentPushIos(
   const teamId = trimOrEmpty(Deno.env.get("APPLE_PUSH_TEAM_ID"));
   const keyId = trimOrEmpty(Deno.env.get("APPLE_PUSH_KEY_ID"));
   const privateKey = normalizePrivateKey(Deno.env.get("APPLE_PUSH_PRIVATE_KEY"));
-  const topic = trimOrEmpty(Deno.env.get("APPLE_PUSH_TOPIC")) || "cityreport.io.map";
+  const topic = trimOrEmpty(Deno.env.get("APPLE_PUSH_TOPIC")) || "cityreport.io.app";
   if (!teamId || !keyId || !privateKey) {
     return { ok: false, skipped: true, reason: "missing_apns_config" as const };
   }
@@ -452,9 +496,15 @@ async function sendResidentPushIos(
     .setIssuedAt()
     .sign(apnsKey);
 
+  const isReportUpdate = input.kind === "report_update";
   const kindLabel = input.kind === "event" ? "Event" : "Alert";
-  const title = `${input.displayName} ${kindLabel}`;
-  const body = formatPushBody(input.item);
+  const title = isReportUpdate
+    ? "Report Status Update"
+    : (trimOrEmpty(input.item.title) || `${input.displayName} ${kindLabel}`);
+  const reportNumber = trimOrEmpty(input.item.report_number);
+  const body = isReportUpdate
+    ? `${humanizeDomainLabel(input.item.domain)}\n${reportNumber || "Report number unavailable"} — ${reportUpdateStateLabel(input.item)}`
+    : formatPushBody(input.item);
   const collapseId = trimOrEmpty(input.item.id) || `${input.kind}:${trimOrEmpty(input.item.topic_key)}`;
   const payload = {
     aps: {
@@ -474,29 +524,47 @@ async function sendResidentPushIos(
     },
   };
 
-  const response = await fetch(`https://api.push.apple.com/3/device/${encodeURIComponent(input.token)}`, {
-    method: "POST",
-    headers: {
-      authorization: `bearer ${jwt}`,
-      "apns-topic": topic,
-      "apns-push-type": "alert",
-      "apns-priority": "10",
-      "apns-collapse-id": collapseId,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  const pushHeaders = {
+    authorization: `bearer ${jwt}`,
+    "apns-topic": topic,
+    "apns-push-type": "alert",
+    "apns-priority": "10",
+    "apns-collapse-id": collapseId,
+    "content-type": "application/json",
+  };
+  const pushBody = JSON.stringify(payload);
+  const endpoints = [
+    "https://api.push.apple.com",
+    "https://api.sandbox.push.apple.com",
+  ];
 
-  if (!response.ok) {
+  let lastFailureReason = "";
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    const response = await fetch(`${endpoint}/3/device/${encodeURIComponent(input.token)}`, {
+      method: "POST",
+      headers: pushHeaders,
+      body: pushBody,
+    });
+    if (response.ok) {
+      return { ok: true, skipped: false, reason: "" };
+    }
     const bodyText = await response.text().catch(() => "");
-    return {
-      ok: false,
-      skipped: false,
-      reason: bodyText || `APNs returned ${response.status}`,
-    };
+    lastFailureReason = bodyText || `APNs returned ${response.status}`;
+    const shouldRetrySandbox =
+      index === 0
+      && response.status === 400
+      && /BadDeviceToken/i.test(bodyText);
+    if (!shouldRetrySandbox) {
+      break;
+    }
   }
 
-  return { ok: true, skipped: false, reason: "" };
+  return {
+    ok: false,
+    skipped: false,
+    reason: lastFailureReason,
+  };
 }
 
 serve(async (req) => {
@@ -510,12 +578,16 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const tenantKey = normalizeTenantKey(body?.tenant_key || body?.item?.tenant_key);
-    const kind: ResidentNotificationKind = body?.kind === "event" ? "event" : "alert";
+    const kind: ResidentNotificationKind = body?.kind === "event"
+      ? "event"
+      : body?.kind === "report_update"
+        ? "report_update"
+        : "alert";
     const item = (body?.item && typeof body.item === "object" ? body.item : {}) as ResidentNotificationItem;
     const deliveryChannels = Array.isArray(item?.delivery_channels) ? item.delivery_channels : [];
     const deliveryChannelsNormalized = deliveryChannels.map((value) => trimOrEmpty(value).toLowerCase()).filter(Boolean);
     if (!tenantKey) return json({ ok: false, error: "tenant_key is required." }, 400);
-    if (!trimOrEmpty(item?.topic_key) || !trimOrEmpty(item?.title)) {
+    if ((!trimOrEmpty(item?.topic_key) && kind !== "report_update") || !trimOrEmpty(item?.title)) {
       return json({ ok: false, error: "topic_key and title are required." }, 400);
     }
 
@@ -523,11 +595,105 @@ serve(async (req) => {
     const accessResult = await requireResidentNotificationAccess(req, admin, tenantKey);
     if (!accessResult.ok) return accessResult.response;
 
+    if (kind === "report_update") {
+      const incidentId = trimOrEmpty((item as Record<string, unknown>)?.incident_id);
+      const domain = trimOrEmpty((item as Record<string, unknown>)?.domain);
+      const nextState = trimOrEmpty((item as Record<string, unknown>)?.new_state);
+      if (!incidentId || !domain || !nextState) {
+        return json({ ok: false, error: "incident_id, domain, and new_state are required for report updates." }, 400);
+      }
+
+      const { data: updateRows, error: updateError } = await admin
+        .from("resident_incident_notifications")
+        .select("id,user_id,title,summary")
+        .eq("tenant_key", tenantKey)
+        .eq("incident_id", incidentId)
+        .eq("domain", domain)
+        .eq("new_state", nextState)
+        .is("push_sent_at", null);
+      if (updateError) throw new Error(updateError.message || "Could not load reporter status updates.");
+
+      const notificationRows = (updateRows || []) as Array<{ id: number; user_id: string; title?: string | null; summary?: string | null }>;
+      const recipientIds = dedupeUserIds(notificationRows.map((row) => trimOrEmpty(row?.user_id)));
+      if (!recipientIds.length) {
+        return json({ ok: true, skipped: true, reason: "no_delivery_targets", push_sent_count: 0 });
+      }
+
+      const { data: preferenceRows, error: preferenceError } = await admin
+        .from("resident_notification_preferences")
+        .select("user_id,web_push_enabled")
+        .eq("tenant_key", tenantKey)
+        .eq("topic_key", "report_updates")
+        .eq("web_push_enabled", true)
+        .in("user_id", recipientIds);
+      if (preferenceError) throw new Error(preferenceError.message || "Could not load reporter notification preferences.");
+      const enabledUserIds = dedupeUserIds((preferenceRows || []).map((row) => trimOrEmpty(row?.user_id)));
+      if (!enabledUserIds.length) {
+        return json({ ok: true, skipped: true, reason: "no_push_preferences_enabled", push_sent_count: 0 });
+      }
+
+      const { data: tokenRows, error: tokenError } = await admin
+        .from("native_push_tokens")
+        .select("user_id,token,platform")
+        .eq("tenant_key", tenantKey)
+        .eq("enabled", true)
+        .eq("platform", "ios")
+        .in("user_id", enabledUserIds);
+      if (tokenError) throw new Error(tokenError.message || "Could not load reporter push tokens.");
+
+      const displayName = trimOrEmpty(item?.tenant_key) || tenantKey;
+      const pushTargets = dedupePushTargets((tokenRows || []) as NativePushTokenRow[]);
+      const pushFailures: Array<Record<string, unknown>> = [];
+      let pushSentCount = 0;
+      for (const target of pushTargets) {
+        const row = notificationRows.find((candidate) => trimOrEmpty(candidate.user_id) === target.user_id);
+        const pushResult = await sendResidentPushIos({
+          token: target.token,
+          displayName,
+          kind,
+          topicLabel: "Your reports",
+          item: {
+            ...item,
+            id: row?.id ?? item.id,
+            title: row?.title || item.title,
+            summary: row?.summary || item.summary,
+          },
+        });
+        if (pushResult.ok) pushSentCount += 1;
+        else if (!pushResult.skipped) pushFailures.push({ user_id: target.user_id, reason: pushResult.reason });
+      }
+
+      // Do not repeatedly alert a resident because a device token is stale or
+      // because they have not granted iOS notification permission.
+      const notificationIds = notificationRows.map((row) => Number(row.id)).filter(Number.isFinite);
+      if (notificationIds.length) {
+        const { error: markError } = await admin
+          .from("resident_incident_notifications")
+          .update({ push_sent_at: new Date().toISOString() })
+          .in("id", notificationIds);
+        if (markError) throw new Error(markError.message || "Could not record reporter push delivery.");
+      }
+
+      return json({
+        ok: true,
+        sent_count: 0,
+        push_sent_count: pushSentCount,
+        push_attempted_count: pushTargets.length,
+        push_failures: pushFailures,
+      });
+    }
+
     if (trimOrEmpty(item.status).toLowerCase() !== "published") {
       return json({ ok: true, skipped: true, reason: "status_not_published" });
     }
-    if (deliveryChannelsNormalized.length && !deliveryChannelsNormalized.includes("email")) {
-      return json({ ok: true, skipped: true, reason: "email_channel_not_enabled" });
+    const deliveryChannelSet = new Set(deliveryChannelsNormalized);
+    const emailChannelEnabled = !deliveryChannelsNormalized.length || deliveryChannelSet.has("email");
+    const pushChannelEnabled = !deliveryChannelsNormalized.length
+      || deliveryChannelSet.has("in_app")
+      || deliveryChannelSet.has("push")
+      || deliveryChannelSet.has("native_push");
+    if (!emailChannelEnabled && !pushChannelEnabled) {
+      return json({ ok: true, skipped: true, reason: "no_supported_delivery_channels" });
     }
 
     const { data: profileRow, error: profileError } = await admin
@@ -541,7 +707,7 @@ serve(async (req) => {
 
     const { data: topicRow, error: topicError } = await admin
       .from("notification_topics")
-      .select("topic_key,label")
+      .select("topic_key,label,default_enabled")
       .eq("tenant_key", tenantKey)
       .eq("topic_key", trimOrEmpty(item.topic_key))
       .maybeSingle();
@@ -551,42 +717,50 @@ serve(async (req) => {
 
     const { data: prefRows, error: prefError } = await admin
       .from("resident_notification_preferences")
-      .select("user_id,in_app_enabled,email_enabled")
+      .select("user_id,in_app_enabled,email_enabled,web_push_enabled")
       .eq("tenant_key", tenantKey)
-      .eq("topic_key", trimOrEmpty(item.topic_key))
-      .or("email_enabled.eq.true,in_app_enabled.eq.true");
+      .eq("topic_key", trimOrEmpty(item.topic_key));
     if (prefError) {
       throw new Error(prefError.message || "Could not load resident notification preferences");
     }
 
     const preferenceRows = (prefRows || []) as ResidentPreferenceRow[];
-    const emailUserIds = Array.from(new Set(
-      preferenceRows
-        .filter((row) => Boolean(row?.email_enabled))
-        .map((row) => trimOrEmpty(row?.user_id))
-        .filter(Boolean),
-    ));
-    const pushUserIds = Array.from(new Set(
-      preferenceRows
-        .filter((row) => Boolean(row?.in_app_enabled))
-        .map((row) => trimOrEmpty(row?.user_id))
-        .filter(Boolean),
-    ));
-    const userIds = Array.from(new Set([...emailUserIds, ...pushUserIds]));
-    if (!userIds.length) {
-      return json({
-        ok: true,
-        skipped: true,
-        reason: "no_notification_subscribers",
-        sent_count: 0,
-        push_sent_count: 0,
-      });
-    }
+    const preferenceRowsByUserId = new Map(
+      preferenceRows.map((row) => [trimOrEmpty(row?.user_id), row]),
+    );
+    const topicDefaultEnabled = Boolean((topicRow as TopicRow | null)?.default_enabled);
+    const emailUserIds = emailChannelEnabled
+      ? dedupeUserIds(
+          preferenceRows
+            .filter((row) => Boolean(row?.email_enabled))
+            .map((row) => trimOrEmpty(row?.user_id)),
+        )
+      : [];
+    const explicitPushUserIds = pushChannelEnabled
+      ? dedupeUserIds(
+          preferenceRows
+            // Push is its own consent channel.  Treating In-app or Email as
+            // Push consent meant the actual Push control was ignored.
+            .filter((row) => Boolean(row?.web_push_enabled))
+            .map((row) => trimOrEmpty(row?.user_id)),
+        )
+      : [];
+    const optedOutPushUserIds = new Set(
+      pushChannelEnabled
+        ? dedupeUserIds(
+            preferenceRows
+              .filter((row) => !Boolean(row?.web_push_enabled))
+              .map((row) => trimOrEmpty(row?.user_id)),
+          )
+        : [],
+    );
 
-    const { data: residentRows, error: residentError } = await admin
-      .from("profiles")
-      .select("user_id,full_name,email")
-      .in("user_id", userIds);
+    const { data: residentRows, error: residentError } = emailUserIds.length
+      ? await admin
+          .from("profiles")
+          .select("user_id,full_name,email")
+          .in("user_id", emailUserIds)
+      : { data: [], error: null };
     if (residentError) {
       throw new Error(residentError.message || "Could not load resident profiles");
     }
@@ -598,18 +772,36 @@ serve(async (req) => {
         .filter(Boolean),
     );
 
-    const { data: pushTokenRows, error: pushTokenError } = pushUserIds.length
-      ? await admin
-          .from("native_push_tokens")
-          .select("user_id,token,platform")
-          .eq("enabled", true)
-          .eq("platform", "ios")
-          .in("user_id", pushUserIds)
+    const shouldQueryDefaultPushTargets = pushChannelEnabled && topicDefaultEnabled;
+    const { data: pushTokenRows, error: pushTokenError } = pushChannelEnabled && (shouldQueryDefaultPushTargets || explicitPushUserIds.length)
+      ? await (
+          shouldQueryDefaultPushTargets
+            ? admin
+                .from("native_push_tokens")
+                .select("user_id,token,platform")
+                .eq("tenant_key", tenantKey)
+                .eq("enabled", true)
+                .eq("platform", "ios")
+            : admin
+                .from("native_push_tokens")
+                .select("user_id,token,platform")
+                .eq("tenant_key", tenantKey)
+                .eq("enabled", true)
+                .eq("platform", "ios")
+                .in("user_id", explicitPushUserIds)
+        )
       : { data: [], error: null };
     if (pushTokenError) {
       throw new Error(pushTokenError.message || "Could not load native push tokens");
     }
-    const pushTargets = dedupePushTargets((pushTokenRows || []) as NativePushTokenRow[]);
+    const explicitPushUserIdSet = new Set(explicitPushUserIds);
+    const pushTargets = dedupePushTargets((pushTokenRows || []) as NativePushTokenRow[])
+      .filter((row) => {
+        const userId = trimOrEmpty(row?.user_id);
+        if (!userId || optedOutPushUserIds.has(userId)) return false;
+        if (explicitPushUserIdSet.has(userId)) return true;
+        return shouldQueryDefaultPushTargets && !preferenceRowsByUserId.has(userId);
+      });
 
     if (!recipients.length && !pushTargets.length) {
       return json({
@@ -627,6 +819,8 @@ serve(async (req) => {
     let sentCount = 0;
     const pushFailures: Array<Record<string, unknown>> = [];
     let pushSentCount = 0;
+    const pushSkippedReasons = new Set<string>();
+    let pushSkippedCount = 0;
 
     for (const recipientEmail of recipients) {
       try {
@@ -671,6 +865,13 @@ serve(async (req) => {
           pushSentCount += 1;
           continue;
         }
+        if (pushResult.skipped) {
+          pushSkippedCount += 1;
+          if (trimOrEmpty(pushResult.reason)) {
+            pushSkippedReasons.add(trimOrEmpty(pushResult.reason));
+          }
+          continue;
+        }
         if (!pushResult.skipped) {
           pushFailures.push({
             user_id: trimOrEmpty(pushTarget.user_id),
@@ -693,6 +894,8 @@ serve(async (req) => {
       attempted_count: recipients.length,
       push_sent_count: pushSentCount,
       push_attempted_count: pushTargets.length,
+      push_skipped_count: pushSkippedCount,
+      push_skipped_reasons: Array.from(pushSkippedReasons),
       skipped: false,
       failures,
       push_failures: pushFailures,

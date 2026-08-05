@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveIncidentDrivenMarkerCollectionShared,
   summarizeCanonicalIncidentMarkersInViewportShared,
 } from "../lib/mapIncidentMarkerSourceSupport.js";
+
+describe("resolveIncidentDrivenMarkerCollectionShared", () => {
+  it("keeps a newly committed generic marker beside an older specialized collection", () => {
+    const specialized = [{ incident_id: "existing", domain: "potholes" }];
+    const generic = [{ incident_id: "fresh", domain: "potholes" }];
+    const merge = (_domain: string, specializedRows: object[], genericRows: object[]) => [
+      ...specializedRows,
+      ...genericRows,
+    ];
+
+    expect(resolveIncidentDrivenMarkerCollectionShared("potholes", specialized, generic, merge)).toEqual([
+      specialized[0],
+      generic[0],
+    ]);
+  });
+});
 
 describe("summarizeCanonicalIncidentMarkersInViewportShared", () => {
   it("counts each canonical incident coordinate instead of a cluster container", () => {

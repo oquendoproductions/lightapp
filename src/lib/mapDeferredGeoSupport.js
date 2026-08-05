@@ -909,6 +909,7 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
           ]);
           const nearestAddress = String(nearestAddressRaw || "").trim();
           const nearestStreet = String(nearestStreetRaw || "").trim();
+          const resolvedNearestAddress = String(nearestAddress || nearestStreet || "").trim();
           const nearestCrossStreet = includeCrossStreet
             ? ((await lookupClosestCrossStreetAt(best.lat, best.lng, nearestStreet)) || "")
             : "";
@@ -916,8 +917,8 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
           const nearestIntersection = String(nearestIntersectionRaw || "").trim();
           roadValidationCandidate = {
             isRoad,
-            label: nearestAddress || fallbackLabel,
-            nearestAddress,
+            label: resolvedNearestAddress || fallbackLabel,
+            nearestAddress: resolvedNearestAddress,
             nearestStreet,
             nearestCrossStreet,
             nearestLandmark,
@@ -1011,6 +1012,7 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
       ]);
       const nearestAddress = bestLabel || "";
       const nearestStreet = String(nearestStreetRaw || "").trim();
+      const resolvedNearestAddress = String(nearestAddress || nearestStreet || "").trim();
       const nearestCrossStreet = includeCrossStreet
         ? ((await lookupClosestCrossStreetAt(best.lat, best.lng, nearestStreet)) || "")
         : "";
@@ -1018,8 +1020,8 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
       const nearestIntersection = String(nearestIntersectionRaw || "").trim();
       const geocoderCandidate = {
         isRoad: best.distance <= roadHitThresholdMeters,
-        label: nearestAddress || fallbackLabel,
-        nearestAddress,
+        label: resolvedNearestAddress || fallbackLabel,
+        nearestAddress: resolvedNearestAddress,
         nearestStreet,
         nearestCrossStreet,
         nearestLandmark,
@@ -1049,6 +1051,7 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
       ]);
       const nearestAddress = bestLabel || "";
       const nearestStreet = String(nearestStreetRaw || "").trim();
+      const resolvedNearestAddress = String(nearestAddress || nearestStreet || "").trim();
       const nearestCrossStreet = includeCrossStreet
         ? ((await lookupClosestCrossStreetAt(lat, lng, nearestStreet)) || "")
         : "";
@@ -1057,8 +1060,8 @@ export async function reverseGeocodeRoadLabelShared(lat, lng, options = {}, deps
       trace("geocoder-fallback-negative", { threshold: roadHitThresholdMeters });
       return {
         isRoad: false,
-        label: nearestAddress || fallbackLabel,
-        nearestAddress,
+        label: resolvedNearestAddress || fallbackLabel,
+        nearestAddress: resolvedNearestAddress,
         nearestStreet,
         nearestCrossStreet,
         nearestLandmark,

@@ -295,6 +295,7 @@ export function IncidentLocationModal({
   loading = false,
   copyHint = "",
   onCopyRow = null,
+  onOpenCoordinatesInMaps = null,
   copyToast = null,
   showReportToUtility = false,
   onReportToUtility = null,
@@ -375,7 +376,9 @@ export function IncidentLocationModal({
             <button
               key={`${row?.label || "row"}-${index}`}
               type="button"
-              onClick={typeof onCopyRow === "function" ? (event) => onCopyRow(row, event.currentTarget) : undefined}
+              onClick={String(row?.label || "").trim().toLowerCase() === "coordinates" && typeof onOpenCoordinatesInMaps === "function"
+                ? () => onOpenCoordinatesInMaps(row?.value || "")
+                : typeof onCopyRow === "function" ? (event) => onCopyRow(row, event.currentTarget) : undefined}
               style={{
                 display: "grid",
                 gridTemplateColumns: "minmax(118px, 0.42fr) minmax(0, 1fr)",
@@ -391,7 +394,9 @@ export function IncidentLocationModal({
                 borderTop: "none",
                 background: "transparent",
                 color: "var(--sl-ui-text)",
-                cursor: typeof onCopyRow === "function" ? "copy" : "default",
+                cursor: String(row?.label || "").trim().toLowerCase() === "coordinates" && typeof onOpenCoordinatesInMaps === "function"
+                  ? "pointer"
+                  : typeof onCopyRow === "function" ? "copy" : "default",
               }}
             >
               <span style={{ fontWeight: 900, opacity: 0.76 }}>{row?.label}</span>
@@ -399,8 +404,8 @@ export function IncidentLocationModal({
                 style={{
                   fontWeight: 800,
                   overflowWrap: "anywhere",
-                  textDecoration: typeof onCopyRow === "function" ? "underline" : "none",
-                  textUnderlineOffset: typeof onCopyRow === "function" ? "2px" : undefined,
+                  textDecoration: typeof onCopyRow === "function" || (String(row?.label || "").trim().toLowerCase() === "coordinates" && typeof onOpenCoordinatesInMaps === "function") ? "underline" : "none",
+                  textUnderlineOffset: typeof onCopyRow === "function" || (String(row?.label || "").trim().toLowerCase() === "coordinates" && typeof onOpenCoordinatesInMaps === "function") ? "2px" : undefined,
                 }}
               >
                 {row?.value}
@@ -460,6 +465,9 @@ export function AllReportsModal({
   geoLoading = false,
   currentState = "",
   lastChangedAt = "",
+  stateEvents = [],
+  stateEventsLoading = false,
+  stateEventsError = "",
   onCopyField = null,
   isMobile = false,
   preferCompactBehavior = false,
@@ -470,6 +478,7 @@ export function AllReportsModal({
   runtimeDomainMeta,
 }) {
   const [actionProfileByUserId, setActionProfileByUserId] = useState({});
+  const [reportIdentityById, setReportIdentityById] = useState({});
   const [reporterDetails, setReporterDetails] = useState({ open: false, item: null });
   const showCompactMobileLayout = Boolean(isMobile || preferCompactBehavior);
   const handleOpenReporterDetails = useCallback((item) => {
@@ -487,12 +496,11 @@ export function AllReportsModal({
     })
   ), [runtimeDomainMeta]);
   const effectiveItems = useMemo(() => {
-    if (Array.isArray(items) && items.length) return items;
-
     const normalizedDomainKey = String(domainKey || "streetlights").trim() || "streetlights";
-    const next = [];
+    const hasExplicitItems = Array.isArray(items) && items.length > 0;
+    const next = hasExplicitItems ? [...items] : [];
 
-    for (const row of Array.isArray(reportRows) ? reportRows : []) {
+    for (const row of hasExplicitItems ? [] : (Array.isArray(reportRows) ? reportRows : [])) {
       const rawType = String(row?.type || row?.report_type || "").trim();
       const typeKey = rawType.toLowerCase();
       const issueLabel = typeof resolveReportIssueLabel === "function"
@@ -502,6 +510,7 @@ export function AllReportsModal({
         ? "Reported Working"
         : (issueLabel || REPORT_TYPES[typeKey] || rawType || "Report");
       next.push({
+        id: row?.id || null,
         kind: "report",
         ts: Number(row?.ts || 0),
         label,
@@ -518,7 +527,7 @@ export function AllReportsModal({
       });
     }
 
-    for (const actionRow of Array.isArray(fixActionRows) ? fixActionRows : []) {
+    for (const actionRow of hasExplicitItems ? [] : (Array.isArray(fixActionRows) ? fixActionRows : [])) {
       const action = String(actionRow?.action || "").trim().toLowerCase();
       const label = action === "fix"
         ? "Marked fixed"
@@ -538,6 +547,23 @@ export function AllReportsModal({
       });
     }
 
+    for (const event of Array.isArray(stateEvents) ? stateEvents : []) {
+      const eventKind = String(event?.kind || "state_update").trim() || "state_update";
+      next.push({
+        kind: eventKind,
+        ts: Date.parse(String(event?.changedAt || "")) || 0,
+        label: eventKind === "repair_confirmation" ? "Marked fixed" : "State updated",
+        previousState: String(event?.previousState || "").trim(),
+        newState: String(event?.newState || "").trim(),
+        note: String(event?.note || "").trim(),
+        imageUrl: String(event?.imageUrl || "").trim(),
+        actor_user_id: String(event?.changedBy || "").trim() || null,
+        actor_name: String(event?.changedByName || "").trim() || null,
+        actor_email: String(event?.changedByEmail || "").trim() || null,
+        actor_phone: String(event?.changedByPhone || "").trim() || null,
+      });
+    }
+
     next.sort((a, b) => Number(b?.ts || 0) - Number(a?.ts || 0));
     return next;
   }, [
@@ -549,7 +575,47 @@ export function AllReportsModal({
     reportRows,
     reportNumberForRow,
     resolveReportIssueLabel,
+    stateEvents,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!open || hideSubmittedBy) return;
+
+    const wantedIds = Array.from(new Set(
+      (effectiveItems || [])
+        .filter((it) => ["report", "working"].includes(it?.kind))
+        .filter((it) => !String(it?.reporter_name || "").trim() && !String(it?.reporter_email || "").trim())
+        .map((it) => String(it?.id || "").trim())
+        .filter((id) => id && !reportIdentityById[id])
+    ));
+    if (!wantedIds.length) return;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("reports")
+        .select("id, reporter_user_id, reporter_name, reporter_phone, reporter_email")
+        .in("id", wantedIds);
+      if (cancelled) return;
+      if (error) {
+        console.error("[reports] reporter identity lookup error:", error);
+        return;
+      }
+      const next = {};
+      for (const row of data || []) {
+        const id = String(row?.id || "").trim();
+        if (!id) continue;
+        next[id] = row;
+      }
+      if (Object.keys(next).length) {
+        setReportIdentityById((prev) => ({ ...prev, ...next }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, effectiveItems, hideSubmittedBy, reportIdentityById]);
 
   useEffect(() => {
     let cancelled = false;
@@ -557,8 +623,11 @@ export function AllReportsModal({
 
     const wanted = Array.from(new Set(
       (effectiveItems || [])
-        .filter((it) => it?.kind === "fix" || it?.kind === "reopen")
-        .map((it) => String(it?.actor_user_id || "").trim())
+        .filter((it) => !hideSubmittedBy && ["report", "working", "fix", "reopen"].includes(it?.kind))
+        .map((it) => {
+          const reportIdentity = reportIdentityById[String(it?.id || "").trim()] || null;
+          return String(it?.reporter_user_id || reportIdentity?.reporter_user_id || it?.actor_user_id || "").trim();
+        })
         .filter((uid) => uid && !actionProfileByUserId[uid])
     ));
     if (!wanted.length) return;
@@ -590,7 +659,7 @@ export function AllReportsModal({
     return () => {
       cancelled = true;
     };
-  }, [open, effectiveItems, actionProfileByUserId]);
+  }, [open, effectiveItems, actionProfileByUserId, hideSubmittedBy, reportIdentityById]);
 
   useEffect(() => {
     if (!open) handleCloseReporterDetails();
@@ -669,20 +738,35 @@ export function AllReportsModal({
           gap: 10,
         }}
       >
-        {!effectiveItems?.length ? (
+        {stateEventsLoading ? (
+          <div style={{ fontSize: 13, opacity: 0.8 }}>Loading incident history…</div>
+        ) : null}
+        {!!stateEventsError && !stateEventsLoading ? (
+          <div style={{ fontSize: 13, opacity: 0.8 }}>Incident history could not be loaded.</div>
+        ) : null}
+        {!effectiveItems?.length && !stateEventsLoading ? (
           <div style={{ fontSize: 13, opacity: 0.8 }}>No history for this light yet.</div>
         ) : (
           effectiveItems.map((it, idx) => {
             const isFix = it.kind === "fix";
             const isReopen = it.kind === "reopen";
-            const isWorking = it.kind === "working";
-            const isWorkingReport = it.kind === "report" && isWorkingReportType(it.type);
-            const imageUrl = readImageUrlFromNote(it.note);
+            const isStateUpdate = it.kind === "state_update";
+            const isRepairConfirmation = it.kind === "repair_confirmation";
+            const imageUrl = isStateUpdate || isRepairConfirmation
+              ? String(it?.imageUrl || "").trim()
+              : readImageUrlFromNote(it.note);
             const displayNote = noteDisplayText(it.note);
-            const typeOptionDetails = resolveReportTypeOptionDetails(
-              it,
-              it?.domainKey || it?.report_domain || it?.domain || ""
-            );
+            // `Latest Report` creates a history item from the original report
+            // row. Use the resolved field list captured at that boundary so
+            // this card presents exactly the same reporting fields as its
+            // source info window.
+            const typeOptionDetails = Array.isArray(it?.typeOptionDetails)
+              ? it.typeOptionDetails
+              : resolveReportTypeOptionDetails(
+                  it,
+                  it?.domainKey || it?.report_domain || it?.domain || ""
+                );
+            const hasConfiguredReportFields = typeOptionDetails.length > 0;
             const itemDomainKey = String(it?.domainKey || it?.report_domain || it?.domain || domainKey || "").trim();
             const itemIsStreetlight = itemDomainKey === "streetlights";
             const issueLabel = String(it?.issueLabel || "").trim();
@@ -705,12 +789,100 @@ export function AllReportsModal({
               String(it?.actor_phone || "").trim()
               || String(actorProfile?.phone || "").trim()
               || "";
+            const reportIdentity = reportIdentityById[String(it?.id || "").trim()] || null;
+            const reporterUserId = String(it?.reporter_user_id || reportIdentity?.reporter_user_id || "").trim();
+            const reporterProfile = reporterUserId ? actionProfileByUserId[reporterUserId] : null;
+            const reporterName =
+              String(it?.reporter_name || "").trim()
+              || String(reportIdentity?.reporter_name || "").trim()
+              || String(reporterProfile?.name || "").trim()
+              || String(it?.reporter_email || "").trim()
+              || String(reportIdentity?.reporter_email || "").trim()
+              || String(reporterProfile?.email || "").trim()
+              || "Unknown";
+            const reporterDetailsItem = {
+              ...it,
+              reporter_user_id: reporterUserId || null,
+              reporter_name: String(it?.reporter_name || reportIdentity?.reporter_name || "").trim() || null,
+              reporter_email: String(it?.reporter_email || reportIdentity?.reporter_email || "").trim() || null,
+              reporter_phone: String(it?.reporter_phone || reportIdentity?.reporter_phone || "").trim() || null,
+            };
+            const cardTitle = it.kind === "report" ? "User Report" : it.label;
 
-            const isPoleDown =
-              !isFix &&
-              ["downed_pole", "pole_down", "downed-pole"].includes(String(it.type || "").toLowerCase());
+            if (isStateUpdate) {
+              return (
+                <div
+                  key={`${it.kind}-${it.ts}-${idx}`}
+                  style={{
+                    display: "grid",
+                    gap: 4,
+                    padding: 10,
+                    borderRadius: 10,
+                    border: "1px solid rgba(0,0,0,0.08)",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.1 }}>State updated</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>{formatDateTime(it.ts)}</div>
+                  {!!it.previousState && (
+                    <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                      <b>Previous State:</b> {incidentStateLabel(it.previousState)}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>New State:</b> {incidentStateLabel(it.newState)}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Notes:</b> {String(it.note || "").trim() || "—"}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Image:</b>{" "}
+                    {imageUrl ? (
+                      <a
+                        href={imageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: "var(--sl-ui-text)",
+                          textDecoration: "underline",
+                          textUnderlineOffset: "2px",
+                          fontWeight: 500,
+                        }}
+                        title="View attached image"
+                      >
+                        View Image
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </div>
+                </div>
+              );
+            }
 
-            const dot = isFix ? "#111" : (isWorking || isWorkingReport) ? "#2e7d32" : isPoleDown ? "#b71c1c" : "#fbc02d";
+            if (isRepairConfirmation) {
+              return (
+                <div
+                  key={`${it.kind}-${it.ts}-${idx}`}
+                  style={{
+                    display: "grid",
+                    gap: 6,
+                    padding: 10,
+                    borderRadius: 10,
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    background: "rgba(46,125,50,0.14)",
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>Marked fixed</div>
+                  <div style={{ opacity: 0.8 }}>{formatDateTime(it.ts)}</div>
+                  <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
+                    <b>Submitted by:</b> {actorName}
+                  </div>
+                  <div style={{ opacity: 0.85, lineHeight: 1.3 }}>
+                    Repair confirmation recorded.
+                  </div>
+                </div>
+              );
+            }
 
             if (useSubmittedReportFormat && (it.kind === "report" || it.kind === "working")) {
               return (
@@ -727,12 +899,15 @@ export function AllReportsModal({
                   <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1.15 }}>
                     {it.report_number || reportNumberForRow(it, itemDomainKey)}
                   </div>
+                  <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
+                    <b>Date/Time:</b> {formatDateTime(it.ts)}
+                  </div>
                   {!hideSubmittedBy && (
                     <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
                       <b>Submitted By:</b>{" "}
                       <button
                         type="button"
-                        onClick={() => handleOpenReporterDetails(it)}
+                        onClick={() => handleOpenReporterDetails(reporterDetailsItem)}
                         style={{
                           border: "none",
                           background: "transparent",
@@ -747,13 +922,10 @@ export function AllReportsModal({
                           lineHeight: "inherit",
                         }}
                       >
-                        {String(it?.reporter_name || "").trim() || String(it?.reporter_email || "").trim() || "Unknown"}
+                        {reporterName}
                       </button>
                     </div>
                   )}
-                  <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
-                    <b>Date/Time:</b> {formatDateTime(it.ts)}
-                  </div>
                   {itemIsStreetlight ? (
                     <>
                       <div style={{ opacity: 0.9, lineHeight: 1.3 }}>
@@ -768,7 +940,7 @@ export function AllReportsModal({
                     </>
                   ) : (
                     <>
-                      {!!issueLabel && !hasIssueTypeOptionDetail(typeOptionDetails) && (
+                      {!!issueLabel && !hasConfiguredReportFields && (
                         <div style={{ opacity: 0.95, lineHeight: 1.35 }}>
                           <b>Issue Type:</b> {issueLabel}
                         </div>
@@ -819,43 +991,18 @@ export function AllReportsModal({
                 }}
               >
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 999,
-                      background: dot,
-                      boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-                      flex: "0 0 auto",
-                    }}
-                  />
                   <div style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.1 }}>
-                    {it.label}
+                    {cardTitle}
                   </div>
                 </div>
 
-                {showCompactMobileLayout ? (
-                  <>
-                    {!!it.report_number && (
-                      <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
-                        Report #: {it.report_number}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 12, opacity: 0.85 }}>
-                      {formatDateTime(it.ts)}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 12, opacity: 0.85 }}>
-                      {formatDateTime(it.ts)}
-                    </div>
-                    {!!it.report_number && (
-                      <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
-                        Report #: {it.report_number}
-                      </div>
-                    )}
-                  </>
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  {formatDateTime(it.ts)}
+                </div>
+                {!!it.report_number && (
+                  <div style={{ fontSize: 11.5, opacity: 0.9, fontWeight: 900 }}>
+                    Report #: {it.report_number}
+                  </div>
                 )}
 
                 {!!String(it?.issueLabel || "").trim() && String(it?.issueLabel || "").trim() !== String(it?.label || "").trim() && !hasIssueTypeOptionDetail(typeOptionDetails) && (
@@ -873,7 +1020,7 @@ export function AllReportsModal({
                     <b>Submitted by:</b>{" "}
                     <button
                       type="button"
-                      onClick={() => handleOpenReporterDetails(it)}
+                      onClick={() => handleOpenReporterDetails(reporterDetailsItem)}
                       style={{
                         border: "none",
                         background: "transparent",
@@ -885,7 +1032,7 @@ export function AllReportsModal({
                         fontWeight: 900,
                       }}
                     >
-                      {String(it?.reporter_name || "").trim() || String(it?.reporter_email || "").trim() || "Unknown"}
+                      {reporterName}
                     </button>
                   </div>
                 )}
@@ -896,27 +1043,23 @@ export function AllReportsModal({
                   </div>
                 )}
                 {!!imageUrl && (
-                  <a
-                    href={imageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "5px 8px",
-                      borderRadius: 8,
-                      border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
-                      background: "var(--sl-ui-modal-btn-secondary-bg)",
-                      color: "var(--sl-ui-modal-btn-secondary-text)",
-                      fontWeight: 900,
-                      textDecoration: "none",
-                      width: "fit-content",
-                    }}
-                    title="View attached image"
-                  >
-                    📷 View image
-                  </a>
+                  <div style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.3 }}>
+                    <b>Image:</b>{" "}
+                    <a
+                      href={imageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--sl-ui-text)",
+                        textDecoration: "underline",
+                        textUnderlineOffset: "2px",
+                        fontWeight: 500,
+                      }}
+                      title="View attached image"
+                    >
+                      View Image
+                    </a>
+                  </div>
                 )}
 
                 {(isFix || isReopen) && (

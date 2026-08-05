@@ -15,10 +15,11 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
-import { getAuthRedirectOptions } from "./platform/auth.js";
+import { getAuthRedirectOptions, getEmailConfirmationRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
 import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { incidentStateLabel, isLifecycleStateOpen } from "./lib/incidentLifecycle";
+import { persistFollowedTenantKey } from "./lib/followedCitySupport";
 import { useHeaderOrganizationProfile } from "./lib/useHeaderOrganizationProfile";
 import { buildMailtoHref, CITYREPORT_SUPPORT_EMAIL } from "./lib/workspaceSupport";
 import "./headerStandards.css";
@@ -35,7 +36,8 @@ const EDIT_BUTTON_BLUE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_blue_i
 const EDIT_BUTTON_WHITE_ICON_SRC = "/Icons/Buttons/edit_button/edit_button_white_icon.png";
 
 const NAV_ITEMS = [
-  { key: "home", label: "Home", path: "/" },
+  { key: "home", label: "Dashboard", path: "/" },
+  { key: "inbox", label: "Inbox", path: "/inbox" },
   { key: "alerts", label: "Alerts", path: "/alerts" },
   { key: "events", label: "Events", path: "/events" },
   { key: "reports", label: "Reports", path: "/reports" },
@@ -43,7 +45,8 @@ const NAV_ITEMS = [
 ];
 
 const SETTINGS_PATH = "/settings";
-const SETTINGS_DEFAULT_PAGE = "/settings/account-info";
+const LOCATIONS_PATH = "/locations";
+const SETTINGS_DEFAULT_PAGE = SETTINGS_PATH;
 const SETTINGS_NAV = [
   {
     key: "account",
@@ -59,6 +62,7 @@ const SETTINGS_NAV = [
     label: "Organization Info",
     items: [
       { key: "organization-general", label: "General Settings", path: "/settings/organization-general" },
+      { key: "notification-categories", label: "Notification Categories", path: "/settings/notification-categories" },
       { key: "organization-assets", label: "Assets", path: "/settings/organization-assets" },
       { key: "organization-resident-menu", label: "Resident Menu", path: "/settings/organization-resident-menu" },
       { key: "organization-report-digests", label: "Report Digests", path: "/settings/organization-report-digests" },
@@ -70,6 +74,7 @@ const SETTINGS_NAV = [
     label: "Team Access",
     items: [
       { key: "manage-employees", label: "Manage Employees", path: "/settings/manage-employees" },
+      { key: "departments", label: "Departments", path: "/settings/departments" },
       { key: "roles-permissions", label: "Roles & Permissions", path: "/settings/roles-permissions" },
       { key: "security-checks", label: "Security Checks", path: "/settings/security-checks" },
     ],
@@ -122,6 +127,13 @@ const EMPTY_NOTIFICATION_TOPIC_DRAFT = {
   default_enabled: false,
   active: true,
 };
+
+const LEGACY_EVENT_TOPIC_KEYS = new Set([
+  "community_events",
+  "parades",
+  "festivals",
+  "public_meetings",
+]);
 
 const RESIDENT_MENU_LINK_TYPE_OPTIONS = [
   { key: "external_url", label: "Website Link" },
@@ -606,10 +618,74 @@ function trimOrEmpty(value) {
   return String(value || "").trim();
 }
 
+function inferNotificationTopicKind(topic = null, fallbackKind = "") {
+  const explicitKind = trimOrEmpty(topic?.topic_kind || fallbackKind).toLowerCase();
+  if (explicitKind === "alert" || explicitKind === "event") return explicitKind;
+  const key = trimOrEmpty(topic?.topic_key).toLowerCase();
+  if (LEGACY_EVENT_TOPIC_KEYS.has(key)) return "event";
+  if (key.includes("event") || key.includes("parade") || key.includes("festival") || key.includes("meeting")) {
+    return "event";
+  }
+  return "alert";
+}
+
+function normalizeHubNotificationTopic(topic = null) {
+  const key = trimOrEmpty(topic?.topic_key);
+  return {
+    ...topic,
+    topic_key: key,
+    label: trimOrEmpty(topic?.label) || key,
+    description: trimOrEmpty(topic?.description),
+    default_enabled: topic?.default_enabled ?? false,
+    active: topic?.active ?? true,
+    sort_order: Number.isFinite(Number(topic?.sort_order)) ? Number(topic?.sort_order) : 999,
+    topic_kind: inferNotificationTopicKind(topic),
+  };
+}
+
+async function loadHubNotificationTopics(supabaseClient, tenantKey) {
+  const fullQuery = await supabaseClient
+    .from("notification_topics")
+    .select("tenant_key,topic_key,label,description,default_enabled,active,sort_order,topic_kind")
+    .eq("tenant_key", tenantKey)
+    .order("sort_order", { ascending: true });
+  if (!fullQuery.error) {
+    return {
+      data: (fullQuery.data || []).map((topic) => normalizeHubNotificationTopic(topic)),
+      error: null,
+      usedLegacyFallback: false,
+    };
+  }
+  if (!isMissingRelationError(fullQuery.error)) {
+    return { data: [], error: fullQuery.error, usedLegacyFallback: false };
+  }
+
+  const legacyQuery = await supabaseClient
+    .from("notification_topics")
+    .select("tenant_key,topic_key,label,description,default_enabled,active,sort_order")
+    .eq("tenant_key", tenantKey)
+    .order("sort_order", { ascending: true });
+  if (legacyQuery.error) {
+    return { data: [], error: legacyQuery.error, usedLegacyFallback: false };
+  }
+  return {
+    data: (legacyQuery.data || []).map((topic) => normalizeHubNotificationTopic(topic)),
+    error: null,
+    usedLegacyFallback: true,
+  };
+}
+
 function shouldSendResidentNotificationEmail(currentStatus, nextStatus) {
   const previous = trimOrEmpty(currentStatus).toLowerCase();
   const next = trimOrEmpty(nextStatus).toLowerCase();
   return next === "published" && previous !== "published";
+}
+
+function formatResidentNotificationPushReason(reason) {
+  const normalized = trimOrEmpty(reason).toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "missing_apns_config") return "native push is not configured on the server";
+  return normalized.replaceAll("_", " ");
 }
 
 async function triggerResidentNotificationEmail({ kind, item }) {
@@ -630,13 +706,13 @@ async function triggerResidentNotificationEmail({ kind, item }) {
   if (error) {
     return {
       ok: false,
-      error: trimOrEmpty(error.message) || "Could not send resident email notifications.",
+      error: trimOrEmpty(error.message) || "Could not send resident notifications.",
     };
   }
   if (data?.ok === false) {
     return {
       ok: false,
-      error: trimOrEmpty(data?.error) || "Could not send resident email notifications.",
+      error: trimOrEmpty(data?.error) || "Could not send resident notifications.",
     };
   }
   return {
@@ -644,9 +720,34 @@ async function triggerResidentNotificationEmail({ kind, item }) {
     skipped: Boolean(data?.skipped),
     sentCount: Number(data?.sent_count || 0),
     attemptedCount: Number(data?.attempted_count || 0),
+    pushSentCount: Number(data?.push_sent_count || 0),
+    pushAttemptedCount: Number(data?.push_attempted_count || 0),
+    pushSkippedCount: Number(data?.push_skipped_count || 0),
+    pushSkippedReasons: Array.isArray(data?.push_skipped_reasons) ? data.push_skipped_reasons : [],
     failures: Array.isArray(data?.failures) ? data.failures : [],
+    pushFailures: Array.isArray(data?.push_failures) ? data.push_failures : [],
     reason: trimOrEmpty(data?.reason),
   };
+}
+
+function formatResidentNotificationDeliverySummary(result) {
+  const emailCount = Math.max(0, Number(result?.sentCount || 0));
+  const pushCount = Math.max(0, Number(result?.pushSentCount || 0));
+  const pushSkippedCount = Math.max(0, Number(result?.pushSkippedCount || 0));
+  const pushReason = formatResidentNotificationPushReason(result?.pushSkippedReasons?.[0] || "");
+  const pushDiagnostic = pushSkippedCount && pushReason
+    ? ` Native push was skipped because ${pushReason}.`
+    : "";
+  if (!emailCount && !pushCount) {
+    return `Resident notifications processed, but no delivery targets were reached.${pushDiagnostic}`;
+  }
+  if (emailCount && pushCount) {
+    return `Resident notifications sent to ${emailCount} email subscriber${emailCount === 1 ? "" : "s"} and ${pushCount} device${pushCount === 1 ? "" : "s"}.${pushDiagnostic}`;
+  }
+  if (emailCount) {
+    return `Resident notifications sent to ${emailCount} email subscriber${emailCount === 1 ? "" : "s"}.${pushDiagnostic}`;
+  }
+  return `Resident notifications sent to ${pushCount} device${pushCount === 1 ? "" : "s"}.${pushDiagnostic}`;
 }
 
 async function hashSharedSecurityPin(userId, pin) {
@@ -1020,13 +1121,46 @@ function activeAlertCount(alerts) {
   }).length;
 }
 
+function upcomingAlertCount(alerts) {
+  const now = Date.now();
+  return (alerts || []).filter((alert) => {
+    if (!isVisibleCommunityItem(alert)) return false;
+    const startsAt = alert?.starts_at ? new Date(alert.starts_at).getTime() : null;
+    return Number.isFinite(startsAt) && startsAt > now;
+  }).length;
+}
+
+function currentEventCount(events) {
+  const now = Date.now();
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  return (events || []).filter((event) => {
+    if (!isVisibleCommunityItem(event)) return false;
+    const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
+    const endsAt = event?.ends_at ? new Date(event.ends_at).getTime() : null;
+    if (!Number.isFinite(startsAt) || startsAt > now) return false;
+    return Number.isFinite(endsAt) ? endsAt >= now : startsAt >= now - oneDayMs;
+  }).length;
+}
+
 function upcomingEventCount(events) {
   const now = Date.now();
   return (events || []).filter((event) => {
     if (!isVisibleCommunityItem(event)) return false;
     const startsAt = event?.starts_at ? new Date(event.starts_at).getTime() : null;
-    return !startsAt || startsAt >= now - (60 * 60 * 1000);
+    return Number.isFinite(startsAt) && startsAt > now;
   }).length;
+}
+
+function formatDashboardDuration(durationMs) {
+  const totalHours = Math.max(0, Math.round(Number(durationMs || 0) / (60 * 60 * 1000)));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  return `${Math.max(1, totalHours)}h`;
+}
+
+function isResolvedForDashboard(state) {
+  return ["fixed", "likely_resolved", "resolved", "completed", "done", "operational"].includes(trimOrEmpty(state).toLowerCase());
 }
 
 function sortAlerts(rows = []) {
@@ -1452,16 +1586,19 @@ function useResidentAuth() {
   return { session, setSession, profile, setProfile, authReady, loadingProfile };
 }
 
-function HomeCard({ title, children, subtitle, onTitleClick = null }) {
+function HomeCard({ title, children, subtitle, onTitleClick = null, headerActions = null, className = "" }) {
   return (
-    <section className="municipality-card municipality-section">
-      {typeof onTitleClick === "function" ? (
-        <button type="button" className="municipality-title-link" onClick={onTitleClick}>
-          {title}
-        </button>
-      ) : (
-        <h3>{title}</h3>
-      )}
+    <section className={`municipality-card municipality-section${className ? ` ${className}` : ""}`}>
+      <div className="municipality-section-header">
+        {typeof onTitleClick === "function" ? (
+          <button type="button" className="municipality-title-link" onClick={onTitleClick}>
+            {title}
+          </button>
+        ) : (
+          <h3>{title}</h3>
+        )}
+        {headerActions ? <div className="municipality-section-header-actions">{headerActions}</div> : null}
+      </div>
       {subtitle ? <p className="municipality-section-subtitle">{subtitle}</p> : null}
       {children}
     </section>
@@ -2322,6 +2459,7 @@ function NotificationTopicManager({
   topicDraft,
   setTopicDraft,
   editingTopicKey = "",
+  creating = false,
   topicSaveBusy = false,
   status = "",
   onStartNew,
@@ -2332,7 +2470,7 @@ function NotificationTopicManager({
 }) {
   const kindLabel = topicKind === "event" ? "event" : "alert";
   const generatedKey = editingTopicKey || sanitizeNotificationTopicKey(topicDraft?.label);
-  const showingForm = Boolean(editingTopicKey) || trimOrEmpty(topicDraft?.label) || trimOrEmpty(topicDraft?.description);
+  const showingForm = Boolean(creating || editingTopicKey || trimOrEmpty(topicDraft?.label) || trimOrEmpty(topicDraft?.description));
 
   return (
     <div className="municipality-topic-row">
@@ -2475,6 +2613,8 @@ export default function MunicipalityApp() {
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [authConfirmationEmail, setAuthConfirmationEmail] = useState("");
+  const [authConfirmationLoading, setAuthConfirmationLoading] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authResetLoading, setAuthResetLoading] = useState(false);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
@@ -2486,11 +2626,12 @@ export default function MunicipalityApp() {
   const [editingEventId, setEditingEventId] = useState(null);
   const [topicDraft, setTopicDraft] = useState(() => buildNotificationTopicDraft("alert"));
   const [editingTopicKey, setEditingTopicKey] = useState("");
+  const [creatingTopicKind, setCreatingTopicKind] = useState("");
   const [topicManagerStatus, setTopicManagerStatus] = useState("");
   const [topicSaveBusy, setTopicSaveBusy] = useState(false);
-  const [openNavMenu, setOpenNavMenu] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [supportFeedbackOpen, setSupportFeedbackOpen] = useState(false);
+  const [locationActionBusyKey, setLocationActionBusyKey] = useState("");
   const [availableHubTenants, setAvailableHubTenants] = useState([]);
   const [interestedTenantKeys, setInterestedTenantKeys] = useState([]);
   const [savedInterestedTenantKeys, setSavedInterestedTenantKeys] = useState([]);
@@ -2498,14 +2639,17 @@ export default function MunicipalityApp() {
   const [hubAccessLoading, setHubAccessLoading] = useState(true);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState("");
-  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
-  const [openSettingsGroups, setOpenSettingsGroups] = useState({
-    account: false,
-    organization: false,
-    team: false,
-    map: false,
-  });
   const [teamAssignments, setTeamAssignments] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [departmentIdsByUserId, setDepartmentIdsByUserId] = useState({});
+  const [departmentDraft, setDepartmentDraft] = useState({ name: "", notification_email: "" });
+  const [editingDepartmentId, setEditingDepartmentId] = useState("");
+  const [departmentFormOpen, setDepartmentFormOpen] = useState(false);
+  const [departmentStatus, setDepartmentStatus] = useState("");
+  const [departmentBusy, setDepartmentBusy] = useState(false);
+  const [reportNotifications, setReportNotifications] = useState([]);
+  const [reportNotificationsLoading, setReportNotificationsLoading] = useState(false);
+  const [reportNotificationsStatus, setReportNotificationsStatus] = useState("");
   const [roleDefinitions, setRoleDefinitions] = useState([]);
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionCatalog, setPermissionCatalog] = useState([]);
@@ -2563,6 +2707,7 @@ export default function MunicipalityApp() {
   });
   const [assetSectionExpanded, setAssetSectionExpanded] = useState({});
   const [teamAssignmentBusy, setTeamAssignmentBusy] = useState({});
+  const [editingEmployeeDepartmentsUserId, setEditingEmployeeDepartmentsUserId] = useState("");
   const [teamManagementView, setTeamManagementView] = useState("list");
   const [teamAssignmentMode, setTeamAssignmentMode] = useState("existing");
   const [editingTeamAssignmentKey, setEditingTeamAssignmentKey] = useState("");
@@ -2594,6 +2739,7 @@ export default function MunicipalityApp() {
   });
   const [tenantVisibilityByDomain, setTenantVisibilityByDomain] = useState({});
   const [tenantVisibilityLoaded, setTenantVisibilityLoaded] = useState(false);
+  const [organizationManagedIncidentDomainKeys, setOrganizationManagedIncidentDomainKeys] = useState(null);
   const [reportActivityRows, setReportActivityRows] = useState([]);
   const [reportActivityDetailRows, setReportActivityDetailRows] = useState([]);
   const [reportActivityStatus, setReportActivityStatus] = useState("");
@@ -2691,6 +2837,7 @@ export default function MunicipalityApp() {
     setShowAuthPassword(false);
     setForgotPasswordOpen(false);
     setForgotPasswordError("");
+    setAuthConfirmationEmail("");
     setAuthModalOpen(true);
   }
 
@@ -2701,6 +2848,7 @@ export default function MunicipalityApp() {
     setForgotPasswordOpen(false);
     setForgotPasswordError("");
     setAuthResetLoading(false);
+    setAuthConfirmationEmail("");
   }
 
   function openForgotPasswordModal() {
@@ -2737,6 +2885,32 @@ export default function MunicipalityApp() {
     return true;
   }
 
+  async function resendAuthConfirmation() {
+    setAuthConfirmationLoading(true);
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: authConfirmationEmail,
+      options: getEmailConfirmationRedirectOptions("/"),
+    });
+    setAuthConfirmationLoading(false);
+    setAuthStatus(
+      error
+        ? "If confirmation is required for this address, please try again in a moment."
+        : "If confirmation is required for this address, a new link is on its way."
+    );
+  }
+
+  function renderAuthConfirmationActions() {
+    if (!authConfirmationEmail) return null;
+    return (
+      <div className="municipality-actions">
+        <button type="button" className="municipality-button municipality-button--ghost" onClick={resendAuthConfirmation} disabled={authConfirmationLoading}>
+          {authConfirmationLoading ? "Sending…" : "Resend Confirmation Email"}
+        </button>
+      </div>
+    );
+  }
+
   useEffect(() => {
     function onPopState() {
       setRoutePath(normalizeMunicipalityAppPath(window.location.pathname, tenantKey));
@@ -2748,22 +2922,6 @@ export default function MunicipalityApp() {
   useEffect(() => {
     setRoutePath(normalizeMunicipalityAppPath(window.location.pathname, tenantKey));
   }, [tenantKey]);
-
-  useEffect(() => {
-    setOpenNavMenu("");
-  }, [routePath]);
-
-  useEffect(() => {
-    if (!String(routePath || "").startsWith("/settings")) return;
-    setOpenSettingsGroups((prev) => ({ ...prev, [activeSettingsCategoryKey]: true }));
-  }, [activeSettingsCategoryKey, routePath]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !openNavMenu) return undefined;
-    const closeMenu = () => setOpenNavMenu("");
-    window.addEventListener("click", closeMenu);
-    return () => window.removeEventListener("click", closeMenu);
-  }, [openNavMenu]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !accountMenuOpen) return undefined;
@@ -2885,23 +3043,15 @@ export default function MunicipalityApp() {
           routePath === item.path
           || (item.path === "/alerts" && routePath.startsWith("/alerts"))
           || (item.path === "/events" && routePath.startsWith("/events"))
+          || (item.path === "/inbox" && routePath.startsWith("/inbox"))
           || (item.path === "/reports" && routePath.startsWith("/reports")),
       })),
     [routePath, tenantKey]
   );
-  const filteredSettingsNav = useMemo(() => {
-    const query = trimOrEmpty(settingsSearchQuery).toLowerCase();
-    if (!query) return SETTINGS_NAV;
-    return SETTINGS_NAV
-      .map((category) => {
-        const categoryMatches = trimOrEmpty(category.label).toLowerCase().includes(query);
-        if (categoryMatches) return category;
-        const filteredItems = category.items.filter((item) => trimOrEmpty(item.label).toLowerCase().includes(query));
-        if (!filteredItems.length) return null;
-        return { ...category, items: filteredItems };
-      })
-      .filter(Boolean);
-  }, [settingsSearchQuery]);
+  const visibleSettingsNav = useMemo(
+    () => SETTINGS_NAV.filter((category) => category.key === "account" || manageAccess),
+    [manageAccess]
+  );
 
   const switchableTenants = useMemo(() => {
     const lookup = new Map();
@@ -3059,6 +3209,44 @@ export default function MunicipalityApp() {
   );
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadOrganizationManagedIncidentDomains() {
+      if (!authReady || !tenantKey) {
+        setOrganizationManagedIncidentDomainKeys(new Set());
+        return;
+      }
+
+      const { data, error } = await supabase.rpc("tenant_domain_public_config");
+      if (cancelled) return;
+
+      if (error) {
+        if (!isMissingFunctionError(error)) {
+          console.warn("[hub organization-managed domains]", error.message || error);
+        }
+        setOrganizationManagedIncidentDomainKeys(new Set());
+        return;
+      }
+
+      setOrganizationManagedIncidentDomainKeys(new Set(
+        (data || []).flatMap((row) => {
+          const domainKey = normalizeReportDomainKey(row?.domain);
+          return domainKey
+            && trimOrEmpty(row?.domain_type).toLowerCase() === "incident_driven"
+            && row?.organization_monitored_repairs === true
+            ? [domainKey]
+            : [];
+        })
+      ));
+    }
+
+    void loadOrganizationManagedIncidentDomains();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, tenantKey]);
+
+  useEffect(() => {
     if (!visibleReportDomains.length) return;
     if (visibleReportDomains.some((domain) => domain.key === reportDomainFilter)) return;
     setReportDomainFilter(visibleReportDomains[0].key);
@@ -3123,6 +3311,60 @@ export default function MunicipalityApp() {
     () => visibleReportDomains.find((domain) => domain.key === reportDomainFilter) || null,
     [reportDomainFilter, visibleReportDomains]
   );
+  const managedReportDashboardTotals = useMemo(() => {
+    const managedDomainKeys = organizationManagedIncidentDomainKeys || new Set();
+    return {
+      openIncidentCount: (reportActivityRows || []).filter((row) => (
+        managedDomainKeys.has(row?.domain) && isOpenReportState(row?.current_state)
+      )).length,
+      reportCount: (reportActivityDetailRows || []).filter((row) => managedDomainKeys.has(row?.domain)).length,
+    };
+  }, [organizationManagedIncidentDomainKeys, reportActivityDetailRows, reportActivityRows]);
+  const managedReportDashboardTrends = useMemo(() => {
+    const managedDomainKeys = organizationManagedIncidentDomainKeys || new Set();
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const reportCountsByDomain = new Map();
+    const fixDurationsByDomain = new Map();
+
+    for (const row of reportActivityDetailRows || []) {
+      const submittedAt = new Date(row?.submitted_at || "").getTime();
+      if (!managedDomainKeys.has(row?.domain) || !Number.isFinite(submittedAt) || submittedAt < thirtyDaysAgo) continue;
+      reportCountsByDomain.set(row.domain, (reportCountsByDomain.get(row.domain) || 0) + 1);
+    }
+
+    for (const row of reportActivityRows || []) {
+      const reportedAt = new Date(row?.first_reported_at || "").getTime();
+      const resolvedAt = new Date(row?.last_changed_at || "").getTime();
+      const durationMs = resolvedAt - reportedAt;
+      if (
+        !managedDomainKeys.has(row?.domain)
+        || !isResolvedForDashboard(row?.current_state)
+        || !Number.isFinite(reportedAt)
+        || !Number.isFinite(resolvedAt)
+        || resolvedAt < thirtyDaysAgo
+        || durationMs < 0
+      ) continue;
+      const durations = fixDurationsByDomain.get(row.domain) || [];
+      durations.push(durationMs);
+      fixDurationsByDomain.set(row.domain, durations);
+    }
+
+    const mostReported = [...reportCountsByDomain.entries()]
+      .sort(([aDomain, aCount], [bDomain, bCount]) => (
+        bCount - aCount || reportDomainLabel(aDomain).localeCompare(reportDomainLabel(bDomain))
+      ))[0] || null;
+    const longestAverageFix = [...fixDurationsByDomain.entries()]
+      .map(([domain, durations]) => ({
+        domain,
+        averageDurationMs: durations.reduce((sum, duration) => sum + duration, 0) / durations.length,
+      }))
+      .sort((a, b) => b.averageDurationMs - a.averageDurationMs || reportDomainLabel(a.domain).localeCompare(reportDomainLabel(b.domain)))[0] || null;
+
+    return {
+      mostReported: mostReported ? { domain: mostReported[0], reportCount: mostReported[1] } : null,
+      longestAverageFix,
+    };
+  }, [organizationManagedIncidentDomainKeys, reportActivityDetailRows, reportActivityRows]);
   const latestReportActivityAt = filteredReportActivityRows[0]?.latest_reported_at || "";
   const filteredOpenIncidentCount = filteredReportActivityRows.filter((row) => isOpenReportState(row?.current_state)).length;
   const filteredClosedIncidentCount = Math.max(0, filteredReportActivityRows.length - filteredOpenIncidentCount);
@@ -3491,6 +3733,20 @@ export default function MunicipalityApp() {
     }
     return lookup;
   }, [teamAssignments]);
+  const canEditTeamDepartments = useMemo(() => {
+    if (manageAccess) return true;
+    const activeRoleKeys = new Set(
+      (teamAssignments || [])
+        .filter((row) => row?.user_id === session?.user?.id && trimOrEmpty(row?.status) === "active")
+        .map((row) => trimOrEmpty(row?.role))
+        .filter(Boolean)
+    );
+    return (rolePermissions || []).some((row) =>
+      activeRoleKeys.has(trimOrEmpty(row?.role))
+      && trimOrEmpty(row?.permission_key) === "users.edit"
+      && row?.allowed !== false
+    );
+  }, [manageAccess, rolePermissions, session?.user?.id, teamAssignments]);
   const eventSourceSummary = useMemo(() => {
     const lookup = {};
     for (const row of events || []) {
@@ -3500,8 +3756,6 @@ export default function MunicipalityApp() {
     return lookup;
   }, [events]);
 
-  const homeAlerts = useMemo(() => sortUpcomingAlerts(publishedAlerts).slice(0, 3), [publishedAlerts]);
-  const homeEvents = useMemo(() => sortEvents(publishedEvents).slice(0, 4), [publishedEvents]);
   const publicAlertsCurrent = useMemo(() => sortUpcomingAlerts(publishedAlerts), [publishedAlerts]);
   const publicEventsCurrent = useMemo(() => sortEvents(publishedEvents), [publishedEvents]);
   const teamSectionBlocked = /could not load team access/i.test(trimOrEmpty(settingsSectionStatus.team).toLowerCase());
@@ -3616,6 +3870,8 @@ export default function MunicipalityApp() {
 
   useEffect(() => {
     let cancelled = false;
+    let idleHandle = null;
+    let fallbackTimer = null;
 
     async function loadReportActivity() {
       setReportActivityLoading(true);
@@ -3810,6 +4066,7 @@ export default function MunicipalityApp() {
               latest_report_number: row.report_number,
             }),
             current_state: row.current_state,
+            last_changed_at: row.last_changed_at,
             report_count: 1,
             first_reported_at: row.submitted_at,
             latest_reported_at: row.submitted_at,
@@ -3898,9 +4155,23 @@ export default function MunicipalityApp() {
       setReportActivityLoading(false);
     }
 
-    void loadReportActivity();
+    // Report activity fans out across several report and incident sources.
+    // Keep it out of the first dashboard paint; the dashboard can render its
+    // alerts and events as soon as those lightweight feeds are ready.
+    const start = () => {
+      void loadReportActivity();
+    };
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      idleHandle = window.requestIdleCallback(start, { timeout: 1200 });
+    } else {
+      fallbackTimer = setTimeout(start, 350);
+    }
     return () => {
       cancelled = true;
+      if (idleHandle !== null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (fallbackTimer !== null) clearTimeout(fallbackTimer);
     };
   }, [authReady, tenantKey, visibleReportDomainSet]);
 
@@ -3916,7 +4187,7 @@ export default function MunicipalityApp() {
       }
 
       const [tenantListRes, interestsRes] = await Promise.all([
-        supabase.rpc("list_resident_hub_tenants"),
+        supabase.rpc("list_accessible_hub_tenants"),
         supabase
           .from("resident_tenant_interests")
           .select("tenant_key")
@@ -4095,12 +4366,6 @@ export default function MunicipalityApp() {
 
     if (!silent) setDataLoading(true);
 
-    const topicQuery = supabase
-      .from("notification_topics")
-      .select("tenant_key,topic_key,label,description,default_enabled,active,sort_order,topic_kind")
-      .eq("tenant_key", tenantKey)
-      .order("sort_order", { ascending: true });
-
     const alertQuery = supabase
       .from("municipality_alerts")
       .select("id,tenant_key,topic_key,title,summary,body,severity,location_name,location_address,cta_label,cta_url,pinned,delivery_channels,status,starts_at,ends_at,published_at,created_at,updated_at")
@@ -4116,37 +4381,45 @@ export default function MunicipalityApp() {
       .order("starts_at", { ascending: true })
       .order("created_at", { ascending: false });
 
-    const [topicRes, alertRes, eventRes] = await Promise.all([topicQuery, alertQuery, eventQuery]);
+    // Topic metadata is useful for labels, but it must not hold up the
+    // dashboard's alert/event counts. Start all reads together, publish the
+    // two visible feeds first, then enrich their labels when topics arrive.
+    const topicPromise = loadHubNotificationTopics(supabase, tenantKey);
+    const [alertRes, eventRes] = await Promise.all([alertQuery, eventQuery]);
 
-    const firstError = topicRes.error || alertRes.error || eventRes.error;
-    if (firstError) {
-      setTopics([]);
+    if (alertRes.error || eventRes.error) {
       setAlerts([]);
       setEvents([]);
       setDataLoading(false);
       return;
     }
 
-    const nextTopics = (topicRes.data || []).map((topic) => ({
-      ...topic,
-      label: trimOrEmpty(topic?.label) || topic?.topic_key,
-      description: trimOrEmpty(topic?.description),
-      topic_kind: trimOrEmpty(topic?.topic_kind).toLowerCase() || "alert",
-    }));
-    const labelsByTopic = Object.fromEntries(nextTopics.map((topic) => [topic.topic_key, topic.label]));
-
-    setTopics(nextTopics);
     setAlerts(
       sortAlerts((alertRes.data || []).map((alert) =>
-        normalizeCommunityAlertRow(alert, labelsByTopic[alert.topic_key] || alert.topic_key)
+        normalizeCommunityAlertRow(alert, alert.topic_key)
       ))
     );
     setEvents(
       sortEvents((eventRes.data || []).map((event) =>
-        normalizeCommunityEventRow(event, labelsByTopic[event.topic_key] || event.topic_key)
+        normalizeCommunityEventRow(event, event.topic_key)
       ))
     );
     setDataLoading(false);
+
+    const topicRes = await topicPromise;
+    if (topicRes.error) {
+      setTopics([]);
+      return;
+    }
+    const nextTopics = topicRes.data || [];
+    const labelsByTopic = Object.fromEntries(nextTopics.map((topic) => [topic.topic_key, topic.label]));
+    setTopics(nextTopics);
+    setAlerts(sortAlerts((alertRes.data || []).map((alert) =>
+      normalizeCommunityAlertRow(alert, labelsByTopic[alert.topic_key] || alert.topic_key)
+    )));
+    setEvents(sortEvents((eventRes.data || []).map((event) =>
+      normalizeCommunityEventRow(event, labelsByTopic[event.topic_key] || event.topic_key)
+    )));
   }, [tenantKey]);
 
   useEffect(() => {
@@ -4489,6 +4762,113 @@ export default function MunicipalityApp() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  async function loadReportNotifications() {
+    if (!session?.user?.id || !tenantKey) {
+      setReportNotifications([]);
+      return;
+    }
+    setReportNotificationsLoading(true);
+    const { data, error } = await supabase
+      .from("tenant_report_notifications")
+      .select("id,department_id,domain_key,source_table,source_report_id,report_number,title,body,read_at,created_at")
+      .eq("tenant_key", tenantKey)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setReportNotificationsLoading(false);
+    if (error) {
+      setReportNotifications([]);
+      setReportNotificationsStatus(isMissingRelationError(error)
+        ? "Operational inbox will be available after the latest database update is applied."
+        : (error.message || "Could not load report notifications."));
+      return;
+    }
+    setReportNotifications(data || []);
+    setReportNotificationsStatus("");
+  }
+
+  async function markReportNotificationRead(notification) {
+    if (!notification?.id || notification?.read_at) return;
+    const { error } = await supabase
+      .from("tenant_report_notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("id", notification.id);
+    if (error) return;
+    setReportNotifications((rows) => rows.map((row) => row.id === notification.id ? { ...row, read_at: new Date().toISOString() } : row));
+  }
+
+  async function loadDepartments() {
+    if (!tenantKey || !session?.user?.id) return;
+    const [departmentsRes, assignmentsRes] = await Promise.all([
+      supabase.from("tenant_departments").select("id,name,notification_email,active").eq("tenant_key", tenantKey).order("name"),
+      supabase.from("tenant_user_departments").select("department_id,user_id").eq("tenant_key", tenantKey),
+    ]);
+    if (departmentsRes.error || assignmentsRes.error) {
+      setDepartments([]);
+      setDepartmentIdsByUserId({});
+      setDepartmentStatus(isMissingRelationError(departmentsRes.error || assignmentsRes.error)
+        ? "Department routing will be available after the latest database update is applied."
+        : ((departmentsRes.error || assignmentsRes.error)?.message || "Could not load departments."));
+      return;
+    }
+    const nextByUserId = {};
+    for (const assignment of assignmentsRes.data || []) {
+      nextByUserId[assignment.user_id] = [...(nextByUserId[assignment.user_id] || []), assignment.department_id];
+    }
+    setDepartments(departmentsRes.data || []);
+    setDepartmentIdsByUserId(nextByUserId);
+    setDepartmentStatus("");
+  }
+
+  async function saveDepartment(event) {
+    event.preventDefault();
+    const name = trimOrEmpty(departmentDraft.name);
+    if (!name) {
+      setDepartmentStatus("Department name is required.");
+      return;
+    }
+    setDepartmentBusy(true);
+    const payload = {
+      tenant_key: tenantKey,
+      name,
+      notification_email: trimOrEmpty(departmentDraft.notification_email).toLowerCase() || null,
+    };
+    const { error } = editingDepartmentId
+      ? await supabase.from("tenant_departments").update(payload).eq("id", editingDepartmentId).eq("tenant_key", tenantKey)
+      : await supabase.from("tenant_departments").insert([payload]);
+    setDepartmentBusy(false);
+    if (error) {
+      setDepartmentStatus(error.message || "Could not save department.");
+      return;
+    }
+    setDepartmentDraft({ name: "", notification_email: "" });
+    setEditingDepartmentId("");
+    setDepartmentFormOpen(false);
+    setDepartmentStatus(editingDepartmentId ? "Department updated." : "Department saved. Assign employees below, then select this department from the appropriate tenant domain’s Reporting settings.");
+    await loadDepartments();
+  }
+
+  async function toggleUserDepartment(userId, departmentId, checked) {
+    setDepartmentBusy(true);
+    const query = checked
+      ? supabase.from("tenant_user_departments").insert([{ tenant_key: tenantKey, department_id: departmentId, user_id: userId }])
+      : supabase.from("tenant_user_departments").delete().eq("tenant_key", tenantKey).eq("department_id", departmentId).eq("user_id", userId);
+    const { error } = await query;
+    setDepartmentBusy(false);
+    if (error) {
+      setDepartmentStatus(error.message || "Could not update this employee’s departments.");
+      return;
+    }
+    await loadDepartments();
+  }
+
+  useEffect(() => {
+    if (routePath === "/inbox") void loadReportNotifications();
+  }, [routePath, session?.user?.id, tenantKey]);
+
+  useEffect(() => {
+    if (String(routePath || "").startsWith("/settings/departments") || String(routePath || "").startsWith("/settings/manage-employees")) void loadDepartments();
+  }, [routePath, session?.user?.id, tenantKey]);
+
   function updatePreferenceDraft(topicKey, field, nextValue) {
     setPreferencesByTopic((prev) => ({
       ...prev,
@@ -4593,18 +4973,21 @@ function populateAlertForm(alert) {
   function startNewTopic(topicKind) {
     setTopicManagerStatus("");
     setEditingTopicKey("");
+    setCreatingTopicKind(topicKind);
     setTopicDraft(buildNotificationTopicDraft(topicKind));
   }
 
   function startEditTopic(topic) {
     setTopicManagerStatus("");
     setEditingTopicKey(trimOrEmpty(topic?.topic_key));
+    setCreatingTopicKind("");
     setTopicDraft(buildNotificationTopicDraft(topic?.topic_kind, topic));
   }
 
   function cancelTopicEditing(topicKind) {
     setTopicManagerStatus("");
     setEditingTopicKey("");
+    setCreatingTopicKind("");
     setTopicDraft(buildNotificationTopicDraft(topicKind));
   }
 
@@ -4658,6 +5041,7 @@ function populateAlertForm(alert) {
 
     setTopicManagerStatus(editingTopicKey ? "Topic updated." : "Topic saved.");
     setEditingTopicKey("");
+    setCreatingTopicKind("");
     setTopicDraft(buildNotificationTopicDraft(nextTopicKind));
     await reloadContent();
   }
@@ -4697,6 +5081,40 @@ function populateAlertForm(alert) {
       else next.delete(key);
       return [...next];
     });
+  }
+
+  async function setHubLocationFollowed(tenantKeyInput, shouldFollow) {
+    const key = trimOrEmpty(tenantKeyInput).toLowerCase();
+    if (!session?.user?.id || !key) return;
+    setLocationActionBusyKey(key);
+    setAccountSectionStatus((prev) => ({ ...prev, cities: "" }));
+    try {
+      await persistFollowedTenantKey({
+        supabase,
+        userId: session.user.id,
+        tenantKey: key,
+        shouldFollow,
+      });
+      setInterestedTenantKeys((prev) => {
+        const next = new Set(prev);
+        if (shouldFollow) next.add(key);
+        else next.delete(key);
+        return [...next];
+      });
+      setSavedInterestedTenantKeys((prev) => {
+        const next = new Set(prev);
+        if (shouldFollow) next.add(key);
+        else next.delete(key);
+        return [...next];
+      });
+    } catch (error) {
+      setAccountSectionStatus((prev) => ({
+        ...prev,
+        cities: error?.message || "Could not update your saved locations.",
+      }));
+    } finally {
+      setLocationActionBusyKey((prev) => (prev === key ? "" : prev));
+    }
   }
 
   function setSectionEditing(sectionKey, isEditing) {
@@ -6245,7 +6663,12 @@ function populateAlertForm(alert) {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       setAuthBusy(false);
       if (error) {
-        setAuthStatus(error.message || "Could not sign in.");
+        if (String(error?.message || "").toLowerCase().includes("email not confirmed")) {
+          setAuthConfirmationEmail(email);
+          setAuthStatus("Please confirm your email before signing in. Didn’t receive the link?");
+        } else {
+          setAuthStatus(error.message || "Could not sign in.");
+        }
         return;
       }
       setAuthStatus("");
@@ -6259,6 +6682,7 @@ function populateAlertForm(alert) {
       email,
       password,
       options: {
+        ...getEmailConfirmationRedirectOptions("/"),
         data: {
           full_name: fullName || null,
         },
@@ -6284,7 +6708,8 @@ function populateAlertForm(alert) {
       setAuthModalOpen(false);
       return;
     }
-    setAuthStatus("Account created. If email confirmation is enabled, please confirm your email and then sign in.");
+    setAuthConfirmationEmail(email);
+    setAuthStatus("If this address needs confirmation, we’ve sent instructions. If you already have an account, sign in or reset your password.");
     setAuthMode("login");
   }
 
@@ -6394,9 +6819,9 @@ function populateAlertForm(alert) {
         },
       });
       if (!notificationResult.ok) {
-        nextStatusMessage = `${nextStatusMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+        nextStatusMessage = `${nextStatusMessage} Resident notifications were not sent: ${notificationResult.error}`;
       } else if (!notificationResult.skipped) {
-        nextStatusMessage = `${nextStatusMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+        nextStatusMessage = `${nextStatusMessage} ${formatResidentNotificationDeliverySummary(notificationResult)}`;
       }
     }
     setAdminStatus(nextStatusMessage);
@@ -6472,9 +6897,9 @@ function populateAlertForm(alert) {
         },
       });
       if (!notificationResult.ok) {
-        nextStatusMessage = `${nextStatusMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+        nextStatusMessage = `${nextStatusMessage} Resident notifications were not sent: ${notificationResult.error}`;
       } else if (!notificationResult.skipped) {
-        nextStatusMessage = `${nextStatusMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+        nextStatusMessage = `${nextStatusMessage} ${formatResidentNotificationDeliverySummary(notificationResult)}`;
       }
     }
     setAdminStatus(nextStatusMessage);
@@ -6556,11 +6981,12 @@ function populateAlertForm(alert) {
   }
 
   async function updateAlertStatus(alert, nextStatus) {
+    const nextPublishedAt = nextStatus === "published" && !alert?.published_at ? new Date().toISOString() : alert?.published_at;
     const { error } = await supabase
       .from("municipality_alerts")
       .update({
         status: nextStatus,
-        published_at: nextStatus === "published" && !alert?.published_at ? new Date().toISOString() : alert?.published_at,
+        published_at: nextPublishedAt,
       })
       .eq("id", alert.id);
     if (error) {
@@ -6571,17 +6997,37 @@ function populateAlertForm(alert) {
       sortAlerts(prev.map((item) => (item.id === alert.id ? {
         ...item,
         status: nextStatus,
-        published_at: nextStatus === "published" && !item?.published_at ? new Date().toISOString() : item?.published_at,
+        published_at: nextPublishedAt,
       } : item)))
     );
+    if (shouldSendResidentNotificationEmail(alert?.status, nextStatus)) {
+      const notificationResult = await triggerResidentNotificationEmail({
+        kind: "alert",
+        item: {
+          ...alert,
+          status: nextStatus,
+          published_at: nextPublishedAt,
+        },
+      });
+      if (!notificationResult.ok) {
+        setAdminStatus(`Alert published, but resident notifications were not sent: ${notificationResult.error}`);
+      } else if (!notificationResult.skipped) {
+        setAdminStatus(`Alert published. ${formatResidentNotificationDeliverySummary(notificationResult)}`);
+      } else {
+        setAdminStatus("Alert published.");
+      }
+      return;
+    }
+    setAdminStatus(`Alert ${nextStatus}.`);
   }
 
   async function updateEventStatus(eventRow, nextStatus) {
+    const nextPublishedAt = nextStatus === "published" && !eventRow?.published_at ? new Date().toISOString() : eventRow?.published_at;
     const { error } = await supabase
       .from("municipality_events")
       .update({
         status: nextStatus,
-        published_at: nextStatus === "published" && !eventRow?.published_at ? new Date().toISOString() : eventRow?.published_at,
+        published_at: nextPublishedAt,
       })
       .eq("id", eventRow.id);
     if (error) {
@@ -6592,14 +7038,33 @@ function populateAlertForm(alert) {
       sortEvents(prev.map((item) => (item.id === eventRow.id ? {
         ...item,
         status: nextStatus,
-        published_at: nextStatus === "published" && !item?.published_at ? new Date().toISOString() : item?.published_at,
+        published_at: nextPublishedAt,
       } : item)))
     );
+    if (shouldSendResidentNotificationEmail(eventRow?.status, nextStatus)) {
+      const notificationResult = await triggerResidentNotificationEmail({
+        kind: "event",
+        item: {
+          ...eventRow,
+          status: nextStatus,
+          published_at: nextPublishedAt,
+        },
+      });
+      if (!notificationResult.ok) {
+        setAdminStatus(`Event published, but resident notifications were not sent: ${notificationResult.error}`);
+      } else if (!notificationResult.skipped) {
+        setAdminStatus(`Event published. ${formatResidentNotificationDeliverySummary(notificationResult)}`);
+      } else {
+        setAdminStatus("Event published.");
+      }
+      return;
+    }
+    setAdminStatus(`Event ${nextStatus}.`);
   }
 
   function renderHeader(floating = false, { authLocked = false } = {}) {
     const mobileNavItems = [
-      { key: "home", label: "Home", path: "/" },
+      { key: "home", label: "Dashboard", path: "/" },
       { key: "events", label: "Events", path: "/events" },
       { key: "alerts", label: "Alerts", path: "/alerts" },
       { key: "reports", label: "Reports", path: "/reports" },
@@ -6665,12 +7130,13 @@ function populateAlertForm(alert) {
                           {accountEmail ? <div className="workspace-menu-meta">{accountEmail}</div> : null}
                         </div>
                         <div className="workspace-menu-actions">
-                          {session?.user?.id && switchableTenants.length ? (
+                          {session?.user?.id ? (
                             <button
                               type="button"
                               className="workspace-menu-button"
                               onClick={() => {
-                                setOpenNavMenu((prev) => (prev === "tenants" ? "" : "tenants"));
+                                setAccountMenuOpen(false);
+                                navigate(LOCATIONS_PATH);
                               }}
                             >
                               Locations
@@ -6680,7 +7146,6 @@ function populateAlertForm(alert) {
                             type="button"
                             className="workspace-menu-button"
                             onClick={() => {
-                              setOpenNavMenu("");
                               setAccountMenuOpen(false);
                               setSupportFeedbackOpen(true);
                             }}
@@ -6708,30 +7173,6 @@ function populateAlertForm(alert) {
                             Sign Out
                           </button>
                         </div>
-                        {session?.user?.id && switchableTenants.length && openNavMenu === "tenants" ? (
-                          <div className="municipality-account-submenu">
-                            <div className="workspace-menu-eyebrow">Switch Location</div>
-                            <div className="municipality-account-submenu-list">
-                              {switchableTenants.map((city) => {
-                                const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
-                                const targetHref = buildTenantSwitchHref(tenant?.env, city, routePath, session);
-                                return (
-                                  <a
-                                    key={cityKey}
-                                    href={targetHref}
-                                    className="workspace-menu-button"
-                                    onClick={() => {
-                                      setOpenNavMenu("");
-                                      setAccountMenuOpen(false);
-                                    }}
-                                  >
-                                    {trimOrEmpty(city?.name) || cityKey}
-                                  </a>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -6786,7 +7227,7 @@ function populateAlertForm(alert) {
                 <button
                   key={item.key}
                   type="button"
-                  className={`municipality-mobile-nav-link${routePath === item.path || (item.path === "/alerts" && routePath.startsWith("/alerts")) || (item.path === "/events" && routePath.startsWith("/events")) || (item.path === "/reports" && routePath.startsWith("/reports")) ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
+                  className={`municipality-mobile-nav-link${routePath === item.path || (item.path === "/alerts" && routePath.startsWith("/alerts")) || (item.path === "/events" && routePath.startsWith("/events")) || (item.path === "/inbox" && routePath.startsWith("/inbox")) || (item.path === "/reports" && routePath.startsWith("/reports")) ? " is-active" : ""}${item.primary ? " municipality-mobile-nav-link--primary" : ""}`}
                   onClick={() => navigate(item.path)}
                 >
                   {item.label}
@@ -6965,6 +7406,7 @@ function populateAlertForm(alert) {
                   </button>
                 </div>
                 {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
+                {renderAuthConfirmationActions()}
               </form>
             </div>
           </div>
@@ -7021,6 +7463,57 @@ function populateAlertForm(alert) {
   const alertsComposerVisible = alertsRouteActive && (showAlertComposer || routePath === "/alerts/create");
   const eventsComposerVisible = eventsRouteActive && (showEventComposer || routePath === "/events/create");
   const settingsRouteActive = String(routePath || "").startsWith("/settings");
+  const locationSearchActive = Boolean(trimOrEmpty(citySearchQuery));
+  const followedLocations = selectableTenants
+    .filter((city) => interestedTenantKeys.includes(trimOrEmpty(city?.tenant_key).toLowerCase()))
+    .sort((a, b) => {
+      const aKey = trimOrEmpty(a?.tenant_key).toLowerCase();
+      const bKey = trimOrEmpty(b?.tenant_key).toLowerCase();
+      if (aKey === tenantKey && bKey !== tenantKey) return -1;
+      if (bKey === tenantKey && aKey !== tenantKey) return 1;
+      return (trimOrEmpty(a?.name) || aKey).localeCompare(trimOrEmpty(b?.name) || bKey);
+    });
+  const currentLocation = followedLocations.find((city) => trimOrEmpty(city?.tenant_key).toLowerCase() === tenantKey)
+    || selectableTenants.find((city) => trimOrEmpty(city?.tenant_key).toLowerCase() === tenantKey)
+    || null;
+  const otherFollowedLocations = followedLocations.filter((city) => trimOrEmpty(city?.tenant_key).toLowerCase() !== tenantKey);
+  const renderHubLocationRow = (city, { searching = false } = {}) => {
+    const cityKey = trimOrEmpty(city?.tenant_key).toLowerCase();
+    if (!cityKey) return null;
+    const cityName = trimOrEmpty(city?.name) || cityKey;
+    const isCurrentLocation = cityKey === tenantKey;
+    const isFollowed = interestedTenantKeys.includes(cityKey);
+    const isBusy = locationActionBusyKey === cityKey;
+    const targetHref = isCurrentLocation
+      ? buildMunicipalityAppHref(window.location.pathname, tenantKey, LOCATIONS_PATH)
+      : buildTenantSwitchHref(tenant?.env, city, LOCATIONS_PATH, session);
+    return (
+      <div key={`${searching ? "search" : "saved"}-${cityKey}`} className={`municipality-location-row${isCurrentLocation ? " is-current" : ""}`}>
+        {searching || !isFollowed || isCurrentLocation ? (
+          <div className="municipality-location-row-copy">
+            <strong>{cityName}</strong>
+            <span>{isCurrentLocation ? "Current location" : "Available location"}</span>
+          </div>
+        ) : (
+          <a href={targetHref} className="municipality-location-row-copy municipality-location-row-link" title={`Switch to ${cityName}`}>
+            <strong>{cityName}</strong>
+            <span>Tap to switch locations</span>
+          </a>
+        )}
+        <button
+          type="button"
+          className={`municipality-location-follow-button${isFollowed ? " is-following" : ""}`}
+          disabled={isBusy}
+          onClick={() => {
+            if (isFollowed && typeof window !== "undefined" && !window.confirm(`Remove ${cityName} from My Locations?`)) return;
+            void setHubLocationFollowed(cityKey, !isFollowed);
+          }}
+        >
+          {isBusy ? "Saving…" : isFollowed ? "Remove" : "Follow"}
+        </button>
+      </div>
+    );
+  };
   const organizationInfo = organizationProfile || {};
   const organizationGeneralFields = [
     { label: "Organization Name", value: tenantName },
@@ -7109,7 +7602,9 @@ function populateAlertForm(alert) {
   const [reportWorkspaceError, setReportWorkspaceError] = useState("");
 
   useEffect(() => {
-    if (routePath !== "/report") {
+    // Reports uses the same All Reports workspace as the map so filters,
+    // icons, incident details, and actions do not drift between surfaces.
+    if (routePath !== "/report" && routePath !== "/reports") {
       setReportWorkspaceError("");
       return;
     }
@@ -7263,6 +7758,7 @@ function populateAlertForm(alert) {
                   </button>
                 </div>
                 {authStatus ? <p className={`municipality-inline-status${authStatus.toLowerCase().includes("could not") || authStatus.toLowerCase().includes("required") ? " is-error" : ""}`}>{authStatus}</p> : null}
+                {renderAuthConfirmationActions()}
               </form>
             </div>
           </section>
@@ -7349,7 +7845,7 @@ function populateAlertForm(alert) {
 
   if (routePath === "/report" || routePath === "/reports") {
     const ReportWorkspace = ReportWorkspaceComponent;
-    const initialReportView = routePath === "/reports" ? "all" : "";
+    const initialReportView = routePath === "/reports" ? "managed" : "";
     return (
       <div className="municipality-shell">
         <div className="municipality-main municipality-main--report">
@@ -7373,96 +7869,91 @@ function populateAlertForm(alert) {
   return (
     <div className="municipality-shell">
       {renderHeader(false)}
-      <main className="municipality-main">
+      <main className={`municipality-main${routePath === "/" ? " municipality-main--dashboard" : ""}${alertsRouteActive || eventsRouteActive ? " municipality-main--full-bleed" : ""}`}>
         {routePath === "/" ? (
           <>
             <section className="municipality-hero municipality-hero--single">
               <div className="municipality-card municipality-hero-copy">
-                <h2>Location summary first. Operations tools right behind it.</h2>
-                <p>
-                  Use the hub to keep up with live alerts, scheduled events, and location-wide activity, then jump into the
-                  map workspace when you need to process reports directly.
-                </p>
                 <div className="municipality-metrics">
                   <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/alerts")}>
-                    <strong>{activeAlertCount(publishedAlerts)}</strong>
-                    <span>Active Alerts</span>
+                    <strong>{dataLoading ? "—" : activeAlertCount(publishedAlerts)}</strong>
+                    <span>Current Alerts</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/alerts")}>
+                    <strong>{dataLoading ? "—" : upcomingAlertCount(publishedAlerts)}</strong>
+                    <span>Upcoming Alerts</span>
                   </button>
                   <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/events")}>
-                    <strong>{upcomingEventCount(publishedEvents)}</strong>
+                    <strong>{dataLoading ? "—" : currentEventCount(publishedEvents)}</strong>
+                    <span>Current Events</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/events")}>
+                    <strong>{dataLoading ? "—" : upcomingEventCount(publishedEvents)}</strong>
                     <span>Upcoming Events</span>
                   </button>
                   <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/reports")}>
-                    <strong>{publishedAlerts.length + publishedEvents.length}</strong>
-                    <span>Domain Overview</span>
+                    <strong>{reportActivityLoading || organizationManagedIncidentDomainKeys === null ? "—" : managedReportDashboardTotals.openIncidentCount}</strong>
+                    <span>Managed Open Incidents</span>
                   </button>
-                </div>
-                <div className="municipality-hero-actions">
-                  <button type="button" className="municipality-button municipality-button--primary" onClick={openReportWorkspaceInNewTab}>
-                    Open Map Workspace
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/reports")}>
+                    <strong>{reportActivityLoading || organizationManagedIncidentDomainKeys === null ? "—" : managedReportDashboardTotals.reportCount}</strong>
+                    <span>Managed Reports</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button municipality-metric--text" onClick={() => navigate("/reports")}>
+                    <strong>{reportActivityLoading || organizationManagedIncidentDomainKeys === null ? "—" : (managedReportDashboardTrends.mostReported ? reportDomainLabel(managedReportDashboardTrends.mostReported.domain) : "—")}</strong>
+                    <span>{managedReportDashboardTrends.mostReported ? `Most reported type · ${managedReportDashboardTrends.mostReported.reportCount} in 30 days` : "Most reported type · 30 days"}</span>
+                  </button>
+                  <button type="button" className="municipality-metric municipality-metric--button" onClick={() => navigate("/reports")}>
+                    <strong>{reportActivityLoading || organizationManagedIncidentDomainKeys === null ? "—" : (managedReportDashboardTrends.longestAverageFix ? formatDashboardDuration(managedReportDashboardTrends.longestAverageFix.averageDurationMs) : "—")}</strong>
+                    <span>{managedReportDashboardTrends.longestAverageFix ? `${reportDomainLabel(managedReportDashboardTrends.longestAverageFix.domain)} · longest avg. fix time / 30 days` : "Longest avg. fix time · 30 days"}</span>
                   </button>
                 </div>
               </div>
             </section>
 
-            <section className="municipality-section-grid">
-              <HomeCard
-                title="Current Alerts"
-                subtitle="Road work, utility interruptions, service changes, and urgent notices."
-                onTitleClick={() => navigate("/alerts")}
-              >
-                {dataLoading ? <div className="municipality-empty">Loading alerts…</div> : <AlertFeed alerts={homeAlerts} emptyText="No active alerts are published right now." />}
-              </HomeCard>
-              <HomeCard
-                title="Upcoming Events"
-                subtitle="Parades, public meetings, sanitation changes, and scheduled maintenance."
-                onTitleClick={() => navigate("/events")}
-              >
-                {dataLoading ? <div className="municipality-empty">Loading events…</div> : <EventFeed events={homeEvents} emptyText="No upcoming events are published yet." />}
-              </HomeCard>
-            </section>
           </>
         ) : null}
 
         {alertsRouteActive ? (
-          <HomeCard title="Location Alerts" subtitle="Create, schedule, and review public alerts for this location.">
+          <HomeCard
+            title="Location Alerts"
+            className="municipality-section--full-bleed"
+            headerActions={manageAccess ? (
+              <button
+                type="button"
+                className="municipality-section-icon-button"
+                aria-label={alertsComposerVisible ? "Close alert composer" : "Create or schedule alert"}
+                title={alertsComposerVisible ? "Close composer" : "Create or schedule alert"}
+                onClick={() => {
+                  if (alertsComposerVisible) {
+                    closeAlertComposer();
+                    navigate("/alerts");
+                    return;
+                  }
+                  startNewAlert();
+                  navigate("/alerts");
+                }}
+              >
+                <img src="/Icons/Buttons/add_button.svg" alt="" aria-hidden="true" />
+              </button>
+            ) : null}
+          >
             <div className="municipality-admin-panel">
               <div className="municipality-actions municipality-actions--toolbar">
-                {manageAccess ? (
-                  <button
-                    type="button"
-                    className={`municipality-button${alertsComposerVisible ? " municipality-button--ghost" : " municipality-button--primary"}`}
-                    onClick={() => {
-                      if (alertsComposerVisible) {
-                        closeAlertComposer();
-                        navigate("/alerts");
-                        return;
-                      }
-                      startNewAlert();
-                      navigate("/alerts");
-                    }}
-                  >
-                    {alertsComposerVisible ? "Close Composer" : "Create / Schedule"}
-                  </button>
-                ) : null}
-                {!manageAccess ? (
-                  <>
-                    <button
-                      type="button"
-                      className={`municipality-button${alertsArchiveView === "current" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                      onClick={() => setAlertsArchiveView("current")}
-                    >
-                      Current
-                    </button>
-                    <button
-                      type="button"
-                      className={`municipality-button${alertsArchiveView === "archived" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                      onClick={() => setAlertsArchiveView("archived")}
-                    >
-                      Archived
-                    </button>
-                  </>
-                ) : null}
+                <button
+                  type="button"
+                  className={`municipality-button${alertsArchiveView === "current" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => setAlertsArchiveView("current")}
+                >
+                  Current
+                </button>
+                <button
+                  type="button"
+                  className={`municipality-button${alertsArchiveView === "archived" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => setAlertsArchiveView("archived")}
+                >
+                  Archived
+                </button>
               </div>
               {manageAccess && alertsComposerVisible ? (
                 <AlertComposer
@@ -7481,32 +7972,12 @@ function populateAlertForm(alert) {
                   submitLabel={editingAlertId ? "Update Alert" : "Save Alert"}
                 />
               ) : null}
-              {manageAccess ? (
-                <NotificationTopicManager
-                  title="Alert Topics"
-                  subtitle="These are the alert topics available to this tenant. Remove hides a topic from the alert composer without disturbing older alerts."
-                  topicKind="alert"
-                  topics={alertTopics}
-                  topicDraft={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "alert" ? topicDraft : buildNotificationTopicDraft("alert")}
-                  setTopicDraft={setTopicDraft}
-                  editingTopicKey={trimOrEmpty(editingTopicKey).toLowerCase() && trimOrEmpty(topicLookup[editingTopicKey]?.topic_kind).toLowerCase() === "alert" ? editingTopicKey : ""}
-                  topicSaveBusy={topicSaveBusy}
-                  status={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "alert" || !editingTopicKey ? topicManagerStatus : ""}
-                  onStartNew={() => startNewTopic("alert")}
-                  onCancel={() => cancelTopicEditing("alert")}
-                  onSave={(event) => void saveTopic("alert", event)}
-                  onEdit={startEditTopic}
-                  onToggleActive={(topic) => void toggleTopicActive(topic)}
-                />
-              ) : null}
               {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
             </div>
             {dataLoading ? <div className="municipality-empty">Loading alerts…</div> : (
               <AlertFeed
-                alerts={manageAccess ? alerts : (alertsArchiveView === "archived" ? archivedAlerts : publicAlertsCurrent)}
-                emptyText={manageAccess
-                  ? "No alerts have been published yet."
-                  : (alertsArchiveView === "archived" ? "No archived alerts yet." : "No current alerts are published right now.")}
+                alerts={alertsArchiveView === "archived" ? archivedAlerts : publicAlertsCurrent}
+                emptyText={alertsArchiveView === "archived" ? "No archived alerts yet." : "No current alerts are published right now."}
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateAlertStatus : null}
                 onEdit={manageAccess ? (alert) => {
@@ -7519,13 +7990,34 @@ function populateAlertForm(alert) {
         ) : null}
 
         {eventsRouteActive ? (
-          <HomeCard title="Location Events" subtitle="Create, schedule, and review public events for this location.">
-            <div className="municipality-admin-panel">
-              <div className="municipality-actions municipality-actions--toolbar">
+          <HomeCard
+            title="Location Events"
+            className="municipality-section--full-bleed"
+            headerActions={(
+              <>
+                <button
+                  type="button"
+                  className="municipality-section-icon-button"
+                  aria-label="Download events calendar"
+                  title="Download calendar (.ics)"
+                  disabled={!publishedEvents.length}
+                  onClick={() => {
+                    if (!publishedEvents.length) return;
+                    downloadTextFile(
+                      `${tenantKey || "location"}-events.ics`,
+                      buildIcsFile(publishedEvents, organizationDisplayName),
+                      "text/calendar;charset=utf-8"
+                    );
+                  }}
+                >
+                  <img src="/Icons/Buttons/download_button.svg" alt="" aria-hidden="true" />
+                </button>
                 {manageAccess ? (
                   <button
                     type="button"
-                    className={`municipality-button${eventsComposerVisible ? " municipality-button--ghost" : " municipality-button--primary"}`}
+                    className="municipality-section-icon-button"
+                    aria-label={eventsComposerVisible ? "Close event composer" : "Create or schedule event"}
+                    title={eventsComposerVisible ? "Close composer" : "Create or schedule event"}
                     onClick={() => {
                       if (eventsComposerVisible) {
                         closeEventComposer();
@@ -7536,40 +8028,27 @@ function populateAlertForm(alert) {
                       navigate("/events");
                     }}
                   >
-                    {eventsComposerVisible ? "Close Composer" : "Create / Schedule"}
+                    <img src="/Icons/Buttons/add_button.svg" alt="" aria-hidden="true" />
                   </button>
                 ) : null}
-                {!manageAccess ? (
-                  <>
-                    <button
-                      type="button"
-                      className={`municipality-button${eventsArchiveView === "current" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                      onClick={() => setEventsArchiveView("current")}
-                    >
-                      Upcoming
-                    </button>
-                    <button
-                      type="button"
-                      className={`municipality-button${eventsArchiveView === "archived" ? " municipality-button--primary" : " municipality-button--ghost"}`}
-                      onClick={() => setEventsArchiveView("archived")}
-                    >
-                      Archived
-                    </button>
-                  </>
-                ) : null}
+              </>
+            )}
+          >
+            <div className="municipality-admin-panel">
+              <div className="municipality-actions municipality-actions--toolbar">
                 <button
                   type="button"
-                  className="municipality-button municipality-button--ghost"
-                  onClick={() => {
-                    if (!publishedEvents.length) return;
-                    downloadTextFile(
-                      `${tenantKey || "location"}-events.ics`,
-                      buildIcsFile(publishedEvents, organizationDisplayName),
-                      "text/calendar;charset=utf-8"
-                    );
-                  }}
+                  className={`municipality-button${eventsArchiveView === "current" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => setEventsArchiveView("current")}
                 >
-                  Download Calendar (.ics)
+                  Upcoming
+                </button>
+                <button
+                  type="button"
+                  className={`municipality-button${eventsArchiveView === "archived" ? " municipality-button--primary" : " municipality-button--ghost"}`}
+                  onClick={() => setEventsArchiveView("archived")}
+                >
+                  Archived
                 </button>
               </div>
               {manageAccess && eventsComposerVisible ? (
@@ -7589,32 +8068,12 @@ function populateAlertForm(alert) {
                   submitLabel={editingEventId ? "Update Event" : "Save Event"}
                 />
               ) : null}
-              {manageAccess ? (
-                <NotificationTopicManager
-                  title="Event Topics"
-                  subtitle="These are the event topics available to this tenant. Add event-specific topics like parades, festivals, or meetings here."
-                  topicKind="event"
-                  topics={eventTopics}
-                  topicDraft={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "event" ? topicDraft : buildNotificationTopicDraft("event")}
-                  setTopicDraft={setTopicDraft}
-                  editingTopicKey={trimOrEmpty(editingTopicKey).toLowerCase() && trimOrEmpty(topicLookup[editingTopicKey]?.topic_kind).toLowerCase() === "event" ? editingTopicKey : ""}
-                  topicSaveBusy={topicSaveBusy}
-                  status={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "event" || !editingTopicKey ? topicManagerStatus : ""}
-                  onStartNew={() => startNewTopic("event")}
-                  onCancel={() => cancelTopicEditing("event")}
-                  onSave={(event) => void saveTopic("event", event)}
-                  onEdit={startEditTopic}
-                  onToggleActive={(topic) => void toggleTopicActive(topic)}
-                />
-              ) : null}
               {adminStatus ? <p className={`municipality-inline-status${adminStatus.toLowerCase().includes("could not") ? " is-error" : ""}`}>{adminStatus}</p> : null}
             </div>
             {dataLoading ? <div className="municipality-empty">Loading events…</div> : (
               <EventFeed
-                events={manageAccess ? events : (eventsArchiveView === "archived" ? archivedEvents : publicEventsCurrent)}
-                emptyText={manageAccess
-                  ? "No events have been published yet."
-                  : (eventsArchiveView === "archived" ? "No archived events yet." : "No upcoming events are published yet.")}
+                events={eventsArchiveView === "archived" ? archivedEvents : publicEventsCurrent}
+                emptyText={eventsArchiveView === "archived" ? "No archived events yet." : "No upcoming events are published yet."}
                 showStatus={manageAccess}
                 onStatusChange={manageAccess ? updateEventStatus : null}
                 onEdit={manageAccess ? (eventRow) => {
@@ -7622,6 +8081,101 @@ function populateAlertForm(alert) {
                   navigate("/events");
                 } : null}
               />
+            )}
+          </HomeCard>
+        ) : null}
+
+        {routePath === "/inbox" ? (
+          <HomeCard title="Operational Inbox" subtitle="New reports routed to your tenant-admin account appear here.">
+            <div className="municipality-admin-panel">
+              <div className="municipality-actions municipality-actions--toolbar">
+                <button type="button" className="municipality-button municipality-button--ghost" onClick={() => void loadReportNotifications()} disabled={reportNotificationsLoading}>
+                  {reportNotificationsLoading ? "Refreshing…" : "Refresh"}
+                </button>
+                <button type="button" className="municipality-button municipality-button--primary" onClick={() => navigate("/reports")}>
+                  Open Reports
+                </button>
+              </div>
+              {reportNotificationsStatus ? <p className="municipality-inline-status">{reportNotificationsStatus}</p> : null}
+              {reportNotificationsLoading ? <div className="municipality-empty">Loading report notifications…</div> : null}
+              {!reportNotificationsLoading && !reportNotifications.length && !reportNotificationsStatus ? (
+                <div className="municipality-empty">No report notifications yet.</div>
+              ) : null}
+              <div className="municipality-settings-list">
+                {reportNotifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    type="button"
+                    className="municipality-settings-list-item"
+                    style={{ textAlign: "left", width: "100%", opacity: notification.read_at ? 0.72 : 1 }}
+                    onClick={() => {
+                      void markReportNotificationRead(notification);
+                      navigate("/reports");
+                    }}
+                  >
+                    <div>
+                      <strong>{notification.title}</strong>
+                      <p className="municipality-note">{notification.body || "A new report is ready for review."}</p>
+                      <p className="municipality-note">{notification.report_number ? `Report #${notification.report_number} • ` : ""}{formatDateTime(notification.created_at)}</p>
+                    </div>
+                    {!notification.read_at ? <span className="municipality-status-badge municipality-status-badge--active">New</span> : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </HomeCard>
+        ) : null}
+
+        {routePath === LOCATIONS_PATH ? (
+          <HomeCard title="My Locations">
+            {!session?.user?.id ? (
+              <div className="municipality-auth-cta">
+                <h4>Sign in to view locations</h4>
+                <p className="municipality-note">Your saved locations are connected to your CityReport account.</p>
+                <button type="button" className="municipality-button municipality-button--primary" onClick={() => openAuthModal("login")}>
+                  Sign In
+                </button>
+              </div>
+            ) : (
+              <div className="municipality-my-locations">
+                <input
+                  id="hub-location-search"
+                  type="search"
+                  value={citySearchQuery}
+                  onChange={(event) => setCitySearchQuery(event.target.value)}
+                  placeholder="Search city name"
+                  aria-label="Search locations"
+                />
+                <p className="municipality-note">Tap a saved city to switch locations. Search locations your account can access.</p>
+
+                {locationSearchActive ? (
+                  <div className="municipality-location-group">
+                    <span className="municipality-location-group-label">Search results</span>
+                    {searchedTenants.length ? searchedTenants.map((city) => renderHubLocationRow(city, { searching: true })) : (
+                      <div className="municipality-empty">No locations matched that search.</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="municipality-location-group">
+                    {currentLocation ? (
+                      <>
+                        <span className="municipality-location-group-label">Current location</span>
+                        {renderHubLocationRow(currentLocation)}
+                      </>
+                    ) : null}
+                    {otherFollowedLocations.length ? (
+                      <>
+                        <span className="municipality-location-group-label">Following</span>
+                        {otherFollowedLocations.map((city) => renderHubLocationRow(city))}
+                      </>
+                    ) : null}
+                    {!currentLocation && !otherFollowedLocations.length ? (
+                      <div className="municipality-empty">You do not have any saved locations yet. Search above to add your first city.</div>
+                    ) : null}
+                  </div>
+                )}
+                {accountSectionStatus.cities ? <p className={`municipality-inline-status${accountSectionStatus.cities.toLowerCase().includes("could not") ? " is-error" : ""}`}>{accountSectionStatus.cities}</p> : null}
+              </div>
             )}
           </HomeCard>
         ) : null}
@@ -7798,55 +8352,58 @@ function populateAlertForm(alert) {
                   </div>
                 </div>
               ) : (
+                routePath === SETTINGS_PATH ? (
+                  <div className="municipality-settings-home">
+                    <div className="municipality-settings-home-intro">
+                      <h3>Settings</h3>
+                      <p>Choose an area to manage your account and this location.</p>
+                    </div>
+                    <div className="municipality-settings-category-grid">
+                      {visibleSettingsNav.map((category) => (
+                        <button
+                          key={category.key}
+                          type="button"
+                          className="municipality-settings-category-card"
+                          onClick={() => navigate(category.items[0].path)}
+                        >
+                          <span className="municipality-settings-category-eyebrow">{category.items.length} {category.items.length === 1 ? "setting" : "settings"}</span>
+                          <strong>{category.label}</strong>
+                          <span className="municipality-settings-category-items">{category.items.map((item) => item.label).join(" • ")}</span>
+                          <span className="municipality-settings-category-action">Open</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                 <div className="municipality-settings-layout">
                   <aside className="municipality-settings-sidebar">
                     <div className="municipality-settings-sidebar-shell">
                       <div className="municipality-settings-sidebar-header">
                         <h3>Settings</h3>
-                        <p>Browse account, organization, team, and map categories.</p>
-                      </div>
-                      <div className="municipality-settings-search">
-                        <input
-                          type="search"
-                          value={settingsSearchQuery}
-                          onChange={(event) => setSettingsSearchQuery(event.target.value)}
-                          placeholder="Search settings"
-                          aria-label="Search settings"
-                        />
+                        <button type="button" className="municipality-settings-all-link" onClick={() => navigate(SETTINGS_PATH)}>
+                          All settings
+                        </button>
                       </div>
                       <div className="municipality-settings-sidebar-groups">
-                        {filteredSettingsNav.map((category) => {
-                          const isExpanded = trimOrEmpty(settingsSearchQuery) ? true : Boolean(openSettingsGroups[category.key]);
-                          return (
-                            <div key={category.key} className="municipality-settings-group">
-                              <button
-                                type="button"
-                                className={`municipality-settings-group-toggle${activeSettingsCategoryKey === category.key ? " is-active" : ""}`}
-                                onClick={() => setOpenSettingsGroups((prev) => ({ ...prev, [category.key]: !prev[category.key] }))}
-                              >
-                                <span>{category.label}</span>
-                                <span className="municipality-settings-group-caret">{isExpanded ? "v" : ">"}</span>
-                              </button>
-                              {isExpanded ? (
-                                <div className="municipality-settings-group-items">
-                                  {category.items.map((item) => (
-                                    <button
-                                      key={item.key}
-                                      type="button"
-                                      className={`municipality-settings-link${activeSettingsItemKey === item.key ? " is-active" : ""}`}
-                                      onClick={() => navigate(item.path)}
-                                    >
-                                      {item.label}
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : null}
+                        {visibleSettingsNav.map((category) => (
+                          <div key={category.key} className="municipality-settings-group">
+                            <div className={`municipality-settings-group-label${activeSettingsCategoryKey === category.key ? " is-active" : ""}`}>
+                              {category.label}
                             </div>
-                          );
-                        })}
-                        {!filteredSettingsNav.length ? (
-                          <div className="municipality-settings-sidebar-empty">No settings matched your search.</div>
-                        ) : null}
+                            <div className="municipality-settings-group-items">
+                              {category.items.map((item) => (
+                                <button
+                                  key={item.key}
+                                  type="button"
+                                  className={`municipality-settings-link${activeSettingsItemKey === item.key ? " is-active" : ""}`}
+                                  onClick={() => navigate(item.path)}
+                                >
+                                  {item.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </aside>
@@ -8312,6 +8869,60 @@ function populateAlertForm(alert) {
                         )}
                         {accountSectionStatus.security ? <p className={`municipality-inline-status${accountSectionStatus.security.toLowerCase().includes("could not") || accountSectionStatus.security.toLowerCase().includes("enter your current password") || accountSectionStatus.security.toLowerCase().includes("use 8+") ? " is-error" : ""}`}>{accountSectionStatus.security}</p> : null}
                       </div>
+                    ) : null}
+
+                    {activeSettingsItemKey === "notification-categories" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Notification categories are limited to location staff</h4>
+                          <p className="municipality-note">This page is reserved for the tenant owner and permitted location staff.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Notification Categories</h4>
+                              <p className="municipality-note">Manage the categories available when staff publish alerts and events, and the defaults residents see in notification preferences.</p>
+                            </div>
+                          </div>
+                          <div className="municipality-topic-row municipality-topic-row--stacked">
+                            <NotificationTopicManager
+                              title="Alert Categories"
+                              subtitle="Categories available in the Alert composer. Removing one hides it from new alerts without changing older alerts."
+                              topicKind="alert"
+                              topics={alertTopics}
+                              topicDraft={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "alert" ? topicDraft : buildNotificationTopicDraft("alert")}
+                              setTopicDraft={setTopicDraft}
+                              editingTopicKey={trimOrEmpty(editingTopicKey).toLowerCase() && trimOrEmpty(topicLookup[editingTopicKey]?.topic_kind).toLowerCase() === "alert" ? editingTopicKey : ""}
+                              creating={creatingTopicKind === "alert"}
+                              topicSaveBusy={topicSaveBusy}
+                              status={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "alert" || !editingTopicKey ? topicManagerStatus : ""}
+                              onStartNew={() => startNewTopic("alert")}
+                              onCancel={() => cancelTopicEditing("alert")}
+                              onSave={(event) => void saveTopic("alert", event)}
+                              onEdit={startEditTopic}
+                              onToggleActive={(topic) => void toggleTopicActive(topic)}
+                            />
+                            <NotificationTopicManager
+                              title="Event Categories"
+                              subtitle="Categories available in the Event composer, such as parades, festivals, meetings, or public works schedules."
+                              topicKind="event"
+                              topics={eventTopics}
+                              topicDraft={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "event" ? topicDraft : buildNotificationTopicDraft("event")}
+                              setTopicDraft={setTopicDraft}
+                              editingTopicKey={trimOrEmpty(editingTopicKey).toLowerCase() && trimOrEmpty(topicLookup[editingTopicKey]?.topic_kind).toLowerCase() === "event" ? editingTopicKey : ""}
+                              creating={creatingTopicKind === "event"}
+                              topicSaveBusy={topicSaveBusy}
+                              status={trimOrEmpty(topicDraft.topic_kind).toLowerCase() === "event" || !editingTopicKey ? topicManagerStatus : ""}
+                              onStartNew={() => startNewTopic("event")}
+                              onCancel={() => cancelTopicEditing("event")}
+                              onSave={(event) => void saveTopic("event", event)}
+                              onEdit={startEditTopic}
+                              onToggleActive={(topic) => void toggleTopicActive(topic)}
+                            />
+                          </div>
+                        </div>
+                      )
                     ) : null}
 
                     {activeSettingsItemKey === "organization-general" ? (
@@ -9101,6 +9712,73 @@ function populateAlertForm(alert) {
                       )
                     ) : null}
 
+                    {activeSettingsItemKey === "departments" ? (
+                      !manageAccess ? (
+                        <div className="municipality-auth-cta">
+                          <h4>Department routing is limited to tenant admins</h4>
+                          <p className="municipality-note">Sign in with a tenant-admin account to configure report routing.</p>
+                        </div>
+                      ) : (
+                        <div className="municipality-account-card municipality-account-card--section">
+                          <div className="municipality-settings-header">
+                            <div>
+                              <h4>Departments & Report Routing</h4>
+                              <p className="municipality-note">Set each department’s central email and assign its employees. Report domains choose their destination departments in Tenant Domains → Reporting.</p>
+                            </div>
+                            <div className="municipality-actions">
+                              <HubAddButton label="Add department" onClick={() => { setEditingDepartmentId(""); setDepartmentDraft({ name: "", notification_email: "" }); setDepartmentFormOpen(true); }} />
+                            </div>
+                          </div>
+                          {departmentFormOpen ? <form className="municipality-form-grid" onSubmit={(event) => void saveDepartment(event)}>
+                            <div className="municipality-form-field">
+                              <label htmlFor="department-name">Department name</label>
+                              <input id="department-name" value={departmentDraft.name} onChange={(event) => setDepartmentDraft((prev) => ({ ...prev, name: event.target.value }))} placeholder="Public Works" required />
+                            </div>
+                            <div className="municipality-form-field">
+                              <label htmlFor="department-email">Central notification email</label>
+                              <input id="department-email" type="email" value={departmentDraft.notification_email} onChange={(event) => setDepartmentDraft((prev) => ({ ...prev, notification_email: event.target.value }))} placeholder="publicworks@example.gov" />
+                            </div>
+                            <div className="municipality-actions">
+                              <button type="submit" className="municipality-button municipality-button--primary" disabled={departmentBusy}>{departmentBusy ? "Saving…" : "Add Department"}</button>
+                              <button type="button" className="municipality-button municipality-button--ghost" onClick={() => { setDepartmentFormOpen(false); setDepartmentDraft({ name: "", notification_email: "" }); }}>Cancel</button>
+                            </div>
+                          </form> : null}
+                          {departmentStatus ? <p className="municipality-inline-status">{departmentStatus}</p> : null}
+                          <div className="municipality-settings-list">
+                            {departments.map((department) => {
+                              return (
+                                <div key={department.id} className="municipality-settings-list-item" style={editingDepartmentId === department.id ? { display: "block" } : undefined}>
+                                  {editingDepartmentId === department.id ? (
+                                    <form className="municipality-form-grid" onSubmit={(event) => void saveDepartment(event)}>
+                                      <div className="municipality-form-field">
+                                        <label htmlFor={`department-name-${department.id}`}>Department name</label>
+                                        <input id={`department-name-${department.id}`} value={departmentDraft.name} onChange={(event) => setDepartmentDraft((prev) => ({ ...prev, name: event.target.value }))} required />
+                                      </div>
+                                      <div className="municipality-form-field">
+                                        <label htmlFor={`department-email-${department.id}`}>Central notification email</label>
+                                        <input id={`department-email-${department.id}`} type="email" value={departmentDraft.notification_email} onChange={(event) => setDepartmentDraft((prev) => ({ ...prev, notification_email: event.target.value }))} />
+                                      </div>
+                                      <div className="municipality-actions">
+                                        <button type="submit" className="municipality-button municipality-button--primary" disabled={departmentBusy}>{departmentBusy ? "Saving…" : "Save Department"}</button>
+                                        <button type="button" className="municipality-button municipality-button--ghost" onClick={() => { setEditingDepartmentId(""); setDepartmentDraft({ name: "", notification_email: "" }); }}>Cancel</button>
+                                      </div>
+                                    </form>
+                                  ) : <>
+                                  <div>
+                                    <strong>{department.name}</strong>
+                                    <p className="municipality-note">{department.notification_email || "No central notification email configured"}</p>
+                                  </div>
+                                  <HubEditButton label={`Edit ${department.name}`} onClick={() => { setDepartmentFormOpen(false); setEditingDepartmentId(department.id); setDepartmentDraft({ name: department.name || "", notification_email: department.notification_email || "" }); }} disabled={departmentBusy} />
+                                  </>}
+                                </div>
+                              );
+                            })}
+                            {!departments.length && !departmentStatus ? <div className="municipality-empty">No departments have been configured yet.</div> : null}
+                          </div>
+                        </div>
+                      )
+                    ) : null}
+
                     {activeSettingsItemKey === "manage-employees" ? (
                       !session?.user?.id ? (
                         <div className="municipality-auth-cta">
@@ -9167,12 +9845,35 @@ function populateAlertForm(alert) {
                                               {" • "}
                                               {trimOrEmpty(assignment.status) || "active"}
                                             </p>
-                                            {!isManageableRole ? (
-                                              <p className="municipality-note">This system role still needs PCP control.</p>
-                                            ) : null}
+                                            {editingEmployeeDepartmentsUserId === assignment.user_id ? <div className="municipality-checkbox-row" style={{ marginTop: 8 }}>
+                                              <span className="municipality-note" style={{ width: "100%", fontWeight: 700 }}>Assigned departments</span>
+                                              {departments.length ? departments.filter((department) => department.active !== false).map((department) => {
+                                                const assignedDepartmentIds = departmentIdsByUserId[assignment.user_id] || [];
+                                                return (
+                                                  <label key={department.id} className="municipality-checkbox">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={assignedDepartmentIds.includes(department.id)}
+                                                      disabled={!canEditTeamDepartments || departmentBusy || trimOrEmpty(assignment.status) !== "active"}
+                                                      onChange={(event) => void toggleUserDepartment(assignment.user_id, department.id, event.target.checked)}
+                                                    />
+                                                    {department.name}
+                                                  </label>
+                                                );
+                                              }) : (
+                                                <span className="municipality-note">Create departments first, then assign them to this employee here.</span>
+                                              )}
+                                            </div> : null}
                                           </div>
                                           <div className="municipality-settings-item-actions">
                                             <span className={statusBadgeClass(assignment.status)}>{trimOrEmpty(assignment.status) || "active"}</span>
+                                            <div className="municipality-actions municipality-actions--compact">
+                                              {editingEmployeeDepartmentsUserId === assignment.user_id ? (
+                                                <button type="button" className="municipality-button municipality-button--primary" onClick={() => setEditingEmployeeDepartmentsUserId("")}>Done</button>
+                                              ) : (
+                                                <HubEditButton label="Edit department assignments" onClick={() => setEditingEmployeeDepartmentsUserId(assignment.user_id)} disabled={!canEditTeamDepartments || trimOrEmpty(assignment.status) !== "active"} />
+                                              )}
+                                            </div>
                                             {isManageableRole ? (
                                               <div className="municipality-actions municipality-actions--compact">
                                                 {isEditingRole ? (
@@ -10168,6 +10869,7 @@ function populateAlertForm(alert) {
                     ) : null}
                   </div>
                 </div>
+                )
               )}
           </section>
         ) : null}

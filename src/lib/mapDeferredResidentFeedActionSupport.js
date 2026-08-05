@@ -49,7 +49,7 @@ export async function loadMapCommunityFeedShared({
 
   const topicQuery = feedReadClient
     .from("notification_topics")
-    .select("topic_key,label,default_enabled,topic_kind")
+    .select("topic_key,label,description,default_enabled,topic_kind")
     .eq("tenant_key", tenantKey)
     .eq("active", true)
     .order("sort_order", { ascending: true });
@@ -98,6 +98,7 @@ export async function loadMapCommunityFeedShared({
     .map((topic) => ({
       topic_key: String(topic?.topic_key || "").trim(),
       label: String(topic?.label || "").trim() || String(topic?.topic_key || "").trim(),
+      description: String(topic?.description || "").trim(),
       default_enabled: Boolean(topic?.default_enabled),
       topic_kind: String(topic?.topic_kind || "").trim().toLowerCase() === "event" ? "event" : "alert",
     }))

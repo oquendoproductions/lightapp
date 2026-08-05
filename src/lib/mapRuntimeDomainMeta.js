@@ -18,6 +18,7 @@ export const RUNTIME_DOMAIN_META = {
   typeOptionsByDomain: new Map(),
   disclosuresByDomain: new Map(),
   allowReportImagesByDomain: new Map(),
+  reportImageRequiredByDomain: new Map(),
   roadRequiredByDomain: new Map(),
   parkRequiredByDomain: new Map(),
 };

@@ -199,7 +199,6 @@ export function buildIncidentPopupRenderModelShared({
   issueLabelFallback = "",
   typeOptionDetailsOverride,
   showIssueFallback = true,
-  isPlatformAdmin = false,
 } = {}) {
   const lat = Number(marker?.lat);
   const lng = Number(marker?.lng);
@@ -244,7 +243,12 @@ export function buildIncidentPopupRenderModelShared({
       domainIdFallback,
       popupInfo: normalizedPopupInfo,
       currentState: String(popupInfo?.currentState || "").trim() || "reported",
-      issueTypes: summarizeIssueTypes(typeOptionDetails, issueLabel) || issueLabel || "Unavailable",
+      // Do not invent an "Issue Type: Unavailable" row for a domain that
+      // has no configured reporting fields. The admin window should only
+      // present field data the tenant actually configured for this report.
+      issueTypes: typeOptionDetails.length
+        ? summarizeIssueTypes(typeOptionDetails, issueLabel)
+        : "",
       issueTypeDetails: typeOptionDetails,
       location: nearestAddress,
       landmark: nearestLandmark,
@@ -256,9 +260,7 @@ export function buildIncidentPopupRenderModelShared({
       issueLabel,
       typeOptionDetails,
       showIssueFallback,
-      coordinates: coordsText,
       currentState: String(popupInfo?.currentState || "").trim() || "reported",
-      showCoordinates: isPlatformAdmin,
     },
   };
 }

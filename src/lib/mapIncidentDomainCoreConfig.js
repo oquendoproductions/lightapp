@@ -68,6 +68,9 @@ export const INCIDENT_DOMAIN_CORE_HELPERS = Object.freeze({
     usesCanonicalPrefixedId: true,
     suppressesGlyph: true,
     displayIdHintField: "ph_id",
+    // Potholes persist with an internal UUID. Use the standard, stable public
+    // identifier when no municipal PH ID has been supplied for that location.
+    builtInDisplayIdMode: "coords_hashed_from_incident",
     supportsIssueMetadata: false,
     fixTsMode: "incident_map",
     identityReportSource: "reportRows",
@@ -158,6 +161,15 @@ export const INCIDENT_DOMAIN_CORE_HELPERS = Object.freeze({
     suppressesGlyph: true,
     displayIdHintField: "wd_id",
     builtInDisplayIdMode: "coords_hashed_from_incident",
+    // WD numbers are public display IDs. State updates must target the
+    // canonical water_drain_issues:<lat>:<lng> incident stored in the row.
+    buildStatusDialogCompatMode: "lookup_official_marker",
+    buildStatusDialogCompatExternalIdFields: Object.freeze(["wd_id", "display_id"]),
+    buildStatusDialogCompatExternalIdFallbackMode: "coords_display_id",
+    buildStatusDialogCompatCompatMarkerIncidentField: "incident_id",
+    buildStatusDialogCompatCompatMarkerExternalIdField: "wd_id",
+    resolveStatusDialogCompatTargetMode: "canonical_incident_official",
+    resolveStatusDialogCompatTargetIncidentFields: Object.freeze(["incident_id"]),
     prefersConfiguredIssueLabel: true,
     snapshotAliases: Object.freeze(["streetlights", "water_main"]),
     storedIssueValueStateField: "issue_type",
@@ -195,6 +207,8 @@ export const INCIDENT_DOMAIN_CORE_HELPERS = Object.freeze({
   }),
   street_signs: Object.freeze({
     prefix: "street_signs",
+    canonicalIncidentIdMode: "prefix_lookup",
+    submitUsesCanonicalIncidentId: true,
     markerGlyphMode: "option_type_glyph",
     seededSourceTable: "official_signs",
     seededSelectFields: "id, sign_type, lat, lng, active",
@@ -214,7 +228,7 @@ export const INCIDENT_DOMAIN_CORE_HELPERS = Object.freeze({
     clearSelectedDomainMarkerOnFix: true,
     seededMarkerSeedIdMode: "id",
     seededMarkerIdMode: "seed_id",
-    seededMarkerIncidentIdMode: "seed_id",
+    seededMarkerIncidentIdMode: "canonical_from_seed_id",
     seededMarkerLastFixMode: "max_light_or_fixed",
     seededMarkerStaticFields: Object.freeze({ isOfficial: true }),
     seededMarkerCopiedFieldNames: Object.freeze(["nearest_address", "nearest_cross_street", "nearest_landmark"]),

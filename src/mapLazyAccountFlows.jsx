@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { openExternalUrl } from "./platform/external.js";
 import { ActionButtonIcon } from "./mapUiIconComponentsSupport.jsx";
 import {
   buildMailtoHref,
+  CITYREPORT_SUPPORT_EMAIL,
   hasNonEmptyValue,
   normalizePhoneHref,
   normalizeResidentMenuLinkRow,
@@ -24,12 +25,11 @@ function normalizeResidentNotificationDraftLocal(topicKey, raw = {}, topics = []
   const fallbackEnabled = topic && Object.prototype.hasOwnProperty.call(topic, "default_enabled")
     ? Boolean(topic.default_enabled)
     : false;
-  const emailEnabled = Boolean(raw?.email_enabled);
-  const inAppEnabled = Boolean(raw?.in_app_enabled) || emailEnabled || fallbackEnabled;
+  const hasSavedInAppPreference = Object.prototype.hasOwnProperty.call(raw || {}, "in_app_enabled");
+  const inAppEnabled = hasSavedInAppPreference ? Boolean(raw?.in_app_enabled) : fallbackEnabled;
   return {
     in_app_enabled: inAppEnabled,
-    email_enabled: emailEnabled,
-    web_push_enabled: false,
+    web_push_enabled: Boolean(raw?.web_push_enabled),
   };
 }
 
@@ -959,6 +959,7 @@ export function MobileHeaderMenuPanel({
   onOpenCitySwitcher,
   showLocationDiagnostics = false,
   onOpenLocationDiagnostics,
+  organizationDisplayName = "",
   pageTopInset = "0px",
   pageBottomInset = "0px",
 }) {
@@ -1048,6 +1049,11 @@ export function MobileHeaderMenuPanel({
     textAlign: "left",
     cursor: "pointer",
   };
+  const tenantContactLabel = `Contact ${String(organizationDisplayName || "this location").trim() || "this location"}`;
+  const cityReportContactHref = buildMailtoHref({
+    to: CITYREPORT_SUPPORT_EMAIL,
+    subject: "CityReport.io support",
+  });
 
   return (
     <div
@@ -1180,12 +1186,41 @@ export function MobileHeaderMenuPanel({
               ))}
             </>
           ) : null}
+          {typeof onContactUs === "function" ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 900,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "var(--sl-ui-header-eyebrow)",
+                }}
+              >
+                {String(organizationDisplayName || "Location").trim() || "Location"}
+              </div>
+              <button
+                type="button"
+                className="workspace-menu-button"
+                onClick={onContactUs}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  border: "1px solid var(--sl-ui-modal-btn-secondary-border)",
+                  background: "var(--sl-ui-modal-btn-secondary-bg)",
+                  color: "var(--sl-ui-modal-btn-secondary-text)",
+                }}
+              >
+                {tenantContactLabel}
+              </button>
+            </div>
+          ) : null}
           <div
             style={{
               display: "grid",
               justifyItems: "start",
               gap: 7,
-              marginTop: resolvedResidentMenuSections.length ? 8 : 0,
+              marginTop: resolvedResidentMenuSections.length || typeof onContactUs === "function" ? 8 : 0,
               paddingTop: 14,
               borderTop: "1px solid var(--sl-ui-modal-btn-secondary-border)",
             }}
@@ -1211,7 +1246,14 @@ export function MobileHeaderMenuPanel({
                 Location Diagnostics
               </button>
             ) : null}
-            <button type="button" onClick={onContactUs} style={cityReportTextLinkStyle}>
+            <button
+              type="button"
+              onClick={() => {
+                onClose?.();
+                void openExternalUrl(cityReportContactHref);
+              }}
+              style={cityReportTextLinkStyle}
+            >
               Contact CityReport.io
             </button>
             <button type="button" onClick={onOpenAbout} style={cityReportTextLinkStyle}>
@@ -1388,6 +1430,20 @@ export function NotificationPreferencesModal({
   const footerBorder = darkMode ? "1px solid rgba(143, 170, 198, 0.16)" : "1px solid rgba(23, 49, 79, 0.08)";
   const checkboxLabelColor = darkMode ? "#edf6ff" : "var(--sl-ui-text)";
   const resolvedLocationLabel = String(locationLabel || "").trim() || "Current location";
+  const topicGroups = [
+    {
+      key: "report-updates",
+      label: "Report Updates",
+      description: "Choose how you receive updates about reports you submitted.",
+      topics: topics.filter((topic) => String(topic?.preference_category || topic?.topic_kind || "").trim().toLowerCase() === "report_updates" || String(topic?.topic_kind || "").trim().toLowerCase() === "report_update"),
+    },
+    {
+      key: "community-updates",
+      label: "Community Updates",
+      description: "Choose how you receive the alerts and events published by this location.",
+      topics: topics.filter((topic) => !["report_updates", "report_update"].includes(String(topic?.preference_category || topic?.topic_kind || "").trim().toLowerCase())),
+    },
+  ].filter((group) => group.topics.length);
 
   useEffect(() => {
     if (!open) {
@@ -1581,8 +1637,15 @@ export function NotificationPreferencesModal({
           {loading ? (
             <div style={{ fontSize: 13, opacity: 0.82, paddingBottom: 12 }}>Loading your notification preferences…</div>
           ) : (
-            <div style={{ display: "grid", gap: 14, paddingBottom: 12 }}>
-              {topics.map((topic) => {
+            <div style={{ display: "grid", gap: 18, paddingBottom: 12 }}>
+              {topicGroups.map((group) => (
+                <section key={group.key} style={{ display: "grid", gap: 9 }}>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    <h3 style={{ margin: 0, fontSize: isWidePageMode ? 16 : 14, lineHeight: 1.2 }}>{group.label}</h3>
+                    <div style={{ fontSize: 12, lineHeight: 1.35, color: topicDescriptionColor }}>{group.description}</div>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+              {group.topics.map((topic) => {
                 const current = normalizeResidentNotificationDraftLocal(
                   topic.topic_key,
                   preferencesByTopic?.[topic.topic_key] || {},
@@ -1660,20 +1723,23 @@ export function NotificationPreferencesModal({
                         >
                           <input
                             type="checkbox"
-                            checked={Boolean(current.email_enabled)}
+                            checked={Boolean(current.web_push_enabled)}
                             disabled={!isEditing}
-                            onChange={(event) => updatePreferenceDraft(topic.topic_key, "email_enabled", event.target.checked)}
+                            onChange={(event) => updatePreferenceDraft(topic.topic_key, "web_push_enabled", event.target.checked)}
                           />
-                          Email
+                          Device push
                         </label>
                       </div>
                     </div>
                     <p style={{ margin: 0, fontSize: isWidePageMode ? 13.5 : 12.5, lineHeight: 1.4, color: topicDescriptionColor }}>
-                      {topic.description}
+                      {String(topic.description || "").trim() || "Manage this notification type for this location."}
                     </p>
                   </article>
                 );
               })}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
         </div>
@@ -1720,6 +1786,11 @@ export function NotificationPreferencesController({
   const [status, setStatus] = useState("");
   const normalizedUserId = String(sessionUserId || "").trim();
   const normalizedTenantKey = String(tenantKey || "").trim().toLowerCase();
+  const topicsRef = useRef(topics);
+
+  useEffect(() => {
+    topicsRef.current = topics;
+  }, [topics]);
 
   useEffect(() => {
     if (!open) {
@@ -1731,7 +1802,9 @@ export function NotificationPreferencesController({
     }
     setPreferencesByTopic(savedPreferences || {});
     setStatus("");
-  }, [open, savedPreferences]);
+  // The alert/event feed polls in the background. Do not replace a resident's
+  // active preference draft every time that polling refreshes parent props.
+  }, [open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1770,7 +1843,7 @@ export function NotificationPreferencesController({
 
       const next = {};
       for (const row of data || []) {
-        next[row.topic_key] = normalizeResidentNotificationDraftLocal(row?.topic_key, row, topics);
+        next[row.topic_key] = normalizeResidentNotificationDraftLocal(row?.topic_key, row, topicsRef.current);
       }
       setPreferencesByTopic(next);
       onSavedPreferencesChange?.(next);
@@ -1782,7 +1855,7 @@ export function NotificationPreferencesController({
     return () => {
       cancelled = true;
     };
-  }, [normalizedTenantKey, normalizedUserId, onSavedPreferencesChange, open, topics]);
+  }, [normalizedTenantKey, normalizedUserId, onSavedPreferencesChange, open]);
 
   const resetDraft = React.useCallback(() => {
     setPreferencesByTopic(savedPreferences || {});
@@ -1796,11 +1869,11 @@ export function NotificationPreferencesController({
         ...current,
         [field]: nextValue,
       };
-      if (field === "email_enabled" && nextValue) {
+      if (field === "web_push_enabled" && nextValue) {
         nextDraft.in_app_enabled = true;
       }
-      if (field === "in_app_enabled" && !nextValue && nextDraft.email_enabled) {
-        nextDraft.email_enabled = false;
+      if (field === "in_app_enabled" && !nextValue) {
+        nextDraft.web_push_enabled = false;
       }
       return {
         ...prev,
@@ -1825,8 +1898,14 @@ export function NotificationPreferencesController({
         user_id: normalizedUserId,
         topic_key: topic.topic_key,
         in_app_enabled: current.in_app_enabled,
-        email_enabled: current.email_enabled ?? false,
-        web_push_enabled: false,
+        // Resident email delivery is not available yet. Persisting false
+        // prevents an old experimental preference from being mistaken for a
+        // supported delivery channel when email templates are introduced.
+        email_enabled: false,
+        // Keep the resident's explicit native/web push choice.  This used to
+        // write `false` for every topic on every save, which made the Push
+        // toggle look enabled in the editor but prevented any delivery.
+        web_push_enabled: current.web_push_enabled ?? false,
       };
     });
 

@@ -67,6 +67,8 @@ export function CommunityFeedEditorModal({
   setForm,
   saving = false,
   deleting = false,
+  accessLoading = false,
+  canManage = false,
   canDelete = false,
   error = "",
   darkMode = false,
@@ -81,6 +83,8 @@ export function CommunityFeedEditorModal({
   const isEvent = kind === "event";
   const actionPending = saving || deleting;
   const showDelete = mode === "edit" && canDelete && typeof onDelete === "function";
+  const submitDisabled = actionPending || accessLoading || !canManage;
+  const deleteDisabled = actionPending || accessLoading;
   const canSchedule = mode !== "edit" || String(form?.status || "").trim().toLowerCase() === "scheduled";
   const statusOptions = canSchedule
     ? communityFeedStatusOptions
@@ -459,17 +463,17 @@ export function CommunityFeedEditorModal({
             <button
               type="button"
               onClick={onDelete}
-              disabled={actionPending}
+              disabled={deleteDisabled}
               style={{ ...destructiveButtonStyle, gridColumn: "1 / -1" }}
             >
-              {deleting ? "Deleting…" : `Delete ${isEvent ? "Event" : "Alert"}`}
+              {deleting ? "Deleting…" : accessLoading ? "Checking Access…" : `Delete ${isEvent ? "Event" : "Alert"}`}
             </button>
           ) : null}
           <button type="button" onClick={onClose} disabled={actionPending} style={secondaryButtonStyle}>
             Cancel
           </button>
-          <button type="submit" disabled={actionPending} style={primaryButtonStyle}>
-            {saving ? "Saving…" : "Save"}
+          <button type="submit" disabled={submitDisabled} style={primaryButtonStyle}>
+            {saving ? "Saving…" : accessLoading ? "Checking Access…" : "Save"}
           </button>
         </div>
       </form>
@@ -481,6 +485,13 @@ function shouldSendResidentNotificationEmail(currentStatus, nextStatus) {
   const previous = trimResidentFeedValue(currentStatus).toLowerCase();
   const next = trimResidentFeedValue(nextStatus).toLowerCase();
   return next === "published" && previous !== "published";
+}
+
+function formatResidentNotificationPushReason(reason) {
+  const normalized = trimResidentFeedValue(reason).toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "missing_apns_config") return "native push is not configured on the server";
+  return normalized.replaceAll("_", " ");
 }
 
 async function triggerResidentNotificationEmail({ supabase, kind, item }) {
@@ -501,13 +512,13 @@ async function triggerResidentNotificationEmail({ supabase, kind, item }) {
   if (error) {
     return {
       ok: false,
-      error: trimResidentFeedValue(error.message) || "Could not send resident email notifications.",
+      error: trimResidentFeedValue(error.message) || "Could not send resident notifications.",
     };
   }
   if (data?.ok === false) {
     return {
       ok: false,
-      error: trimResidentFeedValue(data?.error) || "Could not send resident email notifications.",
+      error: trimResidentFeedValue(data?.error) || "Could not send resident notifications.",
     };
   }
   return {
@@ -515,9 +526,34 @@ async function triggerResidentNotificationEmail({ supabase, kind, item }) {
     skipped: Boolean(data?.skipped),
     sentCount: Number(data?.sent_count || 0),
     attemptedCount: Number(data?.attempted_count || 0),
+    pushSentCount: Number(data?.push_sent_count || 0),
+    pushAttemptedCount: Number(data?.push_attempted_count || 0),
+    pushSkippedCount: Number(data?.push_skipped_count || 0),
+    pushSkippedReasons: Array.isArray(data?.push_skipped_reasons) ? data.push_skipped_reasons : [],
     failures: Array.isArray(data?.failures) ? data.failures : [],
+    pushFailures: Array.isArray(data?.push_failures) ? data.push_failures : [],
     reason: trimResidentFeedValue(data?.reason),
   };
+}
+
+function formatResidentNotificationDeliverySummary(result) {
+  const emailCount = Math.max(0, Number(result?.sentCount || 0));
+  const pushCount = Math.max(0, Number(result?.pushSentCount || 0));
+  const pushSkippedCount = Math.max(0, Number(result?.pushSkippedCount || 0));
+  const pushReason = formatResidentNotificationPushReason(result?.pushSkippedReasons?.[0] || "");
+  const pushDiagnostic = pushSkippedCount && pushReason
+    ? ` Native push was skipped because ${pushReason}.`
+    : "";
+  if (!emailCount && !pushCount) {
+    return `Resident notifications processed, but no delivery targets were reached.${pushDiagnostic}`;
+  }
+  if (emailCount && pushCount) {
+    return `Resident notifications sent to ${emailCount} email subscriber${emailCount === 1 ? "" : "s"} and ${pushCount} device${pushCount === 1 ? "" : "s"}.${pushDiagnostic}`;
+  }
+  if (emailCount) {
+    return `Resident notifications sent to ${emailCount} email subscriber${emailCount === 1 ? "" : "s"}.${pushDiagnostic}`;
+  }
+  return `Resident notifications sent to ${pushCount} device${pushCount === 1 ? "" : "s"}.${pushDiagnostic}`;
 }
 
 export function CommunityFeedEditorController({
@@ -547,6 +583,7 @@ export function CommunityFeedEditorController({
   const [form, setForm] = React.useState(() => makeCommunityFeedForm(safeKind, topics, item));
   const [saving, setSaving] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [accessLoading, setAccessLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [canManage, setCanManage] = React.useState(false);
   const [canDelete, setCanDelete] = React.useState(false);
@@ -555,17 +592,19 @@ export function CommunityFeedEditorController({
     if (!open) return;
     setForm(makeCommunityFeedForm(safeKind, topics, item));
     setError("");
-  }, [item, open, safeKind, topics]);
+  }, [item?.id, mode, open, safeKind]);
 
   React.useEffect(() => {
     let cancelled = false;
 
     async function loadAccess() {
       if (!open) {
+        setAccessLoading(false);
         setCanManage(false);
         setCanDelete(false);
         return;
       }
+      setAccessLoading(true);
       const next = await loadCommunityFeedAccessPermissions({
         supabase,
         tenantKey: resolvedCommunityFeedTenantKey,
@@ -573,6 +612,7 @@ export function CommunityFeedEditorController({
         onWarn: (label, issue) => console.warn(label, issue?.message || issue),
       });
       if (cancelled) return;
+      setAccessLoading(false);
       setCanManage(next.canManage);
       setCanDelete(next.canDelete && next.canManage);
     }
@@ -599,7 +639,15 @@ export function CommunityFeedEditorController({
 
   const handleSubmit = React.useCallback(async (event) => {
     event.preventDefault();
-    if (!canManage || actionPending || !supabase) return;
+    if (accessLoading) {
+      setError("Checking editor permissions. Try save again in a moment.");
+      return;
+    }
+    if (!canManage) {
+      setError("You do not have permission to manage alerts and events for this organization.");
+      return;
+    }
+    if (actionPending || !supabase) return;
     const isEvent = safeKind === "event";
     const isEditing = mode === "edit" && item?.id;
     const tenantKey = trimResidentFeedValue(resolvedCommunityFeedTenantKey);
@@ -695,9 +743,9 @@ export function CommunityFeedEditorController({
         },
       });
       if (!notificationResult.ok) {
-        successMessage = `${successMessage} Resident email notifications were not sent: ${notificationResult.error}`;
+        successMessage = `${successMessage} Resident notifications were not sent: ${notificationResult.error}`;
       } else if (!notificationResult.skipped) {
-        successMessage = `${successMessage} Resident email notifications sent to ${notificationResult.sentCount} subscriber${notificationResult.sentCount === 1 ? "" : "s"}.`;
+        successMessage = `${successMessage} ${formatResidentNotificationDeliverySummary(notificationResult)}`;
       }
     }
     openNotice?.("✅", isEvent ? "Event saved" : "Alert saved", successMessage, {
@@ -706,6 +754,7 @@ export function CommunityFeedEditorController({
     });
     await loadMapCommunityFeed?.();
   }, [
+    accessLoading,
     actionPending,
     canManage,
     form,
@@ -721,6 +770,10 @@ export function CommunityFeedEditorController({
   ]);
 
   const handleDelete = React.useCallback(async () => {
+    if (accessLoading) {
+      setError("Checking editor permissions. Try delete again in a moment.");
+      return;
+    }
     if (!canDelete || actionPending || !supabase) return;
     const isEvent = safeKind === "event";
     const itemId = item?.id;
@@ -756,6 +809,7 @@ export function CommunityFeedEditorController({
     });
     await loadMapCommunityFeed?.();
   }, [
+    accessLoading,
     actionPending,
     canDelete,
     item,
@@ -778,6 +832,8 @@ export function CommunityFeedEditorController({
       setForm={setForm}
       saving={saving}
       deleting={deleting}
+      accessLoading={accessLoading}
+      canManage={canManage}
       canDelete={canDelete}
       error={error}
       darkMode={darkMode}

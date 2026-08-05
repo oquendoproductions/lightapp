@@ -104,6 +104,7 @@ export async function reopenLightRuntimeShared(state = {}, deps = {}) {
     tenantKey: deps.activeTenantKey(),
     light: state.light,
     noteText: state.noteText,
+    options: state.options,
     actor: deps.actor,
     actorColsSupportedRef: deps.lightActionsActorColumnsSupportedRef,
     domainForIncidentId: deps.domainForIncidentId,
@@ -141,7 +142,7 @@ export async function submitPendingIncidentActionRuntimeShared(state = {}, deps 
         incidentDomainCanonicalIncidentId: deps.incidentDomainCanonicalIncidentId,
       })
     : null;
-  const actionImageFile = nextState === "fixed" && state.markFixedImageFile instanceof File ? state.markFixedImageFile : null;
+  const actionImageFile = state.markFixedImageFile instanceof File ? state.markFixedImageFile : null;
   return submitPendingIncidentActionShared({
     supabase: deps.supabase,
     tenantKey: deps.activeTenantKey(),

@@ -88,7 +88,7 @@ export function FollowedLocationsModal({
     const seededNames = {};
     for (const city of Array.isArray(cities) ? cities : []) {
       const key = String(city?.tenantKey || "").trim().toLowerCase();
-      const label = String(city?.displayName || city?.name || "").trim();
+      const label = String(city?.displayName || "").trim();
       if (key && label) seededNames[key] = label;
     }
     if (currentTenantKeyNormalized && String(currentCityLabel || "").trim()) {
@@ -99,14 +99,13 @@ export function FollowedLocationsModal({
     const followedKeys = (Array.isArray(followedTenantKeys) ? followedTenantKeys : [])
       .map((key) => String(key || "").trim().toLowerCase())
       .filter(Boolean);
-    const missingKeys = followedKeys.filter((key) => !String(seededNames[key] || "").trim());
-    if (!missingKeys.length) return () => {
+    if (!followedKeys.length) return () => {
       cancelled = true;
     };
 
     (async () => {
       const results = await Promise.all(
-        missingKeys.map(async (key) => [key, await fetchTenantPublicDisplayName(key)])
+        followedKeys.map(async (key) => [key, await fetchTenantPublicDisplayName(key)])
       );
       if (cancelled) return;
       setDisplayNameByTenant((prev) => {
@@ -643,7 +642,7 @@ export function AccountMenuPanel({
         <button
           onClick={() => {
             onClose();
-            window.__openAuthGate?.("login");
+            window.__openAuthGate?.("welcome");
           }}
           className="workspace-menu-button"
           style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}

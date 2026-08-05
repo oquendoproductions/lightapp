@@ -21,7 +21,7 @@ const ACTION_BUTTON_ICON_SRC = {
   },
 };
 
-export function AppIcon({ src, alt = "", size = 18, style = {}, renderMode = "", iconKey = "", darkMode = null, active = false }) {
+export function AppIcon({ src, alt = "", size = 18, style = {}, renderMode = "", iconKey = "", darkMode = null, active = false, priority = false }) {
   const iconSrc = String(src || "").trim();
   const resolvedRenderMode = resolveRuntimeUiIconRenderMode(iconSrc, renderMode);
   const themedMeta = resolveRuntimeUiIconThemeMeta(iconKey, iconSrc);
@@ -76,6 +76,9 @@ export function AppIcon({ src, alt = "", size = 18, style = {}, renderMode = "",
     <img
       src={iconSrc}
       alt={alt}
+      loading="eager"
+      decoding={priority ? "sync" : "async"}
+      fetchPriority={priority ? "high" : "auto"}
       style={{
         width: size,
         height: size,

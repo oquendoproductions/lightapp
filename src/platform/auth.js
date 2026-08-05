@@ -34,3 +34,8 @@ export function getAuthRedirectOptions(pathname = "/") {
   const redirectTo = getAuthRedirectUrl(pathname);
   return redirectTo ? { redirectTo } : undefined;
 }
+
+export function getEmailConfirmationRedirectOptions(pathname = "/") {
+  const emailRedirectTo = getAuthRedirectUrl(pathname);
+  return emailRedirectTo ? { emailRedirectTo } : undefined;
+}

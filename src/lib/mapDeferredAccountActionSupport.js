@@ -34,11 +34,13 @@ export async function userCreateAccountAction({
   password,
   full_name,
   phone,
+  getEmailConfirmationRedirectOptions,
 }) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
+      ...(getEmailConfirmationRedirectOptions?.("/") || {}),
       data: {
         full_name,
         phone,
@@ -66,6 +68,23 @@ export async function userCreateAccountAction({
   }
 
   return { ok: true };
+}
+
+export async function resendSignupConfirmationAction({
+  supabase,
+  email,
+  getEmailConfirmationRedirectOptions,
+}) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) return { ok: false, error: new Error("Enter your email address.") };
+
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: normalizedEmail,
+    options: getEmailConfirmationRedirectOptions?.("/") || undefined,
+  });
+
+  return error ? { ok: false, error } : { ok: true };
 }
 
 export async function saveManagedProfileAction({

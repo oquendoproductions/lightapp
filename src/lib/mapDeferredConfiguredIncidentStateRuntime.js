@@ -143,6 +143,8 @@ export function createDeferredConfiguredIncidentStateRuntimeHelpers(deps = {}) {
         nearest_address: String(row?.nearest_address || "").trim() || "",
         nearest_cross_street: String(row?.nearest_cross_street || "").trim() || "",
         nearest_landmark: String(row?.nearest_landmark || "").trim() || "",
+        created_at: row?.created_at || null,
+        __cityreport_local_commit_ts: Number(row?.__cityreport_local_commit_ts || 0) || 0,
       };
       return normalized.id && (
         typeof isValidLatLng === "function"
@@ -165,6 +167,7 @@ export function createDeferredConfiguredIncidentStateRuntimeHelpers(deps = {}) {
     if (String(helper?.normalizeReportRecordMode || "").trim() === "report_record_with_lookup_ts") {
       const incidentIdField = String(helper?.normalizeReportRecordIncidentIdField || "").trim();
       const incidentId = String(row?.[incidentIdField] || "").trim() || null;
+      const createdAt = row?.created_at || null;
       return {
         id: row?.id,
         incident_id: incidentId,
@@ -175,11 +178,13 @@ export function createDeferredConfiguredIncidentStateRuntimeHelpers(deps = {}) {
         lng: Number(row?.lng),
         note: row?.note || "",
         report_number: row?.report_number || null,
-        ts: Date.parse(String(row?.created_at || "")) || 0,
+        created_at: createdAt,
+        ts: Date.parse(String(createdAt || "")) || Number(row?.ts || 0) || 0,
         reporter_user_id: row?.reporter_user_id || null,
         reporter_name: row?.reporter_name || null,
         reporter_phone: row?.reporter_phone || null,
         reporter_email: row?.reporter_email || null,
+        __cityreport_local_commit_ts: Number(row?.__cityreport_local_commit_ts || 0) || 0,
       };
     }
     return row;

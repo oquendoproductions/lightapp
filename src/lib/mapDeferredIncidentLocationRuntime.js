@@ -277,7 +277,7 @@ export async function persistIncidentLocationCacheWithEnrichmentRuntimeShared(
     });
     const enrichedPayload = buildIncidentLocationCacheEntryPayload({
       nearestAddress:
-        String(enrichedGeo?.nearestAddress || "").trim()
+        String(enrichedGeo?.nearestAddress || enrichedGeo?.nearestStreet || "").trim()
         || basePayload.nearestAddress
         || basePayload.locationLabel,
       nearestCrossStreet:
@@ -290,7 +290,7 @@ export async function persistIncidentLocationCacheWithEnrichmentRuntimeShared(
         String(enrichedGeo?.nearestLandmark || "").trim()
         || basePayload.nearestLandmark,
       locationLabel:
-        String(enrichedGeo?.nearestAddress || "").trim()
+        String(enrichedGeo?.nearestAddress || enrichedGeo?.nearestStreet || "").trim()
         || basePayload.locationLabel
         || basePayload.nearestAddress,
     });

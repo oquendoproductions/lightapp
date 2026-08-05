@@ -4,15 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CityReport.io Terms of Service</title>
+    <script>
+      const requestedTheme = new URLSearchParams(window.location.search).get("theme");
+      if (requestedTheme === "light" || requestedTheme === "dark") {
+        document.documentElement.dataset.theme = requestedTheme;
+      }
+    </script>
     <style>
-      body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 860px; line-height: 1.55; color: #10243e; }
+      :root { color-scheme: light; --legal-bg: #ffffff; --legal-text: #10243e; --legal-muted: #3b4f68; --legal-link: #1a3153; --legal-note-bg: #f3f7fc; --legal-rule: #1a3153; }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; --legal-bg: #202327; --legal-text: #f3f5f7; --legal-muted: #c2cad4; --legal-link: #9bdcff; --legal-note-bg: #2b3138; --legal-rule: #9bdcff; }
+      }
+      :root[data-theme="light"] { color-scheme: light; --legal-bg: #ffffff; --legal-text: #10243e; --legal-muted: #3b4f68; --legal-link: #1a3153; --legal-note-bg: #f3f7fc; --legal-rule: #1a3153; }
+      :root[data-theme="dark"] { color-scheme: dark; --legal-bg: #202327; --legal-text: #f3f5f7; --legal-muted: #c2cad4; --legal-link: #9bdcff; --legal-note-bg: #2b3138; --legal-rule: #9bdcff; }
+      html { background: var(--legal-bg); }
+      body { font-family: Arial, sans-serif; margin: 2rem auto; padding: 0 1rem 2rem; max-width: 860px; line-height: 1.55; color: var(--legal-text); background: var(--legal-bg); }
       h1 { margin-bottom: 0.25rem; }
       h2 { margin-top: 1.5rem; }
       p, li { font-size: 0.98rem; }
       ul { padding-left: 1.2rem; }
-      .meta { color: #3b4f68; font-size: 0.95rem; }
-      a { color: #1a3153; }
-      .note { background: #f3f7fc; border-left: 4px solid #1a3153; padding: 0.75rem 0.9rem; margin: 1rem 0; }
+      .meta { color: var(--legal-muted); font-size: 0.95rem; }
+      a { color: var(--legal-link); }
+      .note { background: var(--legal-note-bg); border-left: 4px solid var(--legal-rule); padding: 0.75rem 0.9rem; margin: 1rem 0; }
     </style>
   </head>
   <body>

@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadCommunityFeedAccessPermissions } from "./lib/mapCommunityFeedAccessSupport";
-import { fetchResidentNotificationsSnapshot } from "./lib/mapResidentNotificationSupport";
+import {
+  fetchResidentNotificationsSnapshot,
+  residentNotificationDomainLabel,
+  residentNotificationIncidentDisplayId,
+  residentNotificationDomainMapMarker,
+} from "./lib/mapResidentNotificationSupport";
 import {
   buildResidentNotificationPreview,
   countCurrentOrUpcomingPublishedAlerts,
@@ -435,7 +440,6 @@ export function AlertsWindow({
   const cardBorder = "1px solid var(--sl-ui-feed-card-border)";
   const cardBackground = "var(--sl-ui-feed-card-bg)";
   const titleColor = "var(--sl-ui-text)";
-  const summaryColor = "var(--sl-ui-feed-muted-text)";
   const bodyColor = "var(--sl-ui-feed-muted-text)";
   const metaColor = "var(--sl-ui-feed-muted-text)";
   const ctaStyle = {
@@ -564,7 +568,6 @@ export function AlertsWindow({
               </div>
               <div style={{ display: "grid", gap: 6 }}>
                 <h3 style={{ margin: 0, fontSize: isWidePageMode ? 24 : 20, lineHeight: 1.15, color: titleColor }}>{alert.title || "Untitled alert"}</h3>
-                {alert.summary ? <p style={{ margin: 0, fontSize: isWidePageMode ? 16 : 14, lineHeight: 1.5, color: summaryColor }}>{alert.summary}</p> : null}
                 {alert.body ? <p style={{ margin: 0, fontSize: isWidePageMode ? 15 : 13.5, lineHeight: 1.55, color: bodyColor }}>{alert.body}</p> : null}
               </div>
               <div style={{ display: "grid", gap: 4, fontSize: isWidePageMode ? 14 : 12.5, color: metaColor, lineHeight: 1.45 }}>
@@ -666,7 +669,6 @@ export function EventsWindow({
   const cardBorder = "1px solid var(--sl-ui-feed-card-border)";
   const cardBackground = "var(--sl-ui-feed-card-bg)";
   const titleColor = "var(--sl-ui-text)";
-  const summaryColor = "var(--sl-ui-feed-muted-text)";
   const bodyColor = "var(--sl-ui-feed-muted-text)";
   const metaColor = "var(--sl-ui-feed-muted-text)";
   const topicTone = residentFeedCssTone("feed-badge");
@@ -787,7 +789,6 @@ export function EventsWindow({
               </div>
               <div style={{ display: "grid", gap: 6 }}>
                 <h3 style={{ margin: 0, fontSize: isWidePageMode ? 24 : 20, lineHeight: 1.15, color: titleColor }}>{event.title || "Untitled event"}</h3>
-                {event.summary ? <p style={{ margin: 0, fontSize: isWidePageMode ? 16 : 14, lineHeight: 1.5, color: summaryColor }}>{event.summary}</p> : null}
                 {event.body ? <p style={{ margin: 0, fontSize: isWidePageMode ? 15 : 13.5, lineHeight: 1.55, color: bodyColor }}>{event.body}</p> : null}
               </div>
               <div style={{ display: "grid", gap: 4, fontSize: isWidePageMode ? 14 : 12.5, color: metaColor, lineHeight: 1.45 }}>
@@ -842,6 +843,221 @@ export function EventsWindowController(props) {
   return <EventsWindow {...props} canCreate={canManage} canEdit={canManage} />;
 }
 
+const NOTIFICATION_SWIPE_EDGE_INSET = 18;
+const NOTIFICATION_SWIPE_EDGE_RATIO = 0.9;
+
+function NotificationSwipeCard({
+  item,
+  isUnread,
+  isWidePageMode,
+  onOpen,
+  onUpdateNotificationState,
+  ariaLabel,
+  children,
+}) {
+  const [offset, setOffset] = useState(0);
+  const hostRef = useRef(null);
+  const touchRef = useRef(null);
+  const completedRef = useRef(false);
+  const suppressNextOpenRef = useRef(false);
+  const radius = isWidePageMode ? 22 : 18;
+  const actionTrackInset = isWidePageMode ? 8 : 6;
+  const readActionLabel = isUnread ? "Mark as read" : "Mark as unread";
+  const revealingReadAction = offset > 0;
+  const revealingDeleteAction = offset < 0;
+
+  const resetSwipe = useCallback(() => {
+    touchRef.current = null;
+    setOffset(0);
+  }, []);
+
+  const completeSwipe = useCallback((deltaX) => {
+    if (completedRef.current || typeof onUpdateNotificationState !== "function") return;
+    completedRef.current = true;
+    suppressNextOpenRef.current = true;
+    if (deltaX > 0) {
+      void onUpdateNotificationState(item, isUnread ? "read" : "unread");
+      return;
+    }
+    const confirmed = typeof window === "undefined"
+      || window.confirm("Delete this notification? This cannot be undone.");
+    if (!confirmed) return;
+    void onUpdateNotificationState(item, "delete");
+  }, [isUnread, item, onUpdateNotificationState]);
+
+  return (
+    <div
+      ref={hostRef}
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        borderRadius: radius,
+        touchAction: "pan-y",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: `${actionTrackInset}px 0`,
+          overflow: "hidden",
+          borderRadius: Math.max(0, radius - actionTrackInset),
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-start",
+            padding: "0 20px",
+            background: "var(--sl-ui-tool-active-bg)",
+            color: "var(--sl-ui-tool-active-text)",
+            opacity: revealingReadAction ? 1 : 0,
+            transition: "opacity 80ms linear",
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 900, whiteSpace: "nowrap" }}>✓ {readActionLabel}</span>
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            padding: "0 20px",
+            background: "#b22e2a",
+            color: "#fff",
+            opacity: revealingDeleteAction ? 1 : 0,
+            transition: "opacity 80ms linear",
+          }}
+        >
+          <span style={{ fontSize: 12.5, fontWeight: 900, whiteSpace: "nowrap" }}>Delete ✕</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={(event) => {
+          if (suppressNextOpenRef.current) {
+            suppressNextOpenRef.current = false;
+            event.preventDefault();
+            return;
+          }
+          onOpen?.(item);
+        }}
+        onTouchStart={(event) => {
+          const touch = event.touches?.[0];
+          if (!touch) return;
+          touchRef.current = {
+            startX: touch.clientX,
+            startY: touch.clientY,
+            horizontal: false,
+          };
+          completedRef.current = false;
+        }}
+        onTouchMove={(event) => {
+          const touch = event.touches?.[0];
+          const gesture = touchRef.current;
+          if (!touch || !gesture) return;
+          const deltaX = touch.clientX - gesture.startX;
+          const deltaY = touch.clientY - gesture.startY;
+          if (!gesture.horizontal) {
+            if (Math.abs(deltaX) < 6 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+            gesture.horizontal = true;
+          }
+          const currentWidth = Math.max(0, Number(hostRef.current?.clientWidth || 0));
+          const maxDistance = Math.max(0, currentWidth - NOTIFICATION_SWIPE_EDGE_INSET);
+          const nextOffset = Math.max(-maxDistance, Math.min(maxDistance, deltaX));
+          setOffset(nextOffset);
+          if (maxDistance && Math.abs(nextOffset) >= maxDistance * NOTIFICATION_SWIPE_EDGE_RATIO) {
+            completeSwipe(nextOffset);
+            // The action commits only at the near-edge threshold. Let the
+            // revealed action briefly register, then return the card to rest.
+            if (typeof window !== "undefined") {
+              window.setTimeout(resetSwipe, 110);
+            } else {
+              resetSwipe();
+            }
+          }
+        }}
+        onTouchEnd={(event) => {
+          const touch = event.changedTouches?.[0];
+          const gesture = touchRef.current;
+          if (!touch || !gesture) {
+            resetSwipe();
+            return;
+          }
+          const wasHorizontal = gesture.horizontal;
+          resetSwipe();
+          if (!wasHorizontal || completedRef.current) return;
+          suppressNextOpenRef.current = true;
+        }}
+        onTouchCancel={resetSwipe}
+        aria-label={ariaLabel}
+        style={{
+          position: "relative",
+          width: "100%",
+          textAlign: "left",
+          padding: isWidePageMode ? 18 : 16,
+          borderRadius: radius,
+          border: isUnread
+            ? "2px solid var(--sl-ui-tool-active-border)"
+            : "1px solid var(--sl-ui-feed-card-border)",
+          background: "var(--sl-ui-feed-card-bg)",
+          color: "var(--sl-ui-text)",
+          display: "grid",
+          gap: 10,
+          cursor: "pointer",
+          transform: `translateX(${offset}px)`,
+          transition: touchRef.current?.horizontal ? "none" : "transform 170ms ease-out",
+          willChange: "transform",
+          boxShadow: isUnread
+            ? "0 0 0 1px color-mix(in srgb, var(--sl-ui-tool-active-border) 22%, transparent)"
+            : undefined,
+        }}
+      >
+        {children}
+      </button>
+    </div>
+  );
+}
+
+function ReportDomainMapMarker({ item, darkMode, size = 20 }) {
+  const marker = residentNotificationDomainMapMarker(item);
+  const glyphSize = Math.max(11, Math.round(size * 0.56));
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        display: "grid",
+        placeItems: "center",
+        flex: "0 0 auto",
+        borderRadius: "50%",
+        background: marker.markerColor,
+        border: "2px solid #fff",
+        boxShadow: "0 1px 3px rgba(5, 16, 30, 0.28)",
+        overflow: "hidden",
+      }}
+    >
+      {marker.iconSrc ? (
+        <AppIcon
+          src={marker.iconSrc}
+          iconKey={`domain-marker-${marker.domainKey}`}
+          darkMode={darkMode}
+          size={glyphSize}
+          style={{ color: marker.glyphColor }}
+        />
+      ) : marker.glyph ? (
+        <span style={{ fontSize: glyphSize, lineHeight: 1 }}>{marker.glyph}</span>
+      ) : null}
+    </span>
+  );
+}
+
 export function NotificationsWindow({
   open,
   onClose,
@@ -857,6 +1073,7 @@ export function NotificationsWindow({
   tenantOptions = [],
   onSelectTenantFilter,
   onOpenNotification,
+  onUpdateNotificationState,
   normalizeResidentNotificationKind,
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
@@ -877,12 +1094,6 @@ export function NotificationsWindow({
     : String(selectedFilterOption?.label || "My Location").trim() || "My Location";
   const subtitleColor = "var(--sl-ui-feed-muted-text)";
   const unreadTone = residentFeedCssTone("feed-new-badge");
-  const kindTone = residentFeedCssTone("feed-badge");
-  const tenantTone = {
-    bg: "var(--sl-ui-tool-btn-bg)",
-    border: "var(--sl-ui-tool-btn-border)",
-    color: "var(--sl-ui-tool-btn-text)",
-  };
 
   return (
     <ModalShell
@@ -945,7 +1156,7 @@ export function NotificationsWindow({
             </div>
             {!pageMode ? (
               <div style={{ fontSize: isWidePageMode ? 15.5 : 13, lineHeight: 1.45, opacity: 0.82, color: subtitleColor }}>
-                Newest first across your saved locations. Tap one to open that city and jump to the alert or event.
+                Newest first across your saved locations. Swipe right to mark read or unread; swipe left to delete.
               </div>
             ) : null}
           </div>
@@ -1136,41 +1347,42 @@ export function NotificationsWindow({
                 const kind = normalizeResidentNotificationKind(item?.kind);
                 const isUnread = Boolean(item?.unread);
                 const preview = buildResidentNotificationPreview(item);
+                const isReportUpdate = kind === "report_update";
                 const locationLabel = [item?.location_name, item?.location_address].filter(Boolean).join(" • ");
+                const organizationName = String(item?.tenant_label || "Location").trim() || "Location";
+                const kindIconSrc = kind === "event" ? uiIconSrc.calendar : uiIconSrc.notification;
+                const kindIconKey = kind === "event" ? "calendar" : "notification";
                 return (
-                  <button
+                  <NotificationSwipeCard
                     key={`${kind}:${String(item?.tenant_key || "").trim()}:${String(item?.id || "").trim()}`}
-                    type="button"
-                    onClick={() => onOpenNotification?.(item)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: isWidePageMode ? 18 : 16,
-                      borderRadius: isWidePageMode ? 22 : 18,
-                      border: isUnread
-                        ? "1px solid var(--sl-ui-tool-active-border)"
-                        : "1px solid var(--sl-ui-feed-card-border)",
-                      background: "var(--sl-ui-feed-card-bg)",
-                      color: "var(--sl-ui-text)",
-                      display: "grid",
-                      gap: 10,
-                      cursor: "pointer",
-                    }}
+                    item={item}
+                    isUnread={isUnread}
+                    isWidePageMode={isWidePageMode}
+                    onOpen={onOpenNotification}
+                    onUpdateNotificationState={onUpdateNotificationState}
+                    ariaLabel={`${String(item?.title || "Notification").trim()}. Swipe right to mark ${isUnread ? "read" : "unread"}; swipe left to delete.`}
                   >
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
-                        <div style={residentFeedBadgeStyle(tenantTone)}>
-                          {String(item?.tenant_label || item?.tenant_key || "Location").trim()}
-                        </div>
-                        <div style={residentFeedBadgeStyle(kindTone)}>
-                          {kind === "event" ? "Event" : "Alert"}
-                        </div>
-                        {item?.topic_label ? (
-                          <div style={residentFeedBadgeStyle(kindTone)}>
-                            {String(item.topic_label).trim()}
-                          </div>
-                        ) : null}
-                        {isUnread ? <div style={residentFeedBadgeStyle(unreadTone)}>Unread</div> : null}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      {isReportUpdate ? (
+                        <ReportDomainMapMarker item={item} darkMode={darkMode} size={isWidePageMode ? 22 : 20} />
+                      ) : (
+                        <AppIcon src={kindIconSrc} iconKey={kindIconKey} darkMode={darkMode} size={isWidePageMode ? 22 : 20} />
+                      )}
+                      <div
+                        style={{
+                          minWidth: 0,
+                          fontSize: isWidePageMode ? 12.5 : 11.5,
+                          lineHeight: 1.2,
+                          fontWeight: 900,
+                          letterSpacing: "0.075em",
+                          textTransform: "uppercase",
+                          color: "var(--sl-ui-feed-muted-text)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {organizationName}
                       </div>
                     </div>
 
@@ -1178,7 +1390,14 @@ export function NotificationsWindow({
                       <div style={{ fontSize: isWidePageMode ? 20 : 17, fontWeight: 900, lineHeight: 1.2 }}>
                         {String(item?.title || "Untitled notification").trim() || "Untitled notification"}
                       </div>
-                      {preview ? (
+                      {isReportUpdate ? (
+                        <div style={{ display: "grid", gap: 2, fontSize: isWidePageMode ? 14.5 : 13, lineHeight: 1.45, opacity: 0.82 }}>
+                          <div>{residentNotificationDomainLabel(item)}</div>
+                          <div style={{ fontWeight: 800, opacity: 0.94 }}>
+                            {residentNotificationIncidentDisplayId(item) || "Unknown incident"}
+                          </div>
+                        </div>
+                      ) : preview ? (
                         <div style={{ fontSize: isWidePageMode ? 14.5 : 13, lineHeight: 1.45, opacity: 0.82 }}>
                           {preview}
                         </div>
@@ -1188,17 +1407,24 @@ export function NotificationsWindow({
                           {locationLabel}
                         </div>
                       ) : null}
+                      {item?.topic_label ? (
+                        <div style={{ fontSize: 12, lineHeight: 1.35, fontWeight: 800, opacity: 0.72 }}>
+                          {String(item.topic_label).trim()}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ fontSize: 12.5, opacity: 0.72 }}>
-                        Open in {String(item?.tenant_label || item?.tenant_key || "location").trim() || "location"}
+                        {isReportUpdate
+                          ? "Open My Reports"
+                          : `Open in ${organizationName}`}
                       </div>
                       <div style={{ fontSize: 12.5, fontWeight: 900 }}>
                         View →
                       </div>
                     </div>
-                  </button>
+                  </NotificationSwipeCard>
                 );
               })}
             </div>
@@ -1214,6 +1440,7 @@ export function NotificationsController({
   open,
   onClose,
   onOpenNotification,
+  onUpdateNotificationState,
   onLocationSummaryChange,
   refreshToken = 0,
   darkMode = false,
@@ -1402,6 +1629,7 @@ export function NotificationsController({
       tenantOptions={tenantOptions}
       onSelectTenantFilter={setSelectedTenantFilter}
       onOpenNotification={onOpenNotification}
+      onUpdateNotificationState={onUpdateNotificationState}
       normalizeResidentNotificationKind={normalizeResidentNotificationKind}
     />
   );

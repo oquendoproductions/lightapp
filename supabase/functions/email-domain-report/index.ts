@@ -25,6 +25,13 @@ type DomainRuntimeConfig = {
   notificationTemplateKey: string;
   notificationSubjectTemplate: string;
   notificationBodyTemplate: string;
+  reportingFields: DomainReportingFieldConfig[];
+};
+
+type DomainReportingFieldConfig = {
+  key: string;
+  label: string;
+  choices: Array<{ value: string; label: string }>;
 };
 
 type DomainTypeOptionSelection = {
@@ -160,6 +167,7 @@ Tenant: {{tenant_key}}
 Domain: {{domain_label}}
 Issue Type: {{issue_type}}
 Type Details: {{type_options_summary}}
+Incident ID: {{incident_id}}
 Report Number: {{report_number}}
 Closest Address: {{closest_address}}
 Cross Street: {{closest_cross_street}}
@@ -179,6 +187,45 @@ Email: {{reporter_email}}
 Phone: {{reporter_phone}}
 
 This report was submitted through CityReport.io and forwarded by our system as an intermediary.`;
+}
+
+function readTemplateTokenKeys(raw: unknown): string[] {
+  const text = String(raw || "");
+  if (!text) return [];
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  const pattern = /{{\s*([a-z0-9_]+)\s*}}/gi;
+  for (const match of text.matchAll(pattern)) {
+    const key = normalizeTemplateTokenKey(match?.[1] || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    tokens.push(key);
+  }
+  return tokens;
+}
+
+function applyDynamicTypeOptionTemplateFallbacks(
+  variables: Record<string, string>,
+  templates: Array<unknown>,
+): Record<string, string> {
+  const next = { ...variables };
+  const templateTokens = new Set<string>();
+  for (const template of templates) {
+    for (const key of readTemplateTokenKeys(template)) {
+      templateTokens.add(key);
+    }
+  }
+  for (const key of templateTokens) {
+    if ((key.startsWith("type_option_") || /^issue_type_\d+(?:_(?:label|display))?$/.test(key)) && !(key in next)) {
+      next[key] = "Not provided";
+    }
+  }
+  for (const key of ["type_options_summary", "reporting_fields"]) {
+    if (templateTokens.has(key) && !String(next[key] || "").trim()) {
+      next[key] = "Not provided";
+    }
+  }
+  return next;
 }
 
 function renderTemplate(raw: unknown, variables: Record<string, string>): string {
@@ -244,6 +291,7 @@ function normalizeDomainTypeOptions(raw: unknown) {
     .map((row, index) => {
       if (!row || typeof row !== "object") return null;
       const item = row as DomainTypeOptionSelection;
+      const key = normalizeTemplateTokenKey(item.key || "", `issue_type_${index + 1}`);
       const label = String(item.label || "").trim() || humanizeKey(item.key || "", `Type Option ${index + 1}`);
       const value = String(item.value || "").trim().toLowerCase();
       const valueLabel = String(item.valueLabel || item.value || "").trim();
@@ -251,16 +299,83 @@ function normalizeDomainTypeOptions(raw: unknown) {
         item.macroKey || `type_option_${normalizeTemplateTokenKey(item.key || label, `option_${index + 1}`)}`,
         `type_option_${index + 1}`
       );
+      const legacyMacroKey = normalizeTemplateTokenKey(
+        `type_option_${normalizeTemplateTokenKey(item.key || label, `option_${index + 1}`)}`,
+        `type_option_${index + 1}`
+      );
       if (!label || !valueLabel || seen.has(macroKey)) return null;
       seen.add(macroKey);
       return {
+        key,
         label,
         value,
         valueLabel,
+        position: index + 1,
         macroKey,
+        legacyMacroKey,
       };
     })
-    .filter(Boolean) as Array<{ label: string; value: string; valueLabel: string; macroKey: string }>;
+    .filter(Boolean) as Array<{ key: string; label: string; value: string; valueLabel: string; position: number; macroKey: string; legacyMacroKey: string }>;
+}
+
+function normalizeReportingFieldConfigs(raw: unknown): DomainReportingFieldConfig[] {
+  const rows = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  return rows
+    .map((row, index) => {
+      if (!row || typeof row !== "object") return null;
+      const item = row as Record<string, unknown>;
+      const key = normalizeTemplateTokenKey(item.option_key || item.optionKey || item.key || "", `issue_type_${index + 1}`);
+      const label = String(item.option_label || item.optionLabel || item.label || "").trim() || humanizeKey(key, `Reporting Field ${index + 1}`);
+      if (!key || seen.has(key)) return null;
+      seen.add(key);
+      const rawChoices = Array.isArray(item.choices)
+        ? item.choices
+        : Array.isArray(item.options)
+          ? item.options
+          : [];
+      const choices = rawChoices
+        .map((choice) => {
+          if (!choice || typeof choice !== "object") return null;
+          const value = normalizeTemplateTokenKey((choice as Record<string, unknown>).value || (choice as Record<string, unknown>).type_key || "");
+          const choiceLabel = String((choice as Record<string, unknown>).label || (choice as Record<string, unknown>).type_label || "").trim();
+          return value && choiceLabel ? { value, label: choiceLabel } : null;
+        })
+        .filter(Boolean) as Array<{ value: string; label: string }>;
+      return { key, label, choices };
+    })
+    .filter(Boolean) as DomainReportingFieldConfig[];
+}
+
+function reconcileReportingFieldSelections(
+  reportedSelections: ReturnType<typeof normalizeDomainTypeOptions>,
+  reportingFields: DomainReportingFieldConfig[] = [],
+) {
+  if (!reportingFields.length) return reportedSelections;
+  const remaining = new Map(
+    reportedSelections.map((row) => [normalizeTemplateTokenKey(row.key || row.macroKey || ""), row])
+  );
+  const resolved = reportingFields.flatMap((field, index) => {
+    const reported = remaining.get(field.key);
+    if (!reported) return [];
+    remaining.delete(field.key);
+    const selectedValue = normalizeTemplateTokenKey(reported.value || "");
+    const configuredChoice = field.choices.find((choice) => choice.value === selectedValue);
+    return [{
+      ...reported,
+      label: field.label,
+      value: selectedValue || reported.value,
+      valueLabel: configuredChoice?.label || reported.valueLabel,
+      position: index + 1,
+      macroKey: `issue_type_${index + 1}`,
+    }];
+  });
+  // Preserve a selection submitted while a tenant is actively reconfiguring
+  // fields, but put it after the authoritative configured fields.
+  for (const row of remaining.values()) {
+    resolved.push({ ...row, position: resolved.length + 1, macroKey: `issue_type_${resolved.length + 1}` });
+  }
+  return resolved;
 }
 
 function extractImageUrl(raw: unknown): string {
@@ -368,7 +483,7 @@ async function loadDomainRuntimeConfig(
 
   let assignmentResult = await admin
     .from("tenant_domain_assignments")
-    .select("active,visibility,display_label,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template")
+    .select("active,visibility,display_label,notification_email,notification_cc_emails,notification_template_key,notification_subject_template,notification_body_template,type_options")
     .eq("tenant_key", tenantKey)
     .eq("domain_key", domainKey)
     .maybeSingle();
@@ -394,6 +509,7 @@ async function loadDomainRuntimeConfig(
   }
 
   let legacyDomainNotificationEmail = "";
+  let departmentNotificationEmails: string[] = [];
   if (domainKey === "potholes" || domainKey === "water_drain_issues") {
     const domainConfigResult = await admin
       .from("tenant_domain_configs")
@@ -409,6 +525,24 @@ async function loadDomainRuntimeConfig(
     } else {
       legacyDomainNotificationEmail = String(domainConfigResult.data?.notification_email || "").trim();
     }
+  }
+
+  // Department routing is optional and deliberately sits ahead of the older
+  // per-domain address. Existing tenants keep their current email behavior
+  // until they configure a department for the report domain.
+  const departmentResult = await admin
+    .from("tenant_domain_departments")
+    .select("department:tenant_departments!inner(notification_email,active)")
+    .eq("tenant_key", tenantKey)
+    .eq("domain_key", domainKey);
+  if (!departmentResult.error) {
+    departmentNotificationEmails = dedupeEmails(
+      (departmentResult.data || []).map((row) => String((row as { department?: { notification_email?: string; active?: boolean } })?.department?.active === false
+        ? ""
+        : (row as { department?: { notification_email?: string } })?.department?.notification_email || ""))
+    );
+  } else if (!isMissingColumnError(departmentResult.error)) {
+    console.warn("[department email routing]", departmentResult.error.message || departmentResult.error);
   }
 
   let value: DomainRuntimeConfig | null = null;
@@ -428,16 +562,22 @@ async function loadDomainRuntimeConfig(
       domainLabel: String(assignment?.display_label || definition?.label || humanizeKey(domainKey, domainKey)).trim() || humanizeKey(domainKey, domainKey),
       domainClass: String(definition?.domain_class || "incident_driven").trim().toLowerCase() || "incident_driven",
       recipientEmail:
+        departmentNotificationEmails[0]
+        ||
         String(assignment?.notification_email || "").trim()
         || String(definition?.default_notification_email || "").trim()
         || legacyDomainNotificationEmail
         || fallbackRecipient,
-      ccRecipientEmails: String(assignment?.notification_cc_emails || "").trim(),
+      ccRecipientEmails: dedupeEmails([
+        ...departmentNotificationEmails.slice(1),
+        ...splitEmails(assignment?.notification_cc_emails || ""),
+      ]).join(", "),
       assignmentActive: assignment?.active !== false,
       assignmentVisible: String(assignment?.visibility || "enabled").trim().toLowerCase() !== "disabled",
       notificationTemplateKey: String(assignment?.notification_template_key || "standard_ops").trim().toLowerCase() || "standard_ops",
       notificationSubjectTemplate: String(assignment?.notification_subject_template || "").trim() || defaultSubjectTemplate(),
       notificationBodyTemplate: String(assignment?.notification_body_template || "").trim() || defaultBodyTemplate(),
+      reportingFields: normalizeReportingFieldConfigs(assignment?.type_options),
     };
     if (String(definition?.status || "active").trim().toLowerCase() === "archived") {
       value.assignmentActive = false;
@@ -456,6 +596,7 @@ async function loadDomainRuntimeConfig(
       notificationTemplateKey: "standard_ops",
       notificationSubjectTemplate: defaultSubjectTemplate(),
       notificationBodyTemplate: defaultBodyTemplate(),
+      reportingFields: [],
     };
   }
 
@@ -592,6 +733,7 @@ serve(async (req) => {
 
     const domainLabel = String(body?.domainLabel || cfg.domainLabel).trim() || cfg.domainLabel;
     const issueType = String(body?.issueType || "").trim();
+    const incidentId = String(body?.incidentId || body?.incident_id || "").trim() || "Unknown";
     const reportNumber = String(body?.reportNumber || "").trim() || "Unknown";
     const notesRaw = String(body?.notes || "").trim();
     const notes = normalizeNotes(notesRaw);
@@ -610,12 +752,31 @@ serve(async (req) => {
     const reporterName = String(reporter?.name || "").trim() || "Unknown";
     const reporterEmail = String(reporter?.email || "").trim() || "Not provided";
     const reporterPhone = String(reporter?.phone || "").trim() || "Not provided";
-    const normalizedTypeOptions = normalizeDomainTypeOptions(body?.typeOptions);
+    const normalizedTypeOptions = reconcileReportingFieldSelections(
+      normalizeDomainTypeOptions(body?.typeOptions),
+      cfg.reportingFields,
+    );
     const typeOptionsSummary = normalizedTypeOptions.length
       ? normalizedTypeOptions.map((row) => `${row.label}: ${row.valueLabel}`).join(" | ")
       : "Not provided";
+    const reportingFields = normalizedTypeOptions.length
+      ? normalizedTypeOptions.map((row) => `${row.label}: ${row.valueLabel}`).join("\n")
+      : "Not provided";
     const typeOptionTemplateVariables = Object.fromEntries(
-      normalizedTypeOptions.map((row) => [row.macroKey, row.valueLabel])
+      normalizedTypeOptions.flatMap((row, index) => {
+        const position = Number.isInteger(row.position) && row.position > 0 ? row.position : index + 1;
+        const positionalMacroKey = `issue_type_${position}`;
+        return [
+          // Keep existing tenant templates working while the PCP moves from
+          // label-derived tokens to stable positional issue_type_1, _2, etc.
+          [row.macroKey, row.valueLabel],
+          [row.legacyMacroKey, row.valueLabel],
+          // Positional macros work for every current and future domain.
+          [positionalMacroKey, row.valueLabel],
+          [`${positionalMacroKey}_label`, row.label],
+          [`${positionalMacroKey}_display`, `${row.label}: ${row.valueLabel}`],
+        ];
+      })
     );
 
     const templateVariables = {
@@ -623,6 +784,8 @@ serve(async (req) => {
       domain_label: domainLabel,
       issue_type: issueType || "Not provided",
       type_options_summary: typeOptionsSummary,
+      reporting_fields: reportingFields,
+      incident_id: incidentId,
       report_number: reportNumber,
       closest_address: closestAddress,
       closest_cross_street: closestCrossStreet,
@@ -639,10 +802,15 @@ serve(async (req) => {
       ...typeOptionTemplateVariables,
     };
 
-    const subject = renderTemplate(cfg.notificationSubjectTemplate || defaultSubjectTemplate(), templateVariables)
+    const renderedTemplateVariables = applyDynamicTypeOptionTemplateFallbacks(
+      templateVariables,
+      [cfg.notificationSubjectTemplate, cfg.notificationBodyTemplate, defaultSubjectTemplate(), defaultBodyTemplate()],
+    );
+
+    const subject = renderTemplate(cfg.notificationSubjectTemplate || defaultSubjectTemplate(), renderedTemplateVariables)
       || (issueType ? `${domainLabel} report: ${issueType} (${reportNumber})` : `${domainLabel} report (${reportNumber})`);
-    const bodyText = renderTemplate(cfg.notificationBodyTemplate || defaultBodyTemplate(), templateVariables)
-      || renderTemplate(defaultBodyTemplate(), templateVariables);
+    const bodyText = renderTemplate(cfg.notificationBodyTemplate || defaultBodyTemplate(), renderedTemplateVariables)
+      || renderTemplate(defaultBodyTemplate(), renderedTemplateVariables);
     const title = String(body?.title || "").trim() || `${domainLabel} report received`;
 
     const html = `

@@ -6,6 +6,18 @@ import { CircleF, GoogleMap, useJsApiLoader } from "@react-google-maps/api";
 import "./MapGoogleFull.css";
 import "./headerStandards.css";
 import { readCrossTenantAuthBridgeStateHint } from "./lib/mapAuthBridgeHintSupport.js";
+import {
+  clearResidentNotificationFeedHandoff,
+  clearResidentNotificationHandoffs,
+  clearResidentNotificationReportHandoff,
+  readResidentNotificationFeedHandoff,
+  readResidentNotificationReportHandoff,
+  writeNativeResidentNotificationFeedHandoff,
+  writeNativeResidentNotificationReportHandoff,
+  writeResidentNotificationFeedHandoff,
+  writeResidentNotificationReportHandoff,
+} from "./lib/residentNotificationReportHandoff.js";
+import { residentNotificationIncidentDisplayId } from "./lib/mapResidentNotificationSupport.js";
 import { getSupabaseTenantKey, hasPersistedSupabaseSessionHint, supabase } from "./supabaseClient";
 import { TenantContext } from "./tenant/contextObject";
 import { getPlatformName, isNativeAppRuntime } from "./platform/runtime.js";
@@ -17,6 +29,7 @@ import {
   MAP_UI_ICON_PUBLISHED_CONFIG_KEY,
   RUNTIME_UI_ICON_SRC as UI_ICON_SRC,
   isRuntimeUiIconEnabled,
+  preloadCriticalMapToolIcons,
   setResolvedRuntimeUiIconMetaState,
 } from "./mapUiIconRuntimeCoreSupport.js";
 import {
@@ -80,7 +93,6 @@ import {
   normalizeExplicitDomainSelection,
 } from "./lib/mapDomainSelectionConfig.js";
 import {
-  defaultRoadRequiredForDomainShared as defaultRoadRequiredForDomain,
   resolveRuntimeDomainParkRequiredShared,
   resolveRuntimeDomainRoadRequiredShared,
 } from "./lib/mapRuntimeDomainPlacementSupport.js";
@@ -137,6 +149,7 @@ import {
 } from "./lib/mapIncidentDomainHelperCoreSupport.js";
 import {
   dedupeIncidentMarkerRenderSourceShared,
+  resolveIncidentDrivenMarkerCollectionShared,
   summarizeCanonicalIncidentMarkersInViewportShared,
 } from "./lib/mapIncidentMarkerSourceSupport.js";
 import {
@@ -147,6 +160,13 @@ import {
 import { resolveReportDomainLabelShared } from "./lib/mapReportDisplaySupport.js";
 import { createTenantScopedAuthedClient, createTenantScopedReadClient } from "./lib/tenantScopedSupabase";
 import { focusMapMarkerSelectionShared } from "./lib/mapMarkerSelectionInteractionSupport.js";
+import {
+  clearCachedTenantVisibilityConfigShared,
+  loadTenantVisibilityConfigShared,
+  normalizeTenantVisibilityConfigShared,
+  writeCachedTenantVisibilityConfigShared,
+} from "./lib/mapDeferredTenantUiConfigSupport.js";
+import MapTabLoadingSurface from "./mapTabLoadingSurface.jsx";
 
 const LazyAccountMenuPanel = lazy(() => import("./mapLazyAccountPanels.jsx").then((module) => ({ default: module.AccountMenuPanel })));
 const LazyMobileHeaderMenuPanel = lazy(() => import("./mapLazyAccountFlows.jsx").then((module) => ({ default: module.MobileHeaderMenuPanel })));
@@ -208,6 +228,7 @@ const loadAuthBootstrapControllerModule = () => import("./mapLazyAuthBootstrapCo
 const loadPlatformExternalModule = () => import("./platform/external.js");
 const loadStreetlightConfidenceModule = () => import("./streetlightConfidence");
 const loadAccountWorkspaceModule = () => import("./mapLazyAccountWorkspaceBridge.jsx");
+const loadAccountPanelsModule = () => import("./mapLazyAccountPanels.jsx");
 const loadAccountAccessControllerModule = () => import("./mapLazyAccountAccessController.jsx");
 const loadTenantRuntimeControllerModule = () => import("./mapLazyTenantRuntimeController.jsx");
 const loadAbuseSummaryControllerModule = () => import("./mapLazyAbuseSummaryController.jsx");
@@ -224,6 +245,8 @@ const loadMapSelectionPopupsModule = () => import("./mapLazyMapSelectionPopups.j
 const loadMapLayersModule = () => import("./mapLazyMapLayers.jsx");
 const loadOfficialLightsCanvasOverlayModule = () => import("./mapLazyOfficialLightsCanvasOverlay.jsx");
 const loadWorkspaceHostModule = () => import("./mapLazyWorkspaceHostBridge.jsx");
+const loadSecondaryWorkspaceModule = () => import("./mapLazySecondaryWorkspace.jsx");
+const loadResidentFeedsModule = () => import("./mapLazyResidentFeeds.jsx");
 const LazyIncidentTypePickerModal = lazy(() => import("./mapLazyIncidentTypePicker.jsx").then((module) => ({ default: module.IncidentTypePickerModal })));
 const LazyInfoMenuModal = lazy(() => import("./mapLazyInfoPanels.jsx").then((module) => ({ default: module.InfoMenuModal })));
 const loadOpenReportsModalModule = () => import("./mapLazyOpenReportsModal.jsx");
@@ -439,13 +462,13 @@ const cachedRuntimeUiIconManifest = (() => {
     return null;
   }
 })();
-const hasCachedRuntimeUiIconManifest = Boolean(cachedRuntimeUiIconManifest);
 if (cachedRuntimeUiIconManifest) {
   setRuntimeUiIconManifest(
     cachedRuntimeUiIconManifest?.icon_bundle || cachedRuntimeUiIconManifest?.icons || cachedRuntimeUiIconManifest,
     cachedRuntimeUiIconManifest?.theme_bundle || cachedRuntimeUiIconManifest
   );
 }
+preloadCriticalMapToolIcons(UI_ICON_SRC);
 
 function setRuntimeUiIconManifest(rawIcons, rawTheme = {}) {
   UI_ICON_THEME_SOURCE = rawTheme && typeof rawTheme === "object" ? rawTheme : {};
@@ -471,7 +494,7 @@ const MAP_COMMUNITY_FEED_READ_KEY = "cityreport_map_community_feed_read_v2";
 const TENANT_PUBLIC_MAP_CORE_CACHE_KEY = "cityreport_public_map_core_v3";
 const MAP_COMMUNITY_FEED_REMOTE_TABLE = "resident_community_feed_views";
 const NATIVE_PUSH_REGISTERED_KEY = "cityreport_native_push_registered_v1";
-const NATIVE_PUSH_DEFAULT_ENABLED = "false";
+const NATIVE_PUSH_DEFAULT_ENABLED = "true";
 const EMPTY_MAP_COMMUNITY_FEED_READ_STATE = Object.freeze({
   alertsLastViewedAt: 0,
   eventsLastViewedAt: 0,
@@ -2482,6 +2505,7 @@ export default function App({
   const boundaryCameraSignatureRef = useRef("");
   const pendingTenantHomeRecenterRef = useRef("");
   const reportDeepLinkHandledRef = useRef(false);
+  const residentNotificationReportHandoffHandledRef = useRef("");
   const initialReportViewHandledRef = useRef(false);
   const initialReportDeepLinkRef = useRef(
     typeof window === "undefined" ? readReportDeepLinkRequest("") : readReportDeepLinkRequest(window.location.search || "")
@@ -2899,6 +2923,10 @@ export default function App({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Never paint the built-in icon set while the published set is still unknown.
+  // A private/new browser has no local manifest, so showing controls immediately
+  // would briefly expose the legacy defaults before the published config arrives.
+  const [mapUiIconManifestReady, setMapUiIconManifestReady] = useState(false);
   const [mapDataReloadToken, setMapDataReloadToken] = useState(0);
   const [resumeRefreshActive, setResumeRefreshActive] = useState(false);
 
@@ -2930,56 +2958,35 @@ export default function App({
 
   useEffect(() => {
     let cancelled = false;
-    let dispose = () => {};
-    let idleHandle = null;
-    let timeoutHandle = null;
-    if (loading) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (!startupWarmupReady || mapInteracting) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    const reducedWarmup = backgroundWarmupPolicy?.reducedWarmup === true;
-    const idleTimeoutMs = hasCachedRuntimeUiIconManifest
-      ? (reducedWarmup ? 1800 : 1000)
-      : (reducedWarmup ? 5000 : 3200);
-    const fallbackDelayMs = hasCachedRuntimeUiIconManifest
-      ? (reducedWarmup ? 520 : 220)
-      : (reducedWarmup ? 1600 : 900);
-
-    const runLoad = async () => {
-      if (cancelled) return;
-      await loadPublishedMapUiBundle({ preferCacheOnError: true });
-    };
-
-    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-      idleHandle = window.requestIdleCallback(() => {
-        idleHandle = null;
-        void runLoad();
-      }, { timeout: idleTimeoutMs });
-    } else if (typeof window !== "undefined") {
-      timeoutHandle = window.setTimeout(() => {
-        timeoutHandle = null;
-        void runLoad();
-      }, fallbackDelayMs);
-    } else {
-      void runLoad();
-    }
-
+    void loadPublishedMapUiBundle({ preferCacheOnError: true }).finally(() => {
+      if (!cancelled) setMapUiIconManifestReady(true);
+    });
     return () => {
       cancelled = true;
-      if (idleHandle != null && typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
-        window.cancelIdleCallback(idleHandle);
-      }
-      if (timeoutHandle != null && typeof window !== "undefined") {
-        window.clearTimeout(timeoutHandle);
-      }
     };
-  }, [backgroundWarmupPolicy, hasCachedRuntimeUiIconManifest, loadPublishedMapUiBundle, loading, mapInteracting, startupWarmupReady]);
+  }, [loadPublishedMapUiBundle]);
+
+  useEffect(() => {
+    if (!useAppShellLayout || loading || !startupWarmupReady || mapInteracting) return undefined;
+    return scheduleDeferredWarmup(async () => {
+      await loadWorkspaceHostModule();
+      await loadSecondaryWorkspaceModule();
+      await loadOpenReportsModalModule();
+      await loadResidentFeedsModule();
+      await loadAccountWorkspaceModule();
+      await loadAccountPanelsModule();
+    }, {
+      startDelayMs: backgroundWarmupReduced ? 5000 : 1800,
+      idleTimeoutMs: backgroundWarmupReduced ? 5000 : 3000,
+      fallbackDelayMs: backgroundWarmupReduced ? 2400 : 1000,
+    });
+  }, [
+    backgroundWarmupReduced,
+    loading,
+    mapInteracting,
+    startupWarmupReady,
+    useAppShellLayout,
+  ]);
 
   useEffect(() => {
     if (typeof navigator === "undefined") return undefined;
@@ -3585,6 +3592,11 @@ export default function App({
   const officialLightHistoryCacheRef = useRef(new Map());
 
   const [myReportsOpen, setMyReportsOpen] = useState(false);
+  // Keep the Reports controller mounted after its first visit. Map and
+  // Account otherwise unmounted the entire secondary workspace (whereas
+  // Notifications, Alerts, and Events did not), which discarded local search
+  // and filter state only for those two tabs.
+  const [retainMyReportsWorkspace, setRetainMyReportsWorkspace] = useState(false);
   const [myReportsDomain, setMyReportsDomain] = useState("streetlights");
   const [myReportsDomainFilters, setMyReportsDomainFilters] = useState([]);
   const [myReportsLaunchOptions, setMyReportsLaunchOptions] = useState(() => ({
@@ -3622,7 +3634,28 @@ export default function App({
   const [mapCommunityAlerts, setMapCommunityAlerts] = useState([]);
   const [mapCommunityEvents, setMapCommunityEvents] = useState([]);
   const [mapCommunityTopics, setMapCommunityTopics] = useState([]);
-  const notificationTopics = useMemo(() => mapCommunityTopics, [mapCommunityTopics]);
+  // Report updates are a core resident capability, not a map-tool feature.
+  // Keep this stable virtual topic in every signed-in tenant so residents can
+  // manage status updates even when that tenant does not publish alerts/events.
+  const notificationTopics = useMemo(() => [
+    {
+      topic_key: "report_updates",
+      label: "Report updates",
+      description: "Updates when the status of one of your submitted reports changes.",
+      default_enabled: true,
+      topic_kind: "report_update",
+      preference_category: "report_updates",
+    },
+    // `report_updates` is stored in notification_topics for delivery/RLS, but
+    // this screen owns its presentation as the single core Report Updates
+    // card. Do not also render the database row as a Community Update.
+    ...mapCommunityTopics
+      .filter((topic) => String(topic?.topic_key || "").trim().toLowerCase() !== "report_updates")
+      .map((topic) => ({
+        ...topic,
+        preference_category: "community_updates",
+      })),
+  ], [mapCommunityTopics]);
   const [communityFeedEditor, setCommunityFeedEditor] = useState({ open: false, kind: "alert", mode: "create", item: null });
   const [mapCommunityFeedLoading, setMapCommunityFeedLoading] = useState(false);
   const [mapCommunityFeedError, setMapCommunityFeedError] = useState("");
@@ -3633,6 +3666,10 @@ export default function App({
     eventsReadKeys: [],
     alertsReadIds: [],
     eventsReadIds: [],
+    alertsUnreadIds: [],
+    eventsUnreadIds: [],
+    alertsDeletedIds: [],
+    eventsDeletedIds: [],
   }));
   const [alertsSessionNewKeys, setAlertsSessionNewKeys] = useState([]);
   const [eventsSessionNewKeys, setEventsSessionNewKeys] = useState([]);
@@ -3650,6 +3687,7 @@ export default function App({
     openResidentNotificationTarget: async () => {},
     handleResidentAlertVisible: () => {},
     handleResidentEventVisible: () => {},
+    updateResidentNotificationInboxState: async () => false,
     refreshResidentNotifications: () => {},
   }));
   const [residentNotificationsRefreshToken, setResidentNotificationsRefreshToken] = useState(0);
@@ -3754,11 +3792,46 @@ export default function App({
     const domainKey = requestedDomainKey || defaultDomainKey;
     const focusIncidentId = String(opts?.focusIncidentId || "").trim();
     const focusQuery = String(opts?.focusQuery || "").trim();
+    const incidentState = String(opts?.incidentState || "").trim().toLowerCase();
+    const incidentStateChangedAt = String(opts?.incidentStateChangedAt || "").trim();
     const inViewOnly = Boolean(opts?.inViewOnly);
     const hasExplicitReportedByMode = Object.prototype.hasOwnProperty.call(opts || {}, "reportedByMode");
     const reportedByModeSource = hasExplicitReportedByMode ? opts?.reportedByMode : myReportsReportedByMode;
     const reportedByMode = String(reportedByModeSource || "me").trim().toLowerCase() === "all" ? "all" : "me";
+    // A normal bottom-rail/menu visit is a return to the same Reports
+    // workspace. Do not replace its search, status/date filters, selected
+    // domains, or reported-by mode. Marker and notification paths supply a
+    // stable target (or snapshot), and are deliberate new navigations.
+    const replacesReportsWorkspace = Boolean(
+      focusIncidentId
+      || focusQuery
+      || opts?.restrictToDomain
+      || opts?.handoffDomainKey
+      || (Array.isArray(opts?.handoffRows) && opts.handoffRows.length)
+      || opts?.diagnosticSource === "resident-notification"
+    );
     primeReportsModalWorkspace();
+    setRetainMyReportsWorkspace(true);
+    if (domainKey && focusIncidentId && incidentState) {
+      // A resident report-update notification is an authoritative, timestamped
+      // state transition for its incident. Preserve a newer known state, but
+      // never let Reports fall back to the original submitted "Reported" row
+      // while the public lifecycle snapshot finishes loading.
+      setIncidentStateByKey((previous) => {
+        const key = incidentSnapshotKey(domainKey, focusIncidentId);
+        if (!key) return previous;
+        const previousChangedAt = Date.parse(String(previous?.[key]?.last_changed_at || "")) || 0;
+        const incomingChangedAt = Date.parse(incidentStateChangedAt) || Date.now();
+        if (previousChangedAt > incomingChangedAt) return previous;
+        return {
+          ...(previous || {}),
+          [key]: {
+            state: incidentState,
+            last_changed_at: new Date(incomingChangedAt).toISOString(),
+          },
+        };
+      });
+    }
     closeAnyPopup();
     setSelectedOfficialId(null);
     setSelectedDomainMarker(null);
@@ -3769,16 +3842,26 @@ export default function App({
     setNotificationsWindowOpen(false);
     setAlertsWindowOpen(false);
     setEventsWindowOpen(false);
-    setAdminReportDomain(domainKey);
-    setMyReportsDomain(domainKey);
-    setMyReportsDomainFilters(requestedDomainKey ? [domainKey] : []);
-    setMyReportsLaunchOptions({
-      token: nextReportLaunchToken(),
-      focusIncidentId,
-      focusQuery,
-      inViewOnly,
-    });
-    setMyReportsReportedByMode(reportedByMode);
+    if (replacesReportsWorkspace) {
+      setAdminReportDomain(domainKey);
+      setMyReportsDomain(domainKey);
+      // An incident handoff is already constrained by its stable incident ID.
+      // Do not also narrow the domain selector here: returning to Map can
+      // refresh a domain runtime before its report rows are reattached, which
+      // made a second View Report render an empty result set. Keep all domains
+      // active and let the exact incident target do the narrowing instead.
+      setMyReportsDomainFilters(opts?.restrictToDomain && requestedDomainKey ? [domainKey] : []);
+      setMyReportsLaunchOptions({
+        token: nextReportLaunchToken(),
+        focusIncidentId,
+        focusQuery,
+        // Preserve the resolved rows from a map popup for this one navigation.
+        handoffDomainKey: String(opts?.handoffDomainKey || domainKey).trim(),
+        handoffRows: Array.isArray(opts?.handoffRows) ? opts.handoffRows : [],
+        inViewOnly,
+      });
+      setMyReportsReportedByMode(reportedByMode);
+    }
     setMyReportsOpen(true);
   }
 
@@ -3787,9 +3870,12 @@ export default function App({
     setSelectedOfficialId(null);
     setSelectedDomainMarker(null);
     setSelectedQueuedTempId(null);
+    closeAccountSubpages();
+    setOpenReportsOpen(false);
     setAccountMenuOpen(false);
     setMobileHeaderMenuOpen(false);
     setAdminDomainMenuOpen(false);
+    setAdminToolboxOpen(false);
     setMyReportsOpen(false);
     setAlertsWindowOpen(false);
     setEventsWindowOpen(false);
@@ -4079,7 +4165,7 @@ export default function App({
   }
 
   const [authGateOpen, setAuthGateOpen] = useState(false);
-  const [authGateStep, setAuthGateStep] = useState("welcome"); // welcome | login | signup | guest
+  const [authGateStep, setAuthGateStep] = useState("welcome"); // welcome | login | signup | signup-confirmation | guest
   const userInitiatedLogoutRef = useRef(false);
   const wasUserInitiatedLogout = useCallback(() => userInitiatedLogoutRef.current, []);
 
@@ -4171,6 +4257,10 @@ export default function App({
   const [tenantDomainConfigLoaded, setTenantDomainConfigLoaded] = useState(false);
   const [publicMapCoreCacheHydrated, setPublicMapCoreCacheHydrated] = useState(false);
   const [publicMapCoreCacheHasIncidentData, setPublicMapCoreCacheHasIncidentData] = useState(false);
+  // This cache is a first-paint optimization only. Access resolution can change
+  // after a resident opens Notifications, Alerts, or Events; it must never be
+  // allowed to clear the live map/report collections that have already loaded.
+  const publicMapCoreCacheAppliedTenantKeyRef = useRef("");
   const deferredIncidentStateRefreshContextKeyRef = useRef("");
   const deferredBoundaryRefreshContextKeyRef = useRef("");
   const tenantMapFeaturesSourceRef = useRef("initial");
@@ -4185,27 +4275,9 @@ export default function App({
   ).trim().toLowerCase();
 
   useLayoutEffect(() => {
-    const clearMapCoreRuntime = () => {
+    const clearPublicMapCoreCacheState = () => {
       setPublicMapCoreCacheHydrated(false);
       setPublicMapCoreCacheHasIncidentData(false);
-      setOfficialLights([]);
-      setReports([]);
-      setSharedIncidentReportRowsStateByDomain({});
-      setSharedIncidentBaseMarkersStateByDomain({});
-      setStreetlightOutageTsByLightId({});
-      setIncidentStateByKey({});
-      setFixedLights({});
-      setActionsByLightId({});
-      setConfiguredIncidentSeededRowsStateByDomain({});
-      setConfiguredIncidentReportRowsStateByDomain({});
-      setConfiguredIncidentLoadedDomainKeys([]);
-      setConfiguredIncidentPersistedStateLoadedDomainKeys([]);
-      configuredIncidentLoadingDomainKeysRef.current = new Set();
-      configuredIncidentPersistedStateLoadingDomainKeysRef.current = new Set();
-      cachedConfiguredIncidentSeededRowsByDomainRef.current = {};
-      cachedConfiguredIncidentReportRowsByDomainRef.current = {};
-      cachedPersistedIncidentRecordStateByDomainRef.current = {};
-      setPersistedIncidentRecordStateByDomain({});
     };
 
     const shouldHydratePublicCache = shouldHydratePublicMapCoreCacheShared({
@@ -4216,14 +4288,21 @@ export default function App({
       waitingForReportAccess: waitingForAuthenticatedMapAccess,
     });
     if (!shouldHydratePublicCache) {
-      clearMapCoreRuntime();
+      // Do not clear live report state here. This branch is also reached when
+      // delayed report-access resolution completes, including after the
+      // resident feed tabs mount.
+      clearPublicMapCoreCacheState();
       return;
     }
     const cachedMapCoreSnapshot = readCachedTenantPublicMapCoreSnapshot(resolvedTenantBoundaryTenantKey);
     if (!cachedMapCoreSnapshot) {
-      clearMapCoreRuntime();
+      clearPublicMapCoreCacheState();
       return;
     }
+    if (publicMapCoreCacheAppliedTenantKeyRef.current === resolvedTenantBoundaryTenantKey) {
+      return;
+    }
+    publicMapCoreCacheAppliedTenantKeyRef.current = resolvedTenantBoundaryTenantKey;
     const cachedReports = Array.isArray(cachedMapCoreSnapshot.reports)
       ? cachedMapCoreSnapshot.reports
       : [];
@@ -4279,25 +4358,33 @@ export default function App({
 
   useEffect(() => {
     let cancelled = false;
-    if (!resolvedTenantDomainConfigTenantKey) {
-      setTenantVisibilityByDomain({});
-      setTenantVisibilityLoaded(false);
+    // A tenant switch must never temporarily retain the prior tenant's rules.
+    // Visibility is deliberately fetched here—not in a lazy/background
+    // controller—because it determines whether the selector and map tools
+    // exist at all. This starts on the first tenant-map render while retaining
+    // the live server response as the authority.
+    setTenantVisibilityByDomain({});
+    setTenantVisibilityLoaded(false);
+    if (!resolvedTenantDomainConfigTenantKey || tenant?.ready === false) {
       return () => {
         cancelled = true;
       };
     }
-    void loadDeferredTenantUiConfigSupportModule()
-      .then(({ readCachedTenantVisibilityConfigShared }) => {
-        if (cancelled) return;
-        const cachedVisibility = readCachedTenantVisibilityConfigShared(resolvedTenantDomainConfigTenantKey);
-        if (cachedVisibility) {
-          setTenantVisibilityByDomain(cachedVisibility);
-          setTenantVisibilityLoaded(true);
-          return;
-        }
-        setTenantVisibilityByDomain({});
-        setTenantVisibilityLoaded(false);
-      })
+    void loadTenantVisibilityConfigShared({
+      tenantReady: tenant?.ready,
+      enabled: ENABLE_TENANT_VISIBILITY_CONFIG,
+      tenantKey: resolvedTenantDomainConfigTenantKey,
+      readClient: tenantScopedReadClient || supabase,
+      normalizeTenantVisibilityConfig: normalizeTenantVisibilityConfigShared,
+      setTenantVisibilityByDomain: (next) => {
+        if (!cancelled) setTenantVisibilityByDomain(next);
+      },
+      setTenantVisibilityLoaded: (loaded) => {
+        if (!cancelled) setTenantVisibilityLoaded(loaded);
+      },
+      writeCachedTenantVisibilityConfig: writeCachedTenantVisibilityConfigShared,
+      clearCachedTenantVisibilityConfig: clearCachedTenantVisibilityConfigShared,
+    })
       .catch(() => {
         if (cancelled) return;
         setTenantVisibilityByDomain({});
@@ -4306,7 +4393,7 @@ export default function App({
     return () => {
       cancelled = true;
     };
-  }, [resolvedTenantDomainConfigTenantKey]);
+  }, [resolvedTenantDomainConfigTenantKey, tenant?.ready, tenantScopedReadClient]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4441,6 +4528,7 @@ export default function App({
     RUNTIME_DOMAIN_META.typeOptionsByDomain.clear();
     RUNTIME_DOMAIN_META.disclosuresByDomain.clear();
     RUNTIME_DOMAIN_META.allowReportImagesByDomain.clear();
+    RUNTIME_DOMAIN_META.reportImageRequiredByDomain.clear();
     RUNTIME_DOMAIN_META.roadRequiredByDomain.clear();
     RUNTIME_DOMAIN_META.parkRequiredByDomain.clear();
   }, []);
@@ -4504,6 +4592,9 @@ export default function App({
       if (typeof row?.allow_report_images === "boolean") {
         RUNTIME_DOMAIN_META.allowReportImagesByDomain.set(domainKey, row.allow_report_images === true);
       }
+      if (typeof row?.report_image_required === "boolean") {
+        RUNTIME_DOMAIN_META.reportImageRequiredByDomain.set(domainKey, row.report_image_required === true);
+      }
       if (typeof row?.road_required === "boolean") {
         RUNTIME_DOMAIN_META.roadRequiredByDomain.set(domainKey, row.road_required === true);
       }
@@ -4524,6 +4615,7 @@ export default function App({
         report_prefix: reportPrefix,
         marker_color: markerColor,
         allow_report_images: row?.allow_report_images === true,
+        report_image_required: row?.allow_report_images === true && row?.report_image_required === true,
         road_required: row?.road_required === true,
         park_required: row?.park_required === true,
       });
@@ -4536,16 +4628,20 @@ export default function App({
         ? snapshot.domainConfigByDomain
         : {};
     const registryIncidentDomains = normalizeRegistryIncidentDomainRows(snapshot?.registryIncidentDomains || []);
-    setTenantDomainPublicConfigByDomain(domainConfigByDomain);
+    // The cache can warm up labels/icons, but it must never grant an
+    // organization-only action (for example, Update State).  Only the current
+    // live tenant snapshot is authoritative for those access decisions.
+    setTenantDomainPublicConfigByDomain(loaded ? domainConfigByDomain : {});
     setTenantRegistryIncidentDomains(registryIncidentDomains);
     setTenantDomainConfigLoaded(loaded);
   }, [normalizeRegistryIncidentDomainRows]);
   const isDomainPublic = useCallback((domainKey) => {
     const key = String(domainKey || "").trim();
     if (!key) return false;
-    if (!ENABLE_TENANT_VISIBILITY_CONFIG || !tenantVisibilityLoaded) {
+    if (!ENABLE_TENANT_VISIBILITY_CONFIG) {
       return DEFAULT_PUBLIC_DOMAINS.has(key);
     }
+    if (!tenantVisibilityLoaded) return false;
     const configured = String(tenantVisibilityByDomain?.[key] || "").trim().toLowerCase();
     if (configured === "public") return true;
     if (configured === "internal_only") return false;
@@ -4585,7 +4681,12 @@ export default function App({
   const waitingForTenantDomainConfig = tenant?.ready !== false
     && Boolean(resolvedTenantDomainConfigTenantKey)
     && !tenantDomainConfigLoaded;
+  const waitingForTenantVisibilityConfig = tenant?.ready !== false
+    && ENABLE_TENANT_VISIBILITY_CONFIG
+    && Boolean(resolvedTenantDomainConfigTenantKey)
+    && !tenantVisibilityLoaded;
   const visibleDomainOptions = useMemo(() => {
+    if (waitingForTenantVisibilityConfig) return [];
     const legacyOptions = builtInReportDomainOptions.filter((d) => isDomainPublic(d.key)).map((d) => ({
       ...d,
       enabled: true,
@@ -4594,12 +4695,21 @@ export default function App({
       if (waitingForTenantDomainConfig) return [];
       return legacyOptions;
     }
+    // Assigned-domain rows customize domains for this tenant; they are not a
+    // complete map-visibility allowlist.  Replacing the public list here made
+    // a tenant administrator see only the domains their organization manages
+    // (for example, Potholes) and hid otherwise-public Water/Drain markers.
+    // Start with every public domain, then let a tenant assignment override
+    // that domain's presentation/configuration.
     const merged = new Map();
+    for (const option of legacyOptions) {
+      merged.set(String(option?.key || "").trim().toLowerCase(), option);
+    }
     for (const option of registryVisibleDomainOptions) {
       merged.set(String(option?.key || "").trim().toLowerCase(), option);
     }
     return Array.from(merged.values());
-  }, [builtInReportDomainOptions, isDomainPublic, registryVisibleDomainOptions, waitingForTenantDomainConfig]);
+  }, [builtInReportDomainOptions, isDomainPublic, registryVisibleDomainOptions, waitingForTenantDomainConfig, waitingForTenantVisibilityConfig]);
   const visibleReportDomainKeys = useMemo(
     () => (visibleDomainOptions || [])
       .map((option) => String(option?.key || "").trim())
@@ -4627,6 +4737,59 @@ export default function App({
   tenantRegistryIncidentDomainsRef.current = tenantRegistryIncidentDomains || [];
   visibleDomainOptionsRef.current = visibleDomainOptions || [];
   tenantDomainConfigLoadedRef.current = tenantDomainConfigLoaded;
+
+  useEffect(() => {
+    const handoff = readResidentNotificationReportHandoff();
+    if (!handoff) return;
+    const handoffSignature = [
+      handoff.tenantKey,
+      handoff.domainKey,
+      handoff.focusIncidentId,
+      handoff.incidentState,
+      handoff.incidentStateChangedAt,
+    ].join("|");
+    if (residentNotificationReportHandoffHandledRef.current === handoffSignature) return;
+    const targetTenantKey = String(handoff?.tenantKey || "").trim().toLowerCase();
+    const activeTenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
+    if (targetTenantKey && targetTenantKey !== activeTenantKey) return;
+    // On a tenant handoff the new runtime needs its domain and report-access
+    // configuration before Reports can resolve the incident.  The URL remains
+    // intact until those prerequisites are ready.
+    if (tenant?.ready === false || !reportAccessResolved || !visibleDomainOptions.length) return;
+
+    residentNotificationReportHandoffHandledRef.current = handoffSignature;
+    clearResidentNotificationReportHandoff();
+    openMyReports(handoff);
+  }, [openMyReports, reportAccessResolved, tenant?.ready, visibleDomainOptions]);
+
+  useLayoutEffect(() => {
+    const handoff = readResidentNotificationFeedHandoff();
+    if (!handoff) return;
+    const activeTenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
+    if (!activeTenantKey || activeTenantKey !== handoff.tenantKey || tenant?.ready === false) return;
+    clearResidentNotificationFeedHandoff();
+    // Open the destination workspace before the first post-switch paint. The
+    // controller below still owns its eventual data/focus reconciliation, but
+    // the resident sees the intended Alerts/Events screen immediately rather
+    // than a flash of Map while the deferred feed loads.
+    if (handoff.kind === "event") {
+      setFocusedResidentAlertId("");
+      setFocusedResidentEventId(handoff.itemId);
+      setAlertsWindowOpen(false);
+      setEventsWindowOpen(true);
+    } else {
+      setFocusedResidentEventId("");
+      setFocusedResidentAlertId(handoff.itemId);
+      setEventsWindowOpen(false);
+      setAlertsWindowOpen(true);
+    }
+    setPendingResidentNotificationTarget({
+      tenantKey: handoff.tenantKey,
+      kind: handoff.kind,
+      itemId: handoff.itemId,
+    });
+  }, [tenant?.ready, tenant?.tenantKey]);
+
   const shouldComputeMyReportsDomainSelection = Boolean(myReportsOpen);
   const activeMyReportsDomainKeys = useMemo(() => {
     if (!shouldComputeMyReportsDomainSelection) return [];
@@ -4647,6 +4810,9 @@ export default function App({
       return [];
     });
   }, [visibleReportDomainKeys]);
+  const resetMyReportsDomainFiltersToAll = useCallback(() => {
+    setMyReportsDomainFilters([]);
+  }, []);
   const toggleMyReportsDomainFilter = useCallback((domainKeyRaw) => {
     const domainKey = String(domainKeyRaw || "").trim();
     if (!domainKey) return;
@@ -4735,24 +4901,17 @@ export default function App({
     };
   }, [startupWarmupReady, visibleDomainIconUrlSignature]);
   const assetLayerOptions = useMemo(() => {
-    const includeInternalAssetLayers = Boolean(isAdmin);
     const visibleAssetOptions = (visibleDomainOptions || []).filter((d) => isTenantAssetBackedDomain(d.key));
     const next = [...visibleAssetOptions];
     const hasStreetlightLayer = next.some((d) => d.key === "streetlights");
-    if (!hasStreetlightLayer) {
+    if (!hasStreetlightLayer && isDomainPublic("streetlights")) {
       const streetlightsOption = builtInReportDomainOptionsByKey.get("streetlights");
       if (streetlightsOption) {
         next.unshift({ ...streetlightsOption, enabled: true });
       }
     }
-    if (includeInternalAssetLayers) {
-      for (const option of builtInReportDomainOptions.filter((d) => isAssetBackedDomainKey(d.key))) {
-        if (next.some((d) => d.key === option.key)) continue;
-        next.push({ ...option, enabled: true });
-      }
-    }
     return next;
-  }, [builtInReportDomainOptions, builtInReportDomainOptionsByKey, visibleDomainOptions, isAdmin, isTenantAssetBackedDomain]);
+  }, [builtInReportDomainOptionsByKey, isDomainPublic, visibleDomainOptions, isTenantAssetBackedDomain]);
   const incidentLayerDomainOptions = useMemo(
     () => (visibleDomainOptions || []).filter((d) => isTenantIncidentDrivenDomain(d.key)),
     [visibleDomainOptions, isTenantIncidentDrivenDomain]
@@ -4785,6 +4944,7 @@ export default function App({
   }, [activeIncidentMapFilterKeys, hasExplicitIncidentMapFilter, incidentLayerDomainOptions]);
   const incidentLayerButtonEnabled = isRuntimeUiIconEnabled("incidentReportingLayer", UI_ICON_SRC.incidentReportingLayer);
   const allIncidentReportsOptionEnabled = isRuntimeUiIconEnabled("allIncidentReports", UI_ICON_SRC.allIncidentReports);
+  const navigationToolEnabled = isRuntimeUiIconEnabled("navigationArrow", UI_ICON_SRC.navigationArrow);
   const layerOptions = useMemo(() => {
     const opts = [...assetLayerOptions];
     if (incidentLayerDomainOptions.length) {
@@ -4799,6 +4959,9 @@ export default function App({
     }
     return opts;
   }, [assetLayerOptions, domainIconRenderTick, incidentLayerDomainOptions, incidentLayerButtonEnabled]);
+  useEffect(() => {
+    if (!navigationToolEnabled) setTravelFollowMode(false);
+  }, [navigationToolEnabled]);
   const layerOptionsByKey = useMemo(() => {
     const next = new Map();
     for (const option of layerOptions || []) {
@@ -4884,6 +5047,9 @@ export default function App({
       return [];
     });
   }, [openReportsVisibleDomainKeys]);
+  const resetOpenReportsDomainFiltersToAll = useCallback(() => {
+    setOpenReportsDomainFilters([]);
+  }, []);
   const toggleOpenReportsDomainFilter = useCallback((domainKeyRaw) => {
     const domainKey = String(domainKeyRaw || "").trim();
     if (!domainKey) return;
@@ -4965,6 +5131,15 @@ export default function App({
       openMyReports({ reportedByMode: "all", inViewOnly: false });
       return;
     }
+    if (requestedView === "managed") {
+      if (!canOpenDomainReports) {
+        initialReportViewHandledRef.current = true;
+        return;
+      }
+      initialReportViewHandledRef.current = true;
+      openOpenReports({ inViewOnly: false });
+      return;
+    }
     if (requestedView === "me") {
       initialReportViewHandledRef.current = true;
       openMyReports({ reportedByMode: "me", inViewOnly: false });
@@ -4978,6 +5153,8 @@ export default function App({
     canToggleReportedByInMyReports,
     isTenantIncidentDrivenDomain,
     activeMapLayerKey,
+    canOpenDomainReports,
+    openOpenReports,
   ]);
 
   useEffect(() => {
@@ -5006,6 +5183,9 @@ export default function App({
   const [signupPassword2, setSignupPassword2] = useState("");
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupLegalAccepted, setSignupLegalAccepted] = useState(false);
+  const [signupConfirmationEmail, setSignupConfirmationEmail] = useState("");
+  const [signupConfirmationLoading, setSignupConfirmationLoading] = useState(false);
+  const [signupConfirmationStatus, setSignupConfirmationStatus] = useState("");
   const [termsOpen, setTermsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
 
@@ -5103,9 +5283,10 @@ export default function App({
   const [notificationPreferencesOpen, setNotificationPreferencesOpen] = useState(false);
   const [savedNotificationPreferencesByTopic, setSavedNotificationPreferencesByTopic] = useState({});
   const nativePushRegisteringRef = useRef(false);
-  const showNotificationPreferencesEntry =
-    Boolean(session?.user?.id) &&
-    (tenantMapFeatures?.show_alert_icon !== false || tenantMapFeatures?.show_event_icon !== false);
+  // Preferences are available to every signed-in resident. The page itself
+  // only lists capabilities this tenant has: report updates always, and
+  // community topics only when active topics are configured.
+  const showNotificationPreferencesEntry = Boolean(session?.user?.id);
   const shouldLoadReportAccessEagerly =
     Boolean(session?.user?.id) ||
     accountMenuOpen ||
@@ -5237,8 +5418,10 @@ export default function App({
     if (!NATIVE_PUSH_ENABLED) return false;
     if (!isNativeAppRuntime()) return false;
     if (getPlatformName() === "android") return false;
-    return Boolean(showNotificationPreferencesEntry);
-  }, [showNotificationPreferencesEntry]);
+    // Report updates are independently subscribable.  Do not make iOS token
+    // registration depend on optional alert/event map tools being enabled.
+    return Boolean(session?.user?.id);
+  }, [session?.user?.id]);
 
   const closeAccountSubpages = useCallback(() => {
     setAccountMenuOpen(false);
@@ -5804,7 +5987,7 @@ export default function App({
     if (
       useAppShellLayout
       && nextLayerKey === INCIDENT_REPORTING_LAYER_KEY
-      && incidentLayerDomainOptions.length > 1
+      && incidentLayerDomainOptions.length > 0
       && activeMapLayerKey === INCIDENT_REPORTING_LAYER_KEY
     ) {
       setMobileIncidentDomainMenuOpen((prev) => !prev);
@@ -5813,7 +5996,7 @@ export default function App({
     if (nextLayerKey === INCIDENT_REPORTING_LAYER_KEY) {
       const fallbackIncidentDomain = resolvedIncidentMapDomain;
       if (!fallbackIncidentDomain) return;
-      if (useAppShellLayout && incidentLayerDomainOptions.length > 1) {
+      if (useAppShellLayout && incidentLayerDomainOptions.length > 0) {
         setMobileIncidentDomainMenuOpen(true);
       }
       requestAdminDomainSwitch(fallbackIncidentDomain, layerLabel || "Incident Reporting", {
@@ -6018,13 +6201,6 @@ export default function App({
     setReportAccessResolved(Boolean(!userId));
   }, [session?.user?.id, tenant?.tenantKey]);
 
-  useEffect(() => {
-    const userId = String(session?.user?.id || "").trim();
-    if (userId) return;
-    setTenantVisibilityByDomain({});
-    setTenantVisibilityLoaded(false);
-  }, [session?.user?.id]);
-
   const resolvedTenantMapFeaturesTenantKey = resolvedTenantBoundaryTenantKey;
 
   useEffect(() => {
@@ -6171,9 +6347,76 @@ export default function App({
   const closeCommunityFeedEditor = useCallback(() => {
     setCommunityFeedEditor((prev) => ({ ...prev, open: false }));
   }, []);
-  const openResidentNotificationTarget = residentFeedControllerApi.openResidentNotificationTarget;
   const handleResidentAlertVisible = residentFeedControllerApi.handleResidentAlertVisible;
   const handleResidentEventVisible = residentFeedControllerApi.handleResidentEventVisible;
+  const updateResidentNotificationInboxState = residentFeedControllerApi.updateResidentNotificationInboxState;
+  const openInAppResidentNotificationTarget = useCallback(async (item) => {
+    const kind = String(item?.kind || "").trim().toLowerCase();
+    const tenantKey = String(item?.tenant_key || "").trim().toLowerCase();
+    const itemId = String(item?.id || "").trim();
+    if (!tenantKey || !itemId || !["report_update", "alert", "event"].includes(kind)) return;
+
+    // This handler belongs to the map root rather than a deferred controller.
+    // A card can therefore never capture the controller's startup no-op or an
+    // instance that is being unmounted while the tenant switches.
+    setNotificationsWindowOpen(false);
+    setAccountMenuOpen(false);
+    setMobileHeaderMenuOpen(false);
+    setAdminDomainMenuOpen(false);
+    setAdminToolboxOpen(false);
+    setMyReportsOpen(false);
+    setOpenReportsOpen(false);
+
+    const reportTarget = kind === "report_update" ? {
+      domainKey: String(item?.domain || "").trim(),
+      focusIncidentId: String(item?.incident_id || "").trim(),
+      focusQuery: residentNotificationIncidentDisplayId(item),
+      incidentState: String(item?.new_state || "").trim(),
+      incidentStateChangedAt: String(item?.created_at || "").trim(),
+      reportedByMode: "me",
+      inViewOnly: false,
+      diagnosticSource: "resident-notification",
+    } : null;
+    if (kind === "report_update") {
+      await supabase
+        .from("resident_incident_notifications")
+        .update({ read_at: new Date().toISOString() })
+        .eq("id", Number(itemId));
+      setResidentNotificationsRefreshToken((value) => value + 1);
+    } else {
+      // A notification is considered seen when its destination is opened.
+      // Keep the Alert/Event badge and inbox card in lockstep with that view.
+      void updateResidentNotificationInboxState(item, "read").catch((error) => {
+        console.warn("[resident notification read]", error?.message || error);
+      });
+    }
+    setPendingResidentNotificationTarget({ tenantKey, kind, itemId, reportTarget });
+
+    const activeTenantKey = String(tenant?.tenantKey || "").trim().toLowerCase();
+    if (activeTenantKey === tenantKey) return;
+
+    if (kind === "report_update") {
+      const handoff = { tenantKey, ...reportTarget };
+      if (isNativeAppRuntime()) {
+        writeNativeResidentNotificationReportHandoff(handoff);
+      } else {
+        writeResidentNotificationReportHandoff(handoff);
+      }
+    } else {
+      const handoff = { tenantKey, kind, itemId };
+      if (isNativeAppRuntime()) {
+        writeNativeResidentNotificationFeedHandoff(handoff);
+      } else {
+        writeResidentNotificationFeedHandoff(handoff);
+      }
+    }
+    const switched = await tenant?.switchTenant?.(tenantKey);
+    if (switched === false) setPendingResidentNotificationTarget(null);
+  }, [
+    supabase,
+    tenant?.switchTenant,
+    updateResidentNotificationInboxState,
+  ]);
 
   useEffect(() => {
     if (!visibleDomainOptions.length) return;
@@ -6215,6 +6458,7 @@ export default function App({
     setMyReportsDomainFilters([]);
     setOpenReportsDomainFilters([]);
     setMyReportsReportedByMode("me");
+    setRetainMyReportsWorkspace(false);
     closeMyReports();
     closeOpenReports();
     setSelectedOfficialId(null);
@@ -6309,8 +6553,14 @@ export default function App({
 
     setAuthLoading(false);
 
-    if (error) {
-      setLoginError("invalid_credentials");
+      if (error) {
+        if (String(error?.message || "").toLowerCase().includes("email not confirmed")) {
+          setSignupConfirmationEmail(email);
+          setSignupConfirmationStatus("Please confirm your email before signing in. Didn’t receive the link?");
+          setAuthGateStep("signup-confirmation");
+          return false;
+        }
+        setLoginError("invalid_credentials");
       return false;
     }
 
@@ -6320,8 +6570,8 @@ export default function App({
     return true;
   }
 
-  function openForgotPasswordModal() {
-    setForgotPasswordEmail((authEmail || "").trim());
+  function openForgotPasswordModal(email = authEmail) {
+    setForgotPasswordEmail((email || "").trim());
     setForgotPasswordError("");
     setForgotPasswordOpen(true);
   }
@@ -6401,13 +6651,9 @@ export default function App({
       return;
     }
 
-    setAuthGateOpen(false);
-    setAuthGateStep("welcome");
-    openNotice(
-      "✅",
-      "Confirmation sent",
-      "Check your email for the confirmation link. After you confirm, come back here to sign in."
-    );
+    setSignupConfirmationEmail(email);
+    setSignupConfirmationStatus("");
+    setAuthGateStep("signup-confirmation");
 
     setSignupName("");
     setSignupPhone("");
@@ -6415,6 +6661,18 @@ export default function App({
     setSignupPassword("");
     setSignupPassword2("");
     setSignupLegalAccepted(false);
+  }
+
+  async function resendSignupConfirmation() {
+    setSignupConfirmationLoading(true);
+    const { resendSignupConfirmationRuntimeShared } = await loadDeferredAccountRuntimeModule();
+    const result = await resendSignupConfirmationRuntimeShared({ email: signupConfirmationEmail }, { supabase });
+    setSignupConfirmationLoading(false);
+    setSignupConfirmationStatus(
+      result?.ok
+        ? "If confirmation is required for this address, a new link is on its way."
+        : "If confirmation is required for this address, please try again in a moment."
+    );
   }
 
   async function signOut() {
@@ -6812,17 +7070,21 @@ async function selectTenantScopedPublicRows(
   ]);
 
   const configuredIncidentRealtimeConfigEntries = useMemo(() => (
-    configuredIncidentRuntimeEntries
-      .filter((entry) => (
-        typeof entry?.setSeededRows === "function"
-        || typeof entry?.setReportRows === "function"
-      ))
-      .map((entry) => ({
-        domainKey: entry.domainKey,
-        setSeededRows: entry.setSeededRows,
-        setReportRows: entry.setReportRows,
+    configuredIncidentRuntimeCandidateDomainKeys
+      .map((domainKey) => ({
+        domainKey,
+        setSeededRows: configuredIncidentRuntimeSetSeededRowsByDomain.get(domainKey),
+        setReportRows: configuredIncidentRuntimeSetReportRowsByDomain.get(domainKey),
       }))
-  ), [configuredIncidentRuntimeEntries]);
+      .filter((entry) => (
+        typeof entry.setSeededRows === "function"
+        || typeof entry.setReportRows === "function"
+      ))
+  ), [
+    configuredIncidentRuntimeCandidateDomainKeys,
+    configuredIncidentRuntimeSetReportRowsByDomain,
+    configuredIncidentRuntimeSetSeededRowsByDomain,
+  ]);
   const allConfiguredIncidentRuntimeDomainKeys = useMemo(
     () => configuredIncidentRealtimeConfigEntries.map((entry) => String(entry?.domainKey || "").trim()).filter(Boolean),
     [configuredIncidentRealtimeConfigEntries]
@@ -7088,10 +7350,17 @@ async function selectTenantScopedPublicRows(
         let nextReportData = [];
         let nextRepErr = null;
 
-        if (reportsAdminView) {
+        if (isPlatformAdmin) {
           const result = await authedReadClient
             .from("reports")
-            .select(shouldLoadRichStartupReports ? reportSelectFull : reportSelectMapRuntime)
+            // Admin report cards need the reporter identity with the report row
+            // itself.  Loading the map-safe projection first and attempting to
+            // hydrate it later caused every shared-domain report to render as
+            // "Unknown" whenever that deferred request lost a race.  This
+            // branch is authenticated/admin-only, so load the full projection
+            // deterministically from the start.  Public map reads continue to
+            // use reportSelectMapRuntime below.
+            .select(reportSelectFull)
             .eq("tenant_key", loadTenantKey)
             .order("created_at", { ascending: false });
           nextReportData = result?.data || [];
@@ -7103,7 +7372,7 @@ async function selectTenantScopedPublicRows(
           fetchTenantPublicMapReportsShared,
           mergeTenantPublicAndViewerReportsShared,
         } = await publicMapLoadSupportModulePromise;
-        const [publicResult, viewerResult] = await Promise.all([
+        const [publicResult, viewerResult, managedResult] = await Promise.all([
           fetchTenantPublicMapReportsShared(publicReadClient, loadTenantKey),
           isAuthed
             ? authedReadClient
@@ -7113,16 +7382,27 @@ async function selectTenantScopedPublicRows(
                 .eq("reporter_user_id", session.user.id)
                 .order("created_at", { ascending: false })
             : Promise.resolve({ data: [], error: null }),
+          reportsAdminView
+            ? authedReadClient.rpc("tenant_managed_map_reports", { p_tenant_key: loadTenantKey })
+            : Promise.resolve({ data: [], error: null }),
         ]);
         const publicReportData = publicResult?.data || [];
         const viewerReportData = viewerResult?.data || [];
+        const managedReportData = managedResult?.data || [];
         if (viewerResult?.error && !isExpectedPermissionError(viewerResult.error)) {
           console.warn("[viewer map reports] load warning:", viewerResult.error?.message || viewerResult.error);
         }
+        // Tenant administrators receive identity/contact detail only for the
+        // domains their tenant manages.  All other domains continue to come
+        // from the public-safe map feed, exactly as they do for residents.
+        if (managedResult?.error && !isExpectedPermissionError(managedResult.error)) {
+          console.warn("[tenant managed map reports] load warning:", managedResult.error?.message || managedResult.error);
+        }
         nextReportData = mergeTenantPublicAndViewerReportsShared(
           publicReportData,
-          viewerReportData
+          [...viewerReportData, ...managedReportData]
         );
+        // A managed-detail failure must not suppress the public map feed.
         nextRepErr = publicResult?.error || null;
 
         return { data: nextReportData, publicData: publicReportData, error: nextRepErr };
@@ -7728,7 +8008,7 @@ async function selectTenantScopedPublicRows(
       cancelled = true;
       deferredStartupCleanup?.();
     };
-  }, [applyIncidentStateSnapshot, publicMapLoadAuthGateKey, publicReadAccessReady, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken, waitingForTenantDomainConfig]);
+  }, [applyIncidentStateSnapshot, isPlatformAdmin, publicMapLoadAuthGateKey, publicReadAccessReady, reportsAdminView, session?.access_token, session?.user?.id, tenant?.tenantKey, tenant?.ready, tenantScopedReadClient, mapDataReloadToken, waitingForTenantDomainConfig]);
 
   useEffect(() => {
     if (!publicReadAccessReady || tenant?.ready === false) return;
@@ -7759,6 +8039,7 @@ async function selectTenantScopedPublicRows(
     ));
     const shouldDeferCachedConfiguredIncidentHydrationBootstrap =
       !reportsAdminView
+      && !(myReportsOpen || openReportsOpen)
       && activeMapLayerKey !== INCIDENT_REPORTING_LAYER_KEY
       && publicMapCoreCacheHydrated
       && canRefreshConfiguredDomainsFromCachedSnapshot
@@ -7791,6 +8072,10 @@ async function selectTenantScopedPublicRows(
         cachedReportByDomain: cachedConfiguredIncidentReportRowsByDomainRef.current || {},
         cachedPersistedByDomain: cachedPersistedIncidentRecordStateByDomainRef.current || {},
         reportsAdminView,
+        // A Reports handoff is an explicit request for this domain's rows.
+        // Do not make it wait behind the map's cache/idle refresh path: the
+        // modal derives its visible rows immediately after it opens.
+        reportWorkspaceOpen: myReportsOpen || openReportsOpen,
         publicMapCoreCacheHydrated,
         loading,
         nonCriticalStartupReady,
@@ -7834,6 +8119,8 @@ async function selectTenantScopedPublicRows(
     configuredIncidentPersistedStateSupportedDomainKeys,
     configuredIncidentRuntimeEntryByDomain,
     loading,
+    myReportsOpen,
+    openReportsOpen,
     startupWarmupReady,
     publicReadAccessReady,
     activeMapLayerKey,
@@ -8209,7 +8496,7 @@ async function selectTenantScopedPublicRows(
   // Build a fast lookup of official IDs
   const officialIdSet = useMemo(() => new Set(officialLights.map((o) => o.id)), [officialLights]);
   const shouldComputeResidentReportRuntimeLookups = Boolean(
-    myReportsOpen || openReportsOpen
+    myReportsOpen || openReportsOpen || selectedOfficialId
   );
   const shouldComputeReportDomainRuntimeLookups = Boolean(
     shouldComputeResidentReportRuntimeLookups
@@ -8462,9 +8749,7 @@ async function selectTenantScopedPublicRows(
     }
     const streetlightLayerMeta =
       layerOptionsByKey.get("streetlights")
-      || visibleDomainOptionsByKey.get("streetlights")
-      || builtInReportDomainOptionsByKey.get("streetlights")
-      || { key: "streetlights", label: "Streetlights", iconSrc: UI_ICON_SRC.streetlight, enabled: true };
+      || visibleDomainOptionsByKey.get("streetlights");
     if (streetlightLayerMeta?.key === "streetlights") {
       opts.push({
         ...streetlightLayerMeta,
@@ -8473,7 +8758,7 @@ async function selectTenantScopedPublicRows(
       });
     }
     return opts;
-  }, [builtInReportDomainOptionsByKey, incidentLayerDomainOptions.length, incidentLayerMeta, incidentLayerButtonEnabled, layerOptionsByKey, visibleDomainOptionsByKey, hasExplicitIncidentMapFilter, activeIncidentMapFilterKeys.length, resolvedIncidentLayerOption]);
+  }, [incidentLayerDomainOptions.length, incidentLayerMeta, incidentLayerButtonEnabled, layerOptionsByKey, visibleDomainOptionsByKey, hasExplicitIncidentMapFilter, activeIncidentMapFilterKeys.length, resolvedIncidentLayerOption]);
   const webStreetlightsPrimaryOption = useMemo(
     () => mobilePrimaryLayerOptions.find((layer) => layer?.key === "streetlights") || null,
     [mobilePrimaryLayerOptions]
@@ -8641,15 +8926,13 @@ async function selectTenantScopedPublicRows(
   const showMapAlertIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_alert_icon !== false : true;
   const showMapEventIcon = tenantMapFeaturesLoaded ? tenantMapFeatures?.show_event_icon !== false : true;
   const showMapNotificationsIcon = true;
+  // Visibility is a tenant-switch prerequisite. Do not make it wait for the
+  // 4.5-second non-critical startup timer or for map tiles to render.
   const shouldMountTenantRuntimeController = Boolean(
-    shouldPrioritizeTenantParksLoad
-    || (
-      !loading
-      && startupWarmupReady
-      && (
-        resolvedTenantDomainConfigTenantKey
-        || resolvedTenantMapFeaturesTenantKey
-      )
+    !loading
+    && (
+      resolvedTenantDomainConfigTenantKey
+      || resolvedTenantMapFeaturesTenantKey
     )
   );
   const shouldMountAuthBootstrapController = Boolean(
@@ -8716,6 +8999,7 @@ async function selectTenantScopedPublicRows(
     shouldPrepareCommunityFeedReadState
     || communityFeedEditor.open
     || residentFeedBadgeWarmupReady
+    || pendingResidentNotificationTarget
   );
   const secondaryWorkspaceVisible = Boolean(
     isWorkingConfirmOpen
@@ -8728,6 +9012,7 @@ async function selectTenantScopedPublicRows(
     || eventsWindowOpen
     || communityFeedEditor.open
     || myReportsOpen
+    || retainMyReportsWorkspace
     || openReportsOpen
   );
   const showMobileAdminRailButton = false;
@@ -9194,7 +9479,6 @@ async function selectTenantScopedPublicRows(
     if (!domainKey || !isSharedIncidentDomain(domainKey)) {
       return [];
     }
-    const helper = getIncidentDomainHelper(domainKey);
     const buildSpecializedMarkers = incidentDomainMarkerRuntimeHelpers?.incidentDrivenSpecializedMarkerCollection;
     const mergeMarkerCollections = incidentDomainMarkerRuntimeHelpers?.mergeIncidentDrivenMarkerCollections;
     const configuredIncidentRows = configuredIncidentDrivenRowsByDomain.get(domainKey) || [];
@@ -9220,11 +9504,6 @@ async function selectTenantScopedPublicRows(
           isValidLatLng,
         })
         : null;
-    const specializedMarkersHaveVisibleCounts = Array.isArray(specializedMarkers)
-      && specializedMarkers.some((marker) => Number(marker?.count || 0) > 0);
-    if (helper?.specializedMarkerCollectionCoversGenericRows && specializedMarkersHaveVisibleCounts) {
-      return specializedMarkers;
-    }
     const sharedGenericBaseMarkers = Array.isArray(sharedIncidentBaseMarkersStateByDomain?.[domainKey])
       ? sharedIncidentBaseMarkersStateByDomain[domainKey]
       : [];
@@ -9244,10 +9523,12 @@ async function selectTenantScopedPublicRows(
         rows: Array.isArray(marker?.rows) ? [...marker.rows] : [],
       }))
       .sort((a, b) => (b.count - a.count) || (b.lastTs - a.lastTs));
-    if (typeof mergeMarkerCollections === "function") {
-      return mergeMarkerCollections(domainKey, specializedMarkers, genericMarkers);
-    }
-    return genericMarkers;
+    return resolveIncidentDrivenMarkerCollectionShared(
+      domainKey,
+      specializedMarkers,
+      genericMarkers,
+      mergeMarkerCollections,
+    );
   }, [
     configuredIncidentLastFixByDomain,
     configuredGenericBaseMarkersByVisibleDomain,
@@ -9255,7 +9536,6 @@ async function selectTenantScopedPublicRows(
     configuredIncidentSeededByIdByDomain,
     configuredIncidentSeededRowsByDomain,
     fixedLights,
-    getIncidentDomainHelper,
     incidentDomainMarkerRuntimeHelpers,
     incidentDrivenDomainMetaByKey,
     incidentDrivenBaseRowsByDomain,
@@ -9497,7 +9777,9 @@ async function selectTenantScopedPublicRows(
           resolvedTenantDomainConfigTenantKey,
         );
         if (cachedSnapshot) {
-          applyTenantDomainConfigSnapshot(cachedSnapshot, { loaded: true });
+          // A cache is only a visual warm-start. It does not decide which
+          // domains can be selected while the live snapshot is fetched.
+          applyTenantDomainConfigSnapshot(cachedSnapshot, { loaded: false });
           return;
         }
         clearRuntimeDomainMeta();
@@ -9539,7 +9821,6 @@ async function selectTenantScopedPublicRows(
         fetchTenantDomainPublicConfig,
         fetchTenantAssignedDomainsRobust,
         fetchTenantRegistryIncidentDomains,
-        defaultRoadRequiredForDomain,
         applyTenantDomainConfigSnapshot,
         writeCachedTenantDomainConfigSnapshot: writeCachedTenantDomainConfigSnapshotShared,
         shouldCancel: () => cancelled,
@@ -9556,23 +9837,7 @@ async function selectTenantScopedPublicRows(
           void loadDomainPublicConfig();
           return;
         }
-        if (mapInteracting || loading || !startupWarmupReady) return;
-        const cachedRefreshIdleTimeoutMs = 4500;
-        const cachedRefreshDelayMs = 1400;
-
-        if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
-          idleHandle = window.requestIdleCallback(() => {
-            idleHandle = null;
-            void loadDomainPublicConfig();
-          }, { timeout: cachedRefreshIdleTimeoutMs });
-        } else if (typeof window !== "undefined") {
-          timeoutHandle = window.setTimeout(() => {
-            timeoutHandle = null;
-            void loadDomainPublicConfig();
-          }, cachedRefreshDelayMs);
-        } else {
-          void loadDomainPublicConfig();
-        }
+        void loadDomainPublicConfig();
       })
       .catch(() => {
         if (cancelled) return;
@@ -9589,24 +9854,17 @@ async function selectTenantScopedPublicRows(
         window.clearTimeout(timeoutHandle);
       }
     };
-  }, [applyTenantDomainConfigSnapshot, loading, mapInteracting, resolvedTenantDomainConfigTenantKey, session?.access_token, session?.user?.id, startupWarmupReady, tenant?.ready, tenantScopedReadClient]);
+  }, [applyTenantDomainConfigSnapshot, resolvedTenantDomainConfigTenantKey, session?.access_token, session?.user?.id, tenant?.ready, tenantScopedReadClient]);
 
   const incidentRepairProgressContextKey = `${String(activeTenantKey() || "").trim().toLowerCase()}::${String(viewerIdentityKey || "").trim() || "anon"}`;
   const selectedIncidentRepairHydrationDomainKey = normalizeDomainKeyOrSlug(
     selectedDomainMarker?.domain || adminReportDomain,
     { allowUnknown: true }
   );
-  const shouldHydrateIncidentRepairProgress = Boolean(
-    authReady && (
-      myReportsOpen
-      || (
-        selectedDomainMarker
-        && selectedIncidentRepairHydrationDomainKey
-        && selectedIncidentRepairHydrationDomainKey !== "streetlights"
-        && isPublicRepairEnabledForDomain(selectedIncidentRepairHydrationDomainKey)
-      )
-    )
-  );
+  // The repair-progress RPC also determines inactivity archiving.  Load it
+  // before incident markers render, rather than only after a marker is
+  // selected, so an archived incident never flashes on the map and disappears.
+  const shouldHydrateIncidentRepairProgress = Boolean(authReady && tenantDomainConfigLoaded);
   const incidentRepairProgressReadyForContext = incidentRepairProgressReadyContextKey === incidentRepairProgressContextKey;
   const shouldMountIncidentRepairProgressController = Boolean(
     shouldHydrateIncidentRepairProgress
@@ -9812,7 +10070,12 @@ async function selectTenantScopedPublicRows(
     pendingConfiguredDomainCount: pendingConfiguredIncidentDomainKeys.length,
     pendingPersistedStateDomainCount: pendingConfiguredIncidentPersistedStateDomainKeys.length,
   });
-  const suppressIncompleteIncidentDomainRender = !incidentMapSnapshotReady;
+  const hasAutoArchivedIncidentDomain = Object.entries(tenantDomainPublicConfigByDomain || {}).some(([domainKey, config]) => (
+    resolveDomainType(domainKey, config?.domain_type) === "incident_driven"
+    && config?.organization_monitored_repairs === false
+  ));
+  const suppressIncompleteIncidentDomainRender = !incidentMapSnapshotReady
+    || (hasAutoArchivedIncidentDomain && !incidentRepairProgressReadyForContext);
 
   const renderedDomainMarkers = useMemo(() => {
     if (suppressIncompleteIncidentDomainRender) return [];
@@ -9849,16 +10112,26 @@ async function selectTenantScopedPublicRows(
 
         if (publicRepairLifecycleEnabled) {
           repairSnapshot = getIncidentRepairSnapshot(domainKey, incidentId);
-          if (repairSnapshot?.archived) continue;
+          // A resident's own repair confirmation must not hide an otherwise
+          // visible incident. Public-domain markers leave the map only after
+          // the configured community repair threshold is reached (or after
+          // the separate inactivity archive period).
+          if (repairSnapshot?.archived || repairSnapshot?.likelyFixed) continue;
         }
 
-        if (!adminView) {
+        // Administrators receive expanded marker visibility only for domains
+        // their tenant actually manages.  All other domains must mirror the
+        // public map: public-confidence incidents plus the viewer's own
+        // below-threshold reports.  This keeps third-party domains visible
+        // when public, without exposing their private incident detail.
+        const canSeeManagedDomainMarkers = adminView
+          && isTenantOrganizationManagedIncidentDomain(domainKey);
+        if (!canSeeManagedDomainMarkers) {
           const isPublic = count >= publicVisibilityMin;
           const isPrivateOwn = isLoggedIn && userReported && count < publicVisibilityMin;
           if (!isPublic && !isPrivateOwn) continue;
           if (!isPublic && isPrivateOwn) {
             repairSnapshot = repairSnapshot || getIncidentRepairSnapshot(domainKey, incidentId);
-            if (repairSnapshot?.viewerHasRepairSignal) continue;
           }
         }
 
@@ -9915,6 +10188,7 @@ async function selectTenantScopedPublicRows(
     publicMapCoreCacheHydrated,
     session?.user?.id,
     reportsAdminView,
+    isTenantOrganizationManagedIncidentDomain,
     suppressIncompleteIncidentDomainRender,
     restrictPublicMarkersToCity,
     isWithinAshtabulaCityLimits,
@@ -10053,39 +10327,40 @@ async function selectTenantScopedPublicRows(
     setSelectedDomainMarker(null);
     setSelectedOfficialId(null);
     const map = mapRef.current;
-    const north = Number(clusterMarker?.north);
-    const south = Number(clusterMarker?.south);
-    const east = Number(clusterMarker?.east);
-    const west = Number(clusterMarker?.west);
-    if (
-      map
-      && window?.google?.maps?.LatLngBounds
-      && [north, south, east, west].every(Number.isFinite)
-      && (Math.abs(north - south) > 0.00001 || Math.abs(east - west) > 0.00001)
-    ) {
-      try {
-        const bounds = new window.google.maps.LatLngBounds(
-          { lat: south, lng: west },
-          { lat: north, lng: east }
-        );
-        map.fitBounds(bounds, 56);
-        return;
-      } catch {
-        // fall through to manual zoom if fitBounds fails
-      }
-    }
-
     const lat = Number(clusterMarker?.lat);
     const lng = Number(clusterMarker?.lng);
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
       setMapCenter({ lat, lng });
     }
-    const nextZoom = Math.min(18, Math.max(INCIDENT_CLUSTER_MAX_ZOOM + 1, Number(mapZoom || 0) + 2));
+    const currentZoom = Number(map?.getZoom?.() ?? mapZoomRef.current ?? mapZoom ?? 0);
+    const clusterMembers = Array.isArray(clusterMarker?.markers)
+      ? clusterMarker.markers.filter(Boolean)
+      : [];
+    let nextZoom = Math.min(18, Math.max(3, currentZoom + 1));
+    // Jump to the first zoom level that breaks this particular cluster into
+    // multiple groups. This avoids no-op taps while retaining useful smaller
+    // clusters instead of expanding every marker at once.
+    for (let candidateZoom = nextZoom; candidateZoom <= INCIDENT_CLUSTER_MAX_ZOOM; candidateZoom += 1) {
+      const nextGroups = clusterMarkersByDistance(
+        clusterMembers,
+        incidentClusterRadiusMetersForZoom(candidateZoom)
+      );
+      if (nextGroups.length > 1) {
+        nextZoom = candidateZoom;
+        break;
+      }
+      if (candidateZoom === INCIDENT_CLUSTER_MAX_ZOOM) {
+        // Identical or exceptionally dense points cannot separate while
+        // clustering is active; the next level presents individual markers.
+        nextZoom = Math.min(18, INCIDENT_CLUSTER_MAX_ZOOM + 1);
+      }
+    }
     setMapZoom(nextZoom);
     mapZoomRef.current = nextZoom;
     try {
-      map?.panTo?.({ lat, lng });
-      map?.setZoom?.(nextZoom);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) map?.panTo?.({ lat, lng });
+      if (map?.moveCamera) map.moveCamera({ center: { lat, lng }, zoom: nextZoom });
+      else map?.setZoom?.(nextZoom);
     } catch {
       // state updates above are enough
     }
@@ -10944,12 +11219,8 @@ async function selectTenantScopedPublicRows(
     setDomainDisclosureAcknowledgements({});
   }
 
-  function finalizeIncidentDomainSubmitSuccess({
-    isAuthed = false,
+  function commitSubmittedIncidentMapState({
     domainKey = "",
-    title = "Report saved",
-    message = "",
-    reportNumbers = [],
     submittedAt = 0,
     submittedReport = null,
     target = null,
@@ -10986,6 +11257,24 @@ async function selectTenantScopedPublicRows(
         ),
       }));
     }
+  }
+
+  function finalizeIncidentDomainSubmitSuccess({
+    isAuthed = false,
+    domainKey = "",
+    title = "Report saved",
+    message = "",
+    reportNumbers = [],
+    submittedAt = 0,
+    submittedReport = null,
+    target = null,
+  } = {}) {
+    commitSubmittedIncidentMapState({
+      domainKey,
+      submittedAt,
+      submittedReport,
+      target,
+    });
     if (!isAuthed) clearGuestContact();
     resetIncidentDomainReportDraft(domainKey);
     setDomainDisclosureGateTarget(null);
@@ -11360,6 +11649,7 @@ async function selectTenantScopedPublicRows(
       normalizeReportQuality,
       setReports,
       incidentDomainDefaultIssueLabel,
+      commitSubmittedIncidentMapState,
       finalizeIncidentDomainSubmitSuccess,
     });
   }
@@ -11842,13 +12132,21 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
 
   async function markFixed(light, noteText = "", options = {}) {
     const { markFixedRuntimeShared } = await loadDeferredIncidentAdminActionRuntimeModule();
+    const actionTenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+    // `supabase` is a singleton whose PostgREST headers are copied when it is
+    // constructed. On a tenant URL opened after another tenant, that client can
+    // retain the earlier x-tenant-key and RLS rejects the light_actions insert.
+    // State changes must use a client created for the tenant currently on screen.
+    const actionSupabase = session?.access_token && actionTenantKey
+      ? (createTenantScopedAuthedClient(actionTenantKey, session.access_token) || supabase)
+      : supabase;
     return markFixedRuntimeShared({
       light,
       noteText,
       options,
     }, {
-      supabase,
-      activeTenantKey,
+      supabase: actionSupabase,
+      activeTenantKey: () => actionTenantKey,
       officialIdSet,
       lightActionsActorColumnsSupportedRef,
       domainForIncidentId,
@@ -11866,14 +12164,19 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
   }
 
 
-  async function reopenLight(light, noteText = "") {
+  async function reopenLight(light, noteText = "", options = {}) {
     const { reopenLightRuntimeShared } = await loadDeferredIncidentAdminActionRuntimeModule();
+    const actionTenantKey = String(tenant?.tenantKey || activeTenantKey() || "").trim().toLowerCase();
+    const actionSupabase = session?.access_token && actionTenantKey
+      ? (createTenantScopedAuthedClient(actionTenantKey, session.access_token) || supabase)
+      : supabase;
     return reopenLightRuntimeShared({
       light,
       noteText,
+      options,
     }, {
-      supabase,
-      activeTenantKey,
+      supabase: actionSupabase,
+      activeTenantKey: () => actionTenantKey,
       lightActionsActorColumnsSupportedRef,
       domainForIncidentId,
       incidentSnapshotKey,
@@ -12814,6 +13117,17 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           signupPassword2={signupPassword2}
           setSignupPassword2={setSignupPassword2}
           signupLoading={signupLoading}
+          signupConfirmationEmail={signupConfirmationEmail}
+          signupConfirmationLoading={signupConfirmationLoading}
+          signupConfirmationStatus={signupConfirmationStatus}
+          onResendSignupConfirmation={resendSignupConfirmation}
+          onUseConfirmationEmailToSignIn={() => {
+            setAuthEmail(signupConfirmationEmail);
+            setAuthGateStep("login");
+          }}
+          onUseConfirmationEmailForPasswordReset={() => {
+            openForgotPasswordModal(signupConfirmationEmail);
+          }}
           signupLegalAccepted={signupLegalAccepted}
           setSignupLegalAccepted={setSignupLegalAccepted}
           onOpenTerms={() => setTermsOpen(true)}
@@ -12831,6 +13145,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           open={termsOpen}
           onClose={() => setTermsOpen(false)}
           btnPrimary={btnPrimary}
+          darkMode={prefersDarkMode}
         />
       </Suspense>
       ) : null}
@@ -12841,6 +13156,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           open={privacyOpen}
           onClose={() => setPrivacyOpen(false)}
           btnPrimary={btnPrimary}
+          darkMode={prefersDarkMode}
         />
       </Suspense>
       ) : null}
@@ -13014,10 +13330,16 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           ).trim()}
           streetlightMarkerColor={defaultMarkerColorForDomain("streetlights")}
           streetlightHighConfidenceColor={resolveHighConfidenceMarkerColorForDomain("streetlights")}
+          queuedAssetIconSrc={resolveVisibleDomainIconSrc(
+            adminReportDomain,
+            defaultMarkerGlyphSrcForDomain(adminReportDomain, UI_ICON_SRC.mapping)
+          )}
+          queuedAssetDomainKey={adminReportDomain}
           mapMarkerSize={MAP_MARKER_SIZE}
           mapMarkerStroke={MAP_MARKER_STROKE}
           mapMarkerGlyphSize={MAP_MARKER_GLYPH_SIZE}
           incidentDomainIconSize={INCIDENT_DOMAIN_ICON_SIZE}
+          showNavigationTool={navigationToolEnabled}
         />
       </Suspense>
       ) : null}
@@ -13034,6 +13356,11 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           currentCityLabel={organizationDisplayName}
           switchingTenant={tenant?.switchingTenant || ""}
           onSwitchTenant={async (nextTenantKey) => {
+            // A location-picker change is never a report-navigation action.
+            // Cancel any handoff left behind by a failed or superseded
+            // notification switch before changing tenants.
+            setPendingResidentNotificationTarget(null);
+            clearResidentNotificationHandoffs();
             closeAnyPopup();
             setCitySwitcherOpen(false);
             setInfoMenuOpen(false);
@@ -13325,6 +13652,8 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             loading={loading}
             startupWarmupReady={startupWarmupReady}
             showMapNotificationsIcon={showMapNotificationsIcon}
+            showMapAlertIcon={showMapAlertIcon}
+            showMapEventIcon={showMapEventIcon}
             resolvedCommunityFeedTenantKey={resolvedCommunityFeedTenantKey}
             currentTenantKey={tenant?.tenantKey || resolvedCommunityFeedTenantKey}
             supabase={supabase}
@@ -13369,6 +13698,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             setMobileHeaderMenuOpen={setMobileHeaderMenuOpen}
             setAdminDomainMenuOpen={setAdminDomainMenuOpen}
             setAdminToolboxOpen={setAdminToolboxOpen}
+            openMyReports={openMyReports}
             setMyReportsOpen={setMyReportsOpen}
             setOpenReportsOpen={setOpenReportsOpen}
             setAlertsSessionNewKeys={setAlertsSessionNewKeys}
@@ -13382,6 +13712,8 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             nativePushShouldRegister={nativePushShouldRegister}
             nativePushRegisteringRef={nativePushRegisteringRef}
             nativePushRegisteredKey={NATIVE_PUSH_REGISTERED_KEY}
+            openNotice={openNotice}
+            openNotificationsInbox={openNotificationsInbox}
             tenantSwitch={tenant?.switchTenant}
             isMissingFunctionError={isMissingFunctionError}
             isMissingRelationError={isMissingRelationError}
@@ -13415,7 +13747,14 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
       ) : null}
 
       {shouldMountWorkspaceHost ? (
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={secondaryWorkspaceVisible && useAppShellLayout ? (
+            <MapTabLoadingSurface
+              pageTopInset={mobileTabPageTopInset}
+              pageBottomInset={mobileReportsPageBottomInset}
+            />
+          ) : null}
+        >
         <LazyMapWorkspaceHost
           secondaryVisible={secondaryWorkspaceVisible}
           markWorkingConfirmOpen={isWorkingConfirmOpen}
@@ -13469,7 +13808,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           residentNotificationsRefreshToken={residentNotificationsRefreshToken}
           prefersDarkMode={prefersDarkMode}
           useAppShellLayout={useAppShellLayout}
-          openResidentNotificationTarget={openResidentNotificationTarget}
+          openResidentNotificationTarget={openInAppResidentNotificationTarget}
           supabase={supabase}
           authReady={authReady}
           tenantReady={tenant?.ready !== false}
@@ -13494,6 +13833,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           eventsSessionNewKeys={eventsSessionNewKeys}
           focusedResidentEventId={focusedResidentEventId}
           handleResidentEventVisible={handleResidentEventVisible}
+          updateResidentNotificationInboxState={updateResidentNotificationInboxState}
           sessionUserId={session?.user?.id || ""}
           communityFeedEditor={communityFeedEditor}
           mapCommunityTopics={mapCommunityTopics}
@@ -13544,6 +13884,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           myReportsDomainFilters={myReportsDomainFilters}
           toggleMyReportsDomainFilter={toggleMyReportsDomainFilter}
           resetMyReportsDomainFilters={resetMyReportsDomainFilters}
+          resetMyReportsDomainFiltersToAll={resetMyReportsDomainFiltersToAll}
           mapBounds={mapBounds}
           canToggleReportedByInMyReports={canToggleReportedByInMyReports}
           myReportsReportedByMode={myReportsReportedByMode}
@@ -13562,6 +13903,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           openReportsDomainFilters={openReportsDomainFilters}
           toggleOpenReportsDomainFilter={toggleOpenReportsDomainFilter}
           resetOpenReportsDomainFilters={resetOpenReportsDomainFilters}
+          resetOpenReportsDomainFiltersToAll={resetOpenReportsDomainFiltersToAll}
           isTenantOrganizationManagedIncidentDomain={isTenantOrganizationManagedIncidentDomain}
           shouldRenderStreetlightSelectionPopup={shouldRenderStreetlightSelectionPopup}
           bulkMode={bulkMode}
@@ -13612,7 +13954,14 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
       ) : null}
 
       {shouldRenderAccountWorkspace ? (
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={useAppShellLayout ? (
+            <MapTabLoadingSurface
+              pageTopInset={mobileTabPageTopInset}
+              pageBottomInset={mobileReportsPageBottomInset}
+            />
+          ) : null}
+        >
           <LazyMapAccountWorkspace
             useAppShellLayout={useAppShellLayout}
             session={session}
@@ -13814,7 +14163,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
             <LazyOfficialLightsCanvasOverlay
               ref={officialCanvasOverlayRef}
               map={gmapsRef}
-              show={showOfficialLights && !mapInteracting}
+              show={mapUiIconManifestReady && showOfficialLights && !mapInteracting}
               lights={visibleOfficialLights}
               bulkMode={bulkMode}
               bulkSelectedSet={bulkSelectedSet}
@@ -13847,7 +14196,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           <LazyIncidentDomainMarkersLayer
             activeMapLayerKey={activeMapLayerKey}
             adminReportDomain={adminReportDomain}
-            markers={displayedDomainMarkers}
+            markers={mapUiIconManifestReady ? displayedDomainMarkers : []}
             mappingMode={mappingMode}
             isAdmin={isAdmin}
             queuedMarkers={mappingQueue}
@@ -13930,7 +14279,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
           </div>
         )}
 
-        {!useAppShellLayout ? (
+        {!useAppShellLayout && mapUiIconManifestReady ? (
           <Suspense fallback={null}>
             <LazyMapDesktopMapControls
               mapType={mapType}
@@ -13944,6 +14293,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
               onLocate={handleMobileLocate}
               travelFollowMode={travelFollowMode}
               onToggleTravelFollow={handleMobileToggleTravelFollow}
+              navigationToolEnabled={navigationToolEnabled}
               setAutoFollow={setAutoFollow}
               setFollowCamera={setFollowCamera}
               recenterToTenantHome={recenterToTenantHome}
@@ -13977,13 +14327,13 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
               suppressPopupsSafe={suppressPopupsSafe}
               clearBulkSelection={clearBulkSelection}
               canOpenDomainReports={canOpenDomainReports}
-              openReportsOpen={openReportsOpen}
+              myReportsOpen={myReportsOpen}
               mappingMode={mappingMode}
               requestExitMappingMode={requestExitMappingMode}
               setNotificationsWindowOpen={setNotificationsWindowOpen}
               setAlertsWindowOpen={setAlertsWindowOpen}
               setEventsWindowOpen={setEventsWindowOpen}
-              openOpenReports={openOpenReports}
+              openMyReports={openMyReports}
             />
           </Suspense>
         ) : null}
@@ -14136,7 +14486,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
       ) : null}
 
       {useAppShellLayout ? (
-        <div className="sl-mobile-only">
+        <div className={isMobile ? "sl-mobile-only" : "sl-native-tablet-shell"}>
           <Suspense fallback={null}>
             <LazyMapMobileChrome
               mapHeaderTheme={mapHeaderTheme}
@@ -14189,6 +14539,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
               mapType={mapType}
               locating={locating}
               travelFollowMode={travelFollowMode}
+              navigationToolEnabled={navigationToolEnabled}
               mobileMapToolButtonStyle={mobileMapToolButtonStyle}
               mobileMapLayerButtonStyle={mobileMapLayerButtonStyle}
               mobilePrimaryLayerOptions={mobilePrimaryLayerOptions}
@@ -14257,6 +14608,7 @@ async function insertReportWithFallback(payload, supabaseClient = supabase) {
               mobileBottomRailColumnCount={mobileBottomRailColumnCount}
               useWideIosTabletShell={useWideIosTabletShell}
               useAppShellLayout={useAppShellLayout}
+              mapUiIconManifestReady={mapUiIconManifestReady}
               useWideAppShellHeader={useWideAppShellHeader}
               myReportsOpen={myReportsOpen}
               notificationsWindowOpen={notificationsWindowOpen}

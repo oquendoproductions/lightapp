@@ -61,14 +61,13 @@ describe("MapLazyTenantRuntimeController", () => {
     vi.clearAllMocks();
   });
 
-  it("does not restart tenant configuration loads when map interaction changes", async () => {
+  it("loads map features without restarting when map interaction changes", async () => {
     const { rerender } = render(
       <MapLazyTenantRuntimeController {...stableProps} mapInteracting={false} />,
     );
 
     await waitFor(() => {
       expect(from).toHaveBeenCalledWith("tenant_map_features");
-      expect(from).toHaveBeenCalledWith("tenant_visibility_config");
     }, { timeout: 2000 });
 
     const fetchCountBeforeInteraction = from.mock.calls.length;

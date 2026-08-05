@@ -9,8 +9,10 @@ ios
 *.swp
 output
 tmp
+.tmp
 .wrangler
 .venv_pdf
+supabase/.temp
 *parse_error*
 Access
 Create

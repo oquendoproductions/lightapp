@@ -8,14 +8,8 @@ export default function MapLazyTenantRuntimeController({
   nonCriticalStartupReady,
   startupWarmupReady,
   mapInteracting,
-  tenantReady,
-  sessionUserId,
-  resolvedTenantDomainConfigTenantKey,
   tenantScopedReadClient,
   supabase,
-  enableTenantVisibilityConfig,
-  setTenantVisibilityByDomain,
-  setTenantVisibilityLoaded,
   resolvedTenantMapFeaturesTenantKey,
   authReady,
   createTenantScopedReadClient,
@@ -30,61 +24,8 @@ export default function MapLazyTenantRuntimeController({
   useEffect(() => {
     let cancelled = false;
     let dispose = () => {};
-    if (loading || !startupWarmupReady) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    void loadDeferredTenantUiConfigSupportModule().then(({
-      scheduleTenantVisibilityConfigRuntimeShared,
-      readCachedTenantVisibilityConfigShared,
-      normalizeTenantVisibilityConfigShared,
-      writeCachedTenantVisibilityConfigShared,
-      clearCachedTenantVisibilityConfigShared,
-    }) => {
-      if (cancelled) return;
-      const hasCachedVisibility = Boolean(
-        readCachedTenantVisibilityConfigShared(resolvedTenantDomainConfigTenantKey),
-      );
-      const cachedRefreshIdleTimeoutMs = hasCachedVisibility ? 4000 : 1000;
-      const cachedRefreshDelayMs = hasCachedVisibility ? 1200 : 240;
-      dispose = scheduleTenantVisibilityConfigRuntimeShared({
-        tenantReady,
-        enabled: enableTenantVisibilityConfig,
-        tenantKey: resolvedTenantDomainConfigTenantKey,
-        readClient: tenantScopedReadClient || supabase,
-        normalizeTenantVisibilityConfig: normalizeTenantVisibilityConfigShared,
-        setTenantVisibilityByDomain,
-        setTenantVisibilityLoaded,
-        writeCachedTenantVisibilityConfig: writeCachedTenantVisibilityConfigShared,
-        clearCachedTenantVisibilityConfig: clearCachedTenantVisibilityConfigShared,
-        idleTimeoutMs: cachedRefreshIdleTimeoutMs,
-        fallbackDelayMs: cachedRefreshDelayMs,
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      dispose();
-    };
-  }, [
-    enableTenantVisibilityConfig,
-    loading,
-    resolvedTenantDomainConfigTenantKey,
-    sessionUserId,
-    setTenantVisibilityByDomain,
-    setTenantVisibilityLoaded,
-    startupWarmupReady,
-    supabase,
-    tenantReady,
-    tenantScopedReadClient,
-  ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let dispose = () => {};
     const hasCachedTenantMapFeatures = tenantMapFeaturesSourceRef.current === "cache";
-    if (loading || !startupWarmupReady) {
+    if (!startupWarmupReady) {
       return () => {
         cancelled = true;
       };
@@ -124,7 +65,6 @@ export default function MapLazyTenantRuntimeController({
     authReady,
     createTenantScopedReadClient,
     defaultTenantMapFeatures,
-    loading,
     resolvedTenantMapFeaturesTenantKey,
     setTenantMapFeatures,
     setTenantMapFeaturesLoaded,

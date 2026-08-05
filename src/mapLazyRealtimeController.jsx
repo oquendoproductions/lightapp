@@ -1,9 +1,35 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useRef } from "react";
 
 const loadDeferredConfiguredIncidentDataSupportModule = () => import("./lib/mapDeferredConfiguredIncidentDataSupport.js");
 const loadDeferredPublicMapFollowupSupportModule = () => import("./lib/mapDeferredPublicMapFollowupSupport.js");
 const loadDeferredIncidentSupportModule = () => import("./lib/mapDeferredIncidentSupport.js");
 const loadIncidentDeferredSupportModule = () => import("./lib/mapIncidentDeferredSupport.js");
+const HIGH_RISK_INCIDENT_REALTIME_DISABLED = true;
+
+function sameConfiguredIncidentRealtimeEntries(left, right) {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const topologyFor = (entries) => entries.map((entry) => [
+    String(entry?.domainKey || "").trim(),
+    typeof entry?.setSeededRows === "function",
+    typeof entry?.setReportRows === "function",
+  ]).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  const leftTopology = topologyFor(left);
+  const rightTopology = topologyFor(right);
+  return leftTopology.every((entry, index) => (
+    entry[0] === rightTopology[index][0]
+    && entry[1] === rightTopology[index][1]
+    && entry[2] === rightTopology[index][2]
+  ));
+}
+
+function sameStringList(left, right) {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const normalizedLeft = left.map((value) => String(value || "").trim()).sort();
+  const normalizedRight = right.map((value) => String(value || "").trim()).sort();
+  return normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
 
 export default function MapLazyRealtimeController({
   reportsAdminView,
@@ -24,7 +50,6 @@ export default function MapLazyRealtimeController({
   deferredRealtimeReady,
   shouldPrioritizeStreetlightRuntimeStartup,
   shouldComputeStreetlightRuntimeState,
-  activeMapLayerKey,
   supabase,
   loadDeferredConfiguredIncidentStateRuntimeHelpers,
   normalizeDomainKeyOrSlug,
@@ -59,22 +84,77 @@ export default function MapLazyRealtimeController({
   getIncidentDomainHelper,
   incidentDomainCanonicalIncidentId,
 }) {
-  const configuredIncidentRealtimeTargetEntries = useMemo(() => {
-    return configuredIncidentDemandDomainKeys
-      .map((domainKey) => configuredIncidentRuntimeEntryByDomain.get(domainKey))
-      .filter(Boolean);
-  }, [
-    configuredIncidentDemandDomainKeys,
-    configuredIncidentRuntimeEntryByDomain,
-  ]);
+  const notifyDbConnectionIssueRef = useRef(notifyDbConnectionIssue);
+  const resetDbConnectionIssueStreakRef = useRef(resetDbConnectionIssueStreak);
+  const officialIdSetRef = useRef(officialIdSet);
+  const realtimeGenerationRef = useRef(0);
+  notifyDbConnectionIssueRef.current = notifyDbConnectionIssue;
+  resetDbConnectionIssueStreakRef.current = resetDbConnectionIssueStreak;
+  officialIdSetRef.current = officialIdSet;
 
-  const configuredIncidentRealtimePersistedStateDomainKeys = useMemo(() => {
-    const targetDomainKeySet = new Set(configuredIncidentDemandDomainKeys);
-    return configuredIncidentPersistedStateSupportedDomainKeys.filter((domainKey) => targetDomainKeySet.has(domainKey));
-  }, [
-    configuredIncidentDemandDomainKeys,
-    configuredIncidentPersistedStateSupportedDomainKeys,
-  ]);
+  const nextConfiguredIncidentRealtimeTargetEntries = configuredIncidentDemandDomainKeys
+    .map((domainKey) => configuredIncidentRuntimeEntryByDomain.get(domainKey))
+    .filter(Boolean);
+  const configuredIncidentRealtimeTopologyRef = useRef({
+    tenantKey: String(activeTenantKeyValue || "").trim().toLowerCase(),
+    targetEntries: [],
+    persistedStateDomainKeys: [],
+  });
+  const normalizedRealtimeTopologyTenantKey = String(activeTenantKeyValue || "").trim().toLowerCase();
+  if (configuredIncidentRealtimeTopologyRef.current.tenantKey !== normalizedRealtimeTopologyTenantKey) {
+    configuredIncidentRealtimeTopologyRef.current = {
+      tenantKey: normalizedRealtimeTopologyTenantKey,
+      targetEntries: [],
+      persistedStateDomainKeys: [],
+    };
+  }
+  const retainedTargetEntriesByDomain = new Map(
+    configuredIncidentRealtimeTopologyRef.current.targetEntries.map((entry) => [entry.domainKey, entry])
+  );
+  for (const entry of nextConfiguredIncidentRealtimeTargetEntries) {
+    const domainKey = String(entry?.domainKey || "").trim();
+    if (!domainKey) continue;
+    const retained = retainedTargetEntriesByDomain.get(domainKey);
+    if (!retained) {
+      retainedTargetEntriesByDomain.set(domainKey, entry);
+      continue;
+    }
+    if (
+      (typeof retained.setSeededRows !== "function" && typeof entry.setSeededRows === "function")
+      || (typeof retained.setReportRows !== "function" && typeof entry.setReportRows === "function")
+    ) {
+      retainedTargetEntriesByDomain.set(domainKey, {
+        ...retained,
+        setSeededRows: typeof retained.setSeededRows === "function" ? retained.setSeededRows : entry.setSeededRows,
+        setReportRows: typeof retained.setReportRows === "function" ? retained.setReportRows : entry.setReportRows,
+      });
+    }
+  }
+  const nextRetainedTargetEntries = Array.from(retainedTargetEntriesByDomain.values())
+    .sort((left, right) => String(left?.domainKey || "").localeCompare(String(right?.domainKey || "")));
+  if (!sameConfiguredIncidentRealtimeEntries(
+    configuredIncidentRealtimeTopologyRef.current.targetEntries,
+    nextRetainedTargetEntries
+  )) {
+    configuredIncidentRealtimeTopologyRef.current.targetEntries = nextRetainedTargetEntries;
+  }
+  const configuredIncidentRealtimeTargetEntries = configuredIncidentRealtimeTopologyRef.current.targetEntries;
+
+  const targetDomainKeySet = new Set(configuredIncidentDemandDomainKeys);
+  const nextConfiguredIncidentRealtimePersistedStateDomainKeys = configuredIncidentPersistedStateSupportedDomainKeys
+    .filter((domainKey) => targetDomainKeySet.has(domainKey));
+  const retainedPersistedStateDomainKeys = Array.from(new Set([
+    ...configuredIncidentRealtimeTopologyRef.current.persistedStateDomainKeys,
+    ...nextConfiguredIncidentRealtimePersistedStateDomainKeys,
+  ])).sort();
+  if (!sameStringList(
+    configuredIncidentRealtimeTopologyRef.current.persistedStateDomainKeys,
+    retainedPersistedStateDomainKeys
+  )) {
+    configuredIncidentRealtimeTopologyRef.current.persistedStateDomainKeys = retainedPersistedStateDomainKeys;
+  }
+  const configuredIncidentRealtimePersistedStateDomainKeys =
+    configuredIncidentRealtimeTopologyRef.current.persistedStateDomainKeys;
 
   const shouldSubscribeConfiguredIncidentRealtime = Boolean(
     configuredIncidentRealtimeTargetEntries.length
@@ -90,37 +170,79 @@ export default function MapLazyRealtimeController({
     || selectedIncidentStackMarker
     || shouldForceAdminConfiguredIncidentDomain
   );
-  const shouldLiveSubscribeConfiguredIncidentRealtime = Boolean(
+  const rawShouldLiveSubscribeConfiguredIncidentRealtime = Boolean(
+    !HIGH_RISK_INCIDENT_REALTIME_DISABLED
+    &&
     shouldSubscribeConfiguredIncidentRealtime
     && (
       shouldPrioritizeConfiguredIncidentRealtime
       || deferredRealtimeReady
     )
   );
-  const shouldLiveSubscribeIncidentStateRealtime = Boolean(
-    deferredRealtimeReady
-    || shouldPrioritizeStreetlightRuntimeStartup
-    || shouldPrioritizeConfiguredIncidentRealtime
+  const rawShouldLiveSubscribeIncidentStateRealtime = Boolean(
+    !HIGH_RISK_INCIDENT_REALTIME_DISABLED
+    && (
+      deferredRealtimeReady
+      || shouldPrioritizeStreetlightRuntimeStartup
+      || shouldPrioritizeConfiguredIncidentRealtime
+    )
   );
-  const shouldSubscribeAdminReportRealtime = Boolean(
+  const rawShouldSubscribeAdminReportRealtime = Boolean(
     reportsAdminView
     && (
       myReportsOpen
       || openReportsOpen
     )
   );
+  const rawShouldLiveSubscribeStreetlightRuntimeState = Boolean(
+    shouldComputeStreetlightRuntimeState
+    && (
+      shouldPrioritizeStreetlightRuntimeStartup
+      || deferredRealtimeReady
+    )
+  );
+  const viewerUserId = String(sessionUserId || "").trim();
+  const realtimeChannelScopeKey = `${normalizedRealtimeTopologyTenantKey}:${viewerUserId}`;
+  const realtimeChannelGroupTopologyRef = useRef({
+    scopeKey: realtimeChannelScopeKey,
+    configuredIncident: false,
+    incidentState: false,
+    adminReport: false,
+    streetlightRuntime: false,
+  });
+  if (realtimeChannelGroupTopologyRef.current.scopeKey !== realtimeChannelScopeKey) {
+    realtimeChannelGroupTopologyRef.current = {
+      scopeKey: realtimeChannelScopeKey,
+      configuredIncident: false,
+      incidentState: false,
+      adminReport: false,
+      streetlightRuntime: false,
+    };
+  }
+  if (rawShouldLiveSubscribeConfiguredIncidentRealtime) {
+    realtimeChannelGroupTopologyRef.current.configuredIncident = true;
+  }
+  if (rawShouldLiveSubscribeIncidentStateRealtime) {
+    realtimeChannelGroupTopologyRef.current.incidentState = true;
+  }
+  if (rawShouldSubscribeAdminReportRealtime) {
+    realtimeChannelGroupTopologyRef.current.adminReport = true;
+  }
+  if (rawShouldLiveSubscribeStreetlightRuntimeState) {
+    realtimeChannelGroupTopologyRef.current.streetlightRuntime = true;
+  }
+  const shouldLiveSubscribeConfiguredIncidentRealtime =
+    realtimeChannelGroupTopologyRef.current.configuredIncident;
+  const shouldLiveSubscribeIncidentStateRealtime = realtimeChannelGroupTopologyRef.current.incidentState;
+  const shouldSubscribeAdminReportRealtime = realtimeChannelGroupTopologyRef.current.adminReport;
+  const shouldLiveSubscribeStreetlightRuntimeState = realtimeChannelGroupTopologyRef.current.streetlightRuntime;
 
   useEffect(() => {
-    const viewerUserId = String(sessionUserId || "").trim();
+    const realtimeGeneration = realtimeGenerationRef.current + 1;
+    realtimeGenerationRef.current = realtimeGeneration;
+    const isCurrentRealtimeGeneration = () => realtimeGenerationRef.current === realtimeGeneration;
     let utilityRefreshTimer = null;
     let utilityRefreshInFlight = false;
-    const shouldLiveSubscribeStreetlightRuntimeState = Boolean(
-      shouldComputeStreetlightRuntimeState
-      && (
-        shouldPrioritizeStreetlightRuntimeStartup
-        || deferredRealtimeReady
-      )
-    );
 
     const refreshUtilityStatusSets = async () => {
       if (utilityRefreshInFlight) return;
@@ -130,7 +252,7 @@ export default function MapLazyRealtimeController({
         await refreshUtilityStatusRealtimeShared({
           shouldLiveSubscribeStreetlightRuntimeState,
           supabase,
-          tenantKey: activeTenantKeyValue,
+          tenantKey: normalizedRealtimeTopologyTenantKey,
           viewerUserId,
         }, {
           loadIncidentDeferredSupportModule,
@@ -173,7 +295,7 @@ export default function MapLazyRealtimeController({
             setSharedIncidentBaseMarkersStateByDomain,
             buildGenericIncidentBaseMarkersForDomain,
             mergeGenericIncidentBaseMarkers,
-            officialIdSet,
+            officialIdSet: officialIdSetRef.current,
             isOutageReportType,
             setStreetlightOutageTsByLightId,
             setIncidentStateByKey,
@@ -270,8 +392,10 @@ export default function MapLazyRealtimeController({
         }
       )
       .subscribe((status) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") notifyDbConnectionIssue(status);
-        if (status === "SUBSCRIBED") resetDbConnectionIssueStreak();
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          notifyDbConnectionIssueRef.current?.(status);
+        }
+        if (status === "SUBSCRIBED") resetDbConnectionIssueStreakRef.current?.();
       }) : null;
 
     let configuredIncidentRealtimeChannels = [];
@@ -282,7 +406,7 @@ export default function MapLazyRealtimeController({
         loadDeferredConfiguredIncidentDataSupportModule(),
         loadDeferredConfiguredIncidentStateRuntimeHelpers(),
       ]).then(([module, configuredIncidentStateRuntimeHelpers]) => {
-        if (configuredIncidentRealtimeDisposed) return;
+        if (configuredIncidentRealtimeDisposed || !isCurrentRealtimeGeneration()) return;
         const {
           subscribeConfiguredIncidentDomainRealtimeShared,
           subscribeConfiguredIncidentPersistedRecordStateRealtimeShared,
@@ -391,6 +515,9 @@ export default function MapLazyRealtimeController({
 
     return () => {
       configuredIncidentRealtimeDisposed = true;
+      if (isCurrentRealtimeGeneration()) {
+        realtimeGenerationRef.current = realtimeGeneration + 1;
+      }
       if (utilityRefreshTimer) clearTimeout(utilityRefreshTimer);
       if (reportsChannel) supabase.removeChannel(reportsChannel);
       if (fixedChannel) supabase.removeChannel(fixedChannel);
@@ -406,55 +533,20 @@ export default function MapLazyRealtimeController({
       if (utilityStatusChannel) supabase.removeChannel(utilityStatusChannel);
       if (incidentStateChannel) supabase.removeChannel(incidentStateChannel);
     };
+    // These handlers are module-level helpers, React setters, or values carried
+    // through refs. Only the retained channel topology may restart subscriptions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    activeMapLayerKey,
-    activeTenantKeyValue,
-    buildGenericIncidentBaseMarkersForDomain,
+    normalizedRealtimeTopologyTenantKey,
+    viewerUserId,
     configuredIncidentRealtimePersistedStateDomainKeys,
     configuredIncidentRealtimeTargetEntries,
-    deferredRealtimeReady,
-    domainForIncidentId,
-    getIncidentDomainHelper,
-    incidentDomainCanonicalIncidentId,
-    incidentSnapshotKey,
     isAdmin,
-    isAssetBackedDomainType,
-    isOutageReportType,
-    lightIdFor,
-    loadDeferredConfiguredIncidentStateRuntimeHelpers,
-    myReportsOpen,
-    normalizeDomainKeyOrSlug,
-    normalizeOfficialLightRow,
-    normalizeReportQuality,
-    officialIdSet,
-    openReportsOpen,
-    reportDomainForRow,
-    reportsAdminView,
-    resetDbConnectionIssueStreak,
-    resolveRuntimeDomainTypeForMap,
-    sessionUserId,
-    setActionsByLightId,
-    setFixedLights,
-    setIncidentStateByKey,
-    setOfficialLights,
-    setLastFixByLightId,
-    setPersistedIncidentRecordStateByDomain,
-    setReports,
-    setSharedIncidentBaseMarkersStateByDomain,
-    setSharedIncidentReportRowsStateByDomain,
-    setStreetlightOutageTsByLightId,
-    setUtilityReportedAtByLightId,
-    setUtilityReportedLightIdSet,
-    setUtilityReportReferenceByLightId,
-    setUtilitySignalCountsByLightId,
-    shouldComputeStreetlightRuntimeState,
     shouldLiveSubscribeConfiguredIncidentRealtime,
     shouldLiveSubscribeIncidentStateRealtime,
-    shouldPrioritizeStreetlightRuntimeStartup,
+    shouldLiveSubscribeStreetlightRuntimeState,
     shouldSubscribeAdminReportRealtime,
     supabase,
-    mergeGenericIncidentBaseMarkers,
-    notifyDbConnectionIssue,
   ]);
 
   return null;
