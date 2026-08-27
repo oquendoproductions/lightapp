@@ -23,6 +23,14 @@ export function hasConfiguredNativeTenantKey() {
 
 export function getPersistedRuntimeTenantKey() {
   try {
+    const fromRecoveryLink = new URLSearchParams(String(globalThis?.location?.search || "")).get("tenant_key");
+    const normalizedRecoveryTenant = sanitizeTenantKey(fromRecoveryLink);
+    if (normalizedRecoveryTenant) return normalizedRecoveryTenant;
+  } catch {
+    // ignore malformed or unavailable deep-link URLs
+  }
+
+  try {
     const fromWindow = sanitizeTenantKey(globalThis?.__CITYREPORT_TENANT_KEY);
     if (fromWindow) return fromWindow;
   } catch {

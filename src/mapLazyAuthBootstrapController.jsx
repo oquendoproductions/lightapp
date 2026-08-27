@@ -62,6 +62,55 @@ export default function MapLazyAuthBootstrapController({
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const KEY = "sl_password_recovery_opened";
+    try {
+      if (window.sessionStorage.getItem(KEY)) return;
+    } catch {
+      // A storage failure should not block password recovery.
+    }
+
+    const search = String(window.location.search || "");
+    const hash = String(window.location.hash || "");
+    if (!/type=recovery/i.test(`${search}${hash}`)) return;
+
+    let cancelled = false;
+    const openRecovery = () => {
+      if (cancelled) return;
+      try { window.sessionStorage.setItem(KEY, "1"); } catch { /* ignore */ }
+      setAuthGateOpen(false);
+      setForgotPasswordOpen(false);
+      setRecoveryPasswordValue("");
+      setRecoveryPasswordValue2("");
+      setRecoveryPasswordOpen(true);
+    };
+
+    const tokenHash = new URLSearchParams(search).get("token_hash");
+    if (!tokenHash) {
+      openRecovery();
+      return () => { cancelled = true; };
+    }
+
+    void supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          openNoticeRef.current("⚠️", "Reset link unavailable", "This password-reset link is expired or has already been used. Request a new one from the sign-in screen.");
+          return;
+        }
+        setSession(data?.session || null);
+        setAuthReady(true);
+        try { window.history.replaceState({}, document.title, window.location.pathname); } catch { /* ignore */ }
+        openRecovery();
+      })
+      .catch(() => {
+        if (!cancelled) openNoticeRef.current("⚠️", "Reset link unavailable", "Request a new password-reset link from the sign-in screen.");
+      });
+
+    return () => { cancelled = true; };
+  }, [setAuthReady, setAuthGateOpen, setForgotPasswordOpen, setRecoveryPasswordOpen, setRecoveryPasswordValue, setRecoveryPasswordValue2, setSession, supabase]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return undefined;
 
     window.__openAuthGate = (step = "welcome") => {

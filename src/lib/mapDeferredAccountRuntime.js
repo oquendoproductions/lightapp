@@ -31,7 +31,7 @@ export {
 } from "./mapAccountCacheSupport.js";
 
 export async function sendPasswordResetRuntimeShared(state = {}, deps = {}) {
-  const { getAuthRedirectOptions } = await loadPlatformAuthModule();
+  const { getPasswordResetRedirectOptions } = await loadPlatformAuthModule();
   const { sendPasswordResetAction } = await loadDeferredAccountActionSupportModule();
   return sendPasswordResetAction({
     supabase: deps.supabase,
@@ -40,7 +40,7 @@ export async function sendPasswordResetRuntimeShared(state = {}, deps = {}) {
     setAuthResetLoading: deps.setAuthResetLoading,
     setForgotPasswordOpen: deps.setForgotPasswordOpen,
     openNotice: deps.openNotice,
-    getAuthRedirectOptions,
+    getAuthRedirectOptions: getPasswordResetRedirectOptions,
   });
 }
 

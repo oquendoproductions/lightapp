@@ -1,4 +1,5 @@
 import { getCurrentLocationSnapshot, isNativeAppRuntime } from "./runtime.js";
+import { getRuntimeTenantKey } from "../tenant/runtimeTenant.js";
 
 const AUTH_REDIRECT_URL = String(import.meta.env.VITE_AUTH_REDIRECT_URL || "").trim();
 const NATIVE_AUTH_REDIRECT_URL = String(
@@ -33,6 +34,19 @@ export function getAuthRedirectUrl(pathname = "/") {
 export function getAuthRedirectOptions(pathname = "/") {
   const redirectTo = getAuthRedirectUrl(pathname);
   return redirectTo ? { redirectTo } : undefined;
+}
+
+export function getPasswordResetRedirectOptions(pathname = "/") {
+  if (!isNativeAppRuntime()) return getAuthRedirectOptions(pathname);
+  const baseUrl = NATIVE_AUTH_REDIRECT_URL || getDefaultNativeAuthRedirectUrl();
+  try {
+    const redirectUrl = new URL(baseUrl);
+    const tenantKey = getRuntimeTenantKey();
+    if (tenantKey) redirectUrl.searchParams.set("tenant_key", tenantKey);
+    return { redirectTo: redirectUrl.toString() };
+  } catch {
+    return { redirectTo: baseUrl };
+  }
 }
 
 export function getEmailConfirmationRedirectOptions(pathname = "/") {
