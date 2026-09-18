@@ -6578,7 +6578,7 @@ export default function App({
 
   async function sendPasswordReset() {
     const { sendPasswordResetRuntimeShared } = await loadDeferredAccountRuntimeModule();
-    return sendPasswordResetRuntimeShared({
+    const sent = await sendPasswordResetRuntimeShared({
       forgotPasswordEmail,
     }, {
       supabase,
@@ -6587,6 +6587,11 @@ export default function App({
       setForgotPasswordOpen,
       openNotice,
     });
+    if (sent) {
+      setAuthGateOpen(false);
+      setAuthGateStep("welcome");
+    }
+    return sent;
   }
 
     async function userLogin(email, password) {
