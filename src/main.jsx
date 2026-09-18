@@ -9,8 +9,10 @@ import { TenantProvider } from "./tenant/TenantContext";
 import { getRuntimeTenantKey } from "./tenant/runtimeTenant";
 import { buildUnknownTenantSlugEvent, logUnknownTenantSlug, resolveTenantRequest } from "./tenant/tenantResolver";
 import { installVitePreloadRecovery } from "./lib/vitePreloadRecovery.js";
+import { installNativeAuthCallbackHandler } from "./platform/nativeAuthCallback.js";
 
 installVitePreloadRecovery();
+void installNativeAuthCallbackHandler();
 
 class RuntimeFailureBoundary extends React.Component {
   constructor(props) {
