@@ -4028,7 +4028,7 @@ export default function App({
 
   async function getOfficialLightHistoryDetailed(lightId, { preferCache = true } = {}) {
     const { parseWorkingContactFromNote } = await loadIncidentDeferredSupportModule();
-    const lid = (lightId || "").trim();
+    const lid = String(lightId || "").trim();
     if (!lid) return { reportRows: [], fixActionRows: [] };
 
     const cache = officialLightHistoryCacheRef.current;
@@ -4072,7 +4072,7 @@ export default function App({
       const actorEmail = a.actor_email || a.reporter_email || noteContact.email || null;
       const actorPhone = a.actor_phone || a.reporter_phone || noteContact.phone || null;
       const actorUserId = a.actor_user_id || a.reporter_user_id || null;
-      const actorNameRaw = (a.actor_name || a.reporter_name || noteContact.name || "").trim();
+      const actorNameRaw = String(a.actor_name || a.reporter_name || noteContact.name || "").trim();
       const actorNameFallback = actorEmail ? String(actorEmail).split("@")[0] : "";
       return {
         action: a.action,
@@ -4083,7 +4083,7 @@ export default function App({
         actor_phone: actorPhone,
         actor_name: actorNameRaw || actorNameFallback || null,
         reporter_user_id: a.reporter_user_id || actorUserId,
-        reporter_name: (a.reporter_name || "").trim() || actorNameRaw || actorNameFallback || null,
+        reporter_name: String(a.reporter_name || "").trim() || actorNameRaw || actorNameFallback || null,
         reporter_email: a.reporter_email || actorEmail,
         reporter_phone: a.reporter_phone || actorPhone,
       };
@@ -6546,7 +6546,7 @@ export default function App({
     setAuthLoading(true);
     setLoginError("");
 
-    const email = (authEmail || "").trim().toLowerCase();
+    const email = String(authEmail || "").trim().toLowerCase();
     const password = authPassword || "";
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -6571,7 +6571,7 @@ export default function App({
   }
 
   function openForgotPasswordModal(email = authEmail) {
-    setForgotPasswordEmail((email || "").trim());
+    setForgotPasswordEmail(String(email || "").trim());
     setForgotPasswordError("");
     setForgotPasswordOpen(true);
   }
@@ -6590,7 +6590,7 @@ export default function App({
   }
 
     async function userLogin(email, password) {
-      const e = (email || "").trim().toLowerCase();
+      const e = String(email || "").trim().toLowerCase();
       const p = password || "";
 
       const { error } = await supabase.auth.signInWithPassword({ email: e, password: p });
@@ -8300,7 +8300,7 @@ async function selectTenantScopedPublicRows(
 
   useEffect(() => {
     if (!isAdmin) return;
-    const lid = (selectedOfficialId || "").trim();
+    const lid = String(selectedOfficialId || "").trim();
     if (!lid) return;
     getOfficialLightHistoryDetailed(lid).catch((e) => {
       console.warn("[official light history prefetch] failed:", e);
@@ -8626,8 +8626,8 @@ async function selectTenantScopedPublicRows(
     const m = new Map();
     if (!shouldComputeResidentReportRuntimeLookups) return m;
     for (const l of officialLights || []) {
-      const uuid = (l.id || "").trim();
-      const sl = (l.sl_id || "").trim();
+      const uuid = String(l.id || "").trim();
+      const sl = String(l.sl_id || "").trim();
       if (uuid && sl) m.set(uuid, sl);
     }
     return m;
@@ -8644,7 +8644,7 @@ async function selectTenantScopedPublicRows(
     if (!shouldComputeOpenReportOfficialIdSet) return out;
     for (const r of reports || []) {
       if (!isOutageReportType(r)) continue;
-      const lightId = (r.light_id || "").trim();
+      const lightId = String(r.light_id || "").trim();
       if (!lightId || !officialIdSet.has(lightId)) continue;
       const lastFixTs = Math.max(lastFixByLightId?.[lightId] || 0, fixedLights?.[lightId] || 0);
       if (lastFixTs && (r.ts || 0) <= lastFixTs) continue;
@@ -9442,7 +9442,7 @@ async function selectTenantScopedPublicRows(
     // In mapping mode, always show full official asset layer so existing lights are never hidden.
     if (mappingMode) return cityFiltered;
     if (!(isAdmin && openReportMapFilterOn)) return cityFiltered;
-    return cityFiltered.filter((l) => openReportOfficialIdSet.has((l.id || "").trim()));
+    return cityFiltered.filter((l) => openReportOfficialIdSet.has(String(l.id || "").trim()));
   }, [
     officialLights,
     isStreetlightsLayerActive,
@@ -10042,7 +10042,7 @@ async function selectTenantScopedPublicRows(
 
   const officialMarkerRingColorForViewer = useCallback((lightId) => {
     if (!shouldComputeStreetlightConfidenceState) return "#fff";
-    const lid = (lightId || "").trim();
+    const lid = String(lightId || "").trim();
     if (!lid) return "#fff";
     if (!viewerStreetlightRingOpenIdSet.has(lid)) return "#fff";
     if (viewerUtilityReportedLightIdSet.has(lid)) return "#1e88e5";
@@ -10372,7 +10372,7 @@ async function selectTenantScopedPublicRows(
       return;
     }
     if (!(isAdmin && openReportMapFilterOn)) return;
-    const id = (selectedOfficialId || "").trim();
+    const id = String(selectedOfficialId || "").trim();
     if (!id) return;
     if (!openReportOfficialIdSet.has(id)) setSelectedOfficialId(null);
   }, [isStreetlightsLayerActive, isAdmin, openReportMapFilterOn, selectedOfficialId, openReportOfficialIdSet]);
@@ -10741,7 +10741,7 @@ async function selectTenantScopedPublicRows(
 
   const officialMarkerColorForViewer = useCallback((lightId) => {
     if (!shouldComputeStreetlightConfidenceState) return defaultMarkerColorForDomain("streetlights");
-    const lid = (lightId || "").trim();
+    const lid = String(lightId || "").trim();
     if (!lid) return defaultMarkerColorForDomain("streetlights");
     const confidence = streetlightConfidenceByLightId?.[lid] || null;
     if (String(confidence?.state || "").trim().toLowerCase() === "high_confidence_outage") {

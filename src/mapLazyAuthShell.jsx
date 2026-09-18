@@ -849,7 +849,7 @@ export function AuthGateModal({
 
           <button
             type="button"
-            onClick={onOpenForgotPassword}
+            onClick={() => onOpenForgotPassword?.()}
             disabled={authLoading}
             style={{
               padding: 0,
