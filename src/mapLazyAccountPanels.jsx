@@ -642,7 +642,7 @@ export function AccountMenuPanel({
         <button
           onClick={() => {
             onClose();
-            window.__openAuthGate?.("welcome");
+            window.__openAuthGate?.("login");
           }}
           className="workspace-menu-button"
           style={{ ...(buttonStyle || {}), ...(wideButtonStyle || {}) }}
