@@ -2,7 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useState } from "re
 import AppLaunchScreen from "../AppLaunchScreen.jsx";
 import { loadFollowedTenantKeys } from "../lib/followedCitySupport.js";
 import { isNativeAppRuntime } from "../platform/runtime.js";
-import { getAuthRedirectOptions } from "../platform/auth.js";
+import { getPasswordResetRedirectOptions } from "../platform/auth.js";
 import { supabase } from "../supabaseClient";
 import { TenantContext } from "./contextObject";
 import {
@@ -270,7 +270,7 @@ export function TenantGate({ children }) {
 
   const sendInitialSignupPasswordReset = useCallback(async () => {
     const email = String(initialSignupEmail || "").trim().toLowerCase();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getPasswordResetRedirectOptions("/"));
     setInitialSignupConfirmationStatus(
       error
         ? "If an account exists for this address, please try again in a moment."

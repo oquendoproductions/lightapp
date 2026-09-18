@@ -9,6 +9,28 @@ test("apex root resolves marketing home", () => {
   assert.equal(res.tenantKey, null);
 });
 
+test("apex password recovery links redirect into the default tenant app", () => {
+  const res = resolveTenantRequest({
+    hostname: "cityreport.io",
+    pathname: "/",
+    search: "?token_hash=example&type=recovery",
+  });
+  assert.equal(res.mode, "redirect");
+  assert.equal(res.reason, "apex_password_recovery_redirect");
+  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/?token_hash=example&type=recovery");
+});
+
+test("legacy apex password recovery path redirects into the default tenant app", () => {
+  const res = resolveTenantRequest({
+    hostname: "cityreport.io",
+    pathname: "/reset-password",
+    search: "?token_hash=example&type=recovery",
+  });
+  assert.equal(res.mode, "redirect");
+  assert.equal(res.reason, "apex_password_recovery_path_redirect");
+  assert.equal(res.redirectTo, "https://ashtabulacity.cityreport.io/?token_hash=example&type=recovery");
+});
+
 test("apex /platform resolves platform admin", () => {
   const res = resolveTenantRequest({ hostname: "cityreport.io", pathname: "/platform", search: "" });
   assert.equal(res.mode, "platform_admin");

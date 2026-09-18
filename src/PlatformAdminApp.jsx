@@ -12,7 +12,7 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
-import { getAuthRedirectOptions } from "./platform/auth.js";
+import { getPasswordResetRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
 import {
   MAP_UI_ICON_ACCEPT,
@@ -5071,7 +5071,7 @@ export default function PlatformAdminApp() {
 
     setForgotPasswordError("");
     setAuthResetLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getPasswordResetRedirectOptions("/"));
     setAuthResetLoading(false);
 
     if (error) {

@@ -289,8 +289,28 @@ export function resolveTenantRequest(input = {}, options = {}) {
   }
 
   if (PROD_APEX_HOSTS.has(hostname)) {
+    if (
+      (pathname === "/" || pathname === "") &&
+      /(?:^|[?&])token_hash=[^&]+/i.test(search || "") &&
+      /(?:^|[?&])type=recovery(?:&|$)/i.test(search || "")
+    ) {
+      return makeResult({
+        mode: "redirect",
+        tenantKey: defaultTenant,
+        reason: "apex_password_recovery_redirect",
+        redirectTo: `https://${defaultTenant}.cityreport.io/${search || ""}`,
+      });
+    }
     if (pathname === "/" || pathname === "") {
       return makeResult({ mode: "marketing_home", reason: "apex_home" });
+    }
+    if (pathname === "/reset-password") {
+      return makeResult({
+        mode: "redirect",
+        tenantKey: defaultTenant,
+        reason: "apex_password_recovery_path_redirect",
+        redirectTo: `https://${defaultTenant}.cityreport.io/${search || ""}`,
+      });
     }
     if (pathname === "/platform" || pathname.startsWith("/platform/")) {
       return makeResult({ mode: "platform_admin", reason: "apex_platform_admin" });

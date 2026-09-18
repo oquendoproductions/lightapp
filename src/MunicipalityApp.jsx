@@ -15,7 +15,7 @@ import {
   STANDARD_LOGIN_FORM_PROPS,
   getStandardLoginPasswordInputProps,
 } from "./auth/loginFieldStandards";
-import { getAuthRedirectOptions, getEmailConfirmationRedirectOptions } from "./platform/auth.js";
+import { getEmailConfirmationRedirectOptions, getPasswordResetRedirectOptions } from "./platform/auth.js";
 import { openExternalUrl } from "./platform/external.js";
 import { resolveHeaderDisplayName, resolvePublicHeaderDisplayName } from "./lib/headerDisplayName";
 import { incidentStateLabel, isLifecycleStateOpen } from "./lib/incidentLifecycle";
@@ -2872,7 +2872,7 @@ export default function MunicipalityApp() {
 
     setForgotPasswordError("");
     setAuthResetLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, getAuthRedirectOptions("/"));
+    const { error } = await supabase.auth.resetPasswordForEmail(email, getPasswordResetRedirectOptions("/"));
     setAuthResetLoading(false);
 
     if (error) {
