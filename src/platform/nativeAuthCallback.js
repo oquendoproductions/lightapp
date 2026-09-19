@@ -26,14 +26,26 @@ export function toNativeAuthCallbackLocation(rawUrl, currentOrigin) {
   }
 }
 
+export function shouldNavigateToNativeAuthCallback(targetUrl, currentHref) {
+  const target = String(targetUrl || "").trim();
+  return Boolean(target) && target !== String(currentHref || "").trim();
+}
+
 export async function installNativeAuthCallbackHandler() {
   if (!isNativeAppRuntime() || typeof window === "undefined") return () => {};
 
   try {
     const { App } = await import("@capacitor/app");
+    let isNavigatingToCallback = false;
     const openCallback = ({ url } = {}) => {
       const target = toNativeAuthCallbackLocation(url, window.location.origin);
-      if (target) window.location.assign(target);
+      if (
+        !isNavigatingToCallback
+        && shouldNavigateToNativeAuthCallback(target, window.location.href)
+      ) {
+        isNavigatingToCallback = true;
+        window.location.assign(target);
+      }
     };
     const listener = await App.addListener("appUrlOpen", openCallback);
     const launchUrl = await App.getLaunchUrl();
